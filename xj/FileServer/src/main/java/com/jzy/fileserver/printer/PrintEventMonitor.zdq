@@ -1,0 +1,195 @@
+package com.jzy.fileserver.printer;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UnsupportedEncodingException;
+import java.net.ConnectException;
+import java.net.Socket;
+import java.net.UnknownHostException;
+import java.util.Map;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Scope;
+import org.springframework.stereotype.Component;
+
+import com.jzy.fileserver.dao.PrintTaskDao;
+import com.jzy.fileserver.dao.PrinterDao;
+import com.jzy.fileserver.domain.PrintTaskVo;
+import com.jzy.fileserver.domain.Printer;
+import com.jzy.fileserver.enums.PrinterMsgType;
+import com.jzy.fileserver.enums.TaskStatus;
+import com.jzy.fileserver.printer.handler.BeatHeartHandler;
+import com.jzy.fileserver.printer.handler.GenPageMsgHandler;
+import com.jzy.fileserver.printer.handler.GenThumbMsgHandler;
+import com.jzy.fileserver.printer.handler.MsgHandler;
+import com.jzy.fileserver.printer.handler.TaskAcceptMsgHandler;
+import com.jzy.fileserver.printer.handler.TaskCancelMsgHandler;
+import com.jzy.fileserver.printer.handler.TaskEndMsgHandler;
+import com.jzy.fileserver.printer.handler.TaskStartMsgHandler;
+import com.jzy.fileserver.printer.handler.TaskUpdatePriorMsgHandler;
+import com.jzy.fileserver.printer.msg.BeatHeartMsg;
+import com.jzy.fileserver.printer.msg.GenImageMsg;
+import com.jzy.fileserver.printer.msg.GenThumbMsg;
+import com.jzy.fileserver.printer.msg.PrinterMsg;
+import com.jzy.fileserver.printer.msg.TaskAcceptMsg;
+import com.jzy.fileserver.printer.msg.TaskCancelMsg;
+import com.jzy.fileserver.printer.msg.TaskEndMsg;
+import com.jzy.fileserver.printer.msg.TaskStartMsg;
+import com.jzy.fileserver.printer.msg.TaskUpdatePriorMsg;
+import com.jzy.fileserver.utils.BeanLocator;
+import com.jzy.fileserver.utils.CommonUtils;
+import com.jzy.fileserver.utils.JacksonUtils;
+
+/**
+ * 打印事件监控器
+ *
+ * Created by daoqi on 2018年8月3日
+ */
+@Component
+@Scope("prototype")
+public class PrintEventMonitor {
+
+	private static final Logger logger = LoggerFactory.getLogger(PrintEventMonitor.class);
+	
+	private Printer printer;
+
+	@Value("${printer.headerLength}")
+	private int headLength;
+	
+	@Autowired
+	private PrinterDao printerDao;
+	
+	@Autowired
+	private PrintTaskDao printTaskDao;
+
+	public PrintEventMonitor() {
+	}
+
+	public PrintEventMonitor(Printer printer) {
+		this.printer = printer;
+	}
+
+	@SuppressWarnings("resource")
+	public void start0() {
+		try {
+			String host = printer.getHost();
+			int port = printer.getEventPort();
+			Socket socket = new Socket(host, port);
+			logger.info(String.format("monitor[%s:%d] start ...", host, port));
+			
+			//
+			savePrinterInfo();
+
+			while (true) {
+				InputStream bis = null;
+				bis = socket.getInputStream();
+				byte[] head = new byte[headLength];
+				bis.read(head);
+				int length = CommonUtils.byteArrayToShort(head);
+				logger.info("消息长度=" + length);
+				byte[] data = new byte[length];
+				bis.read(data);
+				logger.info(new String(data, "UTF-8").trim());
+
+				handleMessage(data);
+			}
+		}  catch (ConnectException e) {
+			logger.error("打印机【{}】连接不上，请检查！", printer.getHost());
+		} catch (UnknownHostException e) {
+			e.printStackTrace();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
+
+	private void savePrinterInfo() {
+		try {
+			printerDao.save(printer);
+		}catch (Exception e) {
+			logger.error(e.getMessage());
+		}
+	}
+
+	@SuppressWarnings("unchecked")
+	private void handleMessage(byte[] data) throws UnsupportedEncodingException {
+		MsgHandler handler = null;
+		PrinterMsg msgBean = null;
+		String msgStr = new String(data, "UTF-8");
+		Map<String, Object> msg = JacksonUtils.fromJson(msgStr, Map.class);
+		
+		if(!checkMsgIsFromSelf(msg)) {
+			return ;
+		}
+		
+		String msgType = (String) msg.get("msg_type");
+		Object taskStatusObj = msg.get("task_status");
+		String taskStatus = null;
+		if (taskStatusObj != null) {
+			taskStatus = (String) taskStatusObj;
+		}
+		if (PrinterMsgType.beat_heart.name().equals(msgType)) {
+			handler = (MsgHandler) BeanLocator.getBean(BeatHeartHandler.class);
+			msgBean = JacksonUtils.fromJson(msgStr, BeatHeartMsg.class);
+
+		} else if (PrinterMsgType.task_request.name().equals(msgType)) {
+			handler = (MsgHandler) BeanLocator.getBean(TaskAcceptMsgHandler.class);
+			msgBean = JacksonUtils.fromJson(msgStr, TaskAcceptMsg.class);
+
+		} else if (PrinterMsgType.task_cancel.name().equals(msgType)) {
+			handler = (MsgHandler) BeanLocator.getBean(TaskCancelMsgHandler.class);
+			msgBean = JacksonUtils.fromJson(msgStr, TaskCancelMsg.class);
+
+		} else if (PrinterMsgType.update_prior.name().equals(msgType)) {
+			handler = (MsgHandler) BeanLocator.getBean(TaskUpdatePriorMsgHandler.class);
+			msgBean = JacksonUtils.fromJson(msgStr, TaskUpdatePriorMsg.class);
+
+		} else if (PrinterMsgType.task_update.name().equals(msgType) && TaskStatus.task_begin.name().equals(taskStatus)) {
+			handler = (MsgHandler) BeanLocator.getBean(TaskStartMsgHandler.class);
+			msgBean = JacksonUtils.fromJson(msgStr, TaskStartMsg.class);
+
+		} else if (PrinterMsgType.task_update.name().equals(msgType) && TaskStatus.task_end.name().equals(taskStatus)) {
+			handler = (MsgHandler) BeanLocator.getBean(TaskEndMsgHandler.class);
+			msgBean = JacksonUtils.fromJson(msgStr, TaskEndMsg.class);
+
+		} else if (PrinterMsgType.task_update.name().equals(msgType) && TaskStatus.task_gen_thumb.name().equals(taskStatus)) {
+			handler = (MsgHandler) BeanLocator.getBean(GenThumbMsgHandler.class);
+			msgBean = JacksonUtils.fromJson(msgStr, GenThumbMsg.class);
+
+		} else if (PrinterMsgType.task_update.name().equals(msgType) && TaskStatus.task_gen_page.name().equals(taskStatus)) {
+			handler = (MsgHandler) BeanLocator.getBean(GenPageMsgHandler.class);
+			msgBean = JacksonUtils.fromJson(msgStr, GenImageMsg.class);
+
+		} else {
+			throw new RuntimeException("未知的消息类型！");
+		}
+		
+		try {
+			handler.handle(msgBean, this);
+		} catch (Exception e) {
+			logger.error("处理打印机消息异常：msg={}, e={}", msgBean, e);
+		}
+	}
+
+	private boolean checkMsgIsFromSelf(Map<String, Object> msg) {
+		Integer taskId = (Integer) msg.get("task_id");
+		if(taskId != null) {
+			PrintTaskVo printTaskVo = printTaskDao.findById(taskId);
+			String localIp = CommonUtils.getLocalhost();
+			if(!localIp.equals(printTaskVo.getFileServerHost())) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	public Printer getPrinter() {
+		return printer;
+	}
+
+	public void setPrinter(Printer printer) {
+		this.printer = printer;
+	}
+}
