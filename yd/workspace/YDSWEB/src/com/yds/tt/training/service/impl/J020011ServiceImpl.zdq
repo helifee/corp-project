@@ -1,0 +1,318 @@
+/*
+ * @(#) J020011ServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 教育考试培训系统
+ *    SubSystem: 教育子系统
+ */
+package com.yds.tt.training.service.impl;
+
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Service;
+
+import com.yds.base.service.AbstractBaseService;
+import com.yds.util.service.DateUtil;
+import com.yds.util.service.StringUtil;
+import com.yds.tt.manager.bean.AuthorityInfo;
+import com.yds.tt.manager.bean.MessageReminding;
+import com.yds.tt.manager.dao.TtCommonDao;
+import com.yds.tt.manager.service.TtCommonService;
+import com.yds.tt.manager.service.TtCommonUtil;
+import com.yds.tt.manager.service.TtConstants;
+import com.yds.tt.manager.service.TtExclusiveException;
+import com.yds.tt.training.bean.CourseAttentionInfo;
+import com.yds.tt.training.bean.CourseInfo;
+import com.yds.tt.training.dao.J020011Dao;
+import com.yds.tt.training.dao.TrainingCommonDao;
+import com.yds.tt.training.service.J020011Service;
+
+/**
+ * @see com.yds.tt.training.service.J020011Service
+ */
+@Service("j020011Service")
+public class J020011ServiceImpl extends AbstractBaseService implements
+		J020011Service {
+	
+	private J020011Dao j020011Dao;
+	private TtCommonService ttCommonService;
+	private TtCommonDao ttCommonDao;
+	private TrainingCommonDao trainingCommonDao;
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public CourseInfo getCourseInfo(String courseId){
+		return j020011Dao.getCourseInfo(courseId);
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void insertCourse(CourseInfo courseInfo,
+							AuthorityInfo approverInfo, 
+							List<AuthorityInfo> editorInfoList,
+							String strUserIdList){
+		
+		// 登陆用户取得
+		String strUserId = TtCommonUtil.getLoginUserId();	
+
+		// 课程ID取得
+		String strCourseId = ttCommonService.getSequence(TtConstants.SEQID.Course);
+
+		// 插入课程
+		courseInfo.setCourseId(strCourseId);
+		courseInfo.setCreateUserId(strUserId);
+		courseInfo.setUpdateUserId(strUserId);
+		j020011Dao.insertCourse(courseInfo);
+		
+		// 针对对象为<针对个人>时
+		if (TtCommonUtil.isEquals(courseInfo.getObjectType(),
+			          TtConstants.C12.C12_4.value())) {
+			
+			// 循环插入课程员工表
+			CourseAttentionInfo courseAttentionInfo;
+			String[] userIdList = strUserIdList.split(",");
+			
+			for(int i = 0; i < userIdList.length; i++){
+				courseAttentionInfo =  new CourseAttentionInfo();
+				courseAttentionInfo.setCourseId(strCourseId);
+				courseAttentionInfo.setEmployeesId(userIdList[i]);
+				trainingCommonDao.insertUserList(courseAttentionInfo);
+			}
+		}
+		
+		// 插入编辑者
+		AuthorityInfo authorityInfo;
+		if (null != editorInfoList) {
+			for (int i = 0; i < editorInfoList.size(); i++) {
+
+				// 将画面编辑者列表赋值给权限信息Bean
+				authorityInfo = editorInfoList.get(i);
+				authorityInfo.setAuthorityId(TtConstants.C24.C24_6.value());
+				authorityInfo.setRelatedobjectId(strCourseId);
+				authorityInfo.setCreateUserId(strUserId);
+				authorityInfo.setUpdateUserId(strUserId);
+
+				// 添加编辑者信息
+				ttCommonDao.insertAuthority(authorityInfo);
+			}
+		}
+		
+		// 登录审批者
+		approverInfo.setRelatedobjectId(strCourseId);
+		approverInfo.setAuthorityId(TtConstants.C24.C24_10.value());
+		approverInfo.setCreateUserId(strUserId);
+		approverInfo.setUpdateUserId(strUserId);
+		approverInfo.setUserId(StringUtil.leftPadYd(approverInfo.getUserId()));
+		ttCommonDao.insertAuthority(approverInfo);
+		
+		// QIANGUORONG 7/26追加：更新全局Sesssion中的权限版本时间戳
+		ttCommonService.authrityTimestampUpdate();
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void updateCourse(CourseInfo courseInfo,
+							AuthorityInfo approverInfo, 
+							List<AuthorityInfo> editorInfoList,
+							String strUserIdList){
+
+		// 登陆用户取得
+		String strUserId = TtCommonUtil.getLoginUserId();
+		
+		// 排他检查
+		Date updateTime = j020011Dao.getUpdateTime(courseInfo);
+		if(ttCommonService.checkTimeStamp(TtConstants.PageId.J020011,  
+								updateTime) == false){
+
+			throw new TtExclusiveException();
+		}
+
+		// 取得旧课程信息
+		CourseInfo oldCourseInfo = getCourseInfo(courseInfo.getCourseId());
+		
+		// 更新课程
+		courseInfo.setUpdateUserId(strUserId);
+		j020011Dao.updateCourse(courseInfo);
+		
+		// 如果课程分类有变更则更新课程下教材分类
+		if (!(oldCourseInfo.getCategory1Id().equals(courseInfo.getCategory1Id())
+				&& oldCourseInfo.getCategory2Id().equals(courseInfo
+						.getCategory2Id())
+				&& oldCourseInfo.getCategory3Id().equals(courseInfo
+						.getCategory3Id()))) {
+			
+			j020011Dao.updateBookCategory(courseInfo);
+		}
+		
+		// 删除课程员工关联表		
+		trainingCommonDao.deleteUserList(courseInfo.getCourseId());
+		
+		// 针对对象为<针对个人>时
+		if (TtCommonUtil.isEquals(courseInfo.getObjectType(),
+			          TtConstants.C12.C12_4.value())) {
+			
+			// 循环插入课程员工关联表		
+			CourseAttentionInfo courseAttentionInfo;
+			String[] userIdList = strUserIdList.split(",");
+			
+			for(int i = 0; i < userIdList.length; i++){
+				courseAttentionInfo =  new CourseAttentionInfo();
+				courseAttentionInfo.setCourseId(courseInfo.getCourseId());
+				courseAttentionInfo.setEmployeesId(userIdList[i]);
+				trainingCommonDao.insertUserList(courseAttentionInfo);
+			}
+		}
+		
+		// 删除编辑者
+		Map<String, String> paraMap = new HashMap<String, String>();
+		paraMap.put("relatedobjectId", courseInfo.getCourseId());
+		paraMap.put("authorityId", TtConstants.C24.C24_6.toString());
+		ttCommonDao.deleteAuthority(paraMap);
+		
+		// 插入编辑者
+		AuthorityInfo authorityInfo;
+		if (null != editorInfoList) {
+			for (int i = 0; i < editorInfoList.size(); i++) {
+
+				// 将画面编辑者列表赋值给权限信息Bean
+				authorityInfo = editorInfoList.get(i);
+				authorityInfo.setRelatedobjectId(courseInfo.getCourseId());
+				authorityInfo.setAuthorityId(TtConstants.C24.C24_6.value());
+				authorityInfo.setCreateUserId(strUserId);
+				authorityInfo.setUpdateUserId(strUserId);
+
+				// 添加编辑者信息
+				ttCommonDao.insertAuthority(authorityInfo);
+			}
+		}
+
+		// 删除审批者
+		Map<String, String> paraMap2 = new HashMap<String, String>();
+		paraMap2.put("relatedobjectId", courseInfo.getCourseId());
+		paraMap2.put("authorityId", TtConstants.C24.C24_10.toString());
+		ttCommonDao.deleteAuthority(paraMap);
+		
+		// 追加审批者
+		approverInfo.setRelatedobjectId(courseInfo.getCourseId());
+		approverInfo.setAuthorityId(TtConstants.C24.C24_10.value());
+		approverInfo.setCreateUserId(strUserId);
+		approverInfo.setUpdateUserId(strUserId);
+		approverInfo.setUserId(StringUtil.leftPadYd(approverInfo.getUserId()));
+		ttCommonDao.insertAuthority(approverInfo);
+		
+		// QIANGUORONG 7/26追加：更新全局Sesssion中的权限版本时间戳
+		ttCommonService.authrityTimestampUpdate();
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void updateCoursePublishStatus(CourseInfo courseInfo){
+
+		// 登陆用户取得
+		String userId = TtCommonUtil.getLoginUserId();
+		
+		// 排他检查
+		Date updateTime = j020011Dao.getUpdateTime(courseInfo);
+		if(ttCommonService.checkTimeStamp(TtConstants.PageId.J020011,  
+								updateTime) == false){
+			throw new TtExclusiveException();
+		}
+		
+		// 更新课程
+		courseInfo.setUpdateUserId(userId);
+		j020011Dao.updateCoursePublishStatus(courseInfo);
+		
+		// 更新提醒消息
+		MessageReminding msgReminding = new MessageReminding();
+		msgReminding.setMode(TtConstants.REMIND_MODE.JYY04.value());
+		msgReminding.setParameter(courseInfo.getCourseId());
+		ttCommonDao.updateMessageReminding(msgReminding);
+		
+		msgReminding = new MessageReminding();
+		msgReminding.setMode(TtConstants.REMIND_MODE.JYY05.value());
+		msgReminding.setParameter(courseInfo.getCourseId());
+		ttCommonDao.updateMessageReminding(msgReminding);
+		
+		// 登录提醒信息
+		if (TtCommonUtil.isEquals(courseInfo.getCoursePublishStatus(), TtConstants.R05.R05_2.value())) {
+			this.insertMessageReminding(courseInfo, TtConstants.REMIND_MODE.JYY04.value(), "yds.tt.remind.JYY04");
+		} else if (TtCommonUtil.isEquals(courseInfo.getCoursePublishStatus(), TtConstants.R05.R05_3.value())) {
+			this.insertMessageReminding(courseInfo, TtConstants.REMIND_MODE.JYY05.value(), "yds.tt.remind.JYY05");			
+		}	
+	}
+	
+	/**
+	 * 登录提醒信息
+	 * 
+	 * @param BookInfo
+	 *            关联教材信息
+	 * @param String
+	 *            信息ID
+	 * @return String 处理后文件名
+	 */
+	private void insertMessageReminding(CourseInfo courseInfo, String remindMode, String messageCode) {
+
+		MessageReminding message = new MessageReminding();
+
+		// 消息内容
+		message.setContent(propMgr.getMessage(messageCode, courseInfo.getCourseName()));
+		
+		// 参数
+		message.setParameter(courseInfo.getCourseId());
+
+		// Id采番
+		message.setInformationId(ttCommonService.getSequence(TtConstants.SEQID.Information));
+
+		// 链接生成用消息模式
+		message.setMode(remindMode);
+		
+		// 用户ID和失效时间
+		message.setUserId(TtConstants.USER_ALL);
+		message.setLosetime(ttCommonService.getMsgInvalidDate(DateUtil.getDateTime()));
+
+		// 主页面上方显示
+		message.setInformationFlg(TtConstants.REMIND_FLG.TOP.value());
+
+		ttCommonDao.insertMessageReminding(message);
+	}
+	
+	public void setJ020011Dao(J020011Dao j020011Dao) {
+		this.j020011Dao = j020011Dao;
+	}
+	
+	public void setTtCommonDao(TtCommonDao ttCommonDao) {
+		this.ttCommonDao = ttCommonDao;
+	}
+	/**
+	 * @param ttCommonService
+	 *            the ttCommonService to set
+	 */
+	public void setTtCommonService(TtCommonService ttCommonService) {
+		this.ttCommonService = ttCommonService;
+	}
+
+	/**
+	 * @param trainingCommonDao the trainingCommonDao to set
+	 */
+	public void setTrainingCommonDao(TrainingCommonDao trainingCommonDao) {
+		this.trainingCommonDao = trainingCommonDao;
+	}
+
+	/**
+	 * @return the trainingCommonDao
+	 */
+	public TrainingCommonDao getTrainingCommonDao() {
+		return trainingCommonDao;
+	}
+}

@@ -1,0 +1,947 @@
+package com.jzy.hio.platform.login.controller;
+
+import com.google.gson.GsonBuilder;
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.RedisKeyConstant;
+import com.jzy.hio.config.HuanXinConfig;
+import com.jzy.hio.config.QueueConfig;
+import com.jzy.hio.entity.PersonalSecret;
+import com.jzy.hio.entity.UserInfo;
+import com.jzy.hio.exception.HioMybatisInsertException;
+import com.jzy.hio.feign.DiskFeignService;
+import com.jzy.hio.platform.constant.UserOrFriendConstant;
+import com.jzy.hio.platform.friendinfo.service.ImRegisterUserApi;
+import com.jzy.hio.platform.login.mapper.UserMapper;
+import com.jzy.hio.platform.login.service.UserService;
+import com.jzy.hio.platform.login.util.StatusCodeContants;
+import com.jzy.hio.platform.message.param.MessageEnum;
+import com.jzy.hio.platform.shortmessage.param.ImNoticeOrPhoneMsgsParam;
+import com.jzy.hio.platform.shortmessage.service.NoticePhoneMsgService;
+import com.jzy.hio.platform.userinfo.service.UserInfoService;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.springmvc.ApiResponse;
+import com.jzy.hio.utils.JacksonUtils;
+import com.netflix.hystrix.strategy.concurrency.HystrixRequestContext;
+import io.swagger.client.model.RegisterUsers;
+import io.swagger.client.model.User;
+import org.apache.commons.lang.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.converter.json.GsonBuilderUtils;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.NoOpPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.common.OAuth2AccessToken;
+import org.springframework.security.oauth2.provider.token.store.redis.RedisTokenStore;
+import org.springframework.web.bind.annotation.*;
+import redis.clients.jedis.JedisCluster;
+import sun.misc.BASE64Encoder;
+
+import javax.imageio.ImageIO;
+import javax.servlet.http.HttpServletResponse;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.security.Principal;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Date;
+import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
+import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * Created by cuipeng on 2018/1/23.
+ */
+@RestController
+public class RegisterController {
+    private final Logger logger = LoggerFactory.getLogger(getClass());
+    @Autowired
+    private UserMapper userMapper;
+    @Autowired
+    private UserService userService;
+    @Autowired
+    private NoticePhoneMsgService noticePhoneMsgService;
+    @Autowired
+    private DiskFeignService diskFeignService;
+    @Autowired
+    private UserInfoService userInfoService;
+
+    @Value("${huanXin.url}")
+    private String hxUrl;
+
+    //    @Value("${web.upload-path}")
+//    private String path;
+//    @Value("${png.url}")
+//    private String pngUrl;
+    @Autowired
+    private RabbitTemplate rabbitTemplate;
+
+    @Autowired
+    private ImRegisterUserApi imRegisterUserApi;
+
+    @Autowired
+    private QueueConfig queueConfig;
+
+    @Autowired
+    RedisTokenStore redisTokenStore;
+    @Autowired
+    private HuanXinConfig huanXinConfig;
+
+    /**
+     * 获取图片验证码,成功会返回图像的字节流
+     *
+     * @param
+     * @return
+     * @throws Exception
+     */
+    @RequestMapping(value = "/validateCodeGet", method = RequestMethod.GET)
+    public ApiResponse genericVilidateCodeGet(@RequestParam("mobile") String mobile, HttpServletResponse response) throws Exception {
+
+        ApiResponse result = new ApiResponse();
+        if (StringUtils.isBlank(mobile)) {
+            result.setStatus(400);
+            result.setMessage("手机号不能为空");
+            return result;
+        }
+        ValidateCode vCode = new ValidateCode(160, 40, 5, 150);
+        try {
+            JedisUtil.addPicVilidateCode(mobile, vCode.getCode());
+            result.setStatus(200);
+            result.setMessage("success");
+            response.setContentType("image/png");
+            response.reset();
+            OutputStream os = response.getOutputStream();
+            vCode.write(os);
+        } catch (Exception e) {
+            result.setStatus(400);
+            result.setMessage("fail");
+            e.printStackTrace();
+        }
+
+        return result;
+    }
+
+    /**
+     * 获取图片验证码,成功会返回图像的字节流
+     *
+     * @param
+     * @return
+     * @throws Exception
+     */
+    @RequestMapping(value = "/validateCode", method = RequestMethod.POST)
+    public ApiResponse genericVilidateCode(@RequestBody Map param, HttpServletResponse response) throws Exception {
+        ApiResponse result = new ApiResponse();
+        if (StringUtils.isBlank((String) param.get("mobile"))) {
+            result.setStatus(400);
+            result.setMessage("手机号不能为空");
+            return result;
+        }
+        String mobile = param.get("mobile").toString();
+        ValidateCode vCode = new ValidateCode(160, 40, 5, 0);
+        try {
+            JedisUtil.addPicVilidateCode(mobile, vCode.getCode());
+            logger.info("param is {},pictureVilidateCode is {}",param,vCode.getCode());
+            result.setStatus(200);
+            result.setMessage("success");
+            response.setContentType("image/png");
+            response.reset();
+            OutputStream os = response.getOutputStream();
+            vCode.write(os);
+        } catch (Exception e) {
+            logger.error("validateCodeError {}",e.getMessage());
+            result.setStatus(400);
+            result.setMessage("fail");
+            e.printStackTrace();
+        }
+
+        return result;
+    }
+
+    /**
+     * 获取图片验证码,成功会返回图像的字节流
+     *
+     * @param
+     * @return
+     * @throws Exception
+     */
+    @RequestMapping(value = "/validateCodeBase64", method = RequestMethod.POST)
+    public ApiResponse genericVilidateCodeBase64(@RequestBody Map param,HttpServletResponse response, @RequestHeader(value = "User-Agent") String userAgent) throws IOException {
+        response.reset();
+        ApiResponse result = new ApiResponse();
+        if (StringUtils.isBlank((String) param.get("mobile"))) {
+            result.setStatus(400);
+            result.setMessage("手机号不能为空");
+            return result;
+        }
+        String mobile = param.get("mobile").toString();
+        userAgent = userAgent.toLowerCase();
+        if (userAgent.contains("android") || userAgent.contains("iphone")) {
+            mobile = mobile + "_app";
+        }else if(userAgent.contains("juzhouyuncc_pc")){
+            mobile=mobile+"_pc";
+        }
+        ValidateCode vCode = new ValidateCode(160, 40, 5, 150);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        out.reset();
+        try {
+            JedisUtil.addPicVilidateCode(mobile, vCode.getCode());
+            logger.info("genericVilidateCodeBase64 {},{}",param,vCode.getCode());
+            result.setStatus(200);
+            result.setMessage("success");
+//            response.setContentType("image/png");
+            boolean flag = ImageIO.write(vCode.getBuffImg(), "png", out);
+            if(flag==true){
+                byte[] b = out.toByteArray();
+                BASE64Encoder encoder = new BASE64Encoder();
+                result.setResult(encoder.encode(b));
+            }else {
+                result.setResult(null);
+                result.setMessage("fail");
+                result.setStatus(400);
+            }
+        } catch (Exception e) {
+            result.setStatus(400);
+            result.setMessage("fail");
+            e.printStackTrace();
+        }finally {
+            out.close();
+        }
+        return result;
+    }
+
+    /**
+     * 验证短信验证码
+     *
+     * @param param
+     * @param user
+     * @return
+     * @throws Exception
+     */
+    @RequestMapping(value = "/checkSmsCode", method = RequestMethod.POST)
+    public ApiResponse validateSmsCode(@RequestBody Map param, Principal user) throws Exception {
+
+        ApiResponse result = new ApiResponse();
+
+        if (StringUtils.isBlank((String) param.get("mobile"))) {
+            result.setStatus(400);
+            result.setMessage("手机号不能为空");
+            return result;
+        }
+        if (StringUtils.isBlank((String) param.get("smscode"))) {
+            result.setStatus(400);
+            result.setMessage("短信验证码不能为空");
+            return result;
+        }
+        String mobile = param.get("mobile").toString();
+        String smsCode = JedisUtil.getKey(Constants.key_prefix_sms + mobile);
+        if(smsCode==null){
+            result.setStatus(400);
+            result.setMessage("验证码已过期，请重新获取");
+            return result;
+        }
+        if (!param.get("smscode").toString().equals(smsCode)) {
+            result.setMessage("短信验证码错误");
+            result.setStatus(400);
+        } else {
+            result.setStatus(200);
+            result.setMessage("短信验证成功");
+        }
+        return result;
+    }
+
+    /**
+     * 手机号是否重复
+     *
+     * @param param
+     * @param user
+     * @return
+     * @throws Exception
+     */
+    @RequestMapping(value = "/repetitionMobile", method = RequestMethod.POST)
+    public ApiResponse repetition(@RequestBody Map param, Principal user) throws Exception {
+
+        ApiResponse result = new ApiResponse();
+
+        if (StringUtils.isBlank((String) param.get("mobile"))) {
+            result.setStatus(400);
+            result.setMessage("手机号不能为空");
+            return result;
+        }
+        String mobile = param.get("mobile").toString();
+        if (userMapper.queryUserinfoByMobile(mobile, 1) != null) {
+            result.setMessage("手机号已经注册");
+            result.setStatus(400);
+        } else {
+            result.setStatus(200);
+            result.setMessage("手机号可以注册");
+        }
+        return result;
+    }
+
+    /**
+     * 手机号是否注册
+     *
+     * @param param
+     * @param user
+     * @return
+     * @throws Exception
+     */
+    @RequestMapping(value = "/registerAlready", method = RequestMethod.POST)
+    public ApiResponse registerAlready(@RequestBody Map param, Principal user) throws Exception {
+
+        ApiResponse result = new ApiResponse();
+
+        if (StringUtils.isBlank((String) param.get("mobile"))) {
+            result.setStatus(400);
+            result.setMessage("手机号不能为空");
+            return result;
+        }
+        String mobile = param.get("mobile").toString();
+        if (userMapper.queryUserinfoByMobile(mobile, 1) != null) {
+            result.setMessage("手机号已经注册");
+            result.setStatus(200);
+        } else {
+            result.setStatus(400);
+            result.setMessage("手机号未注册");
+        }
+        return result;
+    }
+
+    /**
+     * 找回密码
+     *
+     * @param
+     * @return
+     * @throws Exception
+     */
+    @RequestMapping(value = "/findPassword", method = RequestMethod.POST)
+    public ApiResponse findPassword(@RequestBody Map param) throws  Exception{
+        ApiResponse result = new ApiResponse();
+        if (StringUtils.isBlank((String) param.get("mobile"))) {
+            result.setStatus(400);
+            result.setMessage("手机号不能为空");
+            return result;
+        }
+        String mobile = param.get("mobile").toString();
+        if (userMapper.queryUserinfoByMobile(mobile, 1) == null) {
+            result.setMessage("手机号未注册");
+            result.setStatus(StatusCodeContants.fail);
+            return result;
+        }
+        if (StringUtils.isBlank((String) param.get("smscode"))) {
+            result.setStatus(400);
+            result.setMessage("短信验证码不能为空");
+            return result;
+        }
+
+        String smsCode = JedisUtil.getKey(Constants.key_prefix_sms + mobile);
+        if(smsCode==null){
+            result.setStatus(400);
+            result.setMessage("您已长时间未操作，请重新操作");
+            return result;
+        }
+
+        if (!param.get("smscode").equals(smsCode)) {
+            result.setStatus(400);
+            result.setMessage("验证码错误,请重新输入");
+            return result;
+        }
+        if (StringUtils.isBlank((String) param.get("password"))) {
+            result.setStatus(400);
+            result.setMessage("密码不能为空");
+            return result;
+        }
+
+        String password = param.get("password").toString();
+        //        BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
+        PasswordEncoder encoder = NoOpPasswordEncoder.getInstance();
+        String newPassword = encoder.encode(password);
+        param.put("password", newPassword);
+        try {
+            List list=new ArrayList();
+            list.add(param);
+            Map<String, String> m_app = new HashMap<>();
+            m_app.put("mobile",mobile+"_app");
+            m_app.put("password",newPassword);
+            list.add(m_app);
+            Map<String, String> m_pc = new HashMap<>();
+            m_pc.put("mobile",mobile+"_pc");
+            m_pc.put("password",newPassword);
+            list.add(m_pc);
+            int s = userService.updatePassword(list);
+            if (s == 3) {
+                /*String userId = JedisUtil.fetchIndexMobile(UserOrFriendConstant.IM_USER_INFO, param.get("mobile").toString());
+                if(userId==null){
+                   Map<String,String> userInfo= userMapper.queryUserinfoByMobile(mobile,1);
+                   userId=userInfo.get("id");
+                }
+                NewPassword psd = new NewPassword().newpassword(password);
+                Object imObject=imRegisterUserApi.changePassword(userId, psd);
+                if(imObject==null){
+                    RegisterUsers users = new RegisterUsers();
+                    User hxUser = new User().username(userId).password(password);
+                    users.add(hxUser);
+                    imObject=imRegisterUserApi.createNewIMUserSingle(users);
+                    logger.info("imObject {}",(String)imObject);
+                }*/
+                result.setStatus(200);
+                result.setMessage("success");
+                JedisCluster jedis = JedisUtil.getResource();
+                jedis.del(Constants.error_password_count + mobile);
+                jedis.del(Constants.error_password_count + mobile + "_app");
+                jedis.del(Constants.error_password_count + mobile + "_pc");
+                /**
+                 * 删除所有旧密码token
+                 */
+                removeToken(mobile.replace("_app", ""));
+                removeToken(mobile.replace("_pc", ""));
+
+                String uid = JedisUtil.fetchIndexMobile(UserOrFriendConstant.IM_USER_INFO, mobile);
+                if(null == uid || "".equals(uid)){
+                    Map<String,String> userMap = userMapper.queryUserinfoByMobile(mobile, 1);
+                    if(null == userMap || userMap.size() < 1 ){
+                        result.setStatus(400);
+                        result.setMessage("手机号错误");
+                        return result;
+                    }
+                    uid = userMap.get("id");
+                }
+
+                userInfoService.logoutHX(uid);
+            } else {
+                logger.error("userService.updatePassword return is {}", s);
+                result.setStatus(400);
+                result.setMessage("账号不完整，无法找回密码");
+            }
+        } catch (Exception e) {
+            logger.error("findPassword Exception:",e);
+            logger.error("findPassword Exception：{} {}",e,param.toString());
+            result.setStatus(400);
+            result.setMessage("找回密码失败");
+        }
+
+        return result;
+    }
+
+    /**
+     * 修改密码
+     *
+     * @param
+     * @return
+     * @throws Exception
+     */
+    @RequestMapping(value = "/modifyPassword", method = RequestMethod.POST)
+    public ApiResponse modifyPassword(@RequestBody Map param, Principal user) {
+        ApiResponse result = new ApiResponse();
+
+        if (StringUtils.isBlank((String) param.get("mobile"))) {
+            result.setStatus(400);
+            result.setMessage("手机号不能为空");
+            return result;
+        }
+        if (StringUtils.isBlank((String) param.get("password"))) {
+            result.setStatus(400);
+            result.setMessage("密码不能为空");
+            return result;
+        }
+        if (StringUtils.isBlank((String) param.get("newPassword"))) {
+            result.setStatus(400);
+            result.setMessage("新密码不能为空");
+            return result;
+        }
+        String mobile = param.get("mobile").toString();
+        String password = param.get("password").toString();
+        Map<String, String> userinfo = userMapper.queryUserinfoByMobile(mobile, 1);
+        //        BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
+        PasswordEncoder encoder = NoOpPasswordEncoder.getInstance();
+        String oldPassword = userinfo.get("password");
+        if (!encoder.matches(password, oldPassword)) {
+            result.setStatus(400);
+            result.setMessage("原密码错误");
+            return result;
+
+        }
+        String newPassword = param.get("newPassword").toString();
+        if(encoder.matches(newPassword,oldPassword)){
+            result.setStatus(400);
+            result.setMessage("新密码不能与原密码相同");
+            return result;
+        }
+        newPassword=encoder.encode(newPassword);
+        param.put("password", newPassword);
+        try {
+            List list=new ArrayList();
+            list.add(param);
+            Map<String, String> m_app = new HashMap<>();
+            m_app.put("mobile",mobile+"_app");
+            m_app.put("password",newPassword);
+            list.add(m_app);
+            Map<String, String> m_pc = new HashMap<>();
+            m_pc.put("mobile",mobile+"_pc");
+            m_pc.put("password",newPassword);
+            list.add(m_pc);
+            int s = userService.updatePassword(list);
+            /*String userId = JedisUtil.fetchIndexMobile(UserOrFriendConstant.IM_USER_INFO, param.get("mobile").toString());
+            NewPassword psd = new NewPassword().newpassword(param.get("newPassword").toString());
+            imRegisterUserApi.changePassword(userId, psd);*/
+            if (s == 3) {
+                UserInfo userInfo = new UserInfo();
+                userInfo.setMobile(mobile);
+                userInfo.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+                List<UserInfo> userList = userInfoService.queryList(userInfo);
+                if(null != userList && userList.size() > 0) {
+                    JedisUtil.addRow(userList.get(0));
+                }
+                userInfo.setMobile(mobile+"_app");
+                List<UserInfo> appUserList = userInfoService.queryList(userInfo);
+                if(null != appUserList && appUserList.size() > 0) {
+                    JedisUtil.addRow(appUserList.get(0));
+                }
+                userInfo.setMobile(mobile+"_pc");
+                List<UserInfo> pcUserList = userInfoService.queryList(userInfo);
+                if(null != pcUserList && pcUserList.size() > 0) {
+                    JedisUtil.addRow(pcUserList.get(0));
+                }
+
+                result.setStatus(200);
+                result.setMessage("success");
+                JedisCluster jedis = JedisUtil.getResource();
+                jedis.del(Constants.error_password_count + mobile);
+                jedis.del(Constants.error_password_count + mobile + "_app");
+                jedis.del(Constants.error_password_count + mobile + "_pc");
+
+                /**
+                 * 删除所有旧密码token
+                 */
+                removeToken(user.getName().replace("_app", ""));
+                removeToken(user.getName().replace("_pc", ""));
+
+               /* ImNoticeOrPhoneMsgsParam noticeParam = new ImNoticeOrPhoneMsgsParam();
+                noticeParam.setFromUserId(userinfo.get("id"));
+                noticeParam.setReceiverId(userinfo.get("id"));
+                noticeParam.setMsgType(UserOrFriendConstant.NOTICE_MSG_TYPE);
+                noticeParam.setModuleType(String.valueOf(MessageEnum.LOGOUT.getValue()));
+                noticeParam.setModuleName(MessageEnum.LOGOUT.getDes());
+                noticeParam.setSendMsgType(UserOrFriendConstant.CMD_MSG_TYPE);
+				noticePhoneMsgService.sendMail(noticeParam);*/
+
+                userInfoService.logoutHX(userinfo.get("id"));
+            } else {
+                logger.error("modifyPassword{}",param);
+                result.setStatus(400);
+                result.setMessage("fail");
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            logger.error("modifyPassword{}",param);
+            result.setStatus(400);
+            result.setMessage("fail");
+        }
+
+        return result;
+    }
+
+    /**
+     * 删除所有旧密码token
+     * @param userName
+     */
+    private void removeToken(String userName) {
+        Enumeration<OAuth2AccessToken> tokenEnumeration = Collections.enumeration(redisTokenStore
+                .findTokensByClientIdAndUserName("hio_oauth", userName));
+        while (tokenEnumeration.hasMoreElements()) {
+            redisTokenStore.removeAccessToken(tokenEnumeration.nextElement().getValue());
+        }
+        tokenEnumeration = Collections.enumeration(redisTokenStore
+                .findTokensByClientIdAndUserName("hio_oauth", userName + "_app"));
+        while (tokenEnumeration.hasMoreElements()) {
+            redisTokenStore.removeAccessToken(tokenEnumeration.nextElement().getValue());
+        }
+        tokenEnumeration = Collections.enumeration(redisTokenStore
+                .findTokensByClientIdAndUserName("hio_oauth", userName + "_pc"));
+        while (tokenEnumeration.hasMoreElements()) {
+            redisTokenStore.removeAccessToken(tokenEnumeration.nextElement().getValue());
+        }
+    }
+
+    /**
+     * @param param
+     * @return
+     * @throws Exception
+     */
+    @RequestMapping(value = "/register", method = RequestMethod.POST)
+    public ApiResponse register(@RequestBody Map param) throws Exception {
+
+        logger.info("register param{}",param);
+        ApiResponse result = new ApiResponse();
+        if (StringUtils.isBlank((String) param.get("mobile"))) {
+            result.setMessage("手机号不能为空");
+            result.setStatus(StatusCodeContants.fail);
+            return result;
+        }
+        String mobile = param.get("mobile").toString();
+        if (userMapper.queryUserinfoByMobile(mobile, 1) != null) {
+            result.setMessage("手机号已经注册");
+            result.setStatus(StatusCodeContants.fail);
+            return result;
+        }
+        if (StringUtils.isBlank((String) param.get("password"))) {
+            result.setMessage("密码不能为空");
+            result.setStatus(StatusCodeContants.fail);
+            return result;
+        }
+
+        if (StringUtils.isBlank((String) param.get("smscode"))) {
+            result.setMessage("短信验证码不能为空");
+            result.setStatus(StatusCodeContants.fail);
+            return result;
+        }
+
+        String smsCode = JedisUtil.getKey(Constants.key_prefix_sms + mobile);
+        if (!param.get("smscode").equals(smsCode)) {
+            result.setMessage("短信验证码错误,或注册操作已超时，请重新注册");
+            result.setStatus(StatusCodeContants.fail);
+            return result;
+        }
+        String hxid = UUID.randomUUID().toString().replace("-", "");
+        Map user = new HashMap();
+        user.put("id", hxid);
+        user.put("sid", hxid);
+        user.put("mobile", mobile);
+        user.put("name", null);
+        //        BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
+        PasswordEncoder encoder = NoOpPasswordEncoder.getInstance();
+        String password = encoder.encode(param.get("password").toString());
+        user.put("password", password);
+        user.put("state", 1);
+        user.put("delflag", 0);
+        user.put("sex", 1);
+        user.put("create_date", new Date());
+        String hxPassword = param.get("password").toString();
+        user.put("hxPassword",hxPassword);
+
+        List<Map> userList = new ArrayList<>();
+        try {
+            //注册时如果已有禁用的账号，则激活,同时激活环信账号，chc add 2018-04-16 start
+            Map<String, String> userInfoMap = userMapper.queryUserinfoByMobile(mobile, 0);
+            if (userInfoMap != null) {
+                hxid = userInfoMap.get("id").toString();
+                user.put("state", 1);
+                user.put("id", hxid);
+                user.put("sid", hxid);
+                user.put("password", password);
+                hxPassword = userInfoMap.get("HuanXin_password");
+                user.put("hxPassword",hxPassword);
+
+                /*Object activateObject = imRegisterUserApi.activateIMUser(userInfoMap.get("id").toString());
+                logger.info("激活环信账号返回结果{}",activateObject);
+                NewPassword psd = new NewPassword().newpassword(param.get("password").toString());
+                Object imObject=imRegisterUserApi.changePassword(userInfoMap.get("id").toString(), psd);
+                logger.info("修改环信账号密码返回结果{}",imObject);*/
+
+                io.swagger.client.ApiResponse<String> result1 = (io.swagger.client.ApiResponse<String>)imRegisterUserApi.getIMUserByUserName(hxid);
+                if(result1.getStatusCode() != 200) {
+                    logger.info("邀请同事或者外部联系人时创建环信账号失败，用户注册im账号时重新注册环信账号");
+                    if(huanXinConfig.getIsSendMsg()) {
+                        RegisterUsers users = new RegisterUsers();
+                        User hxUser = new User().username(hxid).password(param.get("password").toString());
+                        users.add(hxUser);
+                        io.swagger.client.ApiResponse<String> obj = (io.swagger.client.ApiResponse<String>)imRegisterUserApi.createNewIMUserSingle(users);
+                        if(obj.getStatusCode() != 200) {
+                            logger.info("创建环信账号失败");
+                            throw new Exception("注册失败，请稍候再试");
+                        }
+                    }
+                }
+                userMapper.updateImUser(user);
+                logger.info("注册时如果已有禁用的账号，则激活");
+            } else {
+                userList.add(user);
+                /**
+                 * 初始化用户隐私redis数据 end
+                 */
+                //chc edit 2018-04-21
+                try {
+                    if(huanXinConfig.getIsSendMsg()) {
+                        logger.info("创建环信账号开始");
+                        RegisterUsers users = new RegisterUsers();
+                        User hxUser = new User().username(hxid).password(param.get("password").toString());
+                        users.add(hxUser);
+                        io.swagger.client.ApiResponse<String> obj = (io.swagger.client.ApiResponse<String>)imRegisterUserApi.createNewIMUserSingle(users);
+                        if(obj.getStatusCode() != 200) {
+                            logger.info("创建环信账号失败");
+                            throw new Exception("注册失败，请稍候再试");
+                        }
+                        logger.info("创建环信账号结束:{}",obj);
+                    }
+                } catch (Exception e) {
+                    logger.error("create HuanXin error,hxid={},errormsg={},param is {} ", hxid, e.getMessage(),param);
+                }
+            }
+            //注册时如果已有禁用的账号，则激活,同时激活环信账号，chc add 2018-04-16 end
+            /**
+             *  移动端生成独立账号
+             */
+            Map user_app = new HashMap();
+            String userappid = UUID.randomUUID().toString().replace("-", "");
+            user_app.put("id", userappid);
+            user_app.put("sid", userappid);
+            user_app.put("mobile", mobile + "_app");
+            password = encoder.encode(param.get("password").toString());
+            user_app.put("password", password);
+            user_app.put("state", 1);
+            user_app.put("delflag", 0);
+            user_app.put("sex", 1);
+            user_app.put("create_date", new Date());
+            user_app.put("hxPassword",hxPassword);
+            userList.add(user_app);
+            /**
+             *  pc端生成独立账号
+             */
+            Map user_pc = new HashMap();
+            String userpcid = UUID.randomUUID().toString().replace("-", "");
+            user_pc.put("id", userpcid);
+            user_pc.put("sid", userpcid);
+            user_pc.put("mobile", mobile + "_pc");
+            password = encoder.encode(param.get("password").toString());
+            user_pc.put("password", password);
+            user_pc.put("state", 1);
+            user_pc.put("delflag", 0);
+            user_pc.put("sex", 1);
+            user_pc.put("create_date", new Date());
+            user_pc.put("hxPassword",hxPassword);
+            userList.add(user_pc);
+            userService.addImUser(userList);
+            /**
+             * 初始化用户隐私redis数据 start
+             */
+            PersonalSecret personalSecret = new PersonalSecret();
+            personalSecret.setUid(hxid);
+            personalSecret.setCompanyFlag(0);
+            personalSecret.setFriendMoibleFlag(0);
+            personalSecret.setMobileFlag(0);
+            personalSecret.setPhoneFlag(0);
+            personalSecret.setWorkMoibleFlag(0);
+            personalSecret.setRemindFlag(0);
+            JedisUtil.addRowCustomKey(hxid, personalSecret);
+
+            JedisUtil.addRow(UserOrFriendConstant.IM_USER_INFO, user);
+            JedisUtil.addIndexMobile(UserOrFriendConstant.IM_USER_INFO, user.get("mobile").toString(), user.get("id").toString());// 用户id与手机号的对应关系
+            JedisUtil.addRow(UserOrFriendConstant.IM_USER_INFO, user_app);
+            JedisUtil.addIndexMobile(UserOrFriendConstant.IM_USER_INFO, user_app.get("mobile").toString(), user_app.get("id").toString());// 用户id与手机号的对应关系
+            JedisUtil.addRow(UserOrFriendConstant.IM_USER_INFO, user_pc);
+            JedisUtil.addIndexMobile(UserOrFriendConstant.IM_USER_INFO, user_pc.get("mobile").toString(), user_pc.get("id").toString());// 用户id与手机号的对应关系
+            logger.info("注册成功，手机号与用户id存到redis");
+            result.setStatus(StatusCodeContants.success);
+            result.setMessage("hio账号注册成功");
+
+            /**
+             * 异步创建个人网盘 start  cuipeng
+             */
+            final String huanxinId = hxid;
+            ExecutorService diskPool = Executors.newSingleThreadExecutor();
+            diskPool.submit(new Runnable() {
+                @Override
+                public void run() {
+                    HystrixRequestContext.initializeContext();
+                    ApiFeignResponse<Object> obj= diskFeignService.initializePersonalSpace(huanxinId);
+                    logger.info("用户{} 网盘创建 {}",huanxinId,obj.getMessage());
+                }
+            });
+            diskPool.shutdown();
+            /**
+             * 异步线程创建个人网盘 end  cuipeng
+             */
+            /**
+             * 异步线程发送站内信 start  cuipeng
+             */
+            ExecutorService instationPool = Executors.newSingleThreadExecutor();
+            instationPool.submit(new Thread("sendInstation") {
+                @Override
+                public void run() {
+                    String noticeString = JedisUtil.fetchRow(RedisKeyConstant.imnoticephonemsg, user.get("mobile").toString());
+                    logger.info("redis获取为该用户发送的好友邀请短信");
+                    Map<String, Object> mapData = Base.json2map(noticeString);
+                    List<Map<String, Object>> dataList = JacksonUtils.fromJson(mapData.get("data") + "", List.class, Map.class);
+                    if (null != dataList && dataList.size() > 0) {
+                        Iterator<Map<String, Object>> iter = dataList.iterator();
+                        while (iter.hasNext()) {
+                            logger.info("发送好友邀请站内信开始！");
+                            ImNoticeOrPhoneMsgsParam noticeParam = Base.map2obj(iter.next(), ImNoticeOrPhoneMsgsParam.class);
+                            noticeParam.setReceiverId(huanxinId);
+                            noticeParam.setMobile(user.get("mobile").toString());
+                            String sucess = null;
+                            try {
+                                noticeParam.setMsg(noticeParam.getZnmsg());
+                                sucess = noticePhoneMsgService.sendMail(noticeParam).toString();
+                                if ("suc".equals(sucess)) {
+                                    logger.debug("发送好友邀请站内信成功！");
+                                    iter.remove();
+                                } else {
+                                    logger.debug("发送好友邀请站内信失败，发送人{}" + iter.next().get("sendName").toString());
+                                }
+                            } catch (Exception e) {
+                                logger.error("好友邀请站内信失败，noticeParam={},noticeString ={}", noticeParam, noticeString);
+                            }
+                        }
+                        JedisUtil.delRow(RedisKeyConstant.imnoticephonemsg, user.get("mobile").toString());
+                        logger.debug("发送好友邀请站内信成功后，删除reids中的短信！");
+                    }
+                    if (null == dataList || dataList.size() < 1) {
+                        JedisUtil.delRow(RedisKeyConstant.imnoticephonemsg, user.get("mobile").toString());
+                    } else {
+                        mapData.put("data", dataList);
+                        mapData.put(user.get("mobile").toString(), mapData.toString());
+                        JedisUtil.addListRow(RedisKeyConstant.imnoticephonemsg, mapData);
+                    }
+
+                    List<Map<String, Object>> workDataList = new ArrayList<>();
+                    //查询是否给该手机号发送过同事/外部联系人邀请短信
+                    Map<String,String> inviterecordMap = JedisUtil.fetchRelationRow(RedisKeyConstant.inviterecord + user.get("mobile").toString());
+                    if(null != inviterecordMap && inviterecordMap.size() > 0){
+                        workDataList = JacksonUtils.fromJson(inviterecordMap.get("data").toString(), List.class, Map.class);
+                        logger.info("redis查询该用户收到的企业邀请sendFriendApply");
+                    }
+                    if (null != workDataList && workDataList.size() > 0) {
+                        Iterator<Map<String, Object>> iter = workDataList.iterator();
+                        while (iter.hasNext()) {
+                            logger.info("发送同事/外部联系人邀请站内信开始！");
+                            ImNoticeOrPhoneMsgsParam noticeParam = Base.map2obj(iter.next(), ImNoticeOrPhoneMsgsParam.class);
+                            noticeParam.setReceiverId(huanxinId);
+                            noticeParam.setMobile(user.get("mobile").toString());
+                            String sucess = null;
+                            try {
+                                sucess = noticePhoneMsgService.sendMail(noticeParam).toString();
+                                logger.info("注册发送消息返回的结果{}",sucess);
+                                if ("suc".equals(sucess)) {
+                                    logger.info("发送同事/外部联系人邀请站内信成功！");
+                                    iter.remove();
+                                } else {
+                                    logger.info("发送同事/外部联系人邀请站内信失败，发送人{}" + iter.next().get("sendName").toString());
+                                }
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                                logger.error("同事/外部联系人邀请站内信失败，noticeParam={},noticeString ={},{}", noticeParam, noticeString,e.getMessage());
+                            }
+                        }
+                        GsonBuilder gson = GsonBuilderUtils.gsonBuilderWithBase64EncodedByteArrays();
+                        logger.info("发送同事/外部联系人邀请站内信成功！剩余邀请短信{}",gson.create().toJson(workDataList));
+                        JedisUtil.del(RedisKeyConstant.inviterecord+user.get("mobile").toString());
+                    }
+                }
+            });
+            instationPool.shutdown();
+            /**
+             * 异步线程发送站内信 end
+             */
+        } catch (Exception e) {
+            e.printStackTrace();
+            logger.error("create user error, userListinfo is {} {}", Base.obj2json(userList),e.getMessage());
+            result.setStatus(StatusCodeContants.fail);
+            String sOut = "";
+            StackTraceElement[] trace = e.getStackTrace();
+            for (StackTraceElement s : trace) {
+                sOut += "\tat " + s + "\r\n";
+            }
+            logger.error("register error stackTrace {}", sOut);
+            if (sOut.contains("for key 'imuser_mobile'")){
+                result.setMessage("手机号已经注册");
+            }else {
+                result.setMessage("注册失败");
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 获取短信验证码
+     *
+     * @param
+     * @return
+     */
+    @RequestMapping(value = "/smscode", method = RequestMethod.POST)
+    public ApiResponse sendSms(@RequestBody Map param) {
+        ApiResponse result = new ApiResponse();
+
+        if (StringUtils.isBlank((String) param.get("mobile"))) {
+            result.setMessage( "手机号不能为空");
+            result.setStatus( 400);
+            return result;
+        }
+        String mobile = param.get("mobile").toString();
+        Random rd = new Random();
+        String value = String.valueOf(rd.nextInt(899999) + 100000);
+        try {
+            String oldSmsCode=JedisUtil.getSmsCode(mobile);
+            if(oldSmsCode!=null){
+                value=oldSmsCode;
+            }
+            JedisUtil.addSmsCode(mobile, String.valueOf(value));
+            Map map = new HashMap();
+            map.put("mobile", mobile);//接收人手机号
+            map.put("msg", "验证码："+value+"，15分钟内有效，验证码提供给他人可能导致账号被盗，请勿泄露。");    // 短信内容
+            rabbitTemplate.convertAndSend(queueConfig.getShortNoticeMsgQueue(), map);
+            result.setMessage( "success");
+            result.setStatus( 200);
+        } catch (Exception e) {
+            result.setMessage("fail");
+            result.setStatus( 400);
+            e.printStackTrace();
+        }
+        return result;
+    }
+
+    /**
+     * 获取短信验证码
+     *
+     * @param
+     * @return
+     */
+    @RequestMapping(value = "/smscode2", method = RequestMethod.GET)
+    public ApiResponse sendSms2(@RequestParam("mobile") String mobile) {
+        ApiResponse result = new ApiResponse();
+
+        if (StringUtils.isBlank(mobile)) {
+            result.setMessage("手机号不能为空");
+            result.setStatus(400);
+            return result;
+        }
+        Random rd = new Random();
+        String value = String.valueOf(rd.nextInt(899999) + 100000);
+        try {
+            String oldSmsCode=JedisUtil.getSmsCode(mobile);
+            if(oldSmsCode!=null){
+                value=oldSmsCode;
+            }
+            JedisUtil.addSmsCode(mobile, String.valueOf(value));
+            Map map = new HashMap();
+            map.put("mobile", mobile);//接收人手机号
+            map.put("code", value);    // 短信内容
+            result.setMessage( "success");
+            result.setStatus( 200);
+            result.setResult(map);
+        } catch (Exception e) {
+            result.setMessage("fail");
+            result.setStatus( 400);
+            e.printStackTrace();
+        }
+        return result;
+    }
+
+//    public static void main(String[] str) {
+//         BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
+//         System.out.println(encoder.encode("f83ecb6c326a20ea7ca7c5b4039e53a1"));
+//    }
+}

@@ -1,0 +1,673 @@
+/*
+ * @(#) K040051Action.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 教育考试培训系统
+ *    SubSystem: 考试子系统
+ */
+package com.yds.tt.testing.action;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Set;
+
+import net.sf.json.JSONObject;
+
+import org.springframework.beans.factory.config.BeanDefinition;
+import org.springframework.context.annotation.Scope;
+import org.springframework.stereotype.Controller;
+
+import com.opensymphony.xwork2.interceptor.annotations.InputConfig;
+import com.yds.base.action.AbstractBaseAction;
+import com.yds.common.service.SessionConstants;
+import com.yds.tt.manager.bean.TtCheckResult;
+import com.yds.tt.manager.service.TtCommonService;
+import com.yds.tt.manager.service.TtConstants;
+import com.yds.tt.manager.service.TtExclusiveException;
+import com.yds.tt.testing.bean.QuestionLibrary;
+import com.yds.tt.testing.service.K040051Service;
+import com.yds.util.service.Session;
+
+/**
+ * 试题预览核对删除.
+ * 
+ * @author 远东)liyanrui
+ * @version 1.00 2010/04/22
+ */
+@Scope(BeanDefinition.SCOPE_PROTOTYPE)
+@Controller("k040051Action")
+public class K040051Action extends AbstractBaseAction {
+
+	private static final long serialVersionUID = -4292227737531303214L;
+	private K040051Service k040051Service;
+
+	// 画面模式
+	private Integer mode;
+
+	// 接口试题json参数
+	private String jsonQueIdList;
+
+	// 接口试题ID参数
+	private String queId;
+
+	// 启动画面Id
+	private String callScreenId;
+
+	// 试卷ID
+	private String paperId;
+
+	// 画面试题Id列表
+	private List<String> questionIdList;
+
+	// 题库资料
+	private QuestionLibrary question;
+
+	// 画面详细试题内容
+	private List<QuestionLibrary> questionInfo;
+
+	// 共通
+	private TtCommonService ttCommonService;
+
+	// 错误消息
+	private String errorMessage;
+
+	private String fileName;
+
+	/**
+	 * 初期表示（题库预览、有修改核对、题库删除、考试卷预览、练习卷预览）.
+	 */
+	@InputConfig(resultName = "error")
+	public String initK040051Mode() throws Exception {
+
+		// 画面启动权限检查
+		if (!checkStartUp()) {
+			return ERROR;
+		}
+
+		// 取得画面显示列表
+		this.questionInfo = k040051Service.getQuestionInfos(questionIdList);
+
+		return SUCCESS;
+	}
+
+	/**
+	 * 初期表示（题库确认、考试卷新建确认、考试卷修改确认、练习卷新建确认、练习卷修改确认、无修改确认）.
+	 */
+	@InputConfig(resultName = "error")
+	public String initK040051ConfirmMode() throws Exception {
+
+		// 取得画面项目
+		getQuestionInfoFromSeesin();
+
+		// 充满试题信息
+		questionInfo = k040051Service.setAllInfoToQuestion(questionInfo);
+
+		// 题库确认、考试卷新建确认、考试卷修改确认、练习卷新建确认、练习卷修改确认、无修改确认模式，画面启动权限检查
+		if (!checkStartUp()) {
+			return ERROR;
+		}
+
+		return SUCCESS;
+	}
+
+	/**
+	 * 核对通过(有修改).
+	 */
+	public String checkedPass() throws Exception {
+
+		// 画面启动权限检查
+		if (!checkStartUp()) {
+			return ERROR;
+		}
+
+		// 排他检查，取得更新时间.
+		Date updateTime = k040051Service.getUpdateTime(question);
+
+		// 时间戳检查正确情况，进行试题核对.
+		try {
+
+			// 试题核对.
+			k040051Service.updateCheckPass(question, updateTime);
+
+			// 显示操作成功消息
+			putOpTip(propMgr.getMessage("yds.tt.info.GTT02"));
+
+			return SUCCESS;
+
+			// 时间戳检查出错的情况，画面显示错误信息.
+		} catch (TtExclusiveException e) {
+
+			setErrorMessage(propMgr.getMessage("yds.tt.error.KSE56"));
+			return ERROR;
+		}
+	}
+
+	/**
+	 * 删除按钮.
+	 */
+	public String deleteQuestion() throws Exception {
+
+		// 画面启动权限检查
+		if (!checkStartUp()) {
+			return ERROR;
+		}
+
+		// 画面上存在数据时.
+		if (questionInfo.size() > 0) {
+
+			// 时间戳检查正确情况.
+			try {
+				
+				
+				k040051Service.deleteQuestion(questionInfo);
+
+				// 时间戳检查出错的情况，画面显示错误信息.
+			} catch (TtExclusiveException e) {
+
+				errorMessage = propMgr.getMessage("yds.tt.error.KSE56");
+				return ERROR;
+			}
+		}
+
+		return SUCCESS;
+	}
+
+	/**
+	 * 确认按钮.
+	 */
+	public String confirmQuestion() throws Exception {
+
+		// 取得画面项目
+		getQuestionInfoFromSeesin();
+
+		// 画面启动权限检查
+		if (!checkStartUp()) {
+			return ERROR;
+		}
+
+		// 画面上存在数据时.
+		if (questionInfo.size() > 0) {
+
+			// 时间戳检查正确情况.
+			try {
+
+				k040051Service.insertQuestion(questionInfo, mode);
+
+				// 时间戳检查出错的情况，画面显示错误信息.
+			} catch (TtExclusiveException e) {
+				errorMessage = propMgr.getMessage("yds.tt.error.KSE56");
+
+				return ERROR;
+			}
+		}
+
+		// 模式为<题库确认>或<无修改模式>时
+		if (mode == TtConstants.C29.C29_4.value()
+				|| mode == TtConstants.C29.C29_5.value()) {
+
+			return "K040011";
+
+		} else {
+
+			// 保存成功消息显示
+			putOpTip(propMgr.getMessage("yds.tt.info.GTT02"));
+			return null;
+
+		}
+	}
+
+	public String downloadAnswerFile() throws Exception {
+
+		return SUCCESS;
+	}
+
+	/**
+	 * 获取文件流
+	 * 
+	 * @return 文件流
+	 * @throws Exception
+	 */
+	public InputStream getTargetFile() throws Exception {
+
+		// 文件所在路径
+		String path = propMgr
+				.getParameter(TtConstants.FILE_PATH.QUESTION_ANSWER.value());
+		File downloadFile = new File(path, fileName);
+
+		return new FileInputStream(downloadFile);
+	}
+
+	/**
+	 * （题库预览、有修改核对、题库删除、考试卷预览、练习卷预览）校验参数是否完整
+	 * 
+	 */
+	public void validateInitK040051Mode() {
+
+		// 模式校验
+		if (null == mode) {
+			setErrorMessage(propMgr.getMessage("yds.tt.error.JYE07"));
+			this.addActionError("error");
+			return;
+		}
+
+		// 题库预览
+		if (mode == TtConstants.C29.C29_1.value()) {
+			if ((null == jsonQueIdList || "".equals(jsonQueIdList))
+					&& (null == queId || "".equals(queId))) {
+				setErrorMessage(propMgr.getMessage("yds.tt.error.JYE07"));
+				this.addActionError("error");
+				return;
+			}
+		}
+
+		// 有修改核对，题库删除
+		if (mode == TtConstants.C29.C29_2.value()
+				|| mode == TtConstants.C29.C29_3.value()) {
+			if (null == callScreenId || "".equals(callScreenId)) {
+				setErrorMessage(propMgr.getMessage("yds.tt.error.JYE07"));
+				this.addActionError("error");
+				return;
+			}
+
+			if ((null == jsonQueIdList || "".equals(jsonQueIdList))
+					&& (null == queId || "".equals(queId))) {
+				setErrorMessage(propMgr.getMessage("yds.tt.error.JYE07"));
+				this.addActionError("error");
+				return;
+			}
+		}
+
+		// 考试卷预览、练习卷预览
+		if (mode == TtConstants.C29.C29_6.value()
+				|| mode == TtConstants.C29.C29_7.value()) {
+			if (null == paperId || "".equals(paperId)) {
+				setErrorMessage(propMgr.getMessage("yds.tt.error.JYE07"));
+				this.addActionError("error");
+				return;
+			}
+
+			if ((null == jsonQueIdList || "".equals(jsonQueIdList))
+					&& (null == queId || "".equals(queId))) {
+				setErrorMessage(propMgr.getMessage("yds.tt.error.JYE07"));
+				this.addActionError("error");
+				return;
+			}
+		}
+	}
+
+	/**
+	 * （题库确认、考试卷新建确认、考试卷修改确认、练习卷新建确认、练习卷修改确认、无修改确认）校验参数是否完整
+	 * 
+	 * 
+	 */
+	public void validateInitK040051ConfirmMode() {
+
+		// 模式校验
+		if (null == mode) {
+			setErrorMessage(propMgr.getMessage("yds.tt.error.JYE07"));
+			this.addActionError("error");
+			return;
+		}
+
+		// 题库确认，无修改核对，没有check
+		if (mode == TtConstants.C29.C29_5.value()
+				|| mode == TtConstants.C29.C29_4.value())
+			return;
+
+		// 考试卷新建确认，练习卷新建确认
+		if (mode == TtConstants.C29.C29_8.value()
+				|| mode == TtConstants.C29.C29_10.value()) {
+			if (null == callScreenId || "".equals(callScreenId)) {
+				setErrorMessage(propMgr.getMessage("yds.tt.error.JYE07"));
+				this.addActionError("error");
+				return;
+			}
+
+			if (null == paperId || "".equals(paperId)) {
+				setErrorMessage(propMgr.getMessage("yds.tt.error.JYE07"));
+				this.addActionError("error");
+				return;
+			}
+		}
+
+		// 考试卷修改确认，练习卷修改确认
+		if (mode == TtConstants.C29.C29_9.value()
+				|| mode == TtConstants.C29.C29_11.value()) {
+			if (null == paperId || "".equals(paperId)) {
+				setErrorMessage(propMgr.getMessage("yds.tt.error.JYE07"));
+				this.addActionError("error");
+				return;
+			}
+
+			if (null == callScreenId || "".equals(callScreenId)) {
+				setErrorMessage(propMgr.getMessage("yds.tt.error.JYE07"));
+				this.addActionError("error");
+				return;
+			}
+		}
+
+		if ((null == jsonQueIdList || "".equals(jsonQueIdList))
+				&& (null == queId || "".equals(queId))) {
+			setErrorMessage(propMgr.getMessage("yds.tt.error.JYE07"));
+			this.addActionError("error");
+			return;
+		}
+	}
+
+	/**
+	 * 画面启动权限检查
+	 * 
+	 * @return
+	 */
+	@SuppressWarnings("unchecked")
+	private boolean checkStartUp() {
+		// 将JSON串转为list
+		questionIdList = new ArrayList<String>();
+		if (null != jsonQueIdList && !jsonQueIdList.isEmpty()) {
+
+			// 将调整结果转化成JSON数组
+			JSONObject json = JSONObject.fromObject(jsonQueIdList);
+
+			// 将JSON数组转换成List
+			Set<String> jsonSet = json.keySet();
+			Iterator<String> jsonIterator = jsonSet.iterator();
+			while (jsonIterator.hasNext()) {
+				questionIdList.add(jsonIterator.next().trim());
+			}
+
+		} else {
+
+			if (null != queId && !queId.isEmpty()) {
+				questionIdList.add(queId);
+			}
+		}
+
+		// 对象区分
+		Integer typeId = null;
+
+		// 事件ID
+		String eventId = null;
+
+		// 对象ID
+		List<String> objectId = new ArrayList<String>();
+
+		// 题库预览
+		if (TtConstants.C29.C29_1.value() == mode) {
+
+			typeId = TtConstants.C43.C43_6.value();
+			eventId = "K040051_1";
+			objectId = questionIdList;
+
+		}
+
+		// 有修改核对、题库删除对象区分
+		if (TtConstants.C29.C29_2.value() == mode
+				|| TtConstants.C29.C29_3.value() == mode) {
+			typeId = TtConstants.C43.C43_6.value();
+			eventId = "K040051_2";
+			objectId = questionIdList;
+		}
+
+		// 题库确认,无修改模式对象区分
+		if (TtConstants.C29.C29_4.value() == mode
+				|| TtConstants.C29.C29_5.value() == mode) {
+			eventId = "K040051_2";
+		}
+
+		// 考试卷预览对象区分
+		if (TtConstants.C29.C29_6.value() == mode) {
+			typeId = TtConstants.C43.C43_4.value();
+			eventId = "K040051_3";
+			objectId.add(paperId);
+		}
+
+		// 考试卷新建确认，考试卷修改确认对象区分
+		if (TtConstants.C29.C29_8.value() == mode
+				|| TtConstants.C29.C29_9.value() == mode) {
+			typeId = TtConstants.C43.C43_4.value();
+			eventId = "K040051_5";
+			objectId.add(paperId);
+		}
+
+		// 练习卷预览对象区分
+		if (TtConstants.C29.C29_7.value() == mode) {
+			typeId = TtConstants.C43.C43_5.value();
+			eventId = "K040051_4";
+			objectId.add(paperId);
+		}
+
+		// 考试卷新建确认，考试卷修改确认对象区分
+		if (TtConstants.C29.C29_10.value() == mode
+				|| TtConstants.C29.C29_11.value() == mode) {
+			typeId = TtConstants.C43.C43_5.value();
+			eventId = "K040051_6";
+			objectId.add(paperId);
+		}
+
+		// 调用共通画面启动限制检查
+		TtCheckResult checkResult = ttCommonService.checkStartupAuthority(
+				TtConstants.PageId.K040051.value(), eventId, typeId, objectId);
+		if (!checkResult.getRetFlag()) {
+			setErrorMessage(checkResult.getRetMessage());
+			return false;
+		}
+		return true;
+	}
+
+	/**
+	 * 取得Session中画面显示列表
+	 * 
+	 */
+	@SuppressWarnings("unchecked")
+	private void getQuestionInfoFromSeesin() throws Exception {
+		if (TtConstants.PageId.K040021.value().equals(callScreenId)) {
+
+			// 取得画面显示列表
+			question = (QuestionLibrary) Session
+					.get(SessionConstants.TT_K040021_PAGEINFO);
+
+			questionInfo = new ArrayList<QuestionLibrary>();
+			questionInfo.add(question);
+
+		} else if (TtConstants.PageId.K040041.value().equals(callScreenId)) {
+
+			if (questionInfo != null) {
+				List<QuestionLibrary> queFromSession = (List<QuestionLibrary>) Session
+						.get(SessionConstants.TT_K040041_PAGEINFO);
+
+				for (int i = 0; i < questionInfo.size(); i++) {
+
+					queFromSession.get(i).setCheckFlg(
+							questionInfo.get(i).getCheckFlg());
+				}
+
+				questionInfo = queFromSession;
+			} else {
+				questionInfo = new ArrayList<QuestionLibrary>();
+				questionInfo = (List<QuestionLibrary>) Session
+						.get(SessionConstants.TT_K040041_PAGEINFO);
+			}
+
+		}
+
+	}
+
+	/**
+	 * @param k040051Service
+	 *            the k040051Service to set
+	 */
+	public void setK040051Service(K040051Service k040051Service) {
+		this.k040051Service = k040051Service;
+	}
+
+	/**
+	 * @param questionInfo
+	 *            the questionInfo to set
+	 */
+	public void setQuestionInfo(List<QuestionLibrary> questionInfo) {
+		this.questionInfo = questionInfo;
+	}
+
+	/**
+	 * @return the questionInfo
+	 */
+	public List<QuestionLibrary> getQuestionInfo() {
+		return questionInfo;
+	}
+
+	/**
+	 * @param mode
+	 *            the mode to set
+	 */
+	public void setMode(Integer mode) {
+		this.mode = mode;
+	}
+
+	/**
+	 * @return the mode
+	 */
+	public Integer getMode() {
+		return mode;
+	}
+
+	/**
+	 * @param questionIdList
+	 *            the questionIdList to set
+	 */
+	public void setQuestionIdList(List<String> questionIdList) {
+		this.questionIdList = questionIdList;
+	}
+
+	/**
+	 * @return the questionIdList
+	 */
+	public List<String> getQuestionIdList() {
+		return questionIdList;
+	}
+
+	/**
+	 * @param questionCheck
+	 *            the questionCheck to set
+	 */
+	public void setQuestion(QuestionLibrary question) {
+		this.question = question;
+	}
+
+	/**
+	 * @return the questionCheck
+	 */
+	public QuestionLibrary getQuestion() {
+		return question;
+	}
+
+	/**
+	 * @return the ttCommonService
+	 */
+	public TtCommonService getTtCommonService() {
+		return ttCommonService;
+	}
+
+	/**
+	 * @param ttCommonService
+	 *            the ttCommonService to set
+	 */
+	public void setTtCommonService(TtCommonService ttCommonService) {
+		this.ttCommonService = ttCommonService;
+	}
+
+	/**
+	 * @param errorMessage
+	 *            the errorMessage to set
+	 */
+	public void setErrorMessage(String errorMessage) {
+		this.errorMessage = errorMessage;
+	}
+
+	/**
+	 * @return the errorMessage
+	 */
+	public String getErrorMessage() {
+		return errorMessage;
+	}
+
+	/**
+	 * @param jsonQueIdList
+	 *            the jsonQueIdList to set
+	 */
+	public void setJsonQueIdList(String jsonQueIdList) {
+		this.jsonQueIdList = jsonQueIdList;
+	}
+
+	/**
+	 * @return the jsonQueIdList
+	 */
+	public String getJsonQueIdList() {
+		return jsonQueIdList;
+	}
+
+	/**
+	 * @param queId
+	 *            the queId to set
+	 */
+	public void setQueId(String queId) {
+		this.queId = queId;
+	}
+
+	/**
+	 * @return the queId
+	 */
+	public String getQueId() {
+		return queId;
+	}
+
+	/**
+	 * @return the callScreenId
+	 */
+	public String getCallScreenId() {
+		return callScreenId;
+	}
+
+	/**
+	 * @param callScreenId
+	 *            the callScreenId to set
+	 */
+	public void setCallScreenId(String callScreenId) {
+		this.callScreenId = callScreenId;
+	}
+
+	/**
+	 * @return the paperId
+	 */
+	public String getPaperId() {
+		return paperId;
+	}
+
+	/**
+	 * @param paperId
+	 *            the paperId to set
+	 */
+	public void setPaperId(String paperId) {
+		this.paperId = paperId;
+	}
+
+	/**
+	 * @return the fileName
+	 */
+	public String getFileName() {
+		return fileName;
+	}
+
+	/**
+	 * @param fileName
+	 *            the fileName to set
+	 */
+	public void setFileName(String fileName) {
+		this.fileName = fileName;
+	}
+
+}

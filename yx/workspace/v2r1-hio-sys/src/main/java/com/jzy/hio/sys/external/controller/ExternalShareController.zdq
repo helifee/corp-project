@@ -1,0 +1,114 @@
+package com.jzy.hio.sys.external.controller;
+
+import com.jzy.hio.annotation.ResponseMessage;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.controller.BaseController;
+import com.jzy.hio.entity.OaSysExternalShare;
+import com.jzy.hio.entity.OaSysUser;
+import com.jzy.hio.exception.HioPermissionException;
+import com.jzy.hio.platform.redis.PlatformRedis;
+import com.jzy.hio.sys.external.dto.ExternalLinkManagerDto;
+import com.jzy.hio.sys.external.dto.ExternalLinkSharesDto;
+import com.jzy.hio.sys.external.param.ExternalManagerParam;
+import com.jzy.hio.sys.external.param.ExternalShareParam;
+import com.jzy.hio.sys.external.service.ExternalShareService;
+import com.jzy.hio.sys.organization.service.OrganizationService;
+import com.jzy.hio.sys.user.dto.IMUserDetailInfoDto;
+import com.jzy.hio.sys.user.service.UserService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.Collections;
+import java.util.List;
+
+/**
+ * @author kimchou
+ * @data 2018/5/28 下午2:59
+ */
+@RestController
+@RequestMapping("external")
+public class ExternalShareController extends BaseController {
+
+    @Autowired
+    private ExternalShareService externalShareService;
+    @Autowired
+    private PlatformRedis platformRedis;
+    @Autowired
+    private UserService userService;
+    @Autowired
+    private OrganizationService organizationService;
+
+    /**
+     * 改变外部联系人的负责人
+     *
+     * @param apiParam
+     * @return
+     */
+    @RequestMapping("chanageManager")
+    @ResponseMessage(message = "设置成功")
+    public Object chanageManager(@RequestBody @Validated ExternalManagerParam apiParam) {
+        isHavePermission(apiParam.getTendId(), apiParam.getContactId());
+        ExternalLinkManagerDto result = new ExternalLinkManagerDto();
+        String userIdIM = getUserIdIM();
+        externalShareService.saveOrUpdateManager(apiParam.getTendId(), apiParam);
+        List<IMUserDetailInfoDto.UserManagerDto> externalManangers = externalShareService.queryOaUserListByType(apiParam.getTendId(), apiParam.getContactId(),
+                BaseConstants.MYSQL_EXTERNAL_MANAGER);
+        if (isNotEmpty(externalManangers)) {
+            externalManangers.forEach(item -> item.setHeaderUrl(platformRedis.getHeadIcon(item.getImUserId())));
+            result.setManagers(externalManangers.get(0));
+        }
+        return result;
+    }
+
+    /**
+     * 改变外部联系人的共享者
+     *
+     * @param apiParam
+     * @return
+     */
+    @RequestMapping("chanageSharer")
+    @ResponseMessage(message = "设置成功")
+    public Object changeSharer(@RequestBody @Validated ExternalShareParam apiParam) {
+        isHavePermission(apiParam.getTendId(), apiParam.getContactId());
+        ExternalLinkSharesDto sharesDto = new ExternalLinkSharesDto();
+        externalShareService.updateShares(apiParam.getTendId(), apiParam.getContactId(), apiParam.getShareIds(), apiParam.getDeleteEsIds());
+        List<IMUserDetailInfoDto.UserManagerDto> externalShares = externalShareService.queryOaUserListByType(apiParam.getTendId(), apiParam.getContactId(),
+                BaseConstants.MYSQL_EXTERNAL_SHARE);
+        if (isNotEmpty(externalShares)) {
+            externalShares.forEach(item -> item.setHeaderUrl(platformRedis.getHeadIcon(item.getImUserId())));
+            sharesDto.setShares(externalShares);
+        } else {
+            sharesDto.setShares(Collections.emptyList());
+        }
+        return sharesDto;
+    }
+
+    public boolean isHavePermission(String tendId, String contactId) {
+        boolean isAdmin = false;
+        try {
+            organizationService.isHavePermission(tendId);
+            isAdmin = true;
+        } catch (Exception e) {
+            isAdmin = false;
+        }
+        if (!isAdmin){
+            OaSysUser oaSysUser = userService.getOaSysUserByImId(tendId, getUserIdIM());
+            if (oaSysUser == null) {
+                throw new HioPermissionException("您不存在非外部联系人的管理员");
+            }
+            OaSysExternalShare oaSysExternalShare = externalShareService.queryManagerByContactId(tendId, contactId);
+            if (oaSysExternalShare == null) {
+                throw new HioPermissionException("非外部联系人的管理员");
+            }
+            if (!Base.isEquals(oaSysExternalShare.getShareId(), oaSysUser.getId())) {
+                throw new HioPermissionException("非外部联系人的管理员");
+            }
+        }
+        return true;
+    }
+
+}

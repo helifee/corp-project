@@ -1,0 +1,347 @@
+package com.jzy.hio.flow.runtime;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.flow.entity.FlowCopy;
+import com.jzy.hio.flow.entity.FlowCustomForm;
+import com.jzy.hio.flow.entity.FlowCustomFormInstance;
+import com.jzy.hio.flow.entity.FlowInstance;
+import com.jzy.hio.flow.entity.FlowTemplate;
+import com.jzy.hio.flow.entity.enums.FlowCopyType;
+import com.jzy.hio.flow.entity.enums.FlowStateEnum;
+import com.jzy.hio.flow.entity.param.FlowSubmitParam;
+import com.jzy.hio.flow.mapper.FlowCopyDao;
+import com.jzy.hio.flow.mapper.FlowInstanceDao;
+import com.jzy.hio.flow.utils.FlowConstants;
+import com.jzy.hio.flow.utils.UUIDGenerator;
+
+/**
+ * 流程草稿操作
+ *
+ * @author daoqi
+ *
+ */
+public class DraftOperation extends AbstractBaseOperation {
+
+	private Logger logger = LoggerFactory.getLogger(DraftOperation.class);
+	
+	@Transactional(rollbackFor = Exception.class)
+	@Override
+	public String action(FlowSubmitParam flowStartParam) {
+		logger.info("草稿操作开始：flowStartParam=" + flowStartParam);
+		
+		checkParam(flowStartParam);
+
+		// 1、 判断草稿是否存在
+		setDraftExist(flowStartParam);
+
+		super.action(flowStartParam);
+
+		// 草稿删除操作
+		if (flowStartParam.isRemove()) {
+			logger.info("******************************************删除草稿*********************************");
+			deleteDraft(flowStartParam);
+			return "success";
+		}
+
+		// 4、表单保存
+		saveOrUpdateForm(flowStartParam);
+
+		//驳回退回处理
+		oldFlowHandleWhenReturn();
+		
+		// 2、保存或更新实例草稿态
+		saveOrUpdateInstance(flowStartParam);
+
+		// 3、保存或更新实例抄送人
+		saveOrUpdateCopyPerson(flowStartParam);
+		
+		return flowStartParam.getInstanceId();
+	}
+	
+	/**
+	 * 流程发起操作调用
+	 * 
+	 * @param flowStartParam
+	 * @return
+	 */
+	@Transactional(rollbackFor = Exception.class)
+	public String action2(FlowSubmitParam flowStartParam) {
+		logger.info("草稿操作开始：flowStartParam=" + flowStartParam);
+		
+		checkParam(flowStartParam);
+
+		// 1、 判断草稿是否存在
+		setDraftExist(flowStartParam);
+
+		super.action(flowStartParam);
+
+		// 草稿删除操作
+		if (flowStartParam.isRemove()) {
+			logger.info("******************************************删除草稿*********************************");
+			deleteDraft(flowStartParam);
+			return "success";
+		}
+
+//		// 4、表单保存
+//		saveOrUpdateForm(flowStartParam);
+
+		//驳回退回处理
+		oldFlowHandleWhenReturn();
+		
+		// 2、保存或更新实例草稿态
+		saveOrUpdateInstance(flowStartParam);
+
+		// 3、保存或更新实例抄送人
+		saveOrUpdateCopyPerson(flowStartParam);
+		
+		/*// 修改关注 指向发起新的实例 TODO
+ 		this.service.getFlowFollowInstanceDao().updateFollowInstanceByInstanceId(instance.getId(), newInstanceId, date);*/
+
+		return flowStartParam.getInstanceId();
+	}
+
+	private void oldFlowHandleWhenReturn() {
+		FlowInstance instance = this.getFlowVariables().getInstance();
+		if(instance == null) {
+			return ;
+		}
+		
+		// 退回或驳回的旧的流程实例处理
+		if(instance.getState() == FlowStateEnum.RETURN.getState()) {
+			instance.setState(FlowStateEnum.RETURN_ALREADY_PROCESSED.getState());
+			
+		}else if(instance.getState() == FlowStateEnum.REJECT.getState()) {
+			instance.setState(FlowStateEnum.REJECT_ALREADY_PROCESSED.getState());
+		}
+
+		this.getService().getFlowInstanceDao().updateByPrimaryKeySelective(instance);
+	}
+
+	private void checkParam(FlowSubmitParam flowStartParam) {
+		if(StringUtils.isBlank(flowStartParam.getOperateType())) {
+			logger.error("表单操作类型operateType为空：字符串0：不处理，1新增，2修改，3删除");
+			throw new HioException("表单操作类型operateType为空：字符串0：不处理，1新增，2修改，3删除！");
+		}
+		
+		String instanceId = flowStartParam.getInstanceId();
+		if(StringUtils.isBlank(instanceId)) {
+			return ;
+		}
+		
+		FlowInstanceDao flowInstanceDao = this.getService().getFlowInstanceDao();
+		FlowInstance instance = flowInstanceDao.selectByPrimaryKey(instanceId);
+
+		// instanceId 不存在
+		if (instance == null) {
+			logger.error(FlowConstants.FLOW_NOT_EXIST.getMessage());
+			throw new HioException(FlowConstants.FLOW_NOT_EXIST.getMessage(), FlowConstants.FLOW_NOT_EXIST.getStatus());
+		}
+
+		// 修改人 不是保存流程的人
+		if (!instance.getCreatePersonId().equals(this.getService().getLoginUser().getUserId())) {
+			logger.error(FlowConstants.NO_PERMISSION_TO_OPERATION.getMessage());
+
+			throw new HioException(FlowConstants.NO_PERMISSION_TO_OPERATION.getMessage(),
+					FlowConstants.NO_PERMISSION_TO_OPERATION.getStatus());
+		}
+		
+		//TODO 条件简化
+		if(flowStartParam.getInstanceState() == FlowStateEnum.RUN.getState()
+					&& instance.getState() != FlowStateEnum.DRAFT.getState()) {
+			if (instance.getState() != FlowStateEnum.RETURN.getState()
+					&& instance.getState() != FlowStateEnum.REJECT.getState()) {
+				
+				logger.error(FlowConstants.FLOW_REPEAT_SUBMISSION.getMessage());
+				throw new HioException(FlowConstants.FLOW_REPEAT_SUBMISSION.getMessage(),
+						FlowConstants.FLOW_REPEAT_SUBMISSION.getStatus());
+			}
+		}
+		
+		this.getFlowVariables().setInstance(instance);
+	}
+
+	/**
+	 * 草稿删除
+	 *
+	 * @param flowStartParam
+	 */
+	private void deleteDraft(FlowSubmitParam flowStartParam) {
+		String instanceId = flowStartParam.getInstanceId();
+
+		// 删除草稿态的流程实例
+		super.deleteFlowInstance(instanceId);
+		
+		//驳回已处理 ->驳回;退回已处理->退回
+		recoveryState();
+
+		// 删除对应的抄送人
+		super.deleteCCPersonOf(instanceId);
+		
+		// 删除关注数据
+		super.deleteFollowBy(instanceId);
+
+		// 删除草稿数据
+		String businessId = this.getFlowVariables().getBusinessId();
+		String customFormId = this.getFlowVariables().getFlowCustomForm().getId();
+		super.deleteBusinessData(customFormId, businessId);
+	}
+
+	private void recoveryState() {
+		logger.info("***************************this.getFlowVariables().getInstance()***************"+this.getFlowVariables().getInstance()+"*********************************");
+
+		FlowInstance instance = this.getFlowVariables().getInstance();
+		String instanceGroupId = instance.getInstanceGroupId();
+		logger.info("****************************instance.getInstanceGroupId()**************"+instance.getInstanceGroupId()+"*********************************");
+		FlowInstanceDao flowInstanceDao = this.getService().getFlowInstanceDao();
+		flowInstanceDao.recoveryState(instanceGroupId);
+		
+		//退回状态恢复
+		flowInstanceDao.recoveryReturnState(instanceGroupId);
+	}
+
+	private void setDraftExist(FlowSubmitParam flowStartParam) {
+		String businessId = flowStartParam.getBusinessId();
+		String instanceId = flowStartParam.getInstanceId();
+		
+		if("1".equals(flowStartParam.getOperateType())) {
+ 			FlowInstance instance = flowVariables.getInstance();
+ 			if(Base.isNotEmpty(instance)){
+				flowStartParam.setInstanceGroupId(instance.getInstanceGroupId());
+//				flowStartParam.setAttachmentId(instance.getAttachmentId());
+			}
+			instanceId = Base.generatePk(FlowInstance.class);
+			this.getFlowVariables().setBusinessDataExist(false);
+			flowStartParam.setInstanceId(instanceId);
+		}
+
+		this.getFlowVariables().setInstanceId(instanceId);
+		this.getFlowVariables().setBusinessId(businessId);
+	}
+
+	/**
+	 * 保存表单数据
+	 *
+	 * @param flowStartParam
+	 */
+	public void saveOrUpdateForm(FlowSubmitParam flowStartParam) {
+		FlowCustomFormInstance formInstance = new FlowCustomFormInstance();
+		formInstance.setBusinessData(flowStartParam.getBusinessData());
+		formInstance.setInstanceId(this.getFlowVariables().getInstanceId());
+		formInstance.setBusinessId(this.getFlowVariables().getBusinessId());
+		formInstance.setValueData(flowStartParam.getValueData());
+		FlowCustomForm flowCustomForm = this.getFlowVariables().getFlowCustomForm();
+		if (flowCustomForm != null) {
+			formInstance.setCustomFormId(flowCustomForm.getId());
+		}
+		
+		boolean businessDataExist = this.getFlowVariables().isBusinessDataExist();
+		formInstance.setSaveOrUpdate(!businessDataExist);
+
+		super.saveBusinessData(formInstance);
+	}
+
+	private void saveOrUpdateCopyPerson(FlowSubmitParam flowStartParam) {
+		if (this.getFlowVariables().isBusinessDataExist()) {
+			super.deleteCCPersonOf(this.getFlowVariables().getInstanceId());
+		}
+		 List<String> copyUserIds = flowStartParam.getCopyUserIds();
+		if (CollectionUtils.isEmpty(copyUserIds)) {
+			return;
+		}
+		List<FlowCopy> copyUserList = new ArrayList<>();
+		for (String userId : copyUserIds) {
+			FlowCopy flowCopy = new FlowCopy();
+			flowCopy.setId(Base.generatePk(FlowCopy.class));
+			flowCopy.setCreateDate(new Date());
+			flowCopy.setFlowInstanceId(this.getFlowVariables().getInstanceId());
+			flowCopy.setSource(FlowCopyType.FORM_COPY.getType());
+ 			flowCopy.setCopyUser(userId);
+			flowCopy.setCreatePersonId(this.getFlowVariables().getCurrentUser().getUserId());
+			copyUserList.add(flowCopy);
+		}
+
+		FlowCopyDao flowCopyDao = super.getService().getFlowCopyDao();
+		flowCopyDao.insertList(copyUserList);
+	}
+
+	private void saveOrUpdateInstance(FlowSubmitParam flowStartParam) {
+	 
+		FlowInstance instanceDraft = new FlowInstance();
+		instanceDraft.setId(this.getFlowVariables().getInstanceId());
+		instanceDraft.setName(flowStartParam.getInstanceName());
+		instanceDraft.setBusinessId(this.getFlowVariables().getBusinessId());
+		
+		FlowTemplate template = getFlowVariables().getTemplate();
+		if(template != null) {
+			instanceDraft.setFlowTemplateId(template.getId());
+		}else {
+			instanceDraft.setFlowTemplateId(flowStartParam.getTemplateId());
+		}
+		Date date = new Date();
+		instanceDraft.setAttachmentId(flowStartParam.getAttachmentId());
+		instanceDraft.setProjectId(flowStartParam.getProjectId());
+		instanceDraft.setState(flowStartParam.getInstanceState());
+		instanceDraft.setStartDate(date);
+
+		String customFormId = flowStartParam.getCustomFormId();
+		if (StringUtils.isNotBlank(customFormId)) {
+			instanceDraft.setCustomFormId(customFormId);
+		} else {
+			
+			FlowCustomForm flowCustomForm = this.getFlowVariables().getFlowCustomForm();
+			if(flowCustomForm != null) {
+				instanceDraft.setCustomFormId(flowCustomForm.getId());
+			}
+		}
+
+		//发时自流程节点处理
+		if (CollectionUtils.isNotEmpty(flowStartParam.getNodeList())) {
+			String nodeList = Base.obj2json(flowStartParam.getNodeList());
+			instanceDraft.setFreeFlowNodes(nodeList);
+		}
+
+		FlowInstanceDao flowInstanceDao = super.getService().getFlowInstanceDao();
+		if (this.getFlowVariables().isBusinessDataExist()) {
+			instanceDraft.setUpdateDate(date);
+			instanceDraft.setUpdatePersonId(this.getFlowVariables().getCurrentUser().getUserId());
+			FlowInstance instance = this.getFlowVariables().getInstance();
+			if(instance != null) {
+				
+				if(StringUtils.isEmpty(instanceDraft.getAttachmentId())) {
+					instanceDraft.setAttachmentId(instance.getAttachmentId());
+				}
+				instanceDraft.setInstanceGroupId(instance.getInstanceGroupId());
+			}
+			flowInstanceDao.updateByPrimaryKeySelective(instanceDraft);
+
+		} else {
+			instanceDraft.setCreateDate(date);
+			instanceDraft.setUpdateDate(date);
+			instanceDraft.setBusinessId(this.getFlowVariables().getBusinessId());
+			instanceDraft.setCreatePersonId(this.getFlowVariables().getCurrentUser().getUserId());
+			if(Base.isNotEmpty(flowStartParam.getInstanceGroupId())){
+				instanceDraft.setInstanceGroupId(flowStartParam.getInstanceGroupId());
+			}else{
+				instanceDraft.setInstanceGroupId(UUIDGenerator.getUUID32());
+			}
+
+			flowInstanceDao.insert(instanceDraft);
+		}
+	}
+
+	@Override
+	public OperateType getType() {
+		return OperateType.DRAFT;
+	}
+}

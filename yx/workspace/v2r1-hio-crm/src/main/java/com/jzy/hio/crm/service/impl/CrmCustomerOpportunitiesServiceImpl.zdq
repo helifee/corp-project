@@ -1,0 +1,485 @@
+package com.jzy.hio.crm.service.impl;
+
+import java.text.MessageFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.alibaba.fastjson.JSON;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.constant.CrmConstant;
+import com.jzy.hio.constant.CrmCustomerEnum;
+import com.jzy.hio.constant.CrmOpportunityStageEnum;
+import com.jzy.hio.crm.dto.AttachmentParamDto;
+import com.jzy.hio.crm.dto.CrmCustomerOpportunitiesDto;
+import com.jzy.hio.crm.dto.CrmOpportunityPageDto;
+import com.jzy.hio.crm.dto.CrmOpportunityProductDto;
+import com.jzy.hio.crm.dto.CrmStatisticalCountDto;
+import com.jzy.hio.crm.dto.CrmStatusCountDto;
+import com.jzy.hio.crm.mapper.CrmContactMapper;
+import com.jzy.hio.crm.mapper.CrmCustomerChangeMapper;
+import com.jzy.hio.crm.mapper.CrmCustomerFollowHisMapper;
+import com.jzy.hio.crm.mapper.CrmCustomerFollowPlanMapper;
+import com.jzy.hio.crm.mapper.CrmCustomerMapper;
+import com.jzy.hio.crm.mapper.CrmCustomerOpportunitiesMapper;
+import com.jzy.hio.crm.mapper.CrmOpportunityProductMapper;
+import com.jzy.hio.crm.mapper.CrmOrderMapper;
+import com.jzy.hio.crm.param.CrmCustomerOpportunitiesParam;
+import com.jzy.hio.crm.param.CrmOpportunitySearchParam;
+import com.jzy.hio.crm.service.CrmCustomerOpportunitiesService;
+import com.jzy.hio.crm.utils.CrmCommonInvokeUtil;
+import com.jzy.hio.crm.utils.PageResult;
+import com.jzy.hio.entity.CrmContact;
+import com.jzy.hio.entity.CrmCustomer;
+import com.jzy.hio.entity.CrmCustomerChange;
+import com.jzy.hio.entity.CrmCustomerFollowHis;
+import com.jzy.hio.entity.CrmCustomerFollowPlan;
+import com.jzy.hio.entity.CrmCustomerOpportunities;
+import com.jzy.hio.entity.CrmOpportunityProduct;
+import com.jzy.hio.entity.CrmOrder;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.utils.LoginUser;
+import com.jzy.hio.utils.StringUtil;
+
+/**
+ * 商机
+ * @author
+ *
+ */
+@Service
+public class CrmCustomerOpportunitiesServiceImpl extends BaseServiceImpl<CrmCustomerOpportunities> implements CrmCustomerOpportunitiesService {
+
+	@Autowired
+	private CrmCustomerOpportunitiesMapper crmCustomerOpportunitiesMapper;
+	@Autowired
+	private CrmOpportunityProductMapper crmOpportunityProductMapper;
+	@Autowired
+    private CrmCustomerChangeMapper crmCustomerChangeMapper;
+    @Autowired
+    private CrmCustomerMapper crmCustomerMapper;
+    @Autowired
+    private CrmContactMapper crmContactMapper;
+	@Autowired
+	private CrmOrderMapper crmOrderMapper;
+	@Autowired
+	private CrmCustomerFollowHisMapper crmCustomerFollowHisMapper;
+    @Autowired
+    private CrmCustomerFollowPlanMapper crmCustomerFollowPlanMapper;
+    @Autowired
+    private CrmCommonInvokeUtil crmCommonInvokeUtil;
+
+	/**
+	 * 保存和修改商机
+	 */
+	@Override
+	public boolean saveCustomerOpportunities(CrmCustomerOpportunitiesDto customerOpportunitiesDto) {
+		String uid = getUserIdOA();
+		String id = customerOpportunitiesDto.getSid();
+		Date date = new Date();
+		//商机有附件，id从前端传入， id有值 进行增加或修改，无值返回false
+		if(StringUtils.isNotBlank(id)) {
+			CrmCustomer customerFind = crmCustomerMapper.selectByPrimaryKey(customerOpportunitiesDto.getCustomerId());
+			if (customerFind == null || customerFind.getDelflag().equals(CrmConstant.DEL_TRUE)) {
+				throw new HioException("客户不存在");
+			} else if(!isRolePermission(BaseConstants.MYSQL_MENU_CODE_CRM_MANAGE)) {
+				if (!customerFind.getOwnerPersonId().equals(uid)) {
+					throw new HioException("您没有该客户权限");
+				}
+			}
+
+			CrmCustomerOpportunities customerOpportunitiesFind = crmCustomerOpportunitiesMapper.selectByPrimaryKey(id);
+			if(customerOpportunitiesFind == null) {
+				CrmCustomerOpportunities customerOpportunities = new CrmCustomerOpportunities();
+				BeanUtils.copyProperties(customerOpportunitiesDto, customerOpportunities);
+
+				customerOpportunities.setId(id);
+				customerOpportunities.setDelflag(CrmConstant.DEL_FALSE);
+				customerOpportunities.setUpdateDate(date);
+				customerOpportunities.setCreateDate(date);
+				customerOpportunities.setCreatePersonId(uid);
+				customerOpportunities.setUpdatePersonId(uid);
+				List<String> attachmentArr = customerOpportunitiesDto.getAttachmentArr();
+				if (attachmentArr != null && attachmentArr.size() > 0) {
+					String attachmentJson = JSON.toJSONString(attachmentArr);
+					customerOpportunities.setAttachment(attachmentJson);
+				} else {
+					customerOpportunities.setAttachment("");
+				}
+
+				crmCustomerOpportunitiesMapper.insert(customerOpportunities);
+
+				//添加动态	**创建了商机***
+				if (StringUtil.isNotEmpty(customerOpportunities.getCustomerId())) {
+                    String userNameOA = getUserNameOA();
+					String format = MessageFormat.format(CrmCustomerEnum.CREATE_OPPORTUNITIES.getCode(), userNameOA, customerOpportunities.getName());
+					CrmCustomerChange crmCustomerChange=new CrmCustomerChange();
+					crmCustomerChange.setCustomerId(customerOpportunities.getCustomerId());
+					crmCustomerChange.setOpportunityId(customerOpportunities.getId());
+					crmCustomerChange.setChangeContent(format);
+					crmCustomerChange.setId(Base.generatePk(CrmCustomerChange.class));
+					crmCustomerChange.setCreatePersonId(uid);
+					crmCustomerChange.setUpdatePersonId(uid);
+					crmCustomerChange.setCreateDate(date);
+					crmCustomerChange.setUpdateDate(date);
+					crmCustomerChange.setCreatePersonName(userNameOA);
+					crmCustomerChange.setUpdatePersonName(userNameOA);
+                    crmCustomerChangeMapper.insert(crmCustomerChange);
+				}
+
+
+			} else if (customerOpportunitiesFind != null && customerOpportunitiesFind.getDelflag().equals(CrmConstant.DEL_FALSE)) {
+				CrmCustomerOpportunities customerOpportunities = new CrmCustomerOpportunities();
+				BeanUtils.copyProperties(customerOpportunitiesDto, customerOpportunities);
+
+				customerOpportunities.setId(id);
+				customerOpportunities.setUpdatePersonId(uid);
+				customerOpportunities.setUpdateDate(date);
+				List<String> attachmentArr = customerOpportunitiesDto.getAttachmentArr();
+				if (attachmentArr != null && attachmentArr.size() > 0) {
+					String attachmentJson = JSON.toJSONString(attachmentArr);
+					customerOpportunities.setAttachment(attachmentJson);
+				} else {
+					customerOpportunities.setAttachment("");
+				}
+				// 修改商机
+				crmCustomerOpportunitiesMapper.updateByPrimaryKeySelective(customerOpportunities);
+
+                //添加动态   xx变更商机xx的阶段为xx
+                if (StringUtil.isNotEmpty(customerOpportunities.getCustomerId())) {
+                    if (!customerOpportunities.getStage().equals(customerOpportunitiesFind.getStage())) {
+                        String userNameOA = getUserNameOA();
+                        String stageOld = CrmOpportunityStageEnum.getNameByStatus(customerOpportunitiesFind.getStage());
+                        String stageNew = CrmOpportunityStageEnum.getNameByStatus(customerOpportunities.getStage());
+                        String format = MessageFormat.format(CrmCustomerEnum.CHANGE_BUSINESS_OPPORTUNITIES.getCode(),userNameOA,stageOld,stageNew);
+                        CrmCustomerChange crmCustomerChange=new CrmCustomerChange();
+                        crmCustomerChange.setCustomerId(customerOpportunities.getCustomerId());
+                        crmCustomerChange.setOpportunityId(customerOpportunities.getId());
+                        crmCustomerChange.setChangeContent(format);
+                        crmCustomerChange.setId(Base.generatePk(CrmCustomerChange.class));
+						crmCustomerChange.setCreatePersonId(uid);
+						crmCustomerChange.setUpdatePersonId(uid);
+						crmCustomerChange.setCreateDate(date);
+						crmCustomerChange.setUpdateDate(date);
+						crmCustomerChange.setCreatePersonName(userNameOA);
+						crmCustomerChange.setUpdatePersonName(userNameOA);
+                        crmCustomerChangeMapper.insert(crmCustomerChange);
+                    }
+                }
+
+				// 删除商机下商品
+				CrmOpportunityProduct opportunityProductDelete = new CrmOpportunityProduct();
+				opportunityProductDelete.setOpportunityId(id);
+				opportunityProductDelete.setUpdatePersonId(uid);
+				opportunityProductDelete.setUpdateDate(date);
+				crmOpportunityProductMapper.deleteByOpportunityId(opportunityProductDelete);
+			} else {
+				return false;
+			}
+		} else {
+			return false;
+		}
+
+		// 保存商机产品
+		List<CrmOpportunityProductDto> opportunityProductDtos = customerOpportunitiesDto.getOpportunityProducts();
+		if (opportunityProductDtos != null && opportunityProductDtos.size() > 0) {
+			List<CrmOpportunityProduct> opportunityProductSaveList = new ArrayList<>();
+			CrmOpportunityProduct opportunityProduct;
+			for (CrmOpportunityProductDto opportunityProductDtoItem : opportunityProductDtos) {
+				opportunityProduct = new CrmOpportunityProduct();
+				BeanUtils.copyProperties(opportunityProductDtoItem, opportunityProduct);
+
+				opportunityProduct.setOpportunityId(id);
+				opportunityProduct.setId(Base.generatePk(opportunityProduct.getClass()));
+				opportunityProduct.setDelflag(CrmConstant.DEL_FALSE);
+				opportunityProduct.setUpdateDate(date);
+				opportunityProduct.setCreateDate(date);
+				opportunityProduct.setCreatePersonId(uid);
+				opportunityProduct.setUpdatePersonId(uid);
+				opportunityProductSaveList.add(opportunityProduct);
+			}
+			crmOpportunityProductMapper.insertList(opportunityProductSaveList);
+		}
+
+		return true;
+	}
+
+	/**
+	 * 查询商机及商机产品
+	 */
+	@Override
+	public CrmCustomerOpportunitiesDto selectCustomerOpportunities(String id) {
+        String tendId = getTendId();
+		// 查询商机
+		CrmCustomerOpportunities customerOpportunitiesFind = crmCustomerOpportunitiesMapper.selectByPrimaryKey(id);
+		if (customerOpportunitiesFind == null || customerOpportunitiesFind.getDelflag().equals(CrmConstant.DEL_TRUE)) {
+			throw new HioException("商机不存在或已删除");
+		}
+
+		CrmCustomerOpportunitiesDto customerOpportunitiesDto = new CrmCustomerOpportunitiesDto();
+		BeanUtils.copyProperties(customerOpportunitiesFind, customerOpportunitiesDto);
+
+		customerOpportunitiesDto.setSid(customerOpportunitiesFind.getId());
+		
+		CrmCustomer customer = crmCustomerMapper.selectByPrimaryKey(customerOpportunitiesFind.getCustomerId());
+		if (customer != null) {
+			customerOpportunitiesDto.setCustomerName(customer.getName());
+		}
+		
+		if (!isRolePermission(BaseConstants.MYSQL_MENU_CODE_CRM_MANAGE)) {
+			String uid = getUserIdOA();
+			if (!customer.getOwnerPersonId().equals(uid)) {
+				throw new HioException("您没有该客户权限");
+			}
+		}
+		
+		CrmContact contact = crmContactMapper.selectByPrimaryKey(customerOpportunitiesFind.getContactId());
+		if (contact != null) {
+			customerOpportunitiesDto.setDecisionRole(contact.getDecisionRole());
+			customerOpportunitiesDto.setContactName(contact.getName());
+			customerOpportunitiesDto.setPhoneNumber(contact.getPhoneNumber());
+		}
+		
+		String personInChargeName = crmCommonInvokeUtil.getUserName(tendId, customerOpportunitiesDto.getPersonInCharge());
+		customerOpportunitiesDto.setPersonInChargeName(personInChargeName);
+		
+		AttachmentParamDto attachmentParamDto = new AttachmentParamDto();
+		attachmentParamDto.setApp(BaseConstants.App.CRM.getId());
+		attachmentParamDto.setCategory(BaseConstants.AttachmentCategory.CRM_OPPORTUNITY.getId());
+		attachmentParamDto.setBusinessId(id);
+		customerOpportunitiesDto.setAttachmentParam(attachmentParamDto);
+		
+		// 处理附件列表
+		List<String> attachmentArr = StringUtils.isNotBlank(customerOpportunitiesFind.getAttachment())
+				? JSON.parseArray(customerOpportunitiesFind.getAttachment(), String.class) : new ArrayList<String>();
+		customerOpportunitiesDto.setAttachmentArr(attachmentArr);
+
+		// 查询商机产品
+		List<CrmOpportunityProductDto> opportunityProductDtoList = selectProductByOpportunityId(id);
+		customerOpportunitiesDto.setOpportunityProducts(opportunityProductDtoList);
+
+		return customerOpportunitiesDto;
+	}
+
+	/**
+	 * 删除 商机及商机产品
+	 */
+	@Override
+	public int deleteCustomerOpportunities(String id) {
+		String uid = getUserIdOA();
+		Date date = new Date();
+		CrmCustomerOpportunities customerOpportunitiesFind = crmCustomerOpportunitiesMapper.selectByPrimaryKey(id);
+		
+		if (customerOpportunitiesFind == null || customerOpportunitiesFind.getDelflag().equals(CrmConstant.DEL_TRUE)) {
+			throw new HioException("商机不存在或已删除");
+		}
+
+		CrmCustomer customer = crmCustomerMapper.selectByPrimaryKey(customerOpportunitiesFind.getCustomerId());
+		if (!isRolePermission(BaseConstants.MYSQL_MENU_CODE_CRM_MANAGE)) {
+			if (customer == null) {
+				throw new HioException("未找到客户");
+			}
+			if (!customer.getOwnerPersonId().equals(uid)) {
+				throw new HioException("您没有该客户权限");
+			}
+		}
+
+		CrmCustomerFollowHis followHisSelect = new CrmCustomerFollowHis();
+		followHisSelect.setCustomerId(customerOpportunitiesFind.getCustomerId());
+		followHisSelect.setOpportunityId(id);
+		followHisSelect.setDelflag(CrmConstant.DEL_FALSE);
+		int followHisCount = crmCustomerFollowHisMapper.selectCount(followHisSelect);
+		
+		if (followHisCount > 0) {
+			throw new HioException("该商机下有跟进记录不能删除");
+		} else {
+			CrmCustomerFollowPlan followPlanSelect = new CrmCustomerFollowPlan();
+    		followPlanSelect.setCustomerId(customerOpportunitiesFind.getCustomerId());
+    		followPlanSelect.setOpportunityId(id);
+    		followPlanSelect.setDelflag(CrmConstant.DEL_FALSE);
+    		int followPlanCount = crmCustomerFollowPlanMapper.selectCount(followPlanSelect);
+    		if (followPlanCount > 0) {
+    			throw new HioException("该商机下有跟进计划不能删除");
+			}
+		}
+		
+		// 删除商机下商品
+		CrmOpportunityProduct opportunityProductDelete = new CrmOpportunityProduct();
+		opportunityProductDelete.setOpportunityId(id);
+		opportunityProductDelete.setUpdatePersonId(uid);
+		opportunityProductDelete.setUpdateDate(date);
+		crmOpportunityProductMapper.deleteByOpportunityId(opportunityProductDelete);
+
+		// 删除商机
+		CrmCustomerOpportunities crmCustomerOpportunities = new CrmCustomerOpportunities();
+		crmCustomerOpportunities.setId(id);
+		crmCustomerOpportunities.setDelflag(CrmConstant.DEL_TRUE);
+		crmCustomerOpportunities.setUpdatePersonId(uid);
+		crmCustomerOpportunities.setUpdateDate(date);
+		return crmCustomerOpportunitiesMapper.updateByPrimaryKeySelective(crmCustomerOpportunities);
+	}
+
+	/**
+	 * 根据商机id 查询 商机下产品
+	 */
+	@Override
+	public List<CrmOpportunityProductDto> selectProductByOpportunityId(String opportunityId) {
+		CrmOpportunityProduct opportunityProduct = new CrmOpportunityProduct();
+		opportunityProduct.setOpportunityId(opportunityId);
+		opportunityProduct.setDelflag(CrmConstant.DEL_FALSE);
+		List<CrmOpportunityProduct> opportunityProductList = crmOpportunityProductMapper.select(opportunityProduct);
+
+		List<CrmOpportunityProductDto> opportunityProductDtoList = new ArrayList<>();
+		CrmOpportunityProductDto crmOpportunityProductDto;
+		for (CrmOpportunityProduct opportunityProductItem : opportunityProductList) {
+			crmOpportunityProductDto = new CrmOpportunityProductDto();
+			BeanUtils.copyProperties(opportunityProductItem, crmOpportunityProductDto);
+
+			opportunityProductDtoList.add(crmOpportunityProductDto);
+		}
+		return opportunityProductDtoList;
+	}
+
+    @Override
+    public List<CrmCustomerOpportunitiesDto> queryOpportunities(String userId) {
+        return crmCustomerOpportunitiesMapper.queryOpportunities(userId);
+    }
+
+    @Override
+    public PageResult queryAll(CrmCustomerOpportunitiesParam crmCustomerOpportunitiesParam) {
+		LoginUser loginUser = getLoginUser();
+		List<CrmCustomerOpportunitiesDto> customerOpportunitiesDtoList = crmCustomerOpportunitiesMapper.queryAll(crmCustomerOpportunitiesParam);
+        List<String> userList=new ArrayList<>();
+		for (CrmCustomerOpportunitiesDto customerOpportunitiesDto:customerOpportunitiesDtoList) {
+			userList.add(customerOpportunitiesDto.getPersonInCharge());
+		}
+		Map<String, String> userName = crmCommonInvokeUtil.getUserName(loginUser.getTendId(), userList);
+		for (CrmCustomerOpportunitiesDto customerOpportunitiesDto:customerOpportunitiesDtoList) {
+			customerOpportunitiesDto.setPersonInChargeName(userName.get(customerOpportunitiesDto.getPersonInCharge()));
+		}
+		int count = crmCustomerOpportunitiesMapper.getCount(crmCustomerOpportunitiesParam);
+        return PageResult.pageResult(crmCustomerOpportunitiesParam, count, customerOpportunitiesDtoList);
+    }
+
+	/**
+	 * 商机分页
+	 */
+	@Override
+	public PageResult getPageOpportunities(CrmOpportunitySearchParam opportunitySearchParam) {
+		
+		// 排序
+		String lastContactTimeSort = opportunitySearchParam.getLastContactTimeSort();
+		String estimateAmountSort = opportunitySearchParam.getEstimateAmountSort();
+		if (CrmConstant.ASC.equalsIgnoreCase(lastContactTimeSort) || CrmConstant.DESC.equalsIgnoreCase(lastContactTimeSort)) {
+			lastContactTimeSort = "oppo.last_contact_time " + lastContactTimeSort + ",";
+			opportunitySearchParam.setLastContactTimeSort(lastContactTimeSort);
+		} else {
+			opportunitySearchParam.setLastContactTimeSort("");
+		}
+		
+		if (CrmConstant.ASC.equalsIgnoreCase(estimateAmountSort) || CrmConstant.DESC.equalsIgnoreCase(estimateAmountSort)) {
+			estimateAmountSort = "oppo.estimate_amount " + estimateAmountSort + ",";
+			opportunitySearchParam.setEstimateAmountSort(estimateAmountSort);
+		} else {
+			opportunitySearchParam.setEstimateAmountSort("");
+		}
+		
+		// 分页查询产品列表
+		List<CrmOpportunityPageDto> list = crmCustomerOpportunitiesMapper.getPageOpportunities(opportunitySearchParam);
+		List<String> uids = new ArrayList<>();
+		for (CrmOpportunityPageDto opportunityPageDto : list) {
+			uids.add(opportunityPageDto.getPersonInCharge());
+		}
+		
+		String tendId = getTendId();
+		Map<String, String> userNameMap = crmCommonInvokeUtil.getUserName(tendId, uids);
+		for (CrmOpportunityPageDto opportunityPageDto : list) {
+			opportunityPageDto.setPersonInChargeName(userNameMap.get(opportunityPageDto.getPersonInCharge()));
+		}
+		
+		// 查询产品总条数
+		int count = crmCustomerOpportunitiesMapper.getPageOpportunitiesCount(opportunitySearchParam);
+		return PageResult.pageResult(opportunitySearchParam, count, list);
+	}
+
+	/**
+	 * 查询商机各个阶段数量
+	 */
+	@Override
+	public List<CrmStatusCountDto> queryCountGoupByStage(String uid, String customerId) {
+		List<CrmStatusCountDto> statusCountDtoList = crmCustomerOpportunitiesMapper.selectCountGoupByStage(uid, customerId);
+
+		List<CrmStatusCountDto> statusCountDtoReturnList = new ArrayList<>();
+		CrmOpportunityStageEnum[] statusArr = CrmOpportunityStageEnum.values();
+		int zero = 0;
+		for (CrmOpportunityStageEnum statusItem : statusArr) {
+			CrmStatusCountDto statusCountDto = null;
+			for (CrmStatusCountDto statusCountDtoItem : statusCountDtoList) {
+				if (statusCountDtoItem.getStatus().equals(statusItem.getStatus())) {
+					statusCountDto = new CrmStatusCountDto();
+					statusCountDto.setCount(statusCountDtoItem.getCount());
+					break;
+				}
+			}
+
+			if (statusCountDto == null) {
+				statusCountDto = new CrmStatusCountDto();
+				statusCountDto.setCount(zero);
+			}
+
+			statusCountDto.setStatus(statusItem.getStatus());
+			statusCountDto.setStatusName(statusItem.getStausName());
+			statusCountDtoReturnList.add(statusCountDto);
+		}
+		return statusCountDtoReturnList;
+	}
+
+	/**
+	 * 商机详情数量查询
+	 */
+	@Override
+	public CrmStatisticalCountDto queryStatistical(String customerId, String opportunityId) {
+		CrmCustomerChange changeSelect = new CrmCustomerChange();
+		changeSelect.setCustomerId(customerId);
+		changeSelect.setOpportunityId(opportunityId);
+		changeSelect.setDelflag(CrmConstant.DEL_FALSE);
+		int changeCount = crmCustomerChangeMapper.selectCount(changeSelect);
+		
+		CrmOrder orderSelect = new CrmOrder();
+		orderSelect.setCustomerId(customerId);
+		orderSelect.setOpportunityId(opportunityId);
+		orderSelect.setDelflag(CrmConstant.DEL_FALSE);
+		int orderCount = crmOrderMapper.selectCount(orderSelect);
+		
+		CrmCustomerFollowHis followHisSelect = new CrmCustomerFollowHis();
+		followHisSelect.setCustomerId(customerId);
+		followHisSelect.setOpportunityId(opportunityId);
+		followHisSelect.setDelflag(CrmConstant.DEL_FALSE);
+		int followHisCount = crmCustomerFollowHisMapper.selectCount(followHisSelect);
+		
+		CrmCustomerFollowPlan followPlanSelect = new CrmCustomerFollowPlan();
+		followPlanSelect.setCustomerId(customerId);
+		followPlanSelect.setOpportunityId(opportunityId);
+		followPlanSelect.setDelflag(CrmConstant.DEL_FALSE);
+		int followPlanCount = crmCustomerFollowPlanMapper.selectCount(followPlanSelect);
+		
+		return new CrmStatisticalCountDto(changeCount, orderCount, followHisCount, followPlanCount);
+	}
+
+	/**
+	 * 同一客户下商机名称不能重复
+	 */
+	@Override
+	public boolean queryOpportunityNameCanUse(String id, String customerId, String name) {
+		return crmCustomerOpportunitiesMapper.selectOpportunityNameCount(id, customerId, name) == 0;
+	}
+
+
+}

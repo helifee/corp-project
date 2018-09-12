@@ -1,0 +1,292 @@
+package com.xinleju.platform.flow.service.impl;
+
+import java.sql.Timestamp;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.log4j.Logger;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.flow.dao.AgentDao;
+import com.xinleju.platform.flow.dto.AgentDto;
+import com.xinleju.platform.flow.dto.AgentFlDto;
+import com.xinleju.platform.flow.dto.AgentPostDto;
+import com.xinleju.platform.flow.dto.InstanceDto;
+import com.xinleju.platform.flow.entity.Agent;
+import com.xinleju.platform.flow.entity.AgentFl;
+import com.xinleju.platform.flow.entity.AgentPost;
+import com.xinleju.platform.flow.exception.FlowException;
+import com.xinleju.platform.flow.service.AgentFlService;
+import com.xinleju.platform.flow.service.AgentPostService;
+import com.xinleju.platform.flow.service.AgentService;
+import com.xinleju.platform.flow.service.FlService;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class AgentServiceImpl extends  BaseServiceImpl<String,Agent> implements AgentService{
+	
+	private static Logger log = Logger.getLogger(AgentServiceImpl.class);
+
+	@Autowired
+	private AgentDao agentDao;
+	
+	@Autowired
+	private AgentFlService agentFlService;
+	
+	@Autowired
+	private AgentPostService agentPostService;
+	
+	@Autowired
+	private FlService flService;
+
+	@Override
+	public int changeStatusByAgentId(String agentId, String status) throws Exception {
+		System.out.println("changeStatusByAgentId()>>> agentId="+agentId);
+		Agent agent = this.getObjectById(agentId);
+		agent.setStatus(status);
+		return update(agent);
+	}
+
+	@Override
+	public void saveAgentAllData(AgentDto agentDto) throws Exception {
+		Agent agent = new Agent();
+		BeanUtils.copyProperties(agentDto, agent);
+		String agentId = agent.getId();
+		//先保存agent信息,再保存两个子表的信息
+		this.save(agent);
+		System.out.println("\n agentController save() agentId="+agent.getId());
+		
+		List<AgentFlDto> flowList = agentDto.getFlowList();
+		List<AgentPostDto> postList = agentDto.getPostList();
+		System.out.println("\n agentController save() flowList.size="+flowList.size());
+		System.out.println("\n agentController save() postList.size="+postList.size());
+		for(AgentFlDto agentFlDto : flowList){
+			AgentFl agentFl = new AgentFl();
+			BeanUtils.copyProperties(agentFlDto, agentFl);
+			agentFl.setId(IDGenerator.getUUID());
+			agentFl.setAgentId(agentId);
+			agentFl.setDelflag(false);
+			agentFlService.save(agentFl);
+			System.out.println("\n agentFlService save() agentId="+agentId+"; agentFl.id="+agentFl.getId());
+		}
+		
+		for(AgentPostDto postDto : postList){
+			AgentPost post = new AgentPost();
+			BeanUtils.copyProperties(postDto, post);
+			post.setId(IDGenerator.getUUID());
+			post.setAgentId(agentId);
+			post.setDelflag(false);
+			agentPostService.save(post);
+			System.out.println("\n agentPostService save() agentId="+agentId+"; post.id="+post.getId());
+		}
+	}
+
+	@Override
+	public int updateAgentAllData(AgentDto agentDto) throws Exception {
+		Agent agent = new Agent();
+		BeanUtils.copyProperties(agentDto, agent);
+		String agentId = agentDto.getId();
+		//先保存agent信息,再删除两个子表的信息，最后保存两个子表的信息
+		int result = this.update(agent);
+		System.out.println("\n updateAgentAllData update() agentId="+agentId);
+		
+		deleteAllPostDateByAgentId(agentId);
+		System.out.println("\n deleteAllPostDateByAgentId  agentId="+agentId);
+		
+		deleteAllFlowDateByAgentId(agentId);
+		System.out.println("\n deleteAllFlowDateByAgentId  agentId="+agentId);
+		List<AgentFlDto> flowList = agentDto.getFlowList();
+		List<AgentPostDto> postList = agentDto.getPostList();
+		
+		for(AgentFlDto agentFlDto : flowList){
+			AgentFl agentFl = new AgentFl();
+			BeanUtils.copyProperties(agentFlDto, agentFl);
+			agentFl.setId(IDGenerator.getUUID());
+			agentFl.setAgentId(agentId);
+			agentFl.setDelflag(false);
+			agentFlService.save(agentFl);
+		}
+		
+		for(AgentPostDto postDto : postList){
+			AgentPost post = new AgentPost();
+			BeanUtils.copyProperties(postDto, post);
+			post.setId(IDGenerator.getUUID());
+			post.setAgentId(agentId);
+			post.setDelflag(false);
+			agentPostService.save(post);
+		}
+		return result;
+	}
+
+	private void deleteAllFlowDateByAgentId(String agentId) throws Exception {
+		agentDao.deleteAllFlowDateByAgentId(agentId);
+		
+	}
+
+	private void deleteAllPostDateByAgentId(String agentId) throws Exception {
+		agentDao.deleteAllPostDateByAgentId(agentId);
+	}
+
+	/*@Override
+	public List<AgentDto> queryAgentInstanceList(Map<String, String> paramMap) throws Exception {
+		return agentDao.queryAgentInstanceList(paramMap);
+	}*/
+	@Override
+	public Page queryAgentInstanceListByPageParam(Map<String, Object> map) throws Exception {
+		Integer start = (Integer) map.get("start");
+		Integer limit = (Integer) map.get("limit");
+	/*	map.remove("start");
+		map.remove("limit");
+		map.put("start", start);
+		map.put("limit", limit);*/
+		List<Map<String,Object>>  list = agentDao.queryAgentInstanceListByParam(map);
+		Integer total = agentDao.queryAgentInstanceCountByParam(map);
+		Page page = new Page();
+		page.setList(list);
+		page.setTotal(total);
+		page.setStart(start);
+		page.setLimit(limit);
+		return page;
+	}
+
+	/**
+	 * 查询指定用户的流程代理
+	 * 当用户的岗位范围、流程范围、代理时间符合时返回用户的代理用户, 不符合时返回NULL
+	 * 
+	 * @param userId：用户ID
+	 * @param postId：岗位ID
+	 * @param flCode：流程定义Code(flId在修改模板是会变化，flCode不会变化)
+	 */
+	@Override
+	public Agent queryAgentBy(String userId, String postId, String flCode) {
+		log.info("流程代理查询开始：userId=" + userId + ", postId=" + postId + ", flCode=" + flCode);
+		//从缓存取值
+		Agent agent = getAgentCache(userId);
+		if(agent != null) {
+			log.info("从缓存中匹配到代理信息！");
+			return agent;
+		}
+		
+		//1、根据用户ID查询代理主表
+		agent = queryAgentBy(userId, new Timestamp(System.currentTimeMillis()));
+		log.info("代理主表查询:" + agent);
+		if(agent == null) {
+			return null;
+		}
+		
+		//2、取得岗位范围并判断指定岗位是否在范围内
+		List<String> agentPosts = queryAgentPosts(agent);
+		log.info("岗位范围查询：scope=" + agentPosts);
+		if(!checkPostScope(agentPosts, postId)) {
+			log.info("岗位范围匹配失败！");
+			return null;
+		}
+		log.info("岗位范围匹配成功！");
+		
+		//3、取得流程范围并判断指定流程是否在范围内
+		List<String> agentFls = queryAgentFls(agent);
+		log.info("流程范围查询：scope=" + agentFls);
+		if(!checkFlScope(agentFls, flCode)) {
+			log.info("流程范围匹配失败！");
+			return null;
+			
+		} else {
+			log.info("流程范围匹配成功！");
+			//设置缓存
+			setAgentCache(userId, agent);
+			
+			return agent;
+		}
+	}
+	
+	private void setAgentCache(String userId, Agent agent) {
+		// TODO zhangdaoqiang 设置流程代理缓存
+		
+	}
+
+	private Agent getAgentCache(String userId) {
+		// TODO zhangdaoqiang 取得流程代理缓存
+		return null;
+	}
+
+	private boolean checkPostScope(List<String> agentPosts, String postId) {
+		if(CollectionUtils.isEmpty(agentPosts)) {
+			return false;
+		} else {
+			for(String agentPost : agentPosts) {
+				if(postId.equals(agentPost)) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+	
+	private boolean checkFlScope(List<String> agentFls, String flCode) {
+		if(CollectionUtils.isEmpty(agentFls)) {
+			return false;
+		} else {
+			for(String agentFl : agentFls) {
+				if(flCode.equals(agentFl)) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	private List<String> queryAgentPosts(Agent agentDto) {
+		List<String> agentPosts = null;
+		//如果是全部岗位则调用岗位查询接口取得此人对应的全部岗位（动态）
+		if("1".equals(agentDto.getPostScope())) {
+			agentPosts = flService.queryPostBy(agentDto.getAuthorizerId());
+
+			//指定岗位
+		} else {
+			agentPosts = agentPostService.queryAgentPostsBy(agentDto.getId());
+		}
+		
+		return agentPosts;
+	}
+	
+	private List<String> queryAgentFls(Agent agentDto) {
+		List<String> agentFls = null;
+		//如果是全部流程则查询此人对应的全部流程模板（动态）
+		if("1".equals(agentDto.getFlowScope())) {
+			agentFls = flService.queryFlByApprover(agentDto.getAuthorizerId());
+			
+			//指定流程
+		} else {
+			agentFls = agentFlService.queryAgentFlsBy(agentDto.getId());
+		}
+		
+		return agentFls;
+	}
+	
+	private Agent queryAgentBy(String userId, Timestamp currentTime) {
+		List<Agent> agents = agentDao.queryAgentBy(userId, currentTime);
+		if(CollectionUtils.isEmpty(agents)) {
+			return null;
+			
+		} else if(agents.size() > 1) {
+			throw new FlowException("用户【" + userId + "】在当前时间【" + currentTime +"】存在多个流程代理配置：" + agents);
+			
+		} else {
+			return agents.get(0);
+		}
+	}
+
+	
+
+}

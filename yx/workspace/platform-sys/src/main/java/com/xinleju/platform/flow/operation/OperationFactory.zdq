@@ -1,0 +1,70 @@
+package com.xinleju.platform.flow.operation;
+
+import com.xinleju.platform.flow.service.InstanceService;
+
+public class OperationFactory {
+
+	public Operation newOperation(String operateType, InstanceService service) {
+		DefaultOperation operation = null;
+		switch (operateType) {
+		case "JS":
+			operation = new AcceptOperation();
+			break;
+		case "TY":
+			operation = new AgreeOperation();
+			break;
+		case "XB":
+			operation = new AssistOperation();
+			break;
+		case "BJS":
+			operation = new NoAcceptOperation();
+			break;
+		case "WYY":
+			operation = new NoObjectionOperation();
+			break;
+		case "HF":
+			operation = new ReplyOperation();
+			break;
+		case "DH":
+			operation = new ReturnOperation();
+			break;
+		case "GTFQR":
+			operation = new TalkToFQROperation();
+			break;
+		case "ZB":
+			operation = new TransferOperation();
+			break;
+		case "START":
+			operation = new StartOperation();
+			break;
+		case "END":
+			operation = new EndOperation();
+			break;
+		case "NULL":
+			operation = new EmptyOperation();
+			break;
+		case "SKIPCURRENT":
+			operation = new SkipCurrentApproverOperation();
+			break;
+		case "FINISHFLOW":
+			operation = new FinishFlowOperation();
+			break;
+		case "RESTART":
+			operation = new RestartOperation();
+			break;
+		case "INVALID":
+			operation = new InvalidOperation();
+			break;
+		case "withdraw_task":
+			operation = new WithdrawTaskOperation();
+			break;
+		case "withdraw_flow":
+			operation = new WithdrawFlowOperation();
+			break;
+		default:
+			break;
+		}
+		operation.setService(service);
+		return operation;
+	}
+}

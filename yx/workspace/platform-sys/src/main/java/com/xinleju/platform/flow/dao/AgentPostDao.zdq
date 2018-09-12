@@ -1,0 +1,24 @@
+package com.xinleju.platform.flow.dao;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.dao.BaseDao;
+import com.xinleju.platform.flow.entity.AgentPost;
+
+/**
+ * @author admin
+ *
+ */
+
+public interface AgentPostDao extends BaseDao<String, AgentPost> {
+
+	List<String> queryAgentPostsBy(String agentId);
+	
+	/**
+	 * 获取代理授权岗位列表
+	 * @param agentId
+	 * @return
+	 */
+	List<Map<String, Object>> queryAgentPostList(Map<String,Object> map);
+}

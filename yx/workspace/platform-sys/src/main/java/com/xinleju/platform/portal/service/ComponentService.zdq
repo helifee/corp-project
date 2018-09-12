@@ -1,0 +1,21 @@
+package com.xinleju.platform.portal.service;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.portal.entity.Component;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface ComponentService extends  BaseService <String,Component>{
+
+	Page getSearchPage(Map map);
+    Component getComponentBySerialNo(Component param);
+    public List<Map<String, Object>> queryAllList();
+}

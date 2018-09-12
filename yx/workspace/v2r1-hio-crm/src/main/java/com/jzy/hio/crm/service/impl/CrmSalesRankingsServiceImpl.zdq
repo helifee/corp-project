@@ -1,0 +1,96 @@
+package com.jzy.hio.crm.service.impl;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.crm.dto.CrmSalesRankingsDto;
+import com.jzy.hio.crm.mapper.CrmSalesRankingsMapper;
+import com.jzy.hio.crm.service.CrmSalesRankingsService;
+import com.jzy.hio.crm.utils.CrmCommonInvokeUtil;
+import com.jzy.hio.crm.utils.DateUtil;
+import com.jzy.hio.entity.CrmSalesRankings;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.sys.role.dto.RoleUserDto;
+
+/**
+ * 销售排行榜
+ * @author 
+ *
+ */
+@Service
+public class CrmSalesRankingsServiceImpl extends BaseServiceImpl<CrmSalesRankings> implements CrmSalesRankingsService {
+
+	private Logger logger = LoggerFactory.getLogger(CrmSalesRankingsServiceImpl.class);
+	@Autowired
+	private CrmSalesRankingsMapper crmSalesRankingsMapper;
+	
+	@Autowired
+    private CrmCommonInvokeUtil crmCommonInvokeUtil;
+	
+	/**
+	 * 查询当前月份排行榜
+	 */
+	@Override
+	public List<CrmSalesRankingsDto> selectRankingsThisMonth() {
+		
+		// 获取当前年月六位数
+		int month = DateUtil.getYearMonth();
+		// 查询当前月排行榜
+		List<CrmSalesRankingsDto> rankingsList = crmSalesRankingsMapper.selectRankingsByMonth(month);
+		
+		// 获取销售id列表
+		List<String> uids = new ArrayList<>();
+		rankingsList.forEach(sales -> {
+			uids.add(sales.getSalesmanId());
+		});
+		
+		// 查询销售名称
+		String tendId = getTendId();
+		Map<String, String> unameMap = crmCommonInvokeUtil.getUserName(tendId, uids);
+		// 设置销售名称
+		rankingsList.forEach(sales -> {
+			if (unameMap.get(sales.getSalesmanId()) == null) {
+				logger.error(sales.getSalesmanId() + "未找到对应的crm人员名称");
+				throw new HioException("销售未找到");
+			}
+			sales.setSalesmanName(unameMap.get(sales.getSalesmanId()));
+		});
+		
+		//把其他crm权限的用户加入排行榜
+		List<RoleUserDto> crmUserList  = crmCommonInvokeUtil.queryCrmUoleUsers();
+		boolean isFind;
+		CrmSalesRankingsDto salesRankingsDto;
+		List<CrmSalesRankingsDto> otherSaleList = new ArrayList<>();
+		int defaultValue = 0;
+		for (RoleUserDto userDto : crmUserList) {
+			isFind = false;
+			for (CrmSalesRankingsDto sale : rankingsList) {
+				if (sale.getSalesmanId().equals(userDto.getUserId())) {
+					isFind = true;
+					break;
+				}
+			}
+			if (!isFind) {
+				salesRankingsDto = new CrmSalesRankingsDto();
+				salesRankingsDto.setSalesmanId(userDto.getUserId());
+				salesRankingsDto.setSalesmanName(userDto.getUserName());
+				salesRankingsDto.setNewOrderCount(defaultValue);
+				salesRankingsDto.setNewCustomerCount(defaultValue);
+				salesRankingsDto.setMonth(month);
+				otherSaleList.add(salesRankingsDto);
+			}
+		}
+		rankingsList.addAll(otherSaleList);
+		
+		return rankingsList;
+	}
+	
+
+}

@@ -1,0 +1,230 @@
+package com.jzy.hio.flow.service.impl;
+
+import java.util.*;
+
+import com.jzy.hio.flow.entity.FlowTemplate;
+import com.jzy.hio.flow.mapper.FlowTemplateDao;
+import com.jzy.hio.utils.JacksonUtils;
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.flow.entity.FlowCustomForm;
+import com.jzy.hio.flow.entity.dto.FormItem;
+import com.jzy.hio.flow.entity.param.FlowFormParam;
+import com.jzy.hio.flow.mapper.FlowCustomFormDao;
+import com.jzy.hio.flow.service.FlowCustomFormService;
+import com.jzy.hio.flow.utils.FlowConstants;
+
+/**
+ * 自定义表单服务类
+ *
+ * @author daoqi
+ *
+ */
+@Service
+public class FlowCustomFormServiceImpl extends BaseServiceImpl<FlowCustomForm> implements FlowCustomFormService {
+
+	@Autowired
+	private FlowCustomFormDao flowCustomFormDao;
+
+	@Autowired
+	private FlowTemplateDao flowTemplateDao;
+
+	/**
+	 * 新增修改自定义表单
+	 *
+	 * @param customForm
+	 */
+	@Override
+	@Transactional(rollbackFor = Exception.class)
+	public String saveCustomForm(FlowCustomForm customForm) {
+
+	    if (isEmpty(customForm)){
+            logger.info("保存表单参数："+JacksonUtils.toJson(customForm));
+        }
+		//检查模板编码
+		String flowTemplateCode = customForm.getFlowTemplateCode();
+		FlowTemplate flowTemplate = flowTemplateDao.getFlowTemplateByCode(flowTemplateCode);
+		if (flowTemplate==null){
+			throw new HioException("模板已被修改，请返回重试！");
+		}
+
+		String formId = customForm.getId();
+		FlowCustomForm flowCustomForm =null;
+		if (StringUtils.isNotBlank(formId)) {
+			flowCustomForm= flowCustomFormDao.selectByPrimaryKey(formId);
+			super.deletePseudoObjectById(formId);
+			logger.info("当前登录用户"+getLoginUser().getUserId()+"表单删除！表单Id"+formId);
+		}
+
+		String newFormId = Base.generatePk(FlowCustomForm.class);
+		customForm.setId(newFormId);
+
+		analyzeFlowProperties(customForm.getPropertyData(), customForm);
+
+		customForm.setCreateDate(new Date());
+		customForm.setCreatePersonName(getUserNameOA());
+		customForm.setCreatePersonId(getUserIdOA());
+		customForm.setUpdateDate(new Date());
+        if (flowCustomForm != null && !flowCustomForm.getFlowTemplateCode().equals(customForm.getFlowTemplateCode())) {
+            throw new HioException("表单出错 请关闭后重试！");
+		}else {
+            flowCustomFormDao.insert(customForm);
+            logger.info("当前登录用户"+getLoginUser().getUserId()+"添加新表单！表单Id"+customForm.getId());
+        }
+		return newFormId;
+	}
+
+	/**
+	 * 从表单全部属性中解析出流程中使用的属性
+	 *
+	 * @param propertyData
+	 * @return
+	 */
+	@SuppressWarnings("unchecked")
+	private void analyzeFlowProperties(String propertyData, FlowCustomForm customForm) {
+		logger.info("解析表单定义中的属性：" + propertyData);
+		Map<String, Object> props = Base.json2map(propertyData);
+		//解析表单类型及回调方法
+		Object extInfoObj = props.get("extInfo");
+		if(extInfoObj == null) {
+			logger.info("自定义表单属性数据结构错误：没有extInfo！");
+			throw new HioException("表单保存失败！");
+		}
+		Map<String, Object> extInfo = (Map<String, Object>)extInfoObj;
+		Object contentTypeObj = extInfo.get("contentType");
+		if(contentTypeObj == null) {
+			logger.info("自定义表单属性数据结构错误：没有contentType！");
+			throw new HioException("表单保存失败！");
+		}
+
+		String contentType = (String) contentTypeObj;
+		List<FormItem> flowProps = new ArrayList<FormItem>();
+		if("standard".equals(contentType)) {
+			customForm.setType(1);
+			//获取表单元素
+			Map<String, Object> wdgInfo = (Map<String, Object>)props.get("wdgInfo");
+			Collection<Object> values = wdgInfo.values();
+			for(Object value : values) {
+				Map<String, Object> map = (Map<String, Object>) value;
+				Object isFlow = map.get("isFlowVar");
+				if(isFlow == null) {
+					continue;
+				}
+				boolean isFlowVar = (boolean) isFlow;
+				if(isFlowVar) {
+					FormItem prop = new FormItem();
+					prop.setCode((String) map.get("wdgId"));
+					prop.setName((String) map.get("label"));
+					prop.setValueType((String) map.get("valueType"));
+					flowProps.add(prop);
+				}
+			}
+
+		} else if("embedded".equals(contentType)) {
+			customForm.setType(0);
+			Object callBackObj = props.get("callback");
+			if(callBackObj != null) {
+				Map<String, Object> callback = (Map<String, Object>)callBackObj;
+				Object dataSaveUrlObj = callback.get("dataSaveUrl");
+				Object dataDeleteUrlObj = callback.get("dataDeleteUrl");
+				Object dataStatusUrlObj = callback.get("dataStatusUrl");
+				if(dataSaveUrlObj == null || dataDeleteUrlObj == null || dataStatusUrlObj == null) {
+					logger.info("自定义表单中第三方表单的回凋函数为空！dataSaveUrl="
+							+ dataSaveUrlObj + ", dataDeleteUrl=" + dataDeleteUrlObj +  ", dataStatusUrl=" + dataStatusUrlObj);
+					throw new HioException("表单保存失败！");
+				}
+				String dataSaveUrl = (String) dataSaveUrlObj;
+				String dataDeleteUrl = (String) dataDeleteUrlObj;
+				String dataStatusUrl = (String) dataStatusUrlObj;
+				customForm.setDataSaveUrl(dataSaveUrl);
+				customForm.setDataDeleteUrl(dataDeleteUrl);
+				customForm.setDataStatusUrl(dataStatusUrl);
+				Object keyParamObj = extInfo.get("keyParam");
+				logger.info("keyParam = " + keyParamObj);
+				if(keyParamObj != null) {
+					String callBackParam = (String) keyParamObj;
+					customForm.setCallBackParam(callBackParam);
+				}
+			}
+
+			//
+			List<Map<String, Object>> flowVar = (List<Map<String, Object>>) extInfo.get("flowVar");
+			for(Map<String, Object> var : flowVar) {
+				boolean isFlowVar = (boolean) var.get("isFlowVar");
+				if(isFlowVar) {
+					FormItem item = new FormItem();
+					item.setCode((String)var.get("code"));
+					item.setName((String)var.get("name"));
+					item.setValueType((String)var.get("valueType"));
+					flowProps.add(item);
+				}
+			}
+		}
+
+		String flowProperties = Base.obj2json(flowProps);
+		customForm.setFlowProperties(flowProperties);
+	}
+
+	/**
+	 * 根据流程模板编码查询自定义表单
+	 */
+	@Override
+	public FlowCustomForm getCustomFormByTemplateCode(String flowTemplateCode) {
+		List<FlowCustomForm> customForms = flowCustomFormDao.getCustomFormByTemplateCode(flowTemplateCode);
+		if(CollectionUtils.isEmpty(customForms)) {
+			logger.info("模板编码【" + flowTemplateCode + "】没有对应的自定义表单！");
+//			throw new HioException("请配置自定义表单!");
+			return null;
+		}
+		if(customForms.size() > 1) {
+			logger.info("模板编码【" + flowTemplateCode + "】对应多个自定义表单！");
+			throw new HioException("自定义表单出错!");
+		}
+		return customForms.get(0);
+	}
+
+	/**
+	 * 查询指定自定义表单中的流程属性
+	 *
+	 * @param flowTemplateCode
+	 * @return
+	 */
+	@Override
+	public List<FormItem> queryFlowPropertiesBy(String flowTemplateCode) {
+		String flowProperties = flowCustomFormDao.queryFlowPropertiesBy(flowTemplateCode);
+		List<FormItem> list = Base.json2list(flowProperties, FormItem.class);
+		return list;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public boolean isUserDefined(String customFormId) {
+		FlowCustomForm customForm = flowCustomFormDao.selectByPrimaryKey(customFormId);
+		if(customForm.getType() == 1) {
+			return true;
+		}
+		return false;
+	}
+
+	@Override
+	public Object getExpression(FlowFormParam FlowFormParam) {
+        List<FlowCustomForm> list = flowCustomFormDao.getExpression(FlowFormParam);
+        boolean flag=false;
+        if (list==null || list.size() > 0) {
+            throw new HioException("该变量正在模板中被使用！ ");
+        }else {
+            flag=true;
+        }
+		return flag;
+	}
+
+}

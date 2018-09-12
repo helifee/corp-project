@@ -1,0 +1,213 @@
+package com.jzy.hio.platform.userinfo.service.impl;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.amqp.core.AmqpTemplate;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.RedisKeyConstant;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.config.QueueConfig;
+import com.jzy.hio.entity.ImFriendAlias;
+import com.jzy.hio.entity.StarInfo;
+import com.jzy.hio.entity.UserInfo;
+import com.jzy.hio.platform.constant.DelflagEnum;
+import com.jzy.hio.platform.constant.MqCodeConstant;
+import com.jzy.hio.platform.constant.UserOrFriendConstant;
+import com.jzy.hio.platform.userinfo.mapper.StarInfoMapper;
+import com.jzy.hio.platform.userinfo.mode.StarInfoModel;
+import com.jzy.hio.platform.userinfo.param.StarSetParam;
+import com.jzy.hio.platform.userinfo.service.ImFriendAliasService;
+import com.jzy.hio.platform.userinfo.service.StarInfoService;
+import com.jzy.hio.platform.userinfo.service.UserInfoService;
+import com.jzy.hio.platform.utils.CommonUtils;
+import com.jzy.hio.redis.JedisUtil;
+
+@Service
+public class StarInfoServiceImpl extends BaseServiceImpl<StarInfo> implements StarInfoService {
+
+	@Autowired
+	private StarInfoMapper starInfoMapper;
+	@Autowired
+    private QueueConfig queueConfig;
+	@Autowired
+	private ImFriendAliasService imFriendAliasService;
+	@Autowired
+	private UserInfoService userInfoService;
+	@Autowired
+    private AmqpTemplate rabbitTemplate;
+	
+	/**
+	 * 查询用户的特别关注列表
+	 */
+	@Override
+	public List<StarInfoModel> getStartList(String uid) {
+		String key = RedisKeyConstant.starList;
+		
+		// 先去redis取，取不到就查库
+		List<StarInfoModel> starList = JedisUtil.hgetArray(key, uid, StarInfoModel.class);
+		if (starList == null) {
+			starList = starInfoMapper.getStartList(uid);
+			for(StarInfoModel model : starList) {
+				UserInfo user = JedisUtil.hgetObject(UserOrFriendConstant.IM_USER_INFO,model.getFid(),UserInfo.class);
+				if(isNotEmpty(user)) {
+					model.setImgUrl(user.getResourceImgUrl());
+					model.setSex(user.getSex());
+				}
+				ImFriendAlias alias = JedisUtil.hgetObject(CommonUtils.getTableName(ImFriendAlias.class),uid + "_" + model.getFid(),ImFriendAlias.class);
+				if(isNotEmpty(alias)) {
+					model.setAliasName(alias.getAliasName());
+					model.setAliasNameFull(alias.getAliasNameFull());
+					model.setAliasNameSimple(alias.getAliasNameSimple());
+				}
+			}
+			// 将查询结果放到缓存
+			JedisUtil.hsetObject(key, uid, starList);
+		}
+		
+		return starList;
+	}
+
+	/**
+	 * 特别关注开关
+	 */
+	@Override
+	public boolean updateStarStatus(StarSetParam starSetParam) {
+		String uid = starSetParam.getUid();
+		String fid = starSetParam.getFid();
+		List<StarInfoModel> starList = getStartList(uid);
+		StarInfoModel findStarInfo = null;
+		if (starList != null) {
+			for (StarInfoModel starInfoModel : starList) {
+				if (starInfoModel.getFid().equals(fid)) {
+					findStarInfo = starInfoModel;
+					break;
+				}
+			}
+			// 本来就没有在特别关注列表里,而且是做取消特别关注，就直接不做处理，原来就在关注列表了，又做关注操作，同样也不做处理
+			if ((findStarInfo == null && !starSetParam.getOnOff()) || (findStarInfo != null && starSetParam.getOnOff())) {
+				return true;
+			}
+			
+		} else {
+			starList = new ArrayList<>();
+		}
+		
+		StarInfo info = new StarInfo();
+		info.setUid(uid);
+		info.setFid(fid);
+		info.setCreatePersonId(uid);
+		info.setCreatePersonName(uid);
+		info.setUpdatePersonId(uid);
+		info.setUpdatePersonName(uid);
+		info.setUpdateDate(new Date());
+		String key = RedisKeyConstant.starList;
+		String tableName = CommonUtils.getTableName(info);
+		// 没找到， 关注就新增
+		if (findStarInfo == null && starSetParam.getOnOff()) {
+			
+			findStarInfo = new StarInfoModel();
+			// 查询关注人信息
+			UserInfo userInfo = userInfoService.findById(fid);
+			if (userInfo == null) {
+				return false;
+			}
+			// 查询备注名
+			ImFriendAlias alias = imFriendAliasService.findByUIdFid(uid, fid);
+			if (alias != null) {
+				findStarInfo.setAliasName(alias.getAliasName());
+				findStarInfo.setAliasNameFull(alias.getAliasNameFull());
+				findStarInfo.setAliasNameSimple(alias.getAliasNameSimple());
+			} else {
+				findStarInfo.setAliasName(userInfo.getName());
+				findStarInfo.setAliasNameFull(userInfo.getNameFull());
+				findStarInfo.setAliasNameSimple(userInfo.getNameSimple());
+			}
+			findStarInfo.setSex(userInfo.getSex());
+			findStarInfo.setImgUrl(userInfo.getResourceImgUrl());
+			findStarInfo.setFid(fid);
+			starList.add(findStarInfo);
+			JedisUtil.hsetObject(key, uid, starList);
+			
+			String id = CommonUtils.getTablePKId(tableName);
+			info.setId(id);
+			info.setDelflag(DelflagEnum.FALSE.getValue());
+			Date date = new Date();
+			info.setCreateDate(date);
+			info.setUpdateDate(date);
+			
+			JedisUtil.hsetObject(tableName, uid + "_" + fid, info);
+			
+			Map<String,Object> map = obj2map(info);
+			map.put("code", MqCodeConstant.RESERVE_4);
+			rabbitTemplate.convertAndSend(queueConfig.getImStarInfoQueue(), map);
+		} else {
+			// findStarInfo != null && !starSetParam.getOnOff() 找到了，取消就直接删除
+			starList.remove(findStarInfo);
+			JedisUtil.hsetObject(key, uid, starList);
+			JedisUtil.hdel(tableName, uid + "_" + fid);
+			
+			Map<String,Object> map = obj2map(info);
+			map.put("code", MqCodeConstant.DELETE);
+			rabbitTemplate.convertAndSend(queueConfig.getImStarInfoQueue(), map);
+		}
+		
+		String fFriendJson = JedisUtil.fetchRow(RedisKeyConstant.myfriendPrefix + uid, fid);
+		if (fFriendJson != null) {
+			Map<String,Object> fFriendMap = Base.json2map(fFriendJson);
+			fFriendMap.put("starFlag", starSetParam.getOnOff()?1:0);
+			fFriendMap.put("id", fFriendMap.get("fid"));
+			JedisUtil.addListRow(RedisKeyConstant.myfriendPrefix + uid, fFriendMap);
+		}
+		
+		return true;
+	}
+
+	/**
+	 * 先删除后新增
+	 */
+	@Override
+	public int deleteAndSaveStar(StarInfo starInfo) {
+		starInfoMapper.deleteByUidFid(starInfo);
+		return this.save(starInfo);
+	}
+
+	/**
+	 * 根据uid和fid删除
+	 */
+	@Override
+	public int deleteByUidFid(StarInfo starInfo) {
+		return starInfoMapper.deleteByUidFid(starInfo);
+	}
+
+	/**
+	 * 更新特别关注缓存信息
+	 */
+	@Override
+	public void cacheEdit(String uid, StarInfoModel starInfoModel) {
+		String key = RedisKeyConstant.starList;
+		List<StarInfoModel> starList = JedisUtil.hgetArray(key,uid, StarInfoModel.class);
+		if (starList != null) {
+			for (StarInfoModel info : starList) {
+				if (info.getFid().equals(starInfoModel.getFid())) {
+					if (starInfoModel.getAliasName() != null) {
+						info.setAliasName(starInfoModel.getAliasName());
+						info.setAliasNameFull(starInfoModel.getAliasNameFull());
+						info.setAliasNameSimple(starInfoModel.getAliasNameSimple());
+					}
+					if (starInfoModel.getImgUrl() != null) {
+						info.setImgUrl(starInfoModel.getImgUrl());
+					}
+					break;
+				}
+			}
+			JedisUtil.hsetObject(key, uid, starList);
+		}
+	}
+
+}

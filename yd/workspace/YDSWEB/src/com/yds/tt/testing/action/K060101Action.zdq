@@ -1,0 +1,527 @@
+/*
+ * @(#) K060101Action.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 教育考试培训系统
+ *    SubSystem: 考试子系统
+ */
+package com.yds.tt.testing.action;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.List;
+
+import net.sf.json.JSONObject;
+
+import org.springframework.beans.factory.config.BeanDefinition;
+import org.springframework.context.annotation.Scope;
+import org.springframework.stereotype.Controller;
+
+import com.opensymphony.xwork2.interceptor.annotations.InputConfig;
+import com.yds.base.action.AbstractBaseAction;
+import com.yds.common.service.SessionConstants;
+import com.yds.tt.manager.service.TtCommonService;
+import com.yds.tt.manager.service.TtConstants;
+//import com.yds.tt.manager.service.TtExclusiveException;
+import com.yds.tt.manager.service.TtExclusiveExtException;
+import com.yds.tt.testing.bean.K060101ValuateSingleInfo;
+import com.yds.tt.testing.bean.PaperBigQuestionInfo;
+import com.yds.tt.testing.bean.TestEmployeeAnswerInfo;
+import com.yds.tt.testing.service.K060101Service;
+import com.yds.util.service.Session;
+
+/**
+ * 考试阅卷(单题)处理.
+ * 
+ * @author lijinling
+ * @version 1.00 2010/04/22
+ */
+@Scope(BeanDefinition.SCOPE_PROTOTYPE)
+@Controller("k060101Action")
+public class K060101Action extends AbstractBaseAction {
+
+	private static final long serialVersionUID = 2125703629034363442L;
+
+	private K060101Service k060101Service;
+
+	private TtCommonService ttCommonService;
+
+	private String errorMessage; // 错误消息
+
+	private String markMode; // 评分方式
+
+	private List<String> markTaskList; // 考试评分任务列表
+
+	private String examId; // 考试ID
+
+	private String valuateSingleInfo; // 画面待评试卷试题相关信息JSON串
+
+	private String bigquestionNum; // 待评所有大题数
+
+	private TestEmployeeAnswerInfo testEmployeeAnswerInfo; // 考试员工答案信息
+
+	private Integer questionJumpFlag; // 试题跳转标志
+
+	private Boolean isSkipMarked; // 是否跳过已评试题
+
+	private Integer questionOrder; // 试题跳转题号
+
+	/**
+	 * 初期化校验
+	 */
+	public void validateExecute() {
+
+		// 参数检查
+		if (markMode == null || markTaskList == null || examId == null) {
+			errorMessage = propMgr.getMessage("yds.com.warning.0001", "接口参数");
+			addFieldError("", "");
+		}
+	}
+
+	/**
+	 * 评分初期处理
+	 */
+	@Override
+	@InputConfig(resultName = "error")
+	public String execute() {
+		// 对象个别权限检查
+		if (!k060101Service.checkPerm(markTaskList, examId, markMode)) {
+			errorMessage = propMgr.getMessage("yds.tt.error.GTE02");
+			return ERROR;
+		}
+		Session.set(SessionConstants.TT_K060101_MARK_MODE, markMode);
+		Session.set(SessionConstants.TT_K060101_EXAM_ID, examId);
+		Session.set(SessionConstants.TT_K060101_MARK_LIST, markTaskList);
+		return SUCCESS;
+	}
+
+	/**
+	 * 画面初期表示
+	 */
+	@SuppressWarnings("unchecked")
+	public String markInitProcess() {
+		markTaskList = (List<String>) Session
+				.get(SessionConstants.TT_K060101_MARK_LIST);
+		examId = (String) Session.get(SessionConstants.TT_K060101_EXAM_ID);
+		// 画面排他限制检查
+		try {
+			for (String item : markTaskList) {
+				// 锁定当前评分任务信息
+				ttCommonService.addLock(examId, item);
+			}
+
+//		} catch (TtExclusiveException e) {
+//			// 出现单键锁冲突意味着有人在进行评分任务分配
+//			String userName = e.getMessage();
+//			errorMessage = propMgr.getMessage("yds.tt.error.KSE67", userName);
+//			putOpTip(errorMessage);
+//			return INPUT;
+		} catch (TtExclusiveExtException e) {
+
+			// 出现双键锁冲突说明有人在进行评分
+			String userName = e.getMessage();
+			errorMessage = propMgr.getMessage("yds.tt.error.KSE68", userName);
+			putOpTip(errorMessage);
+			return INPUT;
+		}
+
+		return SUCCESS;
+	}
+
+	/**
+	 * 取得待评试卷试题信息
+	 * 
+	 * @return
+	 */
+	public String gainValuateSingle() {
+
+		// 取得待评试卷试题信息
+		K060101ValuateSingleInfo k060101ValuateSingleInfo = k060101Service
+				.getValuateSingleInfo();
+		// 生成JSON对象
+		JSONObject json = JSONObject.fromObject(k060101ValuateSingleInfo);
+		// 将待评分试题信息转换为JSON串
+		valuateSingleInfo = json.toString();
+		return SUCCESS;
+	}
+
+	/**
+	 * 取得所有待评大题数量
+	 * 
+	 * @return String
+	 */
+	@SuppressWarnings("unchecked")
+	public String gainBigquestionNumInfo() {
+		// 取得待评大题列表
+		List<PaperBigQuestionInfo> paperBigQuestionInfo = (ArrayList<PaperBigQuestionInfo>) Session
+				.get(SessionConstants.TT_K060101_BIGQUESTION_LIST);
+
+		bigquestionNum = Integer.toString(paperBigQuestionInfo.size());
+
+		return SUCCESS;
+	}
+
+	/**
+	 * 更新排他锁
+	 * 
+	 * @return
+	 */
+	@SuppressWarnings("unchecked")
+	public String updateLock() {
+		// 画面迁移至考试评分详细
+		examId = (String) Session.get(SessionConstants.TT_K060101_EXAM_ID);
+
+		// 取得评分任务列表
+		markTaskList = (ArrayList<String>) Session
+				.get(SessionConstants.TT_K060101_MARK_LIST);
+		// 更新锁时间
+		for (String item : markTaskList) {
+
+			ttCommonService.updateLock(examId, item);
+		}
+		return SUCCESS;
+	}
+
+	/**
+	 * 待评试卷试题迁移
+	 * 
+	 * @return
+	 */
+	public String questionMove() {
+
+		K060101ValuateSingleInfo k060101ValuateSingleInfo = null;
+		switch (questionJumpFlag) {
+		case K060101Service.PREBIGQUESTION:
+			k060101ValuateSingleInfo = k060101Service
+					.getPreBigquestion(isSkipMarked);
+			break;
+		case K060101Service.PREQUESTION:
+			k060101ValuateSingleInfo = k060101Service
+					.getPreExamquestion(isSkipMarked);
+			break;
+		case K060101Service.NEXTQUESTION:
+			k060101ValuateSingleInfo = k060101Service
+					.getNextExamquestion(isSkipMarked);
+			break;
+		case K060101Service.NEXTBIGQUESTION:
+			k060101ValuateSingleInfo = k060101Service
+					.getNextBigquestion(isSkipMarked);
+			break;
+		default:
+			break;
+		}
+		if (null == k060101ValuateSingleInfo) {
+			return ERROR;
+		}
+		// 生成JSON对象
+		JSONObject json = JSONObject.fromObject(k060101ValuateSingleInfo);
+		// 将待评试题信息转化为JSON串
+		valuateSingleInfo = json.toString();
+		return SUCCESS;
+	}
+
+	/**
+	 * 待评试题跳转
+	 * 
+	 * @return
+	 */
+	@SuppressWarnings("unchecked")
+	public String questionJump() {
+		markMode = (String) Session.get(SessionConstants.TT_K060101_MARK_MODE);
+		examId = (String) Session.get(SessionConstants.TT_K060101_EXAM_ID);
+		markTaskList = (List<String>) Session
+				.get(SessionConstants.TT_K060101_MARK_LIST);
+		// 对象个别权限检查
+		if (!k060101Service.checkPerm(markTaskList, examId, markMode)) {
+			errorMessage = propMgr.getMessage("yds.tt.error.GTE02");
+			return ERROR;
+		}
+		// 取得待评试题信息
+		K060101ValuateSingleInfo k060101ValuateSingleInfo = k060101Service
+				.getJumpQuestion(questionOrder);
+		// 生成JSON对象
+		JSONObject json = JSONObject.fromObject(k060101ValuateSingleInfo);
+		// 将待评试题信息转化为JSON串
+		valuateSingleInfo = json.toString();
+		return SUCCESS;
+	}
+
+	/**
+	 * 重评
+	 * 
+	 * @return
+	 */
+	@SuppressWarnings("unchecked")
+	public String reValuate() {
+		markMode = (String) Session.get(SessionConstants.TT_K060101_MARK_MODE);
+		examId = (String) Session.get(SessionConstants.TT_K060101_EXAM_ID);
+		markTaskList = (List<String>) Session
+				.get(SessionConstants.TT_K060101_MARK_LIST);
+		// 对象个别权限检查
+		if (!k060101Service.checkPerm(markTaskList, examId, markMode)) {
+			errorMessage = propMgr.getMessage("yds.tt.error.GTE02");
+			return ERROR;
+		}
+		// 重置考试得分
+		k060101Service
+				.updateResetTestEmployeeAnswerInfo(testEmployeeAnswerInfo);
+		return SUCCESS;
+	}
+
+	/**
+	 * 评分
+	 */
+	@SuppressWarnings("unchecked")
+	public String mark() {
+		markMode = (String) Session.get(SessionConstants.TT_K060101_MARK_MODE);
+		examId = (String) Session.get(SessionConstants.TT_K060101_EXAM_ID);
+		markTaskList = (List<String>) Session
+				.get(SessionConstants.TT_K060101_MARK_LIST);
+		// 对象个别权限检查
+		if (!k060101Service.checkPerm(markTaskList, examId, markMode)) {
+			errorMessage = propMgr.getMessage("yds.tt.error.GTE02");
+			return ERROR;
+		}
+		// 更新考生得分
+		k060101Service.updateTestEmployeeAnswerInfo(testEmployeeAnswerInfo);
+
+		return SUCCESS;
+	}
+
+	/**
+	 * 下载答案文件
+	 * 
+	 * @return
+	 */
+	@SuppressWarnings("unchecked")
+	public String downloadAnswerFile() {
+		markMode = (String) Session.get(SessionConstants.TT_K060101_MARK_MODE);
+		examId = (String) Session.get(SessionConstants.TT_K060101_EXAM_ID);
+		markTaskList = (List<String>) Session
+				.get(SessionConstants.TT_K060101_MARK_LIST);
+		// 对象个别权限检查
+		if (!k060101Service.checkPerm(markTaskList, examId, markMode)) {
+			errorMessage = propMgr.getMessage("yds.tt.error.GTE02");
+			return ERROR;
+		}
+		return SUCCESS;
+	}
+
+	/**
+	 * 获取文件流
+	 * 
+	 * @return 文件流
+	 * @throws Exception
+	 */
+	public InputStream getTargetFile() throws Exception {
+
+		// 文件名
+		String fileName = testEmployeeAnswerInfo.getAnswerContent();
+
+		// 文件所在路径
+		String path = propMgr
+				.getParameter(TtConstants.FILE_PATH.QUESTION_USERANSWER.value());
+		File downloadFile = new File(path, fileName);
+
+		return new FileInputStream(downloadFile);
+	}
+
+	/**
+	 * 结束评分
+	 * 
+	 * @return
+	 */
+	@SuppressWarnings("unchecked")
+	public String endValuate() {
+
+		examId = (String) Session.get(SessionConstants.TT_K060101_EXAM_ID);
+		// 取得评分任务列表
+		markTaskList = (ArrayList<String>) Session
+				.get(SessionConstants.TT_K060101_MARK_LIST);
+		// 解锁数据
+		for (String item : markTaskList) {
+			// 解锁当前评分任务信息
+			ttCommonService.removeLock(examId, item);
+		}
+
+		// 清除Session中的内容
+		Session.delete(SessionConstants.TT_K060101_EXAM_ID);
+		Session.delete(SessionConstants.TT_K060101_MARK_MODE);
+		Session.delete(SessionConstants.TT_K060101_PAGEINFO);
+		Session.delete(SessionConstants.TT_K060101_MARK_LIST);
+		Session.delete(SessionConstants.TT_K060101_EMP_LIST);
+		Session.delete(SessionConstants.TT_K060101_BIGQUESTION_LIST);
+		// 画面迁移至考试评分详细
+		return SUCCESS;
+	}
+
+	/**
+	 * @param service
+	 *            the k060101Service to set
+	 */
+	public void setK060101Service(K060101Service service) {
+		k060101Service = service;
+	}
+
+	/**
+	 * @param ttCommonService
+	 *            the ttCommonService to set
+	 */
+	public void setTtCommonService(TtCommonService ttCommonService) {
+		this.ttCommonService = ttCommonService;
+	}
+
+	/**
+	 * @return the errorMessage
+	 */
+	public String getErrorMessage() {
+		return errorMessage;
+	}
+
+	/**
+	 * @param errorMessage
+	 *            the errorMessage to set
+	 */
+	public void setErrorMessage(String errorMessage) {
+		this.errorMessage = errorMessage;
+	}
+
+	/**
+	 * @return the markMode
+	 */
+	public String getMarkMode() {
+		return markMode;
+	}
+
+	/**
+	 * @param markMode
+	 *            the markMode to set
+	 */
+	public void setMarkMode(String markMode) {
+		this.markMode = markMode;
+	}
+
+	/**
+	 * @return the markTaskList
+	 */
+	public List<String> getMarkTaskList() {
+		return markTaskList;
+	}
+
+	/**
+	 * @param markTaskList
+	 *            the markTaskList to set
+	 */
+	public void setMarkTaskList(List<String> markTaskList) {
+		this.markTaskList = markTaskList;
+	}
+
+	/**
+	 * @return the examId
+	 */
+	public String getExamId() {
+		return examId;
+	}
+
+	/**
+	 * @param examId
+	 *            the examId to set
+	 */
+	public void setExamId(String examId) {
+		this.examId = examId;
+	}
+
+	/**
+	 * @return the valuateSingleInfo
+	 */
+	public String getValuateSingleInfo() {
+		return valuateSingleInfo;
+	}
+
+	/**
+	 * @param valuateSingleInfo
+	 *            the valuateSingleInfo to set
+	 */
+	public void setValuateSingleInfo(String valuateSingleInfo) {
+		this.valuateSingleInfo = valuateSingleInfo;
+	}
+
+	/**
+	 * @return the bigquestionNum
+	 */
+	public String getBigquestionNum() {
+		return bigquestionNum;
+	}
+
+	/**
+	 * @param bigquestionNum
+	 *            the bigquestionNum to set
+	 */
+	public void setBigquestionNum(String bigquestionNum) {
+		this.bigquestionNum = bigquestionNum;
+	}
+
+	/**
+	 * @return the testEmployeeAnswerInfo
+	 */
+	public TestEmployeeAnswerInfo getTestEmployeeAnswerInfo() {
+		return testEmployeeAnswerInfo;
+	}
+
+	/**
+	 * @param testEmployeeAnswerInfo
+	 *            the testEmployeeAnswerInfo to set
+	 */
+	public void setTestEmployeeAnswerInfo(
+			TestEmployeeAnswerInfo testEmployeeAnswerInfo) {
+		this.testEmployeeAnswerInfo = testEmployeeAnswerInfo;
+	}
+
+	/**
+	 * @return the questionJumpFlag
+	 */
+	public Integer getQuestionJumpFlag() {
+		return questionJumpFlag;
+	}
+
+	/**
+	 * @param questionJumpFlag
+	 *            the questionJumpFlag to set
+	 */
+	public void setQuestionJumpFlag(Integer questionJumpFlag) {
+		this.questionJumpFlag = questionJumpFlag;
+	}
+
+	/**
+	 * @return the isSkipMarked
+	 */
+	public Boolean getIsSkipMarked() {
+		return isSkipMarked;
+	}
+
+	/**
+	 * @param isSkipMarked
+	 *            the isSkipMarked to set
+	 */
+	public void setIsSkipMarked(Boolean isSkipMarked) {
+		this.isSkipMarked = isSkipMarked;
+	}
+
+	/**
+	 * @return the questionOrder
+	 */
+	public Integer getQuestionOrder() {
+		return questionOrder;
+	}
+
+	/**
+	 * @param questionOrder
+	 *            the questionOrder to set
+	 */
+	public void setQuestionOrder(Integer questionOrder) {
+		this.questionOrder = questionOrder;
+	}
+
+}

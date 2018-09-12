@@ -1,0 +1,21 @@
+package com.xinleju.platform.flow.dao;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.dao.BaseDao;
+import com.xinleju.platform.flow.dto.AgentFlDto;
+import com.xinleju.platform.flow.entity.AgentFl;
+
+/**
+ * @author admin
+ *
+ */
+
+public interface AgentFlDao extends BaseDao<String, AgentFl> {
+
+	List<AgentFlDto> queryAgentFlowList(Map<String, String> paramMap);
+
+	List<String> queryAgentFlsBy(String agentId);
+	
+}

@@ -1,0 +1,222 @@
+/*
+ * @(#)BeanToCSV.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 共通系统
+ */
+package com.yds.util.service;
+
+import static java.lang.reflect.Modifier.isStatic;
+
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileFilter;
+import java.io.FileWriter;
+import java.lang.reflect.AccessibleObject;
+import java.lang.reflect.Field;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+/**
+ * 把工程下的所有Bean的信息打印到指定的CSV文件中<br>
+ * 
+ * @author tianjian
+ * 
+ */
+public class BeanToCSV {
+	protected static final Log logger = LogFactory.getLog(BeanToCSV.class);
+	// 常量定义
+	private String beanPakage = "bean";
+
+	public String getBeanPakage() {
+		return beanPakage;
+	}
+
+	public void setBeanPakage(String beanPakage) {
+		this.beanPakage = beanPakage;
+	}
+
+	// 文件过滤器，得到.class文件
+	private final static FileFilter fileFilter = new FileFilter() {
+		public boolean accept(File pathname) {
+			String tmp = pathname.getName();
+			if (tmp.endsWith(".class")) {
+				return true;
+			}
+			return false;
+		}
+	};
+
+	/**
+	 * 递归得到包名下的所有Class文件
+	 * 
+	 * @param beanMap
+	 *            含有包路径和包下的Class文件的Map
+	 * @param folder
+	 *            上一级文件夹
+	 * @param beanPakage
+	 *            上一级包路径
+	 * @return Map
+	 */
+	private Map<String, File[]> getBeanFolder(Map<String, File[]> beanMap,
+			File folder, String beanPakage) {
+		// 判断是不是文件夹,如果不是文件夹直接返回参数beanMap
+		if (!folder.isDirectory()) {
+			return beanMap;
+		}
+		File[] fList = folder.listFiles();
+		for (int i = 0; i < fList.length; i++) {
+			// 如果下一级目录的文件对象是文件夹
+			if (fList[i].isDirectory()) {
+				String nowPakage = beanPakage + fList[i].getName() + ".";
+				// 判断是不是bean文件夹
+				if (getBeanPakage().equals(fList[i].getName())) {
+					beanMap.put(nowPakage, fList[i].listFiles(fileFilter));
+				} else {
+					beanMap = getBeanFolder(beanMap, fList[i], nowPakage);
+				}
+			}
+		}
+		return beanMap;
+	}
+
+	/**
+	 * 得到Bean的属性名字或属性类型的List
+	 * 
+	 * @param beanName
+	 *            Bean的路径
+	 * @param mode
+	 *            Bean的属性：1 表示取得名称， 2 表示取得属性类型
+	 * @return List
+	 */
+	private List<String> getPropertyInfoList(String beanName, int mode)
+			throws Exception {
+		List<String> propertyList = new ArrayList<String>();
+		Class<?> clazz = Class.forName(beanName);
+		Field[] fields = clazz.getDeclaredFields();
+		AccessibleObject.setAccessible(fields, true);
+		for (Field field : fields) {
+			if (!isStatic(field.getModifiers())) {
+				if (1 == mode) {
+					propertyList.add(field.getName());
+				} else if (2 == mode) {
+					Type returnType = field.getGenericType();
+					// 如果是List<bean>
+					if (returnType instanceof ParameterizedType) {
+						ParameterizedType pt = (ParameterizedType) returnType;
+						propertyList
+								.add(((Class<?>) pt.getRawType()).getName());
+					} else {
+						// 如果是一般Java属性
+						propertyList.add(((Class<?>) field.getGenericType())
+								.getName());
+					}
+				}
+			}
+		}
+		return propertyList;
+	}
+
+	/**
+	 * 得到所有Bean的全路径名
+	 * 
+	 * @param path
+	 *            当前所有Class所在文件夹的路径
+	 * @return String[]
+	 */
+	private String[] getBeanNames(String path) throws Exception {
+		String beanPakage = "";
+		// class目录的对象
+		File file = new File(path);
+		// key为包路径，value为包下所有class文件对象的Map
+		Map<String, File[]> beanMap = new HashMap<String, File[]>();
+		beanMap = getBeanFolder(beanMap, file, beanPakage);
+		// 存放Bean类全路径名的List
+		List<String> beanNameList = new ArrayList<String>();
+		// 如果没有需要的文件夹
+		if (beanMap.isEmpty()) {
+			return new String[0];
+		}
+		for (Map.Entry<String, File[]> entry : beanMap.entrySet()) {
+			File[] files = (File[]) entry.getValue();
+			if (files.length > 0) {
+				for (File bean : (File[]) entry.getValue()) {
+					String beanName = entry.getKey()
+							+ bean.getName().replace(".class", "");
+					beanNameList.add(beanName);
+				}
+			}
+		}
+
+		return beanNameList.toArray(new String[1]);
+	}
+
+	/**
+	 * 得到Bean的类名
+	 * 
+	 * @param bean
+	 *            当前所有Class所在文件夹的路径
+	 * @return String[]
+	 */
+	private String getSimpleBeanName(String bean) throws Exception {
+		return Class.forName(bean).getSimpleName();
+	}
+
+	public void printBeanToCsv(String path, BufferedWriter bw) throws Exception {
+		String[] beanNames = getBeanNames(path);
+		for (String beanName : beanNames) {
+			List<String> propertyNMList = getPropertyInfoList(beanName, 1);
+			List<String> propertyTypeList = getPropertyInfoList(beanName, 2);
+			// 输出Bean属性的类型
+			bw.write(beanName + ",");
+			for (String type : propertyTypeList) {
+				bw.write(type + ",");
+			}
+			bw.write("\r\n");
+			// 输出Bean属性名
+			bw.write(getSimpleBeanName(beanName) + ",");
+			for (String name : propertyNMList) {
+				bw.write(name + ",");
+			}
+			bw.write("\r\n");
+			bw.write("\r\n");
+		}
+	}
+
+	/**
+	 * @param args
+	 * 			args[0]class文件根目录
+	 * 			args[1]CSV生成路径
+	 */
+	public static void main(String[] args) throws Exception {
+		if(args.length < 2){
+			logger.info("class文件根目录没有提供或CSV生成路径没有提供。");
+			return;
+		}
+		BufferedWriter bw = null;
+		try {
+			BeanToCSV beanToCSV = new BeanToCSV();
+		//	String path = "D:\\eclipse\\workspace\\YDSWEB\\WebRoot\\WEB-INF\\classes";
+		//	String pakage = "training";
+			// String csvPath = "C:\\bean.csv";
+			bw = new BufferedWriter(new FileWriter(args[1]));
+		//	beanToCSV.setBeanPakage(pakage);
+			beanToCSV.printBeanToCsv(args[0], bw);
+			logger.info(args[1]+"文件生成成功");
+		} catch (Exception e) {
+			e.printStackTrace();
+		} finally {
+			if (null != bw) {
+				bw.close();
+			}
+		}
+	}
+}

@@ -1,0 +1,234 @@
+/*
+ * @(#)DBToExcelUtil.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 共通系统
+ */
+package com.yds.util.service;
+
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.poi.hssf.usermodel.HSSFCell;
+import org.apache.poi.hssf.usermodel.HSSFRow;
+import org.apache.poi.hssf.usermodel.HSSFSheet;
+import org.apache.poi.hssf.usermodel.HSSFWorkbook;
+import org.springframework.context.support.ClassPathXmlApplicationContext;
+import org.springframework.stereotype.Repository;
+
+import com.yds.common.service.DBToExcelService;
+
+/**
+ * @author tianjian
+ * 
+ */
+@Repository("dbToExcelUtil")
+public class DBToExcelUtil {
+
+	private DBToExcelService dbToExcelService;
+	/** Excel文件对象 */
+	private HSSFWorkbook workbook;
+	/** Excel文件名 */
+	private String fileName;
+	/** table名 */
+	private String[] tableNames;
+
+	/**
+	 * 初始化Excel对象
+	 * 
+	 * @param tableNames
+	 *            table名
+	 * @param fileName
+	 *            excel文件名
+	 */
+	public DBToExcelUtil() {
+		this.workbook = new HSSFWorkbook();
+	}
+
+	/**
+	 * 导出Excel文件
+	 * 
+	 * @throws Exception
+	 */
+	public void exportXLS() throws Exception {
+		FileOutputStream fileOut = null;
+		try {
+			setDataToExcel(workbook, tableNames);
+			fileOut = new FileOutputStream(this.fileName);
+			workbook.write(fileOut);
+			fileOut.flush();
+			fileOut.close();
+		} catch (FileNotFoundException e) {
+			throw new Exception(" 生成导出Excel文件出错! ", e);
+		} catch (IOException e) {
+			throw new Exception(" 写入Excel文件出错! ", e);
+		} finally {
+			if (null != fileOut) {
+				fileOut.close();
+			}
+		}
+	}
+
+	/**
+	 * 把各个表数据导入到Excel对象中
+	 * 
+	 * @param workbook
+	 *            excel对象
+	 * @param tableNames
+	 *            表名数组
+	 */
+	private void setDataToExcel(HSSFWorkbook workbook, String[] tableNames) throws Exception{
+		// 需要的表的数据集合Map
+		Map<String, List<Map<String, Object>>> tableMap = dbToExcelService
+				.getTablesDataMap(tableNames);
+		// 需要的表的字段名集合Map
+		Map<String, List<String>> tableColumnMap = dbToExcelService
+				.getTablesColunmMap(tableNames);
+		// 如果没有数据，返回
+		if (null == tableColumnMap || tableColumnMap.isEmpty()) {
+			throw new Exception("数据库没有对应表结构！");
+		}
+		// 如果表的字段检索件数和表的数据检索件数不一样
+		if (tableColumnMap.size()!= tableMap.size()) {
+			throw new Exception("数据库表的结构有误！");
+		}
+		
+		HSSFSheet[] sheets = createSheets(tableNames, this.workbook);
+		// 把每个表的数据设置到对应的Sheet中
+		for (HSSFSheet sheet : sheets) {
+			setTableToSheet(sheet, tableMap.get(sheet.getSheetName()),
+					tableColumnMap.get(sheet.getSheetName()));
+		}
+	}
+
+	/**
+	 * 把表数据导入到Sheet对象中
+	 * 
+	 * @param sheet
+	 *            sheet对象
+	 * @param dataList
+	 *            表中的数据List
+	 * @param columnList
+	 *            表中字段名List
+	 */
+	private void setTableToSheet(HSSFSheet sheet,
+			List<Map<String, Object>> dataList, List<String> columnList) {
+		// 生成字段行
+		HSSFRow titleRow = sheet.createRow(0);
+		for (int index = 0; index < columnList.size(); index++) {
+			String column = columnList.get(index);
+			if (null == column || column.isEmpty()) {
+				continue;
+			}
+			setCell(titleRow, index, column);
+		}
+		// 如果没有数据，只生成字段行
+		if (null == dataList || 0 == dataList.size()) {
+			return;
+		}
+
+		// 生成数据行
+		for (int index = 0; index < dataList.size(); index++) {
+			Map<String, Object> dataMap = dataList.get(index);
+			if (null == dataMap || dataMap.isEmpty()) {
+				continue;
+			}
+			HSSFRow row = sheet.createRow(index + 1);
+			// 向每一行设置数据，利用字段list循环,保证输出的字段顺序一致
+			for (int j = 0; j < columnList.size(); j++) {
+				String column = columnList.get(j);
+				if (null == column || column.isEmpty()) {
+					continue;
+				}
+				Object value = dataMap.get(column);
+				//如果数据为null，对应cell设成空
+				if(null == value){
+					setCell(row, j);
+				}else{
+					setCell(row, j, String.valueOf(value));
+				}
+			}
+		}
+	}
+
+	/**
+	 * 设置单元格
+	 * 
+	 * @param row
+	 *            行
+	 * @param index
+	 *            列号
+	 * @param value
+	 *            单元格填充值
+	 */
+	public void setCell(HSSFRow row, int index, String value) {
+		HSSFCell cell = row.createCell(index);
+		cell.setCellType(HSSFCell.CELL_TYPE_STRING);
+		cell.setCellValue(value);
+	}
+
+	public void setCell(HSSFRow row, int index) {
+		HSSFCell cell = row.createCell(index);
+		cell.setCellType(HSSFCell.CELL_TYPE_BLANK);
+	}
+	
+	/**
+	 * 根据table名生成Sheet
+	 * 
+	 * @param tableNames
+	 *            table名数组
+	 * @param workbook
+	 *            excel对象
+	 */
+	private HSSFSheet[] createSheets(String[] tableNames, HSSFWorkbook workbook) {
+		List<HSSFSheet> sheetList = new ArrayList<HSSFSheet>();
+		for (String tableName : tableNames) {
+			HSSFSheet sheet = workbook.createSheet(tableName);
+			sheetList.add(sheet);
+		}
+		return sheetList.toArray(new HSSFSheet[1]);
+	}
+	
+	public void setFileName(String fileName) {
+		this.fileName = fileName;
+	}
+
+	public void setTableNames(String[] tableNames) {
+		this.tableNames = tableNames;
+	}
+	
+	public void setDbToExcelService(DBToExcelService dbToExcelService) {
+		this.dbToExcelService = dbToExcelService;
+	}
+	/**
+	 * @param args
+	 */
+	public static void main(String[] args) throws Exception {
+		if (2 > args.length) {
+			throw new Exception("参数不足！");
+		}
+		// main第一个参数为文件名路径
+		String fileName = args[0];
+		// main第二参数为表名数组
+		String[] tableNames = args[1].split(",");
+		
+		ClassPathXmlApplicationContext context = new ClassPathXmlApplicationContext(
+				"applicationContext-*.xml");
+		DBToExcelService dbToExcelService = (DBToExcelService) context
+				.getBean("dbToExcelService");
+		DBToExcelUtil dbToExcelUtil = (DBToExcelUtil) context
+		.getBean("dbToExcelUtil");
+		dbToExcelUtil.setFileName(fileName);
+		dbToExcelUtil.setTableNames(tableNames);
+		dbToExcelUtil.setDbToExcelService(dbToExcelService);
+		dbToExcelUtil.exportXLS();
+		System.exit(0);
+	}
+	
+	
+}

@@ -1,0 +1,200 @@
+package com.jzy.hio.oa.quartz;
+
+import java.util.Date;
+import java.util.List;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.cloud.core.CoreHeaderInterceptor;
+import com.jzy.hio.entity.SysTendUser;
+import com.jzy.hio.feign.PlatformFeignService;
+import com.jzy.hio.oa.OaConstant;
+import com.jzy.hio.oa.quartz.service.TaskQuartzService;
+import com.jzy.hio.platform.dto.tenantcompanyinfo.TenantCompanyInfoDto;
+import com.jzy.hio.redis.RedisService;
+
+/**
+ * 定时任务——任务超期状态变更
+ * @author wdy
+ * @date 2018年4月14日
+ */
+@Component
+public class TaskQuartz {
+	
+	private static final Logger logger = LoggerFactory.getLogger(TaskQuartz.class);
+	
+	//阻塞队列，FIFO
+//    private static LinkedBlockingQueue<String> concurrentLinkedQueue = new LinkedBlockingQueue<String>(); 
+    
+	@Autowired
+    private RedisService redisService;
+	
+	@Value("${redis_key.taskOverdue}")
+    private String redis_key_taskOverdue;
+	
+	@Value("${redis_key.taskSendMessage}")
+    private String redis_key_sendMessage;
+	
+	@Autowired
+	private TaskQuartzService taskQuartzService;
+	
+	@Autowired
+	private PlatformFeignService platformFeignService;
+	
+	/**
+     * 执行任务超期状态变更
+     * 第一次延迟1分钟后执行，按fixedRate的规则每1分钟执行一次
+     */
+//    @Scheduled(initialDelay = 1000 * 60,fixedRate = 1000 * 60 * 1)
+	@Scheduled(cron="0 0 0 * * ?")
+	public void taskOverdue() {
+		
+    	try {
+            logger.info("redis_key: "+ redis_key_taskOverdue);
+            //在分布式环境下，防止重发查询发消息
+            
+//            logger.info("redis锁是否生效:{}",redisService.addRedisSetnx(redis_key_taskOverdue,redis_key_taskOverdue));
+            
+            if(redisService.addRedisSetnx(redis_key_taskOverdue,redis_key_taskOverdue)) {
+            	logger.info("执行任务超期状态变更开始！");
+            	
+            	//查询主库租户信息，获取租户id，多线程进行切库,执行各租户定时任务
+//            	SysTendUser sysTendUser= new SysTendUser();
+//            	sysTendUser.setState(OaConstant.TENG_STATE1);
+            	
+            	CoreHeaderInterceptor.initHystrixRequestContext(CoreHeaderInterceptor.HEADER_LABEL);// 不设置框架会报错
+            	ApiFeignResponse<List<TenantCompanyInfoDto>> apiFeignResponse = platformFeignService.getTenantCompanyList();
+//            	logger.info("获取租户列表是否成功>>>>>>>>>{}",apiFeignResponse.getStatus());
+            	if(200 == apiFeignResponse.getStatus()){
+            		List<TenantCompanyInfoDto> tenantCompanyInfoList = apiFeignResponse.getResult();
+            		Date today = new Date();
+            		
+            		for (TenantCompanyInfoDto tenantCompanyInfoDto : tenantCompanyInfoList) {
+//            			String tendId = "hio_tend080";
+            			taskQuartzService.updateOverdue(tenantCompanyInfoDto.getTendId(),tenantCompanyInfoDto,today);
+					}
+            	}
+            	
+            	//暂时不使用多线程处理，租户多时在切换多线程
+//            	if(list != null){
+//            		ExecutorService executorService = Executors.newFixedThreadPool(TaskConstant.EXECUTORS_NUM);  
+//                	executorService.submit(new TaskOverdueProducer(list));
+//                	executorService.submit(new TaskOverdueConsumer());
+//            	}
+            	
+            	logger.info("执行任务超期状态变更结束！");
+            }else{
+               logger.info("未执行任务超期状态变更！");
+           }
+        }catch (Exception e){
+            logger.error("任务超期状态变更失败！"+e.getMessage());
+            e.printStackTrace();
+        }finally {
+            redisService.releaseRedisSetnx(redis_key_taskOverdue);
+        }
+    	
+	}
+    
+    /**
+     * 定时发送任务cc消息
+     * 按fixedRate的规则每1分钟执行一次
+     */
+//    @Scheduled(initialDelay = 1000 * 60,fixedRate = 1000 * 60 * 1)
+	@Scheduled(cron="0 */30 * * *  ?")
+	public void taskSendMessage() {
+		
+    	try {
+            logger.info("redis_key: "+ redis_key_sendMessage);
+            //在分布式环境下，防止重发查询发消息
+            
+//            logger.info("redis锁是否生效:{}",redisService.addRedisSetnx(redis_key_sendMessage,redis_key_sendMessage));
+            
+            if(redisService.addRedisSetnx(redis_key_sendMessage,redis_key_sendMessage)) {
+            	logger.info("执行任务定时发送任务cc消息开始！");
+            	
+            	//查询主库租户信息，获取租户id，多线程进行切库,执行各租户定时任务
+//            	SysTendUser sysTendUser= new SysTendUser();
+//            	sysTendUser.setState(OaConstant.TENG_STATE1);
+            	
+            	CoreHeaderInterceptor.initHystrixRequestContext(CoreHeaderInterceptor.HEADER_LABEL);// 不设置框架会报错
+            	ApiFeignResponse<List<TenantCompanyInfoDto>> apiFeignResponse = platformFeignService.getTenantCompanyList();
+//            	logger.info("获取租户列表是否成功>>>>>>>>>{}",apiFeignResponse.getStatus());
+            	if(200 == apiFeignResponse.getStatus()){
+            		List<TenantCompanyInfoDto> tenantCompanyInfoList = apiFeignResponse.getResult();
+            		Date today = new Date();
+            		
+            		for (TenantCompanyInfoDto tenantCompanyInfoDto : tenantCompanyInfoList) {
+//            			String tendId = "hio_tend045";
+            			taskQuartzService.updateSendMessage(tenantCompanyInfoDto.getTendId(),tenantCompanyInfoDto,today);
+					}
+            	}
+            	
+            	
+            	//暂时不使用多线程处理，租户多时在切换多线程
+//            	if(list != null){
+//            		ExecutorService executorService = Executors.newFixedThreadPool(TaskConstant.EXECUTORS_NUM);  
+//                	executorService.submit(new TaskOverdueProducer(list));
+//                	executorService.submit(new TaskOverdueConsumer());
+//            	}
+            	
+            	logger.info("执行任务定时发送任务cc消息结束！");
+            }else{
+               logger.info("未执行任务定时发送任务cc消息！");
+           }
+        }catch (Exception e){
+            logger.error("任务定时发送任务cc消息失败！"+e.getMessage());
+            e.printStackTrace();
+        }finally {
+            redisService.releaseRedisSetnx(redis_key_sendMessage);
+        }
+    	
+	}
+	
+//	public class TaskOverdueProducer  implements Runnable {  
+//	     private List<SysTendUser> list;  
+//
+//	     public TaskOverdueProducer (List<SysTendUser> list) {  
+//	         this.list = list;  
+//	     }  
+//
+//	     public void run() {  
+//	    	 for (SysTendUser sysTendUser : list) {
+//	    		 try {
+//	                 concurrentLinkedQueue.put(sysTendUser.getTendId());
+//	                 Thread.sleep(200); //模拟慢速的生产，产生阻塞的效果
+//	             } catch (InterruptedException e) {
+//	                 logger.error("任务超期状态变更,concurrentLinkedQueue put异常"+e);
+//	                 e.printStackTrace();
+//	             }
+//
+//	    		 
+//			}
+//	    	 
+//	     }  
+//	 }  
+	
+//	public class TaskOverdueConsumer  implements Runnable {  
+//
+//	     public void run() {  
+//	    		
+//	            try {
+//	            	
+//	            	String tendId = concurrentLinkedQueue.take();
+//	            	logger.info(">>>>>>>>>>>>>>>>>>从队列中取出租户id>>>>>>>>>>>>>>>>>>>"+tendId);
+//	            	taskService.taskOverdue(tendId);
+//	            	
+//				} catch (InterruptedException e) {
+//					
+//					logger.error("任务超期状态变更,concurrentLinkedQueue take异常"+e);
+//					e.printStackTrace();
+//				}
+//			}
+//	 }  
+}

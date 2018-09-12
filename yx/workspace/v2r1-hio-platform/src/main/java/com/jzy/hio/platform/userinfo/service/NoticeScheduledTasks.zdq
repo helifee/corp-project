@@ -1,0 +1,98 @@
+package com.jzy.hio.platform.userinfo.service;
+
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cloud.context.config.annotation.RefreshScope;
+import org.springframework.http.converter.json.GsonBuilderUtils;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+
+import com.google.gson.GsonBuilder;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.RedisKeyConstant;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.redis.RedisService;
+import com.jzy.hio.utils.JacksonUtils;
+
+/**
+ * 创建定时任务实现类,定时删除用户收到的过期短信
+ * @author chc
+ */
+@Component
+//@RefreshScope
+public class NoticeScheduledTasks {
+    private static final Logger logger = LoggerFactory.getLogger(NoticeScheduledTasks.class);
+    
+    @Value("${redis_key.ImNoticeMsgPhone}")
+    private String redis_key;
+    
+    @Autowired
+    RedisService redisService;
+    
+    /**
+     * 第一次延迟1分钟后执行，之后按fixedRate的规则每五分钟执行一次
+     * 给用户发送的短信在redis存储的信息，超过有效时间后删除
+     */
+    @Scheduled(initialDelay = 1000 * 60, fixedRate = 1000 * 60 * 5 )
+    public void sendMsg() {
+    	try {
+    		logger.info("redis_key: "+ redis_key);
+    		//在分布式环境下，防止重发查询发消息
+            if(redisService.addRedisSetnx(redis_key,redis_key)) {
+            	logger.info("执行删除短信操作！");
+				Map<String,String> redisNoticeMap = JedisUtil.fetchRelationRow(RedisKeyConstant.imnoticephonemsg);
+				logger.info("redis获取短信 ");
+				if(redisNoticeMap != null && redisNoticeMap.size() > 0) {
+					List<Map<String,Object>> dataList = new ArrayList<Map<String,Object>>();
+					for(String key : redisNoticeMap.keySet()) {
+						if(!key.equals("table_name")) {
+//							String json = redisNoticeMap.get(key);
+							String json = JedisUtil.fetchRow(RedisKeyConstant.imnoticephonemsg, key);
+							if(StringUtils.isNotBlank(json)) {
+								Map<String,Object> mapData = Base.json2map(json);
+								dataList = JacksonUtils.fromJson(mapData.get("data").toString(), List.class, Map.class);
+								if(null != dataList && dataList.size() > 0) {
+									Iterator<Map<String,Object>> iter = dataList.iterator();
+							        while (iter.hasNext()) {
+							        	long timelong = Long.valueOf(iter.next().get("timelong")+"");
+										long currentTime = Calendar.getInstance().getTimeInMillis();
+										if((currentTime - timelong) > 1000 * 60 * 60 * 24) { 	//测试暂时大于1小时，上线改为7天 1000 * 60 * 60 * 24 * 7
+											iter.remove();
+											logger.info("删除过期短信 ！");
+										}
+							        }
+								}
+								if(null == dataList || dataList.size() <1) {
+									JedisUtil.delRow(RedisKeyConstant.imnoticephonemsg,key);
+								}else {
+									GsonBuilder gson = GsonBuilderUtils.gsonBuilderWithBase64EncodedByteArrays();
+									Map<String,String> noticeMap = new HashMap<String,String>();
+									noticeMap.put("data", gson.create().toJson(dataList));
+									noticeMap.put("id", key);
+									JedisUtil.addListRow(RedisKeyConstant.imnoticephonemsg ,noticeMap);
+								}
+							}
+						}
+					}
+				}
+            }else {
+            	logger.info("未执行删除短信操作！");
+            }
+	    }catch(Exception e) {
+	    	logger.error("删除短信失败！"+e.getMessage());
+	    }finally {
+            redisService.releaseRedisSetnx(redis_key);
+        }
+    	
+    }
+}

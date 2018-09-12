@@ -1,0 +1,327 @@
+/**
+ * 
+ * @Title PlanController.java
+ * @Package com.jzy.hio.oa.plan.controller
+ * @author shangb
+ * @date 2018年4月4日 下午2:59:20
+ * @version V1.0 
+ */
+
+package com.jzy.hio.oa.plan.controller;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.controller.BaseOaController;
+import com.jzy.hio.entity.Plan;
+import com.jzy.hio.entity.PlanAllowedScope;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.exception.HioMybatisGetException;
+import com.jzy.hio.exception.HioMybatisInsertException;
+import com.jzy.hio.exception.HioMybatisQueryException;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.oa.OaConstant;
+import com.jzy.hio.oa.journal.dto.ShareDto;
+import com.jzy.hio.oa.plan.dto.PlanDto;
+import com.jzy.hio.oa.plan.dto.PlanShareListParam;
+import com.jzy.hio.oa.plan.service.PlanAllowedScopeService;
+import com.jzy.hio.oa.plan.service.PlanService;
+import com.jzy.hio.sys.organization.dto.OrganizationDto;
+import com.jzy.hio.sys.user.dto.OrganizationUsersDto;
+import com.jzy.hio.sys.user.param.UserAndExternalParam;
+import com.jzy.hio.utils.LoginUser;
+import com.jzy.hio.utils.OaUserUtil;
+import com.jzy.hio.utils.Page;
+
+/**
+ * 计划外层接口
+ * @author machangxi
+ * @date   2018年4月26日
+ */
+@RestController
+@RequestMapping("plan")
+public class PlanController extends BaseOaController {
+	
+	@Autowired
+	private PlanService planService;
+	
+	@Autowired
+	private SysFeignService sysFeignService;
+	
+	@Autowired
+	private PlanAllowedScopeService planAllowedScopeService;
+	
+	@Autowired
+	private OaUserUtil oaUserUtil;
+	
+	/**
+	 * 根据Id获取计划，不包括计划共享范围
+	 * @param id 业务对象主键
+	 * @return 业务对象
+	 */
+	@RequestMapping(value = "/get/{id}", method = RequestMethod.GET)
+	public Object getPlan(@PathVariable("id") String planId) throws HioMybatisGetException {
+		if(StringUtils.isEmpty(planId)) {
+			return HioException.paramNotExist;
+		}
+		PlanDto planDto = planService.findPlanById(planId);
+		// 验证日志发布范围
+		LoginUser loginUser = super.getLoginUser();
+		PlanAllowedScope planAllowedScope = new PlanAllowedScope();
+		planAllowedScope.setPlanId(planId);
+		planAllowedScope.setDelflag(0);
+		List<PlanAllowedScope> planAllowedScopeList = planAllowedScopeService.queryList(planAllowedScope);
+		List<ShareDto> userShareList = new ArrayList<ShareDto>();// 用户共享
+		List<ShareDto> roleShareList = new ArrayList<ShareDto>();// 角色用户共享
+		List<ShareDto> orgShareList = new ArrayList<ShareDto>(); // 组织用户共享
+		if (planAllowedScopeList != null && planAllowedScopeList.size() > 0) {
+			for (PlanAllowedScope planScope : planAllowedScopeList) {
+				String allowedId = planScope.getAllowedId();
+				String allowedType = planScope.getAllowedType();// 共享范围ID:0部门ID，1人员ID，2角色ID
+				if (OaConstant.ALLOWED_TYPE_ORG.equals(allowedType)) {
+					ShareDto orgShareDto = new ShareDto();
+					orgShareDto.setId(allowedId);
+					String name = oaUserUtil.queryOrgNameById(allowedId, loginUser.getTendId());
+					if(StringUtils.isBlank(name)) {
+						continue;
+					}
+					orgShareDto.setName(name);
+					orgShareList.add(orgShareDto);
+				} else if (OaConstant.ALLOWED_TYPE_USER.equals(allowedType)) {
+					ShareDto userShareDto = new ShareDto();
+					userShareDto.setId(allowedId);
+					//包含离职、删除人员
+					String name = oaUserUtil.selectUserNameByTendIdAndStatus(allowedId,loginUser.getTendId(),OaConstant.OA_USER_QUERY_STATUS_3);
+					if(StringUtils.isBlank(name)) {
+						continue;
+					}
+					userShareDto.setName(name);
+					userShareList.add(userShareDto);
+				} else {
+					ShareDto roleShareDto = new ShareDto();
+					roleShareDto.setId(allowedId);
+					String name = oaUserUtil.queryRoleNameById(allowedId, loginUser.getTendId());
+					if(StringUtils.isBlank(name)) {
+						continue;
+					}
+					roleShareDto.setName(name);
+					roleShareList.add(roleShareDto);
+				}
+			}
+		}
+		
+		ApiFeignResponse<List<OrganizationDto>> apiResponse = sysFeignService.queryOrganizationsByUserId(loginUser.getTendId(), loginUser.getUserId());
+		if(apiResponse.getStatus() == 200) {
+			List<OrganizationDto> orgList = apiResponse.getResult();
+			String[] orgIdArray = null;
+			Set<String> orgIdSet = new HashSet<String>();
+			if(orgList != null && orgList.size() > 0) {
+				for(OrganizationDto org : orgList) {
+					String ids = org.getPrefixId();
+					orgIdArray = ids.split("/");
+					for(String orgId : orgIdArray) {
+						orgIdSet.add(orgId);
+					}
+				}
+			}
+			/*List<String> orgIds = new ArrayList<String>();
+			if(orgIdArray != null) {
+				orgIds = Arrays.asList(orgIdArray);
+			}*/
+			List<String> roleIds = loginUser.getRoleIds();
+			// 判断共享部门中是否包含当前人的部门
+			if(orgShareList != null && orgShareList.size() > 0) {
+				for(ShareDto sd : orgShareList) {
+					if(orgIdSet.contains(sd.getId())) {
+						return planDto;
+					}
+				}
+			}
+			// 判断共享角色中是否包含当前人的角色
+			if(roleShareList != null && roleShareList.size() > 0) {
+				for(ShareDto sd : roleShareList) {
+					if(roleIds.contains(sd.getId())) {
+						return planDto;
+					}
+				}
+			}
+			// 判断共享人员中是否包含当前人
+			if(userShareList != null && userShareList.size() > 0) {
+				for(ShareDto sd : userShareList) {
+					if(sd.getId().equals(loginUser.getUserId())) {
+						return planDto;
+					}
+				}
+			}
+			//自己创建的自己评论
+			if(Base.isNotEmpty(planDto) 
+					&& Base.isEquals(planDto.getCreatePersonId(),loginUser.getUserId())){
+				return planDto;
+			}
+			return HioException.planIsNull;
+		} else {
+			return HioException.systemIsBusy;
+		}
+	}
+	
+	/**
+	 * 【我的计划】页面获取某一条计划的详情
+	 * @param plan
+	 * @return
+	 * @throws HioMybatisInsertException
+	 */
+	@RequestMapping(value = "/detail", method = RequestMethod.POST, consumes = "application/json")
+	public PlanDto getPlanDetail(@RequestBody Plan plan) throws HioMybatisInsertException {
+		LoginUser loginUser = super.getLoginUser();
+		plan.setCreatePersonId(loginUser.getUserId());
+		return planService.findPlanDetail(loginUser.getTendId(), plan);
+	}
+	
+	
+	/**
+	 * 发布计划，包括计划共享范围
+	 * @param planDto
+	 * @return
+	 * @throws HioMybatisInsertException
+	 */
+	@RequestMapping(value = "/publish", method = RequestMethod.POST, consumes = "application/json")
+	public Object save(@RequestBody PlanDto planDto) throws HioException {
+		if (StringUtils.isEmpty(planDto.getId())) {
+			// 新建发布
+			planService.savePlanDto(planDto);
+		} else {
+			// 编辑发布
+			planService.updatePlanDto(planDto);
+		}
+		return null;
+	}
+	
+	/**
+	 * 条件查询他人共享给我的计划
+	 * @param planParam
+	 * @return
+	 */
+	@RequestMapping(value = "/share/list", method = { RequestMethod.POST }, consumes = "application/json")
+	public Page<Plan> findSharePlanList(@RequestBody PlanShareListParam planParam) throws HioMybatisQueryException {
+		// 获取当前登录用户
+		LoginUser loginUser = super.getLoginUser();
+		// 当前登录用户的userID
+		String loginUserId = loginUser.getUserId();
+		// 角色id
+		List<String> loginRoleIdList = loginUser.getRoleIds();
+		// 所有部门id
+		List<String> loginOrgIdList = oaUserUtil.findAllOrgIds(loginUser.getTendId(), loginUserId);
+		return planService.findSharePlanList(planParam.getPageNum(), planParam.getPageCount(), planParam.getPlanType(), planParam.getUserIdList(),
+				loginOrgIdList, loginRoleIdList, loginUserId);
+	}
+	
+	/**
+	 * 分页条件查询我评论过的计划列表
+	 * @param planParam
+	 * @return
+	 * @throws HioMybatisQueryException
+	 */
+	@RequestMapping(value = "/comment/list", method = { RequestMethod.POST }, consumes = "application/json")
+	public Page<Plan> commentPage(@RequestBody PlanShareListParam planParam) throws HioMybatisQueryException {
+		// 获取当前登录用户
+		LoginUser loginUser = super.getLoginUser();
+		// 当前登录用户的userID
+		String loginUserId = loginUser.getUserId();
+		// 角色id
+		List<String> loginRoleIdList = loginUser.getRoleIds();
+		// 所有部门id
+		List<String> loginOrgIdList = oaUserUtil.findAllOrgIds(loginUser.getTendId(), loginUserId);
+		return planService.findCommentPlanList(planParam.getPageNum(), planParam.getPageCount(), planParam.getPlanType(), planParam.getUserIdList(),
+				loginOrgIdList, loginRoleIdList, loginUserId);
+	}
+	
+	/**
+	 * 共享给我的页面中获取筛选人员数据
+	 * @return
+	 * @throws HioMybatisQueryException
+	 */
+	@RequestMapping(value = "/share/filter", method = { RequestMethod.GET })
+	public Object getSharePlanForMe() throws HioMybatisQueryException {
+		// 获取当前登录用户
+		LoginUser loginUser = super.getLoginUser();
+		// 当前登录用户的userID
+		String loginUserId = loginUser.getUserId();
+		// 角色id
+		List<String> loginRoleIdList = loginUser.getRoleIds();
+		// 所有部门id
+		List<String> loginOrgIdList = oaUserUtil.findAllOrgIds(loginUser.getTendId(), loginUserId);
+		// 获取所有共享给我计划的人
+		List<String> shareUserIdList = planService.findSharePlanUserIdList(loginOrgIdList, loginRoleIdList, loginUserId);
+		//OrganizationDto organizationDto = new OrganizationDto();
+		OrganizationUsersDto orgDto = new OrganizationUsersDto();
+		if(shareUserIdList != null && shareUserIdList.size() > 0) {
+			/*StringBuffer sb = new StringBuffer();
+			for(String userId : shareUserIdList) {
+				sb.append(userId).append(",");
+			}*/
+			UserAndExternalParam apiParam = new UserAndExternalParam();
+			apiParam.setTendId(loginUser.getTendId());
+			apiParam.setUserIds(shareUserIdList);
+			apiParam.setWorkStatus(3);
+			orgDto = sysFeignService.queryOrganizationUsersDto(apiParam).getResult();
+			//organizationDto = sysFeignService.queryOrganizationTreeByUserIds(loginUser.getTendId(), sb.substring(0, sb.length() - 1), null).getResult();
+		}
+		return orgDto;
+	}
+	
+	/**
+	 * 我评论的页面-筛选查看
+	 * 
+	 * @param map
+	 * @return
+	 */
+	@RequestMapping(value = "/comment/filter", method = { RequestMethod.GET })
+	public Object selectCommentCondition() throws HioMybatisQueryException {
+		// 获取当前登录用户
+		LoginUser loginUser = super.getLoginUser();
+		// 当前登录用户的userID
+		String loginUserId = loginUser.getUserId();
+		// 角色id
+		List<String> loginRoleIdList = loginUser.getRoleIds();
+		// 所有部门id
+		List<String> loginOrgIdList = oaUserUtil.findAllOrgIds(loginUser.getTendId(), loginUserId);
+		// 获取所有共享给我的计划id
+		List<String> sharePlanIdList = planService.findSharePlanIdList(-1, null, loginOrgIdList, loginRoleIdList, loginUserId);
+		// 获取所有共享给我计划的人
+		//List<String> shareUserIdList = planService.findSharePlanUserIdList(loginOrgIdList, loginRoleIdList, loginUserId);
+		//OrganizationDto organizationDto = new OrganizationDto();
+		OrganizationUsersDto orgDto = new OrganizationUsersDto();
+		//还应包含自己创建的计划-自己评论的
+		/*if(sharePlanIdList == null || sharePlanIdList.size() == 0) {
+			return orgDto;
+		}*/
+		// 查询我评论过的计划的创建人id集合
+		List<String> commentUserIdList = planService.findCommentPlanUserIdList(loginUserId, sharePlanIdList);
+		if(commentUserIdList != null && commentUserIdList.size() > 0) {
+			/*StringBuffer sb = new StringBuffer();
+			for(String userId : commentUserIdList) {
+				sb.append(userId).append(",");
+			}*/
+			UserAndExternalParam apiParam = new UserAndExternalParam();
+			apiParam.setTendId(loginUser.getTendId());
+			apiParam.setUserIds(commentUserIdList);
+			apiParam.setWorkStatus(3);
+			orgDto = sysFeignService.queryOrganizationUsersDto(apiParam).getResult();
+			//organizationDto = sysFeignService.queryOrganizationTreeByUserIds(loginUser.getTendId(), sb.substring(0, sb.length() - 1), null).getResult();
+		}
+		return orgDto;
+	}
+	
+}

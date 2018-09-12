@@ -1,0 +1,366 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.jzy.hio.oa.contract.mapper.ContractPaymentMapper">
+
+	<!-- 根据id进行逻辑删除 -->
+    <update id="deleteContractPaymentById">
+    	UPDATE oa_contract_payment p SET  p.delflag = 1 where p.id = #{id}
+    </update>
+    <!-- 根据id更新状态  作废-->
+    <update id="updatePaymentStatus" parameterType="com.jzy.hio.oa.contract.dto.ContractPaymentDto">
+    	UPDATE oa_contract_payment p SET  p.status = #{status} where p.id = #{id}
+    </update>
+    
+     <!-- 根据id查询 -->
+    <select id="getContractPaymentById" parameterType="String"
+    		resultType="com.jzy.hio.oa.contract.dto.ContractPaymentDto" >   			
+		SELECT 
+			p.id id,p.title title,
+			c.signing_date signingDate,
+			c.money money,
+			c.title contractTitle,
+			c.id contractId,
+			c.code code,
+			ct.contract_type contractTypeName,
+			ifnull(a.sumPaymentMoney,0.00) sumPaymentMoney,
+			ifnull(cc.sumChangeMoney,0.00) sumChangeMoney,
+			p.status status,
+			p.first_party firstParty,
+			p.second_party secondParty,					
+			p.payer payer,
+			p.payee payee,
+			p.payment_money paymentMoney,
+			p.payment_date paymentDate,
+			p.operator_id operatorId,
+			osu.real_name operatorName,
+			p.operator_dept_id operatorDeptId,
+			oso.name operatorDeptName,
+			p.payment_explain paymentExplain,
+			p.opening_bank openingBank,
+			p.bank_account bankAccount,
+			p.approve_status approveStatus,
+			p.fi_id fiId
+			
+		FROM oa_contract_payment p
+		INNER JOIN oa_contract c ON p.contract_id = c.id
+		LEFT JOIN oa_sys_organization oso ON p.operator_dept_id = oso.id
+		LEFT JOIN oa_sys_user osu ON p.operator_id = osu.id
+		LEFT JOIN (
+			SELECT 
+				sum(ifnull(cc2.change_money,0.00)) sumChangeMoney,cc2.contract_id 
+			FROM oa_contract_change cc2
+			INNER JOIN oa_contract_payment p2 ON p2.contract_id = cc2.contract_id
+			WHERE 1=1 
+				AND cc2.delflag = 0 
+				<!-- 此处统计累计金额,需加条件非作废、非打回和草稿 -->
+				AND (cc2.status = 0 OR cc2.status = 2)
+				AND (cc2.approve_status = 2 OR cc2.approve_status = 5)
+				AND p2.id = #{id}
+		) cc ON c.id = cc.contract_id
+		
+		LEFT JOIN (
+			SELECT sum(p3.payment_money) sumPaymentMoney, p3.contract_id 
+			FROM oa_contract_payment p3
+			INNER JOIN oa_contract_payment p4 ON p3.contract_id = p4.contract_id
+			WHERE 1=1 
+				AND p3.delflag = 0 
+				<!-- 此处统计累计金额,需加条件非作废、非打回和草稿 -->
+				AND (p3.status = 0 OR p3.status = 2)
+				AND (p3.approve_status = 1 OR p3.approve_status = 2 OR p3.approve_status = 5)
+				AND p4.id = #{id}
+		) a ON a.contract_id = p.contract_id
+		
+		LEFT JOIN oa_contract_type ct ON c.contract_type_id = ct.id
+		WHERE 1=1
+			AND p.id = #{id}
+	</select>
+    
+    <!-- 根据查询条件获取列表 -->
+    <select id="getContractPaymentList" parameterType="com.jzy.hio.oa.contract.dto.ContractPaymentDto"
+    		resultType="com.jzy.hio.oa.contract.dto.ContractPaymentDto" >
+    			
+		SELECT 
+			p.id id,
+			p.title title,
+			p.status status,
+			p.payee payee,
+			p.payment_money paymentMoney,
+			c.money money,
+			p.operator_id operatorId,
+			osu.real_name operatorName,
+			p.operator_dept_id operatorDeptId,
+			oso.name operatorDeptName,
+			p.payment_date paymentDate,
+			ifnull(a.sumPaymentMoney,0.00) sumPaymentMoney,
+			p.approve_status approveStatus,
+			p.fi_id fiId,
+			c.id contractId,
+			c.title contractTitle
+			
+		FROM oa_contract_payment p
+		LEFT JOIN oa_sys_organization oso ON p.operator_dept_id = oso.id
+		LEFT JOIN oa_sys_user osu ON p.operator_id = osu.id
+		LEFT JOIN (
+			SELECT sum(payment_money) sumPaymentMoney, contract_id 
+			FROM oa_contract_payment 
+			WHERE 1=1 
+				AND delflag = 0 
+				<!-- 此处统计累计金额,需加条件非作废、非打回和草稿 -->
+				AND (status = 0 OR status = 2)
+				AND (approve_status = 1 OR approve_status = 2 OR approve_status = 5)
+			GROUP BY contract_id
+		) a ON a.contract_id = p.contract_id
+		INNER JOIN oa_contract c ON p.contract_id = c.id
+		
+		<choose>
+		    <when test="contractTypeId != null and contractTypeId != ''">
+		       LEFT JOIN oa_contract_type ct ON c.contract_type_id = ct.id
+				WHERE 1=1
+					AND c.delflag = 0 
+					AND ct.delflag = 0 
+					AND (p.delflag = 0 OR p.delflag IS NULL)
+					<!-- AND (c.status = 0 OR c.status = 2) -->
+					AND (p.approve_status = 2 OR p.approve_status = 5 
+						OR (p.approve_status = 4 AND (p.fi_id IS NULL OR p.fi_id = '')))
+					AND ct.id = #{contractTypeId}
+		    </when>
+		    <otherwise>
+		    	WHERE 1=1 
+					AND c.delflag = 0 
+				<!-- 	AND (c.status = 0 OR c.status = 2) -->
+					AND (p.delflag = 0 OR p.delflag IS NULL)
+					AND (p.approve_status = 2 OR p.approve_status = 5 
+						OR (p.approve_status = 4 AND (p.fi_id IS NULL OR p.fi_id = '')))
+		    </otherwise>
+		</choose>
+		
+		<if test="contractId != null and contractId != ''">
+		    AND c.id = #{contractId}
+		</if>
+		<if test="title != null and title != ''">
+		    AND p.title LIKE concat('%',#{title},'%')
+		</if>
+		<if test="contractTitle != null and contractTitle != ''">
+		    AND c.title LIKE concat('%',#{contractTitle},'%')
+		</if>
+		<if test="secondParty != null and secondParty != ''">
+		    AND p.second_party LIKE concat('%',#{secondParty},'%')
+		</if>
+		<if test="paymentDateBegin != null and paymentDateBegin != ''">
+		    AND DATE_FORMAT(p.payment_date,'%Y-%m-%d %H:%i:%S') >= #{paymentDateBegin}
+		</if>
+		<if test="paymentDateEnd != null and paymentDateEnd != ''">
+		   AND #{paymentDateEnd} >= DATE_FORMAT(p.payment_date,'%Y-%m-%d %H:%i:%S')
+		</if>
+		<if test="contractTypeId != null and contractTypeId != ''">
+		    AND c.contract_type_id =  #{contractTypeId}
+		</if>
+		<if test="operatorId != null and operatorId != ''">
+		    AND p.operator_id = #{operatorId}
+		</if>
+		<if test="signingDateBegin != null and signingDateBegin != ''">
+		    AND DATE_FORMAT(c.signing_date,'%Y-%m-%d %H:%i:%S') >= #{signingDateBegin}
+		</if>
+		<if test="signingDateEnd != null and signingDateEnd != ''">
+		    AND #{signingDateEnd} >= DATE_FORMAT(c.signing_date,'%Y-%m-%d %H:%i:%S')
+		</if>
+		<if test="operatorDeptId != null and operatorDeptId != ''">
+		    AND oso.prefix_id LIKE CONCAT( #{operatorDeptId}, '%' )
+		</if>
+		<if test="status != null">
+		    AND p.status = #{status}
+		</if>
+		<if test="payee != null and payee != ''">
+		    AND p.payee LIKE concat('%',#{payee},'%')
+		</if>
+		ORDER BY p.create_date DESC
+    </select>
+    
+    <select id="getContractPaymentPage" parameterType="map" resultType="com.jzy.hio.oa.contract.dto.ContractPaymentDto" >
+
+    </select>
+    
+     <!-- 移动端根据id查询 -->
+    <select id="getContractPaymentMobileById" parameterType="String"
+    		resultType="com.jzy.hio.oa.contract.dto.ContractPaymentMobileDto" >   			
+		SELECT 
+			p.id sid,p.title title,
+			c.signing_date signingDate,
+			c.money money,
+			ct.contract_type contractTypeName,
+			ifnull(a.sumPaymentMoney,0.00) sumPaymentMoney,
+			ifnull(cc.sumChangeMoney,0.00) sumChangeMoney,
+			p.status status,
+			p.first_party firstParty,
+			p.second_party secondParty,					
+			p.payer payer,
+			p.payee payee,
+			p.payment_money paymentMoney,
+			p.payment_date paymentDate,
+			p.operator_id operatorId,
+			osu.real_name operatorName,
+			p.operator_dept_id operatorDeptId,
+			oso.name operatorDeptName,
+			p.payment_explain paymentExplain,
+			p.fi_id fiId			
+			
+		FROM oa_contract_payment p
+		INNER JOIN oa_contract c ON p.contract_id = c.id
+		LEFT JOIN oa_sys_organization oso ON p.operator_dept_id = oso.id
+		LEFT JOIN oa_sys_user osu ON p.operator_id = osu.id
+		
+		LEFT JOIN (
+			SELECT 
+				sum(ifnull(change_money,0.00)) sumChangeMoney,contract_id 
+			FROM oa_contract_change 
+			WHERE 1=1 
+				AND delflag = 0 
+				<!-- 此处统计累计金额,需加条件非作废、非打回和草稿 -->
+				AND (status = 0 OR status = 2)
+				AND (approve_status = 2 OR approve_status = 5)
+				AND contract_id = #{id}
+		) cc ON c.id = cc.contract_id
+		
+		LEFT JOIN (
+			SELECT sum(payment_money) sumPaymentMoney, contract_id 
+			FROM oa_contract_payment 
+			WHERE 1=1 
+				AND delflag = 0 
+				<!-- 此处统计累计金额,需加条件非作废、非打回和草稿 -->
+				AND (status = 0 OR status = 2)
+				AND (approve_status = 1 OR approve_status = 2 OR approve_status = 5)
+				AND contract_id = #{id}
+		) a ON a.contract_id = p.contract_id
+		
+		LEFT JOIN oa_contract_type ct ON c.contract_type_id = ct.id
+		WHERE 1=1
+		<!-- 
+			AND c.delflag = 0			
+			AND c.status = 2
+			AND p.delflag = 0
+			AND (p.status = 0 OR p.status = 2)
+			 -->
+			AND p.id = #{id}
+			
+			<!-- 
+			包含草稿
+			WHERE 1=1 
+				AND c.delflag = 0 
+				AND (c.status = 0 OR c.status = 2)
+				AND (p.delflag = 0 OR p.delflag IS NULL)
+		 -->
+	</select>
+	
+    <!-- 移动端列表 -->
+    <select id="getContractPaymentMobileList" parameterType="com.jzy.hio.oa.contract.dto.ContractPaymentDto"
+    		resultType="com.jzy.hio.oa.contract.dto.ContractMobileListDto" >
+    		
+		SELECT 
+			p.id sid,p.title title,
+			p.payment_date paymentDate,
+			c.money money,
+			p.payment_money paymentMoney,
+			ifnull(a.sumPaymentMoney,0.00) sumPaymentMoney
+		FROM oa_contract_payment p
+		INNER JOIN oa_contract c ON p.contract_id = c.id
+		LEFT JOIN (
+			SELECT sum(payment_money) sumPaymentMoney, contract_id 
+			FROM oa_contract_payment 
+			WHERE 1=1 
+				AND delflag = 0 
+				<!-- 此处统计累计金额,需加条件非作废、非打回和草稿 -->
+				AND (status = 0 OR status = 2)
+				AND (approve_status = 1 OR approve_status = 2 OR approve_status = 5)
+			GROUP BY contract_id
+		) a ON a.contract_id = p.contract_id
+		
+		WHERE 1=1 
+			AND c.delflag = 0			
+			AND c.status = 2
+			AND p.delflag = 0
+			AND (p.status = 0 OR p.status = 2)
+			AND (p.approve_status = 2 OR p.approve_status = 5)
+			
+		<!-- 
+			包含草稿
+			WHERE 1=1 
+				AND c.delflag = 0 
+				AND (c.status = 0 OR c.status = 2)
+				AND (p.delflag = 0 OR p.delflag IS NULL)
+		 -->
+		<if test="title != null and title != ''">
+		    AND p.title like concat('%',#{title},'%')
+		</if>
+		
+		ORDER BY p.create_date DESC
+    </select>
+    
+    
+    
+    <!-- 根据contractId查询合同付款信息 -->
+    <select id="getPaymentListByContractId" parameterType="com.jzy.hio.oa.contract.dto.ContractPaymentDto" 
+    	resultType="com.jzy.hio.oa.contract.dto.ContractPaymentDto" >
+    	
+		SELECT 
+			p.id id,
+			p.title title,
+			p.contract_id contractId,
+			ct.contract_type contractTypeName,
+			p.payee payee,
+			p.payment_money paymentMoney,
+			c.money money,
+			p.status status,
+			p.payment_date paymentDate,
+			ifnull(a.sumPaymentMoney,0.00) sumPaymentMoney,
+			p.approve_status approveStatus,
+			p.operator_id operatorId,
+			osu.real_name operatorName,
+			p.operator_dept_id operatorDeptId,
+			oso.name operatorDeptName,
+			p.fi_id fiId
+			
+		FROM oa_contract_payment p
+		INNER JOIN oa_contract c ON p.contract_id = c.id
+		LEFT JOIN oa_sys_organization oso ON p.operator_dept_id = oso.id
+		LEFT JOIN oa_sys_user osu ON p.operator_id = osu.id
+		LEFT JOIN oa_contract_type ct ON c.contract_type_id = ct.id
+		LEFT JOIN (
+			SELECT sum(payment_money) sumPaymentMoney, contract_id 
+			FROM oa_contract_payment 
+			WHERE 1=1 
+				AND delflag = 0 
+				<!-- 此处统计累计金额,需加条件非作废、非打回和草稿 -->
+				AND (status = 0 OR status = 2)
+				AND (approve_status = 1 OR  approve_status = 2 OR approve_status = 5)
+				AND contract_id = #{contractId}
+		) a ON a.contract_id = p.contract_id
+				
+		WHERE 1=1 
+			AND c.delflag = 0 
+			AND (p.delflag = 0 OR p.delflag IS NULL)
+			AND c.id = #{contractId}			
+		<!-- 查询包含审批和审批发起的草稿 -->
+		<!--校验查询付款或变更  1-非打回、非退回 2-所有非删除 0-已完成、合同应用保存的草稿 -->
+		<choose>
+			<when test="approveStatusOneAndFour != null and approveStatusOneAndFour == '1'.toString()">
+				AND p.approve_status != 3 AND p.approve_status != 6
+			</when>
+			<otherwise>
+				<choose>
+					<when test="approveStatusOneAndFour == null or approveStatusOneAndFour == ''
+						or approveStatusOneAndFour == '0'.toString()">
+						AND (p.approve_status = 2 OR p.approve_status = 5 
+							OR (p.approve_status = 4 AND (p.fi_id IS NULL OR p.fi_id = '')))
+					</when>
+				</choose>
+			</otherwise>
+		</choose>
+		
+		<if test="noCancel != null and noCancel != ''">
+		   AND (p.status = 0 OR p.status = 2)
+		</if>
+		ORDER BY p.create_date DESC
+    </select>
+    
+
+</mapper>

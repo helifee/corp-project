@@ -1,0 +1,530 @@
+package com.jzy.hio.platform.userinfo.service.impl;
+
+import java.util.*;
+import java.util.Map.Entry;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.config.QueueConfig;
+import com.jzy.hio.entity.TendUserInfo;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.platform.constant.PhoneNoSettingConstant;
+import com.jzy.hio.platform.friendinfo.service.FriendInfoService;
+import com.jzy.hio.platform.friendinfo.service.ImRegisterUserApi;
+import com.jzy.hio.platform.login.util.Base;
+import com.jzy.hio.platform.tenduser.service.TendUserInfoService;
+import com.jzy.hio.sys.user.param.UserRelationParam;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.amqp.core.AmqpTemplate;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.common.OAuth2AccessToken;
+import org.springframework.security.oauth2.provider.token.store.redis.RedisTokenStore;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.RedisKeyConstant;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.entity.ImFriendAlias;
+import com.jzy.hio.entity.UserInfo;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.platform.constant.DelflagEnum;
+import com.jzy.hio.platform.constant.UserOrFriendConstant;
+import com.jzy.hio.platform.dto.userinfo.ImUserInfoDto;
+import com.jzy.hio.platform.friendinfo.dto.FriendInfoDto;
+import com.jzy.hio.platform.userinfo.mapper.UserInfoMapper;
+import com.jzy.hio.platform.userinfo.mode.LoginUserInfoDto;
+import com.jzy.hio.platform.userinfo.mode.UserInfoSimpleDto;
+import com.jzy.hio.platform.userinfo.param.UserInfoParam;
+import com.jzy.hio.platform.userinfo.service.UserInfoService;
+import com.jzy.hio.platform.utils.CommonUtils;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.springmvc.ApiResponse;
+
+/**
+ * 用户信息
+ * @author chc<br/>
+ * 		2018年3月23日
+ */
+@Service
+public class UserInfoServiceImpl extends BaseServiceImpl<UserInfo> implements UserInfoService {
+	
+	@Autowired
+	private UserInfoMapper mapper;
+
+	@Autowired
+	private TendUserInfoService tendUserInfoService;
+
+	@Autowired
+	private ImRegisterUserApi imRegisterUserApi;
+	@Autowired
+	RedisTokenStore redisTokenStore;
+	@Autowired
+	private AmqpTemplate rabbitTemplate;
+	@Autowired
+	private QueueConfig queueConfig;
+	@Autowired
+	private FriendInfoService friendInfoService;
+	@Autowired
+	private SysFeignService sysFeignService;
+
+	@Override
+	public List<ImUserInfoDto> queryList() {
+		List<ImUserInfoDto> items = mapper.queryList();
+		return items;
+	}
+
+	@Override
+	public ImUserInfoDto getUserInfoById(String id) {
+		Map<String,Object> map = new HashMap<String,Object>();
+		map.put("id", id);
+		ImUserInfoDto items = mapper.getUserInfoByMap(map);
+		return items;
+	}
+	
+	@Override
+	public ImUserInfoDto getUserInfoByMap(Map<String,Object> map) throws HioException{
+		ImUserInfoDto items = mapper.getUserInfoByMap(map);
+		return items;
+	}
+	
+	@Override
+	public LoginUserInfoDto getLoginUserInfoByMap(Map<String,Object> map) throws HioException{
+		LoginUserInfoDto items = mapper.getLoginUserInfoByMap(map);
+		return items;
+	}
+
+	/**
+	 * 根据手机是否存在此用户 true占用，false未占用
+	 */
+	@Override
+	public boolean findMobile(String mobile) {
+		// 先查缓存，找到就直接返回
+		String tableName = CommonUtils.getTableName(UserInfo.class);
+		String uid = JedisUtil.fetchIndexMobile(tableName, mobile);
+		if (StringUtils.isNotBlank(uid)) {
+			return true;
+		}
+		
+		// 后查库
+		UserInfo ui = new UserInfo();
+		ui.setMobile(mobile);
+//		ui.setState(1);
+		ui.setDelflag(DelflagEnum.FALSE.getValue());
+		int count = mapper.selectCount(ui);
+		if (count > 0) {
+			return true;
+		}
+		return false;
+	}
+	
+	/**
+	 * 根据id查找用户
+	 */
+	@Override
+	public UserInfo findById(String id) {
+		String tableName = CommonUtils.getTableName(UserInfo.class);
+		UserInfo userInfo = JedisUtil.hgetObject(tableName, id, UserInfo.class);
+		if (userInfo == null) {
+			userInfo = mapper.selectByPrimaryKey(id);
+			if (userInfo == null || userInfo.getDelflag().equals(DelflagEnum.TRUE.getValue())) {
+				return null;
+			}
+			JedisUtil.addRow(userInfo);
+		}
+		return userInfo;
+	}
+	
+	/**
+	 * 获取用户的简单信息
+	 * @param userParam
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public ApiResponse<Object> getSimpleDto(UserInfoParam userParam) throws Exception{
+		ApiResponse<Object> ares = new ApiResponse<Object>();
+		String id = userParam.getSid();
+		String mobile = userParam.getMobile();
+		
+		ImUserInfoDto userInfoBean = null;
+		if (StringUtils.isBlank(id)) {
+			String uid = JedisUtil.fetchIndexMobile(UserOrFriendConstant.IM_USER_INFO, mobile);
+			if (StringUtils.isBlank(uid)) {
+				Map<String,Object> map = obj2map(userParam);
+				map.put("id", id);
+				userInfoBean = getUserInfoByMap(map);
+				if (userInfoBean != null) {
+					JedisUtil.addIndexMobile(UserOrFriendConstant.IM_USER_INFO, userInfoBean.getMobile(), userInfoBean.getId());
+					logger.info("通过手机号mysql获取用户信息，保存到redis");
+					id = userInfoBean.getId();
+				} else {
+					ares.setStatus(HioException.getUserInfoNoRegister.getStatus());
+					ares.setMessage(HioException.getUserInfoNoRegister.getMessage());
+					return ares;
+				}
+			} else {
+				logger.info("通过手机号redis获取用户的id");
+				id = uid;
+			}
+		}
+		String userJson = JedisUtil.fetchRow(UserOrFriendConstant.IM_USER_INFO, id);
+
+		if (StringUtils.isBlank(userJson)) {
+			Map<String,Object> map = obj2map(userParam);
+			map.put("id", id);
+			userInfoBean = getUserInfoByMap(map);
+			if (userInfoBean != null) {
+				UserInfo userInfo = new UserInfo();
+				BeanUtils.copyProperties(userInfoBean, userInfo);
+				logger.info("通过id，mysql查询用户信息");
+				JedisUtil.addRow(userInfo);
+				logger.info("mysql查到的用户保存的redis");
+			} else {
+				ares.setStatus(HioException.getUserInfoNoRegister.getStatus());
+				ares.setMessage(HioException.getUserInfoNoRegister.getMessage());
+				return ares;
+			}
+		} else {
+			userInfoBean = json2obj(userJson, ImUserInfoDto.class);
+			logger.info("通过用户id，从redis获取用户信息");
+		}
+		UserInfoSimpleDto dto = new UserInfoSimpleDto();
+		BeanUtils.copyProperties(userInfoBean, dto);
+//		dto.setMobile(mobile);
+		String tableName = CommonUtils.getTableName(ImFriendAlias.class);
+		ImFriendAlias alias = JedisUtil.hgetObject(tableName,getUserIdIM() + "_" + id, ImFriendAlias.class);
+		if(isNotEmpty(alias)) {
+			dto.setAliasName(alias.getAliasName());
+			dto.setAliasNameFull(alias.getAliasNameFull());
+			dto.setAliasNameSimple(alias.getAliasNameSimple());
+		}
+		if(isFriend(getUserIdIM(),id)) {
+			dto.setIsFriend(UserOrFriendConstant.IS_FRIEND_YES);
+		}else {
+			dto.setIsFriend(UserOrFriendConstant.IS_FRIEND_NO);
+		}
+		ares.setStatus(200);
+		ares.setMessage("查询用户卡片成功！");
+		ares.setResult(dto);
+		return ares;
+	}
+	
+	/**
+	 * fid是否是uid的好友
+	 * @param uid
+	 * @param fid
+	 * @return
+	 */
+	public boolean isFriend(String uid,String fid) {
+		/*Map<String,String> friendJson = JedisUtil.fetchRelationRow(RedisKeyConstant.myfriendPrefix + uid);
+		for (String key : friendJson.keySet()) {
+			FriendInfoDto dto = json2obj(friendJson.get(key),FriendInfoDto.class);
+			if(isEquals(fid, key) && 0 == dto.getIsDel()) {
+				return true;
+			}
+		}*/
+		String myFriendJson = JedisUtil.fetchRow(RedisKeyConstant.myfriendPrefix + uid, fid);
+		if(isNotEmpty(myFriendJson)) {
+			FriendInfoDto dto = json2obj(myFriendJson,FriendInfoDto.class);
+			if(null != dto && isEquals(dto.getIsDel(),BaseConstants.MYSQL_DELFLAG_NORMAL)) {
+				return true;
+			}
+		}
+		return false;
+	}
+	
+	/**
+	 * 租户列表排序  倒序
+	 * @param tendUserMap
+	 * @return
+	 * @throws Exception
+	 */
+	 public List<Map<String, Object>> getTendListByUserId(Map<String, String> tendUserMap) throws Exception{
+		 List<Map<String, Object>> map = new ArrayList<Map<String,Object>>();
+		//这里将map.entrySet()转换成list
+	    List<Map.Entry<String,String>> list = new ArrayList<Map.Entry<String,String>>(tendUserMap.entrySet());
+	    //然后通过比较器来实现排序
+	    Collections.sort(list,new Comparator<Map.Entry<String,String>>() {
+	      //倒序排序
+	    	public int compare(Entry<String, String> o1, Entry<String, String> o2) {
+	    		return json2map(o2.getValue()).get("createDate").toString().compareTo(json2map(o1.getValue()).get("createDate").toString());
+	    	}
+	    });
+	     
+	    for(Map.Entry<String,String> mapping:list){ 
+	        map.add(json2map(mapping.getValue()));
+	     } 
+	 	return map;
+	 }
+
+	public UserInfo getUserInfoByMobile(String mobile){
+		UserInfo dto = new UserInfo();
+		String receiverId = JedisUtil.fetchIndexMobile(UserOrFriendConstant.IM_USER_INFO, mobile);
+		if(isEmpty(receiverId)){
+			UserInfo param = new UserInfo();
+			param.setMobile(mobile);
+			param.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+			List<UserInfo> list = this.queryList(param);
+			if(isNotEmpty(list)){
+				dto = list.get(0);
+			}
+		}else{
+			String userJson = JedisUtil.fetchRow(UserOrFriendConstant.IM_USER_INFO, receiverId);
+			dto = json2obj(userJson,UserInfo.class);
+		}
+		return dto;
+	}
+
+	public int checkIsSendMessage(String uid,String fid) throws Exception{
+		//是否可以发消息 0：否，1：是
+		int isSendFlag = 0;
+		String fFriendJson = JedisUtil.fetchRow(RedisKeyConstant.myfriendPrefix + uid, fid);
+		if (fFriendJson != null) {
+			Map<String,String> fFriendMap = json2mapString(fFriendJson);
+			if(isEquals(0, Integer.valueOf(fFriendMap.get("isDel")+""))) {
+				isSendFlag = 1;
+			}
+		}
+		if (isEquals(0, isSendFlag)){
+			//登录人的租户列表
+			Map<String, String> loginUserTendJson = tendUserInfoService.getTendListByUserId(getUserIdIM());
+			//被查询人的租户列表
+			Map<String, String> userTendJson = tendUserInfoService.getTendListByUserId(fid);
+			for(String loginKey : loginUserTendJson.keySet()) {
+				if (!"table_name".equals(loginKey)) {
+					TendUserInfo tendLoginUser = json2obj(loginUserTendJson.get(loginKey),TendUserInfo.class);
+					for(String key : userTendJson.keySet()) {
+						if (!"table_name".equals(key)) {
+							TendUserInfo tendUser = json2obj(userTendJson.get(key),TendUserInfo.class);
+							if(isEquals(loginKey, key) && isEquals(BaseConstants.UserWorkStatus.JOB.getWorkStatus(), tendLoginUser.getReserve1()) &&
+									isEquals(BaseConstants.UserWorkStatus.JOB.getWorkStatus(), tendUser.getReserve1()) ) {
+								UserRelationParam userRelationParam = new UserRelationParam();
+								userRelationParam.setSourceIMUserId(tendLoginUser.getUid());
+								userRelationParam.setTargetIMUserId(tendUser.getUid());
+								userRelationParam.setTendId(loginKey);
+								ApiFeignResponse<Boolean> apiFeignResponse = sysFeignService.queryUserRelation(userRelationParam);
+								if(apiFeignResponse.isSuccess() && apiFeignResponse.getResult()) {
+									isSendFlag = 1;
+									break;
+								}
+							}
+						}
+					}
+					if(isEquals(BaseConstants.UserWorkEnu.JOB.getWorkStatus(), isSendFlag)) {
+						break;
+					}
+				}
+			}
+		}
+		return isSendFlag;
+	}
+
+	public static Map<String, String> json2mapString(String json) {
+		Map<String, Object> map = com.jzy.hio.base.Base.json2map(json);
+		Map<String, String> resultMap = new HashMap<String, String>();
+		for (String key : map.keySet()) {
+			resultMap.put(key, map.get(key)+"");
+		}
+		return resultMap;
+	}
+
+	public ApiResponse<Void> updPhoneNo(Map<String, Object> paramMap)throws Exception{
+		ApiResponse<Void> res = new ApiResponse<>(200, "手机号修改成功");
+		String uid = getUserIdIM();
+		logger.info("登录人uid::{}",uid);
+		String key = RedisKeyConstant.UPDATEPHONENO + uid;
+		String userMapJson = JedisUtil.get(key);
+		if (userMapJson == null) {
+			res.setMessage(HioException.sendValidCodeTimeOut.getMessage());
+			res.setStatus(HioException.sendValidCodeTimeOut.getStatus());
+			return res;
+		}
+		String verifyCodeParam = getStr(paramMap, "verifyCode");
+		Map<String, Object> map = json2map(userMapJson);
+		String verifyCode = getStr(map, "verifyCode");
+		if (verifyCode == null || !verifyCode.equals(verifyCodeParam)) {
+			res.setMessage(HioException.updPhoneNoValidateError.getMessage());
+			res.setStatus(HioException.updPhoneNoValidateError.getStatus());
+			return res;
+		}
+
+		long liveTime = JedisUtil.ttl(key);
+		long times = map.get("times")==null?null :Long.valueOf(map.get("times") + "");
+		long minTime = times - PhoneNoSettingConstant.VERIFYCODE_EXPIRE_SECONDS + PhoneNoSettingConstant.INTERVAL_SECONDS;
+		if (liveTime < minTime) {
+			res.setMessage(HioException.updPhoneNoValidateTimeOut.getMessage());
+			res.setStatus(HioException.updPhoneNoValidateTimeOut.getStatus());
+			return res;
+		}
+
+		String phoneNo = getStr(map, "phoneNo");
+		boolean find = this.findMobile(phoneNo);
+		if (find) {
+			res.setMessage(HioException.sendValidCodeMobileAlready.getMessage());
+			res.setStatus(HioException.sendValidCodeMobileAlready.getStatus());
+			return res;
+		}
+
+		// 处理成功不论是否过期，删掉key值
+		JedisUtil.del(key);
+		// 更新缓存
+		String oldMobile = "";
+
+		Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+		String phone = authentication.getName();
+		logger.info("修改手机号之前的手机号：{}",phone);
+		if(phone.contains("_app")) {
+			oldMobile = phone.replaceAll("_app", "");
+		}else if(phone.contains("_pc")){
+			oldMobile = phone.replaceAll("_pc", "");
+		}else {
+			oldMobile = phone;
+		}
+		/*String userJson = JedisUtil.fetchRow(UserOrFriendConstant.IM_USER_INFO, JedisUtil.fetchIndexMobile(UserOrFriendConstant.IM_USER_INFO, oldMobile));
+		logger.info("更新手机号{}，用户信息{}",phoneNo,userJson);
+		UserInfo userInfo = json2obj(userJson, UserInfo.class);
+		logger.info("原手机号{}",oldMobile);
+		userInfo.setMobile(phoneNo);
+		JedisUtil.addRow(userInfo);
+		JedisUtil.delIndexMobile(UserOrFriendConstant.IM_USER_INFO,oldMobile,userInfo.getId());
+		JedisUtil.addIndexMobile(UserOrFriendConstant.IM_USER_INFO,userInfo.getMobile(),userInfo.getId());
+*/
+		/*UserInfo ui = new UserInfo();
+		ui.setId(uid);
+		ui.setMobile(phoneNo);
+		update(ui);*/
+		String userJson = JedisUtil.fetchRow(UserOrFriendConstant.IM_USER_INFO, uid);
+		UserInfo userInfo = new UserInfo();
+		if(isEmpty(userJson)){
+			userInfo = getObjectById(uid);
+		}else{
+			userInfo = json2obj(userJson, UserInfo.class);
+		}
+		if(isNotEmpty(userInfo)) {
+			userInfo.setMobile(phoneNo);
+			update(userInfo);
+			JedisUtil.addRow(userInfo);
+			JedisUtil.delIndexMobile(UserOrFriendConstant.IM_USER_INFO, oldMobile, uid);
+			JedisUtil.addIndexMobile(UserOrFriendConstant.IM_USER_INFO, userInfo.getMobile(), uid);
+		}
+//		rabbitTemplate.convertAndSend(queueConfig.getImUserInfoQueue(), ui);
+
+		//更新移动端生成独立账号
+		String appUid = JedisUtil.fetchIndexMobile(UserOrFriendConstant.IM_USER_INFO, oldMobile+"_app");
+		logger.info("更新移动端生成独立账号的手机号{}",oldMobile+"_app");
+		String appUserJson = JedisUtil.fetchRow(UserOrFriendConstant.IM_USER_INFO, appUid);
+		logger.info("更新移动端生成独立账号信息{}",appUserJson);
+		UserInfo appUserInfo = new UserInfo();
+		if(isEmpty(appUserJson)){
+			UserInfo appUserParam = new UserInfo();
+			appUserParam.setMobile(oldMobile+"_app");
+			appUserParam.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+			appUserInfo = queryList(appUserParam)==null?null:queryList(appUserParam).get(0);
+		}else{
+			appUserInfo = json2obj(appUserJson, UserInfo.class);
+		}
+		if(isNotEmpty(appUserInfo)) {
+			appUserInfo.setMobile(phoneNo + "_app");
+			update(appUserInfo);
+			JedisUtil.addRow(appUserInfo);
+			JedisUtil.delIndexMobile(UserOrFriendConstant.IM_USER_INFO, oldMobile + "_app", appUserInfo.getId());
+			JedisUtil.addIndexMobile(UserOrFriendConstant.IM_USER_INFO, userInfo.getMobile() + "_app", appUserInfo.getId());
+		}
+		/*UserInfo appUi = new UserInfo();
+		appUi.setId(appUid);
+		appUi.setMobile(phoneNo+"_app");
+		rabbitTemplate.convertAndSend(queueConfig.getImUserInfoQueue(), appUi);*/
+
+		//更新pc端生成独立账号
+		String pcUid = JedisUtil.fetchIndexMobile(UserOrFriendConstant.IM_USER_INFO, oldMobile+"_pc");
+		logger.info("更新PC端生成独立账号的手机号{}",oldMobile+"_pc");
+		String pcUserJson = JedisUtil.fetchRow(UserOrFriendConstant.IM_USER_INFO, pcUid);
+		logger.info("更新PC端生成独立账号信息{}",appUserJson);
+		UserInfo pcUserInfo = new UserInfo();
+		if(isEmpty(pcUserJson)){
+			UserInfo pcUserParam = new UserInfo();
+			pcUserParam.setMobile(oldMobile+"_pc");
+			pcUserParam.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+			pcUserInfo = queryList(pcUserParam)==null?null:queryList(pcUserParam).get(0);
+		}else{
+			pcUserInfo = json2obj(pcUserJson, UserInfo.class);
+		}
+		if(isNotEmpty(pcUserInfo)) {
+			pcUserInfo.setMobile(phoneNo + "_pc");
+			update(pcUserInfo);
+			JedisUtil.addRow(pcUserInfo);
+			JedisUtil.delIndexMobile(UserOrFriendConstant.IM_USER_INFO, oldMobile + "_pc", pcUserInfo.getId());
+			JedisUtil.addIndexMobile(UserOrFriendConstant.IM_USER_INFO, userInfo.getMobile() + "_pc", pcUserInfo.getId());
+		}
+		/*UserInfo pcUi = new UserInfo();
+		pcUi.setId(pcUid);
+		pcUi.setMobile(phoneNo+"_pc");
+		rabbitTemplate.convertAndSend(queueConfig.getImUserInfoQueue(), pcUi);*/
+
+		// 修改我好友的列表我的信息
+		Map<String, String> friendJson = friendInfoService.getUserFriend(uid, "query");
+		if(null != friendJson && friendJson.size() > 0) {
+			for (String fid : friendJson.keySet()) {
+				String fFriendJson = JedisUtil.fetchRow(RedisKeyConstant.myfriendPrefix + fid, uid);
+				Map<String, String> fFriendMap = json2mapString(fFriendJson);
+				if (isEmpty(fFriendMap) && fFriendMap.size() > 0) {
+					fFriendMap.put("mobile", phoneNo);
+					fFriendMap.put("id", fFriendMap.get("fid"));
+					JedisUtil.addListRow(RedisKeyConstant.myfriendPrefix + fid, fFriendMap);
+				}
+			}
+		}
+		removeToken(phoneNo);
+		/*io.swagger.client.ApiResponse<String> obj = (io.swagger.client.ApiResponse<String>)imRegisterUserApi.disconnectIMUser(uid);
+		if(isNotEmpty(obj)) {
+            logger.info("updPhoneNo password hxid:" + obj.getData() + "---status----:" + obj.getStatusCode() + "----header---" + obj.getHeaders());
+        }else{
+            logger.info("修改手机号，账号：{}，没有环信账号",uid);
+        }*/
+		logoutHX(uid);
+		return res;
+	}
+	//踢环信
+	public void logoutHX(String xhUserName){
+		ExecutorService hxPool = Executors.newSingleThreadExecutor();
+		hxPool.submit(new Runnable() {
+			@Override
+			public void run() {
+				try {
+					Thread.sleep(2000);
+					io.swagger.client.ApiResponse<String> obj = (io.swagger.client.ApiResponse<String>) imRegisterUserApi.disconnectIMUser(xhUserName);
+					logger.info("find password hxid:" + obj.getData() + "---status----:" + obj.getStatusCode() + "----header---" + obj.getHeaders());
+				}catch (Exception e){
+					e.printStackTrace();
+					logger.error("环信互踢失败：{}",e.getMessage());
+				}
+			}
+		});
+		hxPool.shutdown();
+	}
+	/**
+	 * 删除所有旧密码token
+	 * @param userName
+	 */
+	private void removeToken(String userName) {
+		Enumeration<OAuth2AccessToken> tokenEnumeration = Collections.enumeration(redisTokenStore
+				.findTokensByClientIdAndUserName("hio_oauth", userName));
+		while (tokenEnumeration.hasMoreElements()) {
+			redisTokenStore.removeAccessToken(tokenEnumeration.nextElement().getValue());
+		}
+		tokenEnumeration = Collections.enumeration(redisTokenStore
+				.findTokensByClientIdAndUserName("hio_oauth", userName + "_app"));
+		while (tokenEnumeration.hasMoreElements()) {
+			redisTokenStore.removeAccessToken(tokenEnumeration.nextElement().getValue());
+		}
+		tokenEnumeration = Collections.enumeration(redisTokenStore
+				.findTokensByClientIdAndUserName("hio_oauth", userName + "_pc"));
+		while (tokenEnumeration.hasMoreElements()) {
+			redisTokenStore.removeAccessToken(tokenEnumeration.nextElement().getValue());
+		}
+	}
+}

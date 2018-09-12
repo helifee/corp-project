@@ -1,0 +1,179 @@
+package com.jzy.hio.sys.external.controller;
+
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.controller.BaseController;
+import com.jzy.hio.entity.OaSysExternalContact;
+import com.jzy.hio.sys.external.dto.ExternalContactDto;
+import com.jzy.hio.sys.external.dto.UserIsNormalDto;
+import com.jzy.hio.sys.external.param.ExternalContactRelationParam;
+import com.jzy.hio.sys.external.param.UserIsNormalParam;
+import com.jzy.hio.sys.external.service.ExternalContactService;
+import com.jzy.hio.sys.user.service.UserService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * 外部联系人查询
+ *
+ * @author wt.coffee
+ * @date 2018年4月3日下午3:58:55
+ */
+@RestController
+@RequestMapping("externalContact")
+public class ExternalContactController extends BaseController {
+
+	@Autowired
+	private ExternalContactService externalContactService;
+	@Autowired
+	private UserService userService;
+
+	/**
+	 * <pre>
+	 * 按照负责人或者共享者id查询外部联系人
+	 * 超级管理员 可以查所有的
+	 * 负责人或者共享者只能查自己负责的或者被共享的
+	 * </pre>
+	 *
+	 * @param paramMap
+	 * @return
+	 */
+	@PostMapping("queryListByUser")
+	public List<ExternalContactDto> queryListByUser(@RequestBody Map<String, String> paramMap) {
+		String userIdIm = getUserIdIM();
+		String tendId = getStr(paramMap, BaseConstants.HTTP_PARAM_TENDID);
+		String userId = null;
+		try {
+			userId = userService.getOAUserId(tendId, userIdIm);
+		} catch (Exception e) {
+			logger.info("查询oa userId失败 {} {} ", tendId, userIdIm);
+			return null;
+		}
+		List<ExternalContactDto> list = externalContactService.queryListByUserWithRole(tendId, userId);
+		return list;
+	}
+
+	/**
+	 * 设置标签
+	 *
+	 * @param external
+	 *            id<br>
+	 *            label
+	 * @return
+	 */
+	@PostMapping("updateLabel")
+	public Object updateLabel(@RequestBody OaSysExternalContact external) {
+		super.update(external.getId(), external);
+		return null;
+	}
+
+	/**
+	 * 查询外部联系人的详细信息
+	 *
+	 * @param paramMap
+	 * @return
+	 */
+	@PostMapping("queryDetail")
+	public ExternalContactDto queryDetail(@RequestParam("sid") String id) {
+		OaSysExternalContact external = externalContactService.getObjectById(id);
+		ExternalContactDto dto = getExternalContactDto(external,0);
+		return dto;
+	}
+	/**
+	 * 查询外部联系人的详细信息
+	 *
+	 * @param paramMap
+	 * @return
+	 */
+	@PostMapping("queryDetailByStatus")
+	public ExternalContactDto queryDetailByStatus(@RequestParam("tendId") String tendId,@RequestParam("sid") String id,@RequestParam("status") int status) {
+		OaSysExternalContact external = externalContactService.getObjectById(tendId,id);
+		ExternalContactDto dto = getExternalContactDto(external,status);
+		return dto;
+	}
+
+	/**
+	 * 查询外部联系人和当前人是否有关系
+	 * @param apiParam
+	 * @return  true 表示有关系，false表示无关联关系
+	 */
+	@RequestMapping(value = "queryExternalIsHaveRelation", method = RequestMethod.POST)
+	public Boolean queryExternalIsHaveRelation(@RequestBody @Validated ExternalContactRelationParam apiParam){
+		return externalContactService.queryExternalIsHaveRelation(apiParam.getTendId(),apiParam.getImUserId(),apiParam.getUserId());
+	}
+
+	/**
+	 * 查询用户Ids
+	 * 
+	 * @param userIds
+	 *            外部联系人的主键
+	 * @return
+	 */
+	@PostMapping("queryExternalUsersByUserIds")
+	public List<ExternalContactDto> queryExternalUsersByUserIds(@RequestParam("userIds") List<String> userIds) {
+		List<ExternalContactDto> result = externalContactService.queryExternalUsersByIds(getTendId(),userIds,0);
+		return result;
+	}
+
+	/**
+	 * 查询用户Ids 通过状态
+	 * @param userIds
+	 * @param status 0-查询未删除的；1-可以查询删除的
+	 * @return
+	 */
+	@RequestMapping(value = "queryExternalUsersByUserIdsAndStatus", method = RequestMethod.POST)
+	public List<ExternalContactDto> queryExternalUsersByUserIdsAndStatus(@RequestParam("tendId") String tendId,@RequestParam("userIds") List<String> userIds,@RequestParam("status") int status){
+		List<ExternalContactDto> result = externalContactService.queryExternalUsersByIds(tendId,userIds,status);
+		return result;
+	}
+
+	/**
+	 * key-status
+	 * @param apiParam
+	 * @return
+	 */
+	@RequestMapping(value = "queryUserIsNormal", method = RequestMethod.POST)
+	public UserIsNormalDto queryUserIsNormal(@RequestBody @Validated UserIsNormalParam apiParam){
+		UserIsNormalDto userIsNormalDto = new UserIsNormalDto();
+		//内部
+		if (isNotEmpty(apiParam.getSysUserIds())){
+			String sysUserNams = userService.queryUserIsNormal(apiParam.getTendId(),apiParam.getSysUserIds());
+			userIsNormalDto.setErrorName(sysUserNams);
+		}
+		//外部
+		if (isNotEmpty(apiParam.getSysExternalIds())){
+			String sysExternalNames = externalContactService.queryUserIsNormal(apiParam.getTendId(),apiParam.getSysExternalIds());
+			userIsNormalDto.setErrorExternalName(sysExternalNames);
+		}
+
+		return userIsNormalDto;
+	}
+
+	private ExternalContactDto getExternalContactDto(OaSysExternalContact external,int status) {
+		if (external == null ){
+			return null;
+		}
+		if (status == 0){
+			if (external.getDelflag().intValue() == BaseConstants.MYSQL_DELFLAG_DELETED){
+				return null;
+			}
+		}
+		ExternalContactDto dto = new ExternalContactDto();
+		dto.setId(external.getId());
+		dto.setName(external.getName());
+		dto.setCompany(external.getCompany());
+		dto.setLabel(external.getLabel());
+		dto.setPositionName(external.getPosition());
+		return dto;
+	}
+
+}

@@ -1,0 +1,263 @@
+package com.jzy.hio.crm.utils;
+
+import java.text.SimpleDateFormat;
+import java.util.*;
+import java.util.stream.Collectors;
+
+import com.jzy.hio.crm.param.CrmAssignedMsgParam;
+
+import com.jzy.hio.sys.user.dto.UserStatusDto;
+import com.jzy.hio.sys.user.param.UserStatusParam;
+import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.RedisKeyConstant;
+import com.jzy.hio.base.controller.BaseController;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.feign.SysRoleFeignService;
+import com.jzy.hio.platform.dto.tenantcompanyinfo.TenantCompanyInfoDto;
+import com.jzy.hio.platform.message.MessageFeignService;
+import com.jzy.hio.platform.message.param.IMToUserParam;
+import com.jzy.hio.platform.message.param.ImNoticeMsgSendParam;
+import com.jzy.hio.platform.message.param.ImNoticeMsgsParam;
+import com.jzy.hio.platform.message.param.MessageEnum;
+import com.jzy.hio.platform.message.param.MsgTypeEnum;
+import com.jzy.hio.platform.message.param.SendMsgTypeEnum;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.sys.organization.dto.FlowUserDto;
+import com.jzy.hio.sys.organization.param.SkyDriveParam;
+import com.jzy.hio.sys.role.dto.RoleUserDto;
+import com.jzy.hio.sys.user.dto.OAUserDto;
+import com.jzy.hio.sys.user.param.OAUserParam;
+
+/**
+ * crm 公共调用 
+ * @author 
+ *
+ */
+@Component
+public class CrmCommonInvokeUtil extends BaseController {
+
+	private Logger logger = LoggerFactory.getLogger(CrmCommonInvokeUtil.class);
+	
+	/**
+	 * crm 菜单前缀
+	 */
+	private static final String CRM_MANAGE_MENU = "crm";
+	
+	@Autowired
+    private SysFeignService sysFeignService;
+	@Autowired
+	private SysRoleFeignService sysRoleFeignService;
+	@Autowired
+	private MessageFeignService messageFeignService;
+	
+	/**
+	 * 获取拥有crm权限的所有人
+	 * @return
+	 */
+	public List<RoleUserDto> queryCrmUoleUsers() {
+		ApiFeignResponse<List<RoleUserDto>> res = sysRoleFeignService.queryRoleUserByMenuCode(CRM_MANAGE_MENU);
+		if (res != null &&res.getStatus() == 200) {
+			if (res.getResult() != null) {
+				return res.getResult();
+			} else {
+				return new ArrayList<RoleUserDto>();
+			}
+		} else {
+			logger.error("查询crm人员列表出错，入参{}，返回值：{}",CRM_MANAGE_MENU, obj2json(res));
+			throw new HioException("查询crm人员列表出错");
+		}
+	}
+	
+	public void sendAssignMessage(List<CrmAssignedMsgParam> assignedMsgList) {
+		List<String> uids = assignedMsgList.stream().map(obj -> obj.getUserId()).collect(Collectors.toList());
+		String tendId = getTendId();
+		String uName = getUserNameOA();
+		SkyDriveParam skyDriveParam = new SkyDriveParam();
+		skyDriveParam.setUserIds(uids);
+		skyDriveParam.setTendId(tendId);
+		skyDriveParam.setStatus(0);
+		ApiFeignResponse<List<FlowUserDto>> result = sysFeignService.queryPositionNameByUserIds(skyDriveParam);
+		logger.info("crm查询im id入参：{}，返回值：{}" , obj2json(skyDriveParam) ,obj2json(result));
+		if (result.getStatus() != 200) {
+			logger.error("查询imId失败");
+			throw new HioException("查询imId失败");
+		}
+		List<FlowUserDto> list = result.getResult();
+		ImNoticeMsgSendParam msgSendParam = new ImNoticeMsgSendParam();
+		List<ImNoticeMsgsParam> msgs = new ArrayList<>();
+		String tenantId = JedisUtil.fetchIndexMobile(RedisKeyConstant.tenantToInfo, tendId);
+        String tenantJson = JedisUtil.fetchRow("tenant_company_info", tenantId);
+        TenantCompanyInfoDto tenantCompanyInfoDto = Base.json2obj(tenantJson, TenantCompanyInfoDto.class);
+        String tendName = tenantCompanyInfoDto.getName();
+        if (StringUtils.isBlank(tendName)) {
+        	logger.error("查询企业名称失败：{}", tenantId);
+			throw new HioException("查询企业名称失败");
+		}
+
+		String assignTime = new SimpleDateFormat("yyyy-MM-dd HH:mm").format(new Date());
+		boolean find;
+		for (CrmAssignedMsgParam cust: assignedMsgList) {
+			find = false;
+			for (FlowUserDto user : list) {
+				if (cust.getUserId().equals(user.getUserId())) {
+					find = true;
+					ImNoticeMsgsParam msg = new ImNoticeMsgsParam();
+					/*
+					 * custName		客户名称
+					 * assignPerson	分配人
+					 * assignTime	分配时间
+					 */
+					Map<String,Object> ext = new HashMap<>();
+					ext.put("custName", cust.getCustomerName());
+					ext.put("assignPerson", uName);
+					ext.put("assignTime", assignTime);
+					ext.put("pcUrl", "/ccdist/#/crm/customer/details?customerId=" + cust.getCustomerId() + "&tendId=" + tendId);
+					ext.put("mobileUrl", "/mobiledist/#/m_cus/m_cus_detail?id=" + cust.getCustomerId() + "&tendId=" + tendId);
+					ext.put("tendId", tendId);
+					ext.put("tendName", tendName);
+					msg.setExt(ext);
+					msg.setModuleType(MessageEnum.CRM.getValue());
+					msg.setModuleName(MessageEnum.CRM.getDes());
+					msg.setSendMsgType(SendMsgTypeEnum.TEXT.getValue());
+					msg.setMsg("客户分配");
+					msg.setMsgType(MsgTypeEnum.MSG.getValue());
+					msg.setOpenStatus(1);
+
+					msg.setTendId(tendId);
+					msg.setTendName(tendName);
+					List<IMToUserParam> toUsers = new ArrayList<>();
+					IMToUserParam imToUserParam =  new IMToUserParam();
+					imToUserParam.setToUserId(user.getImUserId());
+					toUsers.add(imToUserParam);
+
+					msg.setToUsers(toUsers);
+					msgs.add(msg);
+					break;
+				}
+
+			}
+			if (!find) {
+				logger.error("crm客户分配未发送的客户" , obj2json(cust));
+			}
+
+		}
+
+		msgSendParam.setMsgs(msgs);
+		@SuppressWarnings("rawtypes")
+		ApiFeignResponse res = messageFeignService.sendMessage(msgSendParam);
+		logger.info("crm客户分配发消息入参：{}，返回结果：{}" ,obj2json(msgSendParam), obj2json(res));
+	}
+	
+	/**
+	 * 查询根据租户id,userId,查询名称
+	 * @param tendId
+	 * @param uid
+	 * @return
+	 */
+	public String getUserName(String tendId, String uid) {
+		OAUserParam oaUserParam = new OAUserParam();
+        List<String> userIds = new ArrayList<>();
+        oaUserParam.setTendId(tendId);
+        userIds.add(uid);
+        oaUserParam.setUserIds(userIds);
+		oaUserParam.setStatus(3);
+		logger.info("crm查询用户名称，入参{}", obj2json(oaUserParam));
+        ApiFeignResponse<List<OAUserDto>> res = sysFeignService.queryUserByOrgAndRoleAndUser(oaUserParam);
+        if (res != null && res.getStatus() == 200) {
+        	if (res.getResult() != null && res.getResult().size() > 0) {
+        		return res.getResult().get(0).getName();
+			}
+		}
+        
+        logger.error("crm查询用户名称出错，入参{}，返回值：{}", obj2json(oaUserParam), obj2json(res));
+		throw new HioException("crm查询用户名称出错");
+	}
+	
+	/**
+	 * 根据租户id,和userId列表 查询对应的用户列表
+	 * 返回用户名集合，key值为userId，value为名称
+	 * @param tendId
+	 * @param uids
+	 * @return
+	 */
+	public Map<String, String> getUserName(String tendId, List<String> uids) {
+		OAUserParam oaUserParam = new OAUserParam();
+		oaUserParam.setTendId(tendId);
+		oaUserParam.setUserIds(uids);
+		oaUserParam.setStatus(3);
+		logger.info("crm查询用户名称列表，入参{}", obj2json(oaUserParam));
+		ApiFeignResponse<List<OAUserDto>> res = sysFeignService.queryUserByOrgAndRoleAndUser(oaUserParam);
+		if (res != null && res.getStatus() == 200) {
+			List<OAUserDto> userList = res.getResult();
+			if (userList != null) {
+				Map<String, String> mapParam = new HashMap<>(userList.size());
+				for (OAUserDto oaUserDto : userList) {
+					mapParam.put(oaUserDto.getId(), oaUserDto.getName());
+				}
+				return mapParam;
+			}
+			
+			return new HashMap<String, String>();
+		} else {
+			logger.error("crm查询用户名称列表出错，入参{}，返回值：{}", obj2json(oaUserParam), obj2json(res));
+			throw new HioException("crm查询用户名称列表出错");
+		}
+		
+	}
+	
+	/**
+	 * 根据用户名查询用户id
+	 * @param uNames
+	 * @return key：name,value：id
+	 */
+	public Map<String,FlowUserDto> getUidByNames(List<String> uNames) {
+		logger.info("crm根据用户名称查询用户，入参{}", obj2json(uNames));
+		ApiFeignResponse<Map<String,FlowUserDto>> res = sysFeignService.queryUserMapByName(uNames);
+		if (res != null && res.getStatus() == 200) {
+			Map<String,FlowUserDto> uidMap = res.getResult();
+			if (uidMap == null) {
+				uidMap = new HashMap<>();
+			}
+			return uidMap;
+		} else {
+			logger.error("crm根据用户名称查询用户出错，入参{}，返回值：{}", obj2json(uNames), obj2json(res));
+			throw new HioException("crm根据用户名称查询用户出错");
+		}
+		
+	}
+
+	/**
+	 * 查询人员状态是否正常
+	 * true-表示正常状态；false-表示不正常状态（包括、未激活、删除、离职等等）
+	 * @param uid
+	 * @return
+	 */
+	public boolean getUserStatus(String uid) {
+		logger.info("crm根据userId查询人员状态，入参{}", uid);
+
+		UserStatusParam userStatusParam = new UserStatusParam();
+		userStatusParam.setTendId(getTendId());
+		List<String> userIds = new ArrayList<>();
+		userIds.add(uid);
+		userStatusParam.setUserIds(userIds);
+		ApiFeignResponse<Map<String,UserStatusDto>> res = sysFeignService.queryUserStatusByIds(userStatusParam);
+		if (res != null && res.getStatus() == 200 && res.getResult() != null) {
+			// 判断有没有key，有即是正常状态，不正常不返回
+			return res.getResult().containsKey(uid);
+		}
+
+		String jsonres = obj2json(res);
+		logger.error("crm根据userId查询人员状态，返回值：{}", jsonres);
+		throw new HioException("crm根据userId查询人员状态出错");
+	}
+	
+	
+}

@@ -1,0 +1,19 @@
+package com.xinleju.platform.finance.dao;
+
+import java.util.List;
+
+import com.xinleju.platform.base.dao.BaseDao;
+import com.xinleju.platform.finance.entity.AssMapping;
+
+/**
+ * @author admin
+ *
+ */
+
+public interface AssMappingDao extends BaseDao<String, AssMapping> {
+
+	void deleteByTypeId(String string);
+	
+	public List queryListByAssTypeIds(List<String> paramList);
+
+}

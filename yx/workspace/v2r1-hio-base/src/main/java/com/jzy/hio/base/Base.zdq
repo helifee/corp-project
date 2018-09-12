@@ -1,0 +1,659 @@
+package com.jzy.hio.base;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import javax.persistence.Table;
+import javax.servlet.http.HttpServletRequest;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+
+import com.jzy.hio.aop.DataSourceAop;
+import com.jzy.hio.base.dto.BaseTendDto;
+import com.jzy.hio.base.entity.BaseEntity;
+import com.jzy.hio.exception.HioSessionException;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.redis.RedisService;
+import com.jzy.hio.redis.entity.RoleMenuButtonRds;
+import com.jzy.hio.redis.entity.TendUserIdRds;
+import com.jzy.hio.utils.JacksonUtils;
+import com.jzy.hio.utils.LoginUser;
+
+/**
+ * 该类的设计初衷：提供项目基础功能的封装<br/>
+ * 集中管理对第三方类的依赖、最大化的减少业务相关的类直接import第三方class
+ *
+ * @author coffee<br>
+ *         2018年2月1日上午10:27:24
+ */
+public class Base {
+
+	protected Logger logger = LoggerFactory.getLogger(getClass());
+
+	@Autowired
+	private RedisService redisService;
+
+	/**
+	 * 把Object转化为String、主要处理Null <br/>
+	 *
+	 * @param obj
+	 *            任意数据类型
+	 * @return
+	 * @date 2018年2月1日上午10:35:26
+	 */
+	public static String getStr(Object obj) {
+		String str = null;
+		if (obj != null) {
+			str = String.valueOf(obj);
+		}
+		return str;
+	}
+
+	public String getStr(Map<?, ?> param, String key) {
+		Object obj = param.get(key);
+		if (obj == null) {
+			return null;
+		} else {
+			return String.valueOf(obj);
+		}
+	}
+
+	/**
+	 * 注意返回值 Null 可能造成空指针异常
+	 *
+	 * @param param
+	 * @param key
+	 * @return
+	 */
+	public Integer getInteger(Map<?, ?> param, String key) {
+		Object obj = param.get(key);
+		if (obj == null) {
+			return null;
+		} else {
+			return Integer.valueOf(obj + "");
+		}
+	}
+
+	public boolean getBool(Map<?, ?> param, String key, boolean defValue) {
+		Object obj = param.get(key);
+		if (obj == null) {
+			return defValue;
+		} else {
+			try {
+				return Boolean.valueOf(obj + "");
+			} catch (Exception e) {
+				return defValue;
+			}
+		}
+	}
+
+	@SuppressWarnings("unchecked")
+	public <T> List<T> getList(Map<?, ?> param, String key, Class<T> tClass) {
+		Object obj = param.get(key);
+		if (obj == null) {
+			return new ArrayList<>();
+		} else {
+			List<T> result = (List<T>) obj;
+			return result;
+		}
+	}
+
+	@SuppressWarnings("unchecked")
+	public static Map<String, Object> json2map(String json) {
+		Map<String, Object> map = JacksonUtils.fromJson(json, Map.class);
+		if (map == null) {
+			map = new HashMap<>();
+		}
+		return map;
+	}
+
+	public static <T> T json2obj(String json, Class<T> tclass) {
+		return JacksonUtils.fromJson(json, tclass);
+	}
+
+	public static <T> List<T> json2list(String json, Class<T> tclass) {
+		return JacksonUtils.fromJson(json, ArrayList.class, tclass);
+	}
+
+	/**
+	 * 考虑到null值, 不能用 com.alibaba.fastjson 相关的类 <br/>
+	 *
+	 * @param obj
+	 * @return
+	 * @author coffee 2018年2月2日下午6:16:43<br/>
+	 */
+	@SuppressWarnings("unchecked")
+	public static Map<String, Object> obj2map(Object obj) {
+		String json = JacksonUtils.toJson(obj);
+		Map<String, Object> map = JacksonUtils.fromJson(json, Map.class);
+		// return JSON.parseObject(JSON.toJSONString(obj), Map.class);
+		return map;
+	}
+
+	/**
+	 * <pre>
+	 * 注意返回值不能为Map<String, String> 而应该是Map<String, Object>
+	 * 否则运行时很可能抛出类似java.lang.ClassCastException: java.util.ArrayList cannot be cast to java.lang.String
+	 * 的异常
+	 * </pre>
+	 *
+	 * @param obj
+	 * @return
+	 */
+	@SuppressWarnings("unchecked")
+	public static Map<String, String> obj2mapStr(Object obj) {
+		String json = JacksonUtils.toJson(obj);
+		Map<String, Object> map = JacksonUtils.fromJson(json, Map.class);
+		Map<String, String> newMap = new HashMap<>();
+		for (String key : map.keySet()) {
+			Object value = map.get(key);
+			if (value instanceof Set || value instanceof List) {
+				String newValue = Base.obj2json(value);
+				newMap.put(key, newValue);
+			} else {
+				String newValue = value.toString();
+				newMap.put(key, newValue);
+			}
+		}
+		return newMap;
+	}
+
+	/**
+	 * @param map
+	 * @return
+	 */
+	public static Map<String, Object> mapStr2mapObj(Map<String, String> map) {
+		Map<String, Object> newMap = new HashMap<>();
+		newMap.putAll(map);
+		for (String key : map.keySet()) {
+			String value = map.get(key);
+			if (value.startsWith("[") && value.endsWith("]")) {
+				Object newValue = json2obj(value, Set.class);
+				newMap.put(key, newValue);
+			}
+		}
+		return newMap;
+	}
+
+	/**
+	 * <pre>
+	 * {userId=10106, oauth=["1005","10130"]}
+	 * {"userId":"10106","oauth":"[\"1005\",\"10130\"]"}
+	 *
+	 * {"userId":"10106","oauth":["1005","10130"]}
+	 * "{\"userId\":\"10106\",\"oauth\":[\"1005\",\"10130\"]}"
+	 * </pre>
+	 *
+	 * @param map
+	 * @param clazz
+	 * @return
+	 */
+	public static <T> T map2obj(Map<String, ? extends Object> map, Class<T> clazz) {
+		String json = JacksonUtils.toJson(map);
+		return JacksonUtils.fromJson(json, clazz);
+	}
+
+	public static String obj2json(Object obj) {
+		String json = JacksonUtils.toJson(obj);
+		return json;
+	}
+
+	/**
+	 * 判断对象是否为空、适用于集合、自定义Object、String <br>
+	 *
+	 * @param obj
+	 *            <br>
+	 * @return 2018年1月31日上午11:14:34
+	 */
+	public static boolean isNotEmpty(Object obj) {
+		if (obj == null) {
+			return false;
+		}
+		if (obj instanceof Collection<?>) {
+			Collection<?> coll = (Collection<?>) obj;
+			return coll.size() > 0;
+		}
+		if (obj instanceof Map<?, ?>) {
+			Map<?, ?> map = (Map<?, ?>) obj;
+			return map.size() > 0;
+		}
+		return String.valueOf(obj + "").trim().length() > 0;
+	}
+
+	public static boolean isEquals(Object obj1, Object obj2) {
+		if (obj1 == null && obj2 == null) {
+			return true;
+		}
+		if (obj1 != null && obj1.equals(obj2)) {
+			return true;
+		} else {
+			return false;
+		}
+	}
+
+	public static void main(String[] args) {
+		System.out.println(isEquals(2, 3));
+	}
+
+	public static boolean isNotEquals(Object obj1, Object obj2) {
+		return isEquals(obj1, obj2) == false;
+	}
+
+	/**
+	 * 判断对象是否为空、适用于集合、自定义Object、String <br/>
+	 *
+	 * @param obj
+	 *            <br/>
+	 * @return 2018年1月31日上午11:14:34
+	 */
+	public static boolean isEmpty(Object obj) {
+		return isNotEmpty(obj) == false;
+	}
+
+	public static String generatePk(Class<?> entityClass) {
+		Table table = entityClass.getAnnotation(Table.class);
+		String tableName = table.name();
+		return JedisUtil.generateKey(tableName);
+	}
+
+	public void initBaseEntity(BaseEntity baseEntity, boolean generatePK) {
+		if (generatePK && baseEntity.getId() == null) {
+			baseEntity.setId(generatePk(baseEntity.getClass()));
+		}
+		Date currentDate = new Date();
+		if (baseEntity.getCreateDate() == null) {
+			baseEntity.setCreateDate(currentDate);
+		}
+		if (baseEntity.getUpdateDate() == null) {
+			baseEntity.setUpdateDate(currentDate);
+		}
+		// update by guoyanhong at 20170519
+		// 指定主库的包，使用主库用户信息
+		String className = getClass().getPackage().getName();
+		List<String> excludePackages = DataSourceAop.excludePackages;
+		if (excludePackages.stream().filter(p -> className.startsWith(p)).count() > 0) {
+			if (baseEntity.getCreatePersonId() == null) {
+				baseEntity.setCreatePersonId(getUserIdIM());
+			}
+			if (baseEntity.getCreatePersonName() == null) {
+				baseEntity.setCreatePersonName(getUserNameIM());
+			}
+			if (baseEntity.getUpdatePersonId() == null) {
+				baseEntity.setUpdatePersonId(getUserIdIM());
+			}
+			if (baseEntity.getUpdatePersonName() == null) {
+				baseEntity.setUpdatePersonName(getUserNameIM());
+			}
+		} else {
+			if (baseEntity.getCreatePersonId() == null) {
+				baseEntity.setCreatePersonId(getUserIdOA());
+			}
+			if (baseEntity.getCreatePersonName() == null) {
+				baseEntity.setCreatePersonName(getUserNameOA());
+			}
+			if (baseEntity.getUpdatePersonId() == null) {
+				baseEntity.setUpdatePersonId(getUserIdOA());
+			}
+			if (baseEntity.getUpdatePersonName() == null) {
+				baseEntity.setUpdatePersonName(getUserNameOA());
+			}
+		}
+		//
+		baseEntity.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+	}
+
+	/**
+	 * 更新时初始化共通字段
+	 *
+	 * @param baseEntity
+	 *            更新entity
+	 * @author haoqipeng
+	 */
+	public void initBaseEntityForUpdate(BaseEntity baseEntity) {
+
+		if (baseEntity.getUpdateDate() == null) {
+			baseEntity.setUpdateDate(new Date());
+		}
+		// update by guoyanhong at 20170519
+		// 指定主库的包，使用主库用户信息
+		String className = getClass().getPackage().getName();
+		List<String> excludePackages = DataSourceAop.excludePackages;
+		if (excludePackages.stream().filter(p -> className.startsWith(p)).count() > 0) {
+			if (baseEntity.getUpdatePersonId() == null) {
+				baseEntity.setUpdatePersonId(getUserIdIM());
+			}
+			if (baseEntity.getUpdatePersonName() == null) {
+				baseEntity.setUpdatePersonName(getUserNameIM());
+			}
+		} else {
+			if (baseEntity.getUpdatePersonId() == null) {
+				baseEntity.setUpdatePersonId(getUserIdOA());
+			}
+			if (baseEntity.getUpdatePersonName() == null) {
+				baseEntity.setUpdatePersonName(getUserNameOA());
+			}
+		}
+	}
+
+	public static <K> List<K> copyProperties(List<?> sourceList, Class<K> targetType) {
+		List<K> targetList = new ArrayList<>();
+		for (Object source : sourceList) {
+			try {
+				K k = targetType.newInstance();
+				copyProperties(source, k);
+				targetList.add(k);
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+			// ParameterizedType pt = (ParameterizedType)
+			// targetList.getClass().getGenericInterfaces()[0];
+			// System.out.println(pt.getActualTypeArguments()[0]);
+		}
+		return targetList;
+	}
+
+	public static void copyProperties(Object source, Object target) {
+		BeanUtils.copyProperties(source, target);
+	}
+
+	/**
+	 * 把驼峰转换成下划线命名
+	 *
+	 * @param field
+	 */
+	public static String hump2underline(String field) {
+		StringBuilder sb = new StringBuilder();
+		for (int i = 0; i < field.length(); i++) {
+			if (field.charAt(i) >= 'A' && field.charAt(i) <= 'Z') {
+				sb.append("_").append(String.valueOf(field.charAt(i)).toLowerCase());
+			} else {
+				sb.append(field.charAt(i));
+			}
+		}
+		return sb.toString();
+	}
+
+	// ************************************ 登录信息 **********************************
+
+	/**
+	 * 调用了该方法说明是肯定需要登录的、所以没有信息就直接抛异常统一处理
+	 *
+	 * @return
+	 */
+	public String getTendId() {
+		Map<String, String> session = getSession();
+		if (session == null) {
+			logger.warn("getSession() 获取用户session不存在===》未登录");
+			throw new HioSessionException("用户未登录,请先登录");
+		} else {
+			HttpServletRequest request = ((ServletRequestAttributes) RequestContextHolder.getRequestAttributes()).getRequest();
+			String tendId = request.getHeader(BaseConstants.HTTP_PARAM_TENDID);
+			if (isNotEmpty(tendId)) {
+				logger.info("从header中取 tendId {}", tendId);
+				return tendId;
+			} else {
+				String currentTendid = session.get(BaseConstants.SESSION_TENDID);
+				if (isEmpty(currentTendid)) {
+					logger.warn("session.get(BaseConstants.SESSION_TENDID) == null  获取当前用户tendId不存在===》未切换租户");
+					throw new HioSessionException("用户选择团队,请先选择团队进入系统");
+				}
+				logger.info("从session中取tendId");
+				return currentTendid;
+			}
+		}
+	}
+
+	public LoginUser getLoginUser() {
+		LoginUser user = new LoginUser();
+		Map<String, String> session = getSession();
+		// 获取OA-ID 可能不存在 、移动端不需要切库
+		String userId = getUserIdOA();
+		user.setUserId(userId);
+		// 获取当前租户ID 可能不存在、移动端不需要切库
+		try {
+			String currentTendid = getTendId();
+			// 获取用户色角色组织等、可能不存在、移动端不需要切库
+			String key = currentTendid + ":" + BaseConstants.REDIS_TABLE_USERDETAIL + ":" + userId;
+			// 角色IDs
+			String roles = redisService.getRow(key, "roles");
+			String orgIds = redisService.getRow(key, "orgs");
+			// 1、租户
+			user.setTendId(currentTendid);
+			// 2、组织
+			List<String> orgList = json2list(orgIds, String.class);
+			user.setOrgIds(orgList);
+			if (orgList != null && orgList.size() > 0) {
+				user.setOrgId(orgList.get(0));
+			}
+			// 3、角色
+			if (roles != null) {
+				List<String> roleList = json2list(roles, String.class);
+				user.setRoleIds(roleList);
+				if (roles.contains(BaseConstants.MYSQL_ROLE_SUPERID)) {
+					user.setSuper(true);
+				} else {
+					user.setSuper(false);
+				}
+			}
+		} catch (Exception e) {
+			// IM端可能没有当前租户id
+		}
+		// 所有的租户
+		List<String> tendList = new ArrayList<>();
+		// 所在企业租户列表
+		List<String> innerTendList = new ArrayList<>();
+		// 外部企业租户列表
+		List<String> outerTendList = new ArrayList<>();
+		// 租户信息 IM-USERID -必存在
+		String userIdIm = (String) session.get(BaseConstants.SESSION_USERID_IM);
+		//
+		Map<String, String> userTendJson = JedisUtil.fetchRelationRow(RedisKeyConstant.userTendList + userIdIm);
+		if (null != userTendJson && userTendJson.size() > 0) {
+			for (String tendKey : userTendJson.keySet()) {
+				if (!"table_name".equals(tendKey)) {
+					BaseTendDto tendUserInfo = json2obj(userTendJson.get(tendKey), BaseTendDto.class);
+					if (isNotEmpty(tendUserInfo) && isEquals(BaseConstants.UserWorkStatus.JOB.getWorkStatus(), tendUserInfo.getReserve1())) {
+						tendList.add(tendUserInfo.getTendId());
+						if (tendUserInfo.getOuterLinkman().intValue() == 0) {
+							innerTendList.add(tendUserInfo.getTendId());
+						} else {
+							outerTendList.add(tendUserInfo.getTendId());
+						}
+					}
+				}
+			}
+		}
+		user.setTendIds(tendList);
+		user.setOuterTendIds(outerTendList);
+		user.setInnerTendIds(innerTendList);
+		return user;
+	}
+
+	/**
+	 * 获取当前登录用户 -- OA
+	 *
+	 * @return
+	 */
+	public String getUserIdOA() {
+		Map<String, String> session = getSession();
+		HttpServletRequest request = ((ServletRequestAttributes) RequestContextHolder.getRequestAttributes()).getRequest();
+		String tendId = request.getHeader(BaseConstants.HTTP_PARAM_TENDID);
+		String currentId = session.get(BaseConstants.SESSION_TENDID);
+		// 如果header里的tendId和当前session中的不一致
+		if (isNotEmpty(tendId) && isNotEquals(tendId, currentId)) {
+			String imUserId = session.get(BaseConstants.SESSION_USERID_IM);
+			String userId = redisService.getRow(tendId, TendUserIdRds.class, imUserId);
+			if (userId == null) {
+				// 抛异常
+				logger.warn("获取oa userId失败, currentId {} tendId {} imUserId {}", currentId, tendId, imUserId);
+				return null;
+			} else {
+				logger.info("从redis获取oaUserId {} {}", tendId, imUserId);
+				return userId;
+			}
+		} else {
+			String userId = session.get(BaseConstants.SESSION_USERID_OA);
+			logger.info("从session获取oaUserId {} {}", tendId);
+			return userId;
+		}
+	}
+
+	public String getUserIdOA(String tendId) {
+		String imUserId = getUserIdIM();
+		String userId = redisService.getRow(tendId, TendUserIdRds.class, imUserId);
+		return userId;
+	}
+
+	/**
+	 * 获取当前登录用户 --IM
+	 *
+	 * @return
+	 */
+	public String getUserIdIM() {
+		Map<String, String> session = getSession();
+		return session.get(BaseConstants.SESSION_USERID_IM);
+	}
+
+	public String getUserNameOA() {
+		String userIdOA = getUserIdOA();
+		if (isEmpty(userIdOA)) {
+			// 用户还没被邀请加入团队、第一次接受邀请的时候 获取不到该信息
+			logger.warn("获取usreNameOA失败  当前Session---{}", getSession());
+			return null;
+		} else {
+			try {
+				String tendId = getTendId();
+				String key = tendId + ":" + BaseConstants.MYSQL_TABLE_USER;
+				String json = redisService.getRow(key, userIdOA);
+				Map<String, Object> map = json2map(json);
+				String name = getStr(map, "realName");
+				return name;
+			} catch (Exception e) {
+				logger.info("IM 端调用没有tendId()----手动切库");
+			}
+		}
+		return null;
+	}
+
+	public String getUserNameIM() {
+		String userIdIM = getUserIdIM();
+		String key = BaseConstants.MYSQL_TABLE_IM_USER;
+		String json = redisService.getRow(key, userIdIM);
+		Map<String, Object> map = json2map(json);
+		String name = getStr(map.get("name"));
+		return name;
+	}
+
+	@SuppressWarnings("unchecked")
+	public Map<String, String> getSession() {
+		Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+		if (authentication == null) {
+			logger.error("authentication == null");
+			throw new HioSessionException("authentication == null");
+		}
+		String phone = authentication.getName();
+		Map<String, String> session = JedisUtil.fetchSession(phone);
+		if (isEmpty(session)) {
+			logger.error("session为空{} phone {}", session, phone);
+			throw new HioSessionException("Session失效, 请重新登录");
+		}
+		return session;
+	}
+
+	/**
+	 * 判断当前用户是否系统管理员
+	 *
+	 * @return
+	 */
+	public boolean isSuper() {
+		String userId = getUserIdOA();
+		String currentTendid = getTendId();
+		return isSuper(currentTendid, userId);
+	}
+
+	/**
+	 * 判断指定的用户是否系统管理员
+	 * <p>
+	 * param tendId
+	 *
+	 * @param userId
+	 * @return
+	 */
+	public boolean isSuper(String tendId, String userId) {
+		String key = tendId + ":" + BaseConstants.REDIS_TABLE_USERDETAIL + ":" + userId;
+		// roles UserRds的字段
+		String oauth = redisService.getRow(key, "roles");
+		if (oauth != null && oauth.contains(BaseConstants.MYSQL_ROLE_SUPERID)) {
+			return true;
+		} else {
+			return false;
+		}
+	}
+
+	/**
+	 * 判断是否具备Role权限
+	 *
+	 * @param menuCode
+	 *            传入OaSysMenu表的code字段
+	 * @return
+	 */
+	public boolean isRolePermission(String menuCode) {
+		// 如果是超级管理员，直接返回true
+		if (isSuper()) {
+			return true;
+		}
+
+		LoginUser loginUser = getLoginUser();
+		if (loginUser != null) {
+			List<String> roleIds = loginUser.getRoleIds();
+			if (isNotEmpty(roleIds)) {
+
+				for (String roleId : roleIds) {
+					String json = redisService.getRow(getTendId(), RoleMenuButtonRds.class, roleId);
+					if (json == null) {
+						continue;
+					}
+					RoleMenuButtonRds buttonRds = JacksonUtils.fromJson(json, RoleMenuButtonRds.class);
+					Set<String> menuCodes = buttonRds.getMenuCodes();
+					if (menuCodes.contains(menuCode)) {
+						return true;
+					}
+				}
+			}
+		}
+		return false;
+	}
+
+	public static boolean isFeignRequest() {
+		ServletRequestAttributes ra = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+		HttpServletRequest request = ra.getRequest();
+		String value = request.getHeader(BaseConstants.HTTP_HEADER_FEIGN_KEY);
+		if (BaseConstants.HTTP_HEADER_FEIGN_VALUE.equals(value)) {
+			return true;
+		}
+		return false;
+	}
+
+	/**
+	 * 通过tendId和imUserId获取userId 只维护oa_sys_user
+	 * 
+	 * @param tendId
+	 * @param imUserId
+	 * @return
+	 */
+	public String getUserIdByIMUserId(String tendId, String imUserId) {
+		return redisService.getRow(tendId, TendUserIdRds.class, imUserId);
+	}
+}

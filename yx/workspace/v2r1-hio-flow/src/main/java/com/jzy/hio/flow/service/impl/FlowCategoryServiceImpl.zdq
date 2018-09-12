@@ -1,0 +1,493 @@
+package com.jzy.hio.flow.service.impl;
+
+import java.util.*;
+import java.util.stream.Collectors;
+
+import com.jzy.hio.flow.entity.enums.FlowTemplateRoleEnum;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.flow.entity.FlowCategory;
+import com.jzy.hio.flow.entity.FlowTemplate;
+import com.jzy.hio.flow.entity.FlowTemplateRole;
+import com.jzy.hio.flow.entity.dto.FlowCategoryDto;
+import com.jzy.hio.flow.entity.dto.FlowTemplateChildDto;
+import com.jzy.hio.flow.entity.param.FlowCategoryParam;
+import com.jzy.hio.flow.mapper.FlowCategoryDao;
+import com.jzy.hio.flow.mapper.FlowTemplateDao;
+import com.jzy.hio.flow.mapper.FlowTemplateRoleDao;
+import com.jzy.hio.flow.service.FlowCategoryService;
+import com.jzy.hio.sys.organization.dto.GeneralDto;
+import com.jzy.hio.sys.organization.dto.OrgRoleUserDto;
+import com.jzy.hio.sys.user.param.FlowUserParam;
+import com.jzy.hio.sys.user.param.OAUserParam;
+import org.springframework.util.CollectionUtils;
+
+@Service
+public class FlowCategoryServiceImpl extends BaseServiceImpl<FlowCategory> implements FlowCategoryService {
+
+    private Logger logger = LoggerFactory.getLogger(FlowCategoryServiceImpl.class);
+
+    @Autowired
+    private FlowCategoryDao flowCategoryDao;
+
+    @Autowired
+    private FlowTemplateDao flowTemplateDao;
+
+    @Autowired
+    private FlowTemplateRoleDao flowTemplateRoleDao;
+
+    @Autowired
+    private SysFeignService sysFeignService;
+
+    @Override
+    public List<FlowCategory> queryList() {
+        return flowCategoryDao.queryList();
+    }
+
+    @Override
+    public List<FlowCategoryDto> getFlowCategoryandChild() {
+        List<FlowCategory> selectAll = flowCategoryDao.queryList();
+        List<FlowCategoryDto> categoryChildList = new ArrayList<>();
+        for (FlowCategory flowCategory : selectAll) {
+            FlowCategoryDto flowCategoryDTO = new FlowCategoryDto();
+            flowCategoryDTO.setId(flowCategory.getId());
+            flowCategoryDTO.setName(flowCategory.getName());
+            flowCategoryDTO.setSort(flowCategory.getSort());
+            List<FlowTemplateChildDto> templateList = flowTemplateDao.getTemplateListByCategoryId(flowCategory.getId());
+            flowCategoryDTO.setChildList(templateList);
+            categoryChildList.add(flowCategoryDTO);
+        }
+        return categoryChildList;
+    }
+
+    @Override
+    public List<FlowCategoryDto> getMyFlowCateGoryTemplate(String userId, String sign) {
+        long start = System.currentTimeMillis();
+        FlowUserParam flowUserParam = new FlowUserParam();
+        flowUserParam.setUserId(userId);
+        OAUserParam oaUserParam = new OAUserParam();
+        List<String> userList = new ArrayList<>();
+        userList.add(userId);
+        oaUserParam.setTendId(getTendId());
+        oaUserParam.setUserIds(userList);
+        oaUserParam.setContainsParentUserOrg(true);
+        long start2 = System.currentTimeMillis();
+        ApiFeignResponse<List<OrgRoleUserDto>> listApiFeignResponse = sysFeignService.queryOrgAndRoleByUserIds(oaUserParam);
+        if (listApiFeignResponse.getStatus() == 500) {
+            throw new HioException("查询失败");
+        }
+        long end2 = System.currentTimeMillis();
+        long q = end2 - start2;
+//        System.out.println("feign耗时：" + (end2 - start2) + " ms");
+        logger.info("sign=" + sign);
+        if (sign == null) {
+            throw new HioException("参数为空！");
+        }
+        List<GeneralDto> organizations = new ArrayList<>();
+        List<GeneralDto> roles = new ArrayList<>();
+        for (OrgRoleUserDto orgRoleUserDto : listApiFeignResponse.getResult()) {
+            organizations = orgRoleUserDto.getOrganizations();
+            roles = orgRoleUserDto.getRoles();
+        }
+        List<FlowCategoryDto> categoryChildList = new ArrayList<>();
+        long start3 = System.currentTimeMillis();
+        List<FlowTemplateChildDto> flowTemplates = flowTemplateDao.selectAllFlowTemplate();
+        long end3 = System.currentTimeMillis();
+//        System.out.println("查模板库耗时：" + (end3 - start3) + " ms");
+        List<FlowTemplateChildDto> flowTemplateChilds = new ArrayList<>();
+        if (sign.equals("mobile")) {
+            flowTemplateChilds.addAll(flowTemplates.stream().filter(templateChildDto -> templateChildDto.getStartSign() != null &&
+                    templateChildDto.getStartSign() == 1).collect(Collectors.toList()));
+        } else if (sign.equals("pc")) {
+            flowTemplateChilds.addAll(flowTemplates);
+        }
+
+        long start4 = System.currentTimeMillis();
+        List<FlowTemplateRole> templateRoleDaoAll = flowTemplateRoleDao.getAll();
+        long end4 = System.currentTimeMillis();
+//        System.out.println("查权限库耗时：" + (end4 - start4) + " ms");
+        Map<String, Map<Integer, List<FlowTemplateRole>>> collect = templateRoleDaoAll.stream()
+                .collect(Collectors.groupingBy(FlowTemplateRole::getFlowTemplateId, Collectors.groupingBy(FlowTemplateRole::getChooseType)));
+
+        List<FlowTemplateChildDto> listAllTemplate = new ArrayList<>();
+
+        List<GeneralDto> finalOrganizations = organizations;
+        List<GeneralDto> finalRoles = roles;
+        flowTemplateChilds.forEach(flowTemplateChildDto -> {
+//            List<FlowTemplateRole> templateRoleList = flowTemplateRoleDao.getTemplateRoleList(flowTemplateChildDto.getCode());
+            Map<Integer, List<FlowTemplateRole>> templateRoleMap = collect.get(flowTemplateChildDto.getCode());
+            if (CollectionUtils.isEmpty(templateRoleMap)){
+                logger.info("权限为空  CODE :  ："+flowTemplateChildDto.getCode());
+                throw new HioException("查询异常，模板权限为空！");
+
+            }
+//            Map<Integer, List<FlowTemplateRole>> templateRoleMap = templateRoleList.stream().collect(Collectors.groupingBy(FlowTemplateRole::getChooseType));
+            List<FlowTemplateRole> listOrgRole = templateRoleMap.get(FlowTemplateRoleEnum.DEPARTMENT.getType());
+            List<FlowTemplateRole> listRoleRole = templateRoleMap.get(FlowTemplateRoleEnum.ROLE.getType());
+            List<FlowTemplateRole> listUserRole = templateRoleMap.get(FlowTemplateRoleEnum.USER.getType());
+            List<FlowTemplateRole> allUserRole = templateRoleMap.get(FlowTemplateRoleEnum.ALLUSER.getType());
+            //组织
+            if (listOrgRole != null) {
+                for (FlowTemplateRole flowTemplateRole : listOrgRole) {
+                    for (GeneralDto generalDto : finalOrganizations) {
+                        if (flowTemplateRole.getRootId().equals(generalDto.getSid())) {
+                            listAllTemplate.add(flowTemplateChildDto);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            //角色
+            if (listRoleRole != null) {
+                for (FlowTemplateRole flowTemplateRole : listRoleRole) {
+                    for (GeneralDto generalDto : finalRoles) {
+                        if (flowTemplateRole.getRootId().equals(generalDto.getSid())) {
+                            listAllTemplate.add(flowTemplateChildDto);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            //人员
+            if (listUserRole != null) {
+                for (FlowTemplateRole flowTemplateRole : listUserRole) {
+                    if (flowTemplateRole.getRootId().equals(userId)) {
+                        listAllTemplate.add(flowTemplateChildDto);
+                        break;
+                    }
+                }
+            }
+
+            //所有人
+            if (allUserRole != null) {
+                if (allUserRole.size() >= 1 && flowTemplateChildDto.getState() == 1) {
+                    listAllTemplate.add(flowTemplateChildDto);
+                }
+            }
+        });
+
+        Set<FlowTemplateChildDto> set = new HashSet<>();
+        List<FlowTemplateChildDto> newList = new ArrayList<>();
+        for (Iterator iter = listAllTemplate.iterator(); iter.hasNext(); ) {
+            FlowTemplateChildDto element = (FlowTemplateChildDto) iter.next();
+            if (set.add(element)) {
+                newList.add(element);
+            }
+        }
+        Map<String, List<FlowTemplateChildDto>> collect1 = newList.stream()
+                .collect(Collectors.groupingBy(FlowTemplateChildDto::getFlowCategoryId));
+        long start5 = System.currentTimeMillis();
+        List<FlowCategory> flowCategories = flowCategoryDao.queryList();
+        long end5 = System.currentTimeMillis();
+//        System.out.println("查分类库耗时：" + (end5 - start5) + " ms");
+        flowCategories.forEach(flowCategory -> {
+            FlowCategoryDto flowCategoryDTO1 = new FlowCategoryDto();
+            flowCategoryDTO1.setId(flowCategory.getId());
+            flowCategoryDTO1.setName(flowCategory.getName());
+            List<FlowTemplateChildDto> childList = new ArrayList<>();
+            if (collect1.get(flowCategory.getId()) == null) {
+                flowCategoryDTO1.setChildList(childList);
+            } else {
+                flowCategoryDTO1.setChildList(collect1.get(flowCategory.getId()));
+            }
+            categoryChildList.add(flowCategoryDTO1);
+        });
+        long end = System.currentTimeMillis();
+        long q2 = end - start;
+
+        logger.error("feign耗时：" + (end2 - start2) + " ms"+"    "+"总耗时：" + (end - start) + " ms"+"    "
+                +"查权限库耗时：" + (end4 - start4) + " ms"+"    "+"查分类库耗时：" + (end5 - start5) + " ms"+"    "+"查模板库耗时：" + (end3 - start3) + " ms"+
+        "    "+"内部耗时"+(q2-q));
+//        System.out.println("总耗时：" + (end - start) + " ms");查模板库耗时：" + (end3 - start3) + " ms
+//        System.out.println("内部耗时"+(q2-q));
+        return categoryChildList;
+    }
+
+
+    /**
+     * map.put("firstSort","1");   map.put("afterSort","2");      map.put("flowCategoryId","12132")
+     * 分类拖拽排序
+     *
+     * @param map
+     * @return
+     */
+    @Override
+    public Object dragCategory(Map<String, Object> map) {
+        Object firstSort = map.get("firstSort");
+        Object afterSort = map.get("afterSort");
+        Object flowCategoryId = map.get("flowCategoryId");
+        int result = 0;
+        if (!"".equals(firstSort) && !"".equals(afterSort)) {
+            FlowCategory flowCategory = flowCategoryDao.selectByPrimaryKey(flowCategoryId);
+            double first = Double.parseDouble((String) firstSort);
+            double second = Double.parseDouble((String) afterSort);
+            flowCategory.setSort((second - first) / 2 + first);
+            flowCategory.setUpdateDate(new Date());
+            result = flowCategoryDao.updateByPrimaryKeySelective(flowCategory);
+        }
+        if ("".equals(firstSort)) {
+            FlowCategory flowCategory = flowCategoryDao.selectByPrimaryKey(flowCategoryId);
+            double second = Double.parseDouble((String) afterSort);
+            flowCategory.setSort(second + 1);
+            flowCategory.setUpdateDate(new Date());
+            result = flowCategoryDao.updateByPrimaryKeySelective(flowCategory);
+        }
+        if ("".equals(afterSort)) {
+            FlowCategory flowCategory = flowCategoryDao.selectByPrimaryKey(flowCategoryId);
+            double first = Double.parseDouble((String) firstSort);
+            flowCategory.setSort(first - 1);
+            flowCategory.setUpdateDate(new Date());
+            result = flowCategoryDao.updateByPrimaryKeySelective(flowCategory);
+        }
+        return result;
+    }
+
+    @Override
+    public List<FlowTemplate> queryTemplate(FlowCategoryParam flowCategoryParam) {
+        return flowCategoryDao.queryTemplate(flowCategoryParam);
+    }
+
+    @Override
+    public int getCategoryName(FlowCategory flowCategory) {
+        return flowCategoryDao.getCategoryName(flowCategory);
+    }
+
+    @Override
+    public List<FlowCategoryDto> getAllList(FlowCategoryParam flowCategoryParam) {
+        FlowUserParam flowUserParam = new FlowUserParam();
+        flowUserParam.setUserId(flowCategoryParam.getUserId());
+        OAUserParam oaUserParam = new OAUserParam();
+        List<String> userList = new ArrayList<>();
+        userList.add(flowCategoryParam.getUserId());
+        oaUserParam.setTendId(getTendId());
+        oaUserParam.setUserIds(userList);
+        oaUserParam.setContainsParentUserOrg(true);
+
+        ApiFeignResponse<List<OrgRoleUserDto>> listApiFeignResponse = sysFeignService.queryOrgAndRoleByUserIds(oaUserParam);
+        if (listApiFeignResponse.getStatus() == 500) {
+            throw new HioException("查询失败！");
+        }
+
+        logger.info("sign=" + flowCategoryParam.getSign());
+        if (flowCategoryParam.getSign() == null) {
+            throw new HioException("参数为空！");
+        }
+        List<GeneralDto> organizations = new ArrayList<>();
+        List<GeneralDto> roles = new ArrayList<>();
+        for (OrgRoleUserDto orgRoleUserDto : listApiFeignResponse.getResult()) {
+            organizations = orgRoleUserDto.getOrganizations();
+            roles = orgRoleUserDto.getRoles();
+        }
+
+        List<FlowCategoryDto> categoryChildList = new ArrayList<>();
+        List<FlowTemplateChildDto> flowTemplates = flowTemplateDao.getTemplateList(flowCategoryParam);
+        List<FlowTemplateChildDto> flowTemplateChilds = new ArrayList<>();
+        if (flowCategoryParam.getSign().equals("mobile")) {
+            flowTemplateChilds.addAll(flowTemplates.stream().filter(templateChildDto -> templateChildDto.getStartSign() != null &&
+                    templateChildDto.getStartSign() == 1).collect(Collectors.toList()));
+        } else if (flowCategoryParam.getSign().equals("pc")) {
+            flowTemplateChilds.addAll(flowTemplates);
+        }
+
+        List<FlowTemplateRole> templateRoleDaoAll = flowTemplateRoleDao.getAll();
+        Map<String, Map<Integer, List<FlowTemplateRole>>> roleMap = templateRoleDaoAll.stream()
+                .collect(Collectors.groupingBy(FlowTemplateRole::getFlowTemplateId, Collectors.groupingBy(FlowTemplateRole::getChooseType)));
+
+        List<FlowTemplateChildDto> listAllTemplate = new ArrayList<>();
+
+        List<GeneralDto> finalOrganizations = organizations;
+        List<GeneralDto> finalRoles = roles;
+        flowTemplateChilds.forEach(flowTemplateChildDto -> {
+//            List<FlowTemplateRole> templateRoleList = flowTemplateRoleDao.getTemplateRoleList(flowTemplateChildDto.getCode());
+            Map<Integer, List<FlowTemplateRole>> templateRoleMap = roleMap.get(flowTemplateChildDto.getCode());
+//            Map<Integer, List<FlowTemplateRole>> templateRoleMap = templateRoleList.stream().collect(Collectors.groupingBy(FlowTemplateRole::getChooseType));
+            List<FlowTemplateRole> listOrgRole = templateRoleMap.get(FlowTemplateRoleEnum.DEPARTMENT.getType());
+            List<FlowTemplateRole> listRoleRole = templateRoleMap.get(FlowTemplateRoleEnum.ROLE.getType());
+            List<FlowTemplateRole> listUserRole = templateRoleMap.get(FlowTemplateRoleEnum.USER.getType());
+            List<FlowTemplateRole> allUserRole = templateRoleMap.get(FlowTemplateRoleEnum.ALLUSER.getType());
+            //组织
+            if (listOrgRole != null) {
+                for (FlowTemplateRole flowTemplateRole : listOrgRole) {
+                    for (GeneralDto generalDto : finalOrganizations) {
+                        if (flowTemplateRole.getRootId().equals(generalDto.getSid())) {
+                            listAllTemplate.add(flowTemplateChildDto);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            //角色
+            if (listRoleRole != null) {
+                for (FlowTemplateRole flowTemplateRole : listRoleRole) {
+                    for (GeneralDto generalDto : finalRoles) {
+                        if (flowTemplateRole.getRootId().equals(generalDto.getSid())) {
+                            listAllTemplate.add(flowTemplateChildDto);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            //人员
+            if (listUserRole != null) {
+                for (FlowTemplateRole flowTemplateRole : listUserRole) {
+                    if (flowTemplateRole.getRootId().equals(flowCategoryParam.getUserId())) {
+                        listAllTemplate.add(flowTemplateChildDto);
+                        break;
+                    }
+                }
+            }
+
+            //所有人
+            if (allUserRole != null) {
+                if (allUserRole.size() >= 1 && flowTemplateChildDto.getState() == 1) {
+                    listAllTemplate.add(flowTemplateChildDto);
+                }
+            }
+        });
+
+        Set<FlowTemplateChildDto> set = new HashSet<>();
+        List<FlowTemplateChildDto> newList = new ArrayList<>();
+        for (Iterator iter = listAllTemplate.iterator(); iter.hasNext(); ) {
+            FlowTemplateChildDto element = (FlowTemplateChildDto) iter.next();
+            if (set.add(element)) {
+                newList.add(element);
+            }
+        }
+        Map<String, List<FlowTemplateChildDto>> collect1 = newList.stream()
+                .collect(Collectors.groupingBy(FlowTemplateChildDto::getFlowCategoryId));
+        List<FlowCategory> flowCategories = flowCategoryDao.queryList();
+        flowCategories.forEach(flowCategory -> {
+            FlowCategoryDto flowCategoryDTO1 = new FlowCategoryDto();
+            flowCategoryDTO1.setId(flowCategory.getId());
+            flowCategoryDTO1.setName(flowCategory.getName());
+            List<FlowTemplateChildDto> childList = new ArrayList<>();
+            if (collect1.get(flowCategory.getId()) == null) {
+                flowCategoryDTO1.setChildList(childList);
+            } else {
+                flowCategoryDTO1.setChildList(collect1.get(flowCategory.getId()));
+            }
+            categoryChildList.add(flowCategoryDTO1);
+        });
+
+        return categoryChildList;
+    }
+
+    @Override
+    public FlowCategory querySort() {
+        return flowCategoryDao.querySort();
+    }
+
+//    @Override
+//    public List<FlowCategoryDto> getAll(String sign) {
+//        OAUserParam oaUserParam = new OAUserParam();
+//        List<String> userList = new ArrayList<>();
+//        userList.add(getUserIdOA());
+//        oaUserParam.setTendId(getTendId());
+//        oaUserParam.setUserIds(userList);
+//
+//        ApiFeignResponse<List<OrgRoleUserDto>> listApiFeignResponse = sysFeignService.queryOrgAndRoleByUserIds(oaUserParam);
+//        if (listApiFeignResponse.getStatus() == 500) {
+//            logger.info("Feign接口调用失败");
+//        }
+//        List<GeneralDto> organizations = new ArrayList<>();
+//        List<GeneralDto> roles = new ArrayList<>();
+//        for (OrgRoleUserDto orgRoleUserDto : listApiFeignResponse.getResult()) {
+//            organizations = orgRoleUserDto.getOrganizations();
+//            roles = orgRoleUserDto.getRoles();
+//        }
+//
+//        List<FlowCategory> selectAll = flowCategoryDao.queryList();
+//        List<FlowTemplateChildDto> templateDtos = flowTemplateDao.selectAllFlowTemplate();
+//        List<FlowTemplateRole> roleDaoAll = flowTemplateRoleDao.getAll();
+//        Map<String, List<FlowTemplateChildDto>> temp=new HashMap<>();
+//        if (sign.equals("mobile")){
+//            temp = templateDtos.stream().filter(templateChildDto -> templateChildDto.getStartSign() == 1).
+//                    collect(Collectors.groupingBy(FlowTemplateChildDto::getCode));
+//        }else if (sign.equals("pc")){
+//            temp=templateDtos.stream().collect(Collectors.groupingBy(FlowTemplateChildDto::getCode));
+//        }
+//
+//        HashSet<String> teList=new HashSet<>();
+//        Map<Integer, List<FlowTemplateRole>> templateRoleMap = roleDaoAll.stream().collect(Collectors.groupingBy(FlowTemplateRole::getChooseType));
+//        List<FlowTemplateRole> listOrgRole = templateRoleMap.get(1);
+//        List<FlowTemplateRole> listRoleRole = templateRoleMap.get(2);
+//        List<FlowTemplateRole> listUserRole = templateRoleMap.get(3);
+//        List<FlowTemplateRole> allUserRole = templateRoleMap.get(4);
+//        //组织
+//        if (listOrgRole != null) {
+//            for (FlowTemplateRole flowTemplateRole : listOrgRole) {
+//                for (GeneralDto generalDto : organizations) {
+//                    if (flowTemplateRole.getRootId().equals(generalDto.getSid())) {
+//                        teList.add(flowTemplateRole.getFlowTemplateId());
+//                    }
+//                }
+//            }
+//        }
+//
+//        //角色
+//        if (listRoleRole != null) {
+//            for (FlowTemplateRole flowTemplateRole : listRoleRole) {
+//                for (GeneralDto generalDto : roles) {
+//                    if (flowTemplateRole.getRootId().equals(generalDto.getSid())) {
+//                        teList.add(flowTemplateRole.getFlowTemplateId());
+//                    }
+//                }
+//            }
+//        }
+//
+//        //人员
+//        if (listUserRole != null) {
+//            for (FlowTemplateRole flowTemplateRole : listUserRole) {
+//                if (flowTemplateRole.getRootId().equals(getUserIdOA())) {
+//                    teList.add(flowTemplateRole.getFlowTemplateId());
+//                }
+//            }
+//        }
+//
+//        //所有人
+//        if (allUserRole != null) {
+//            for (FlowTemplateRole flowTemplateRole:allUserRole) {
+//                teList.add(flowTemplateRole.getFlowTemplateId());
+//            }
+//        }
+//        List<FlowTemplateChildDto> flowTemplateChildDto=new ArrayList<>();
+//        Map<String, List<FlowTemplateChildDto>> collect=new HashMap<>();
+//        Map<String, List<FlowTemplateChildDto>> finalTemp = temp;
+//        teList.forEach(s -> {
+//            List<FlowTemplateChildDto> flowTemplateChildDtos = finalTemp.get(s);
+//            if (CollectionUtils.isNotEmpty(flowTemplateChildDtos)){
+//                flowTemplateChildDto.addAll(flowTemplateChildDtos);
+//            }
+//        });
+//
+//        if (CollectionUtils.isNotEmpty(flowTemplateChildDto)){
+//            Map<String, List<FlowTemplateChildDto>> collect1 = flowTemplateChildDto.stream().
+//                    collect(Collectors.groupingBy(FlowTemplateChildDto::getFlowCategoryId));
+//            collect.putAll(collect1);
+//        }
+//
+//        List<FlowCategoryDto> categoryDtos=new ArrayList<>();
+//
+//        selectAll.forEach(flowCategory -> {
+//            FlowCategoryDto flowCategoryDto=new FlowCategoryDto();
+//            flowCategoryDto.setId(flowCategory.getId());
+//            flowCategoryDto.setName(flowCategory.getName());
+//            flowCategoryDto.setSort(flowCategory.getSort());
+//            flowCategoryDto.setChildList(collect.get(flowCategory.getId()));
+//            categoryDtos.add(flowCategoryDto);
+//        });
+//        return categoryDtos;
+//    }
+
+}

@@ -1,0 +1,475 @@
+/**
+ * 
+ * @Title NewsController.java
+ * @Package com.jzy.hio.oa.news.controller
+ * @author shangb
+ * @date 2018年4月10日 上午11:06:49
+ * @version V1.0
+ */
+
+package com.jzy.hio.oa.news.controller;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+import org.apache.commons.lang.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.controller.BaseOaController;
+import com.jzy.hio.entity.News;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.exception.HioMybatisDeleteException;
+import com.jzy.hio.exception.HioMybatisGetException;
+import com.jzy.hio.exception.HioMybatisInsertException;
+import com.jzy.hio.exception.HioMybatisQueryException;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.oa.journal.dto.ShareDto;
+import com.jzy.hio.oa.news.dto.NewsDto;
+import com.jzy.hio.oa.news.dto.NewsListParam;
+import com.jzy.hio.oa.news.mapper.NewsMapper;
+import com.jzy.hio.oa.news.service.NewsService;
+import com.jzy.hio.oa.news.service.NewsTypeService;
+import com.jzy.hio.sys.organization.dto.OrganizationDto;
+import com.jzy.hio.utils.LoginUser;
+import com.jzy.hio.utils.OaUserUtil;
+import com.jzy.hio.utils.Page;
+
+/**
+ * 新闻对外接口
+ * @author machangxi
+ * @date   2018年4月24日
+ */
+@RestController
+@RequestMapping("/news")
+public class NewsController extends BaseOaController {
+	
+	//private static final ExecutorService syncNewsCountThreadPool = Executors.newFixedThreadPool(5);
+	
+	private static Logger logger = LoggerFactory.getLogger(NewsController.class);
+
+	@Autowired
+	private NewsService newsService;
+	
+	@Autowired
+	private NewsTypeService newsTypeService;
+	
+	@Autowired
+	private SysFeignService sysFeignService;
+	
+	@Autowired
+	private OaUserUtil oaUserUtil;
+	
+	@Autowired
+	private NewsMapper newsMapper;
+	
+	/**
+	 * 新闻附件信息初始化
+	 * @return
+	 */
+	@GetMapping("/attachment")
+	public NewsDto initializeAttachment() {
+		String appId = BaseConstants.App.OA.getId();
+		String categoryId = BaseConstants.AttachmentCategory.OA_NEWS.getId();
+		String businessId = newsService.generatePk();
+		NewsDto nd = new NewsDto();
+		nd.setAppId(appId);
+		nd.setCategoryId(categoryId);
+		nd.setBusinessId(businessId);
+		return nd;
+	}
+	
+	/**
+	 * 新闻是否可以评论
+	 * @param id
+	 * @return
+	 */
+	@GetMapping("/comment/{id}")
+	public Boolean comment(@PathVariable("id") String id) {
+		News news = (News) get(id);
+		if(news == null) {
+			return false;
+		}
+		if(news.getIsComment() == 0) {
+			return false;
+		}
+		if(news.getStatus() == 0 && !news.getCreatePersonId().equals(getUserIdOA())) {
+			return false;
+		}
+		return true;
+	}
+	
+	/**
+	 * 编辑新闻，包括可见范围
+	 * @param id 业务对象主键
+	 * @return 业务对象
+	 */
+	@RequestMapping(value = "/edit/{id}", method = RequestMethod.GET)
+	public Object editNews(@PathVariable("id") String id) throws HioMybatisGetException {
+		LoginUser loginUser = super.getLoginUser();// 获取当前登录用户
+		String tendId = loginUser.getTendId();// 当前用户登录的租户ID
+		boolean isSuper = loginUser.isSuper();
+		NewsDto news = newsService.getNewsById(id, tendId);
+		if(news == null || news.getDelflag() == 1) {
+			return HioException.newsIsNull;
+		}
+		if(isSuper) {
+			news.setIsSuper(1);
+		}
+		return news;
+	}
+	
+	/**
+	 * 查看新闻
+	 * @param id
+	 * @return
+	 * @throws HioMybatisGetException
+	 */
+	/*@RequestMapping(value = "/read/{id}", method = RequestMethod.GET)
+	public Object readNews(@PathVariable("id") String id) throws HioMybatisGetException {
+		LoginUser loginUser = super.getLoginUser();// 获取当前登录用户
+		boolean isSuper = loginUser.isSuper();
+		NewsDto newsDto = newsService.readNewsById(id);
+		if(newsDto == null || newsDto.getDelflag() == 1) {
+			return HioException.newsIsNull;
+		}
+		if(isSuper) {
+			newsDto.setIsSuper(1);
+		}
+		return newsDto;
+	}*/
+	
+	private Object readNews(String tendId, String id) throws HioMybatisGetException {
+		LoginUser loginUser = super.getLoginUser();// 获取当前登录用户
+		boolean isSuper = loginUser.isSuper();
+		NewsDto newsDto = newsService.readNewsById(tendId, id);
+		if(newsDto == null || newsDto.getDelflag() == 1) {
+			return HioException.newsIsNull;
+		}
+		if(isSuper) {
+			newsDto.setIsSuper(1);
+		}
+		return newsDto;
+	}
+	/**
+	 * 查看新闻
+	 * @param id
+	 * @return
+	 * @throws HioMybatisGetException
+	 */
+	@RequestMapping(value = "/read/{id}", method = RequestMethod.GET)
+	public Object readNews2(@PathVariable("id") String id, HttpServletRequest request, HttpServletResponse response) throws HioMybatisGetException {
+		// 获取当前登录用户
+		LoginUser loginUser = super.getLoginUser();
+		boolean isSuper = loginUser.isSuper();
+		NewsDto newsDto = null;
+		String tendId = request.getHeader(BaseConstants.HTTP_PARAM_TENDID);
+		logger.info("================请求Header中tendId为：" + tendId);
+		logger.info("================当前登录用户tendId为：" + loginUser.getTendId()+" userId: "+loginUser.getUserId());
+		if(StringUtils.isBlank(tendId)) {
+			tendId = loginUser.getTendId();
+		}
+		// 当前登录企业与业务消息所在企业不同
+		if(!tendId.equals(loginUser.getTendId())) {
+			return readNews(tendId, id);
+		}
+		// 管理员
+		if(isSuper) {
+			newsDto = newsService.readNewsById(tendId, id);
+			// 当前人为新闻创建人
+			if(loginUser.getUserId().equals(newsDto.getCreatePersonId())) {
+				if(newsDto == null || newsDto.getDelflag() == 1) {
+					logger.info("================管理员》》》当前人为新闻创建人，新闻为空或已删除！");
+					return HioException.newsIsNull;
+				}
+			}else {
+				if(newsDto == null || newsDto.getDelflag() == 1 || newsDto.getStatus() == 0) {
+					logger.info("================管理员》》》新闻为空或为草稿或已删除！");
+					return HioException.newsIsNull;
+				}
+			}
+			newsDto.setIsSuper(1);
+			return newsDto;
+		}else {
+			newsDto = newsService.getNewsById(id, tendId);
+			// 当前人为新闻创建人
+			if(loginUser.getUserId().equals(newsDto.getCreatePersonId())) {
+				if(newsDto == null || newsDto.getDelflag() == 1) {
+					logger.info("================当前人为新闻创建人，新闻为空或已删除！");
+					return HioException.newsIsNull;
+				}
+			}else {
+				if(newsDto == null || newsDto.getDelflag() == 1 || newsDto.getStatus() == 0) {
+					logger.info("================新闻为空或为草稿或已删除！");
+					return HioException.newsIsNull;
+				}
+			}
+			if(newsDto.getStatus() == 1) {
+				// 增加点击量
+				newsMapper.addHitNum(id);
+				newsDto.setHitNum(newsDto.getHitNum()+1);
+			}
+		}
+		String createPersonId = newsDto.getCreatePersonId();
+		// 当前人为新闻创建人
+		if(loginUser.getUserId().equals(createPersonId)) {
+			return newsDto;
+		}
+		
+		List<ShareDto> orgShareList = newsDto.getOrgShareList();
+		List<ShareDto> roleShareList = newsDto.getRoleShareList();
+		List<ShareDto> userShareList = newsDto.getUserShareList();
+		for(ShareDto sd : userShareList) {
+			logger.info("====================新闻共享人员userId："+sd.getId());
+		}
+		ApiFeignResponse<List<OrganizationDto>> apiResponse = sysFeignService.queryOrganizationsByUserId(tendId, loginUser.getUserId());
+		if(apiResponse.getStatus() == 200) {
+			List<OrganizationDto> orgList = apiResponse.getResult();
+			String[] orgIdArray = null;
+			Set<String> orgIdSet = new HashSet<String>();
+			if(orgList != null && orgList.size() > 0) {
+				for(OrganizationDto org : orgList) {
+					String ids = org.getPrefixId();
+					orgIdArray = ids.split("/");
+					for(String orgId : orgIdArray) {
+						orgIdSet.add(orgId);
+					}
+				}
+			}
+			/*List<String> orgIds = new ArrayList<String>();
+			if(orgIdArray != null) {
+				orgIds = Arrays.asList(orgIdArray);
+			}*/
+			logger.info("=====================当前人员所在部门列表>>>>>{}", orgIdSet.toString());
+			List<String> roleIds = loginUser.getRoleIds();
+			// 判断共享部门中是否包含当前人的部门
+			if(orgShareList != null && orgShareList.size() > 0) {
+				for(ShareDto sd : orgShareList) {
+					if(orgIdSet.contains(sd.getId())) {
+						return newsDto;
+					}
+				}
+			}
+			// 判断共享角色中是否包含当前人的角色
+			if(roleShareList != null && roleShareList.size() > 0) {
+				for(ShareDto sd : roleShareList) {
+					if(roleIds.contains(sd.getId())) {
+						return newsDto;
+					}
+				}
+			}
+			// 判断共享人员中是否包含当前人
+			if(userShareList != null && userShareList.size() > 0) {
+				for(ShareDto sd : userShareList) {
+					if(sd.getId().equals(loginUser.getUserId())) {
+						return newsDto;
+					}
+				}
+			}
+			logger.info("=================当前用户未在新闻共享范围内！");
+			return HioException.newsIsNull;
+		} else {
+			return HioException.systemIsBusy;
+		}
+	}
+	
+	/**
+	 * 置顶新闻
+	 * @param id
+	 * @return
+	 * @throws HioMybatisGetException
+	 */
+	@RequestMapping(value = "/top/{id}", method = RequestMethod.PUT)
+	public Object topNews(@PathVariable("id") String id) throws HioMybatisGetException {
+		News news = (News) get(id);
+		if(news == null || news.getDelflag() == 1) {
+			return HioException.newsIsNull;
+		}
+		newsService.topNewsById(id);
+		return null;
+	}
+	
+	/**
+	 * 取消置顶新闻
+	 * @param id
+	 * @return
+	 * @throws HioMybatisGetException
+	 */
+	@RequestMapping(value = "/top/cancel/{id}", method = RequestMethod.PUT)
+	public Object cancelTopNews(@PathVariable("id") String id) throws HioMybatisGetException {
+		News news = (News) get(id);
+		if(news == null || news.getDelflag() == 1) {
+			return HioException.newsIsNull;
+		}
+		newsService.cancelTopNewsById(id);
+		return null;
+	}
+	
+	/**
+	 * 保存新闻，包括新闻可阅范围
+	 * @param json
+	 * @return
+	 */
+	@RequestMapping(value = "/save", method = RequestMethod.POST, consumes = "application/json")
+	public Object save(@RequestBody NewsDto newsDto) throws HioException {
+		LoginUser loginUser = super.getLoginUser();
+		if(StringUtils.isEmpty(newsDto.getId())) {
+			// 新建保存
+			newsDto.setStatus(0);
+			return newsService.saveNews(loginUser, newsDto);
+		}else {
+			News oldNews = (News) super.get(newsDto.getId());
+			if(oldNews == null || oldNews.getDelflag() == 1) {
+				return HioException.newsIsNull;
+			}
+			if(newsDto.getStatus() == 1) {
+				// 由发布状态修改为草稿状态
+				News news = (News) super.get(newsDto.getId());
+				newsTypeService.minusNewsCount(loginUser.getTendId(), news.getTypeId());
+				/*syncNewsCountThreadPool.execute(new Runnable() {
+					@Override
+					public void run() {
+						newsTypeService.minusNewsCount(loginUser.getTendId(), newsDto.getTypeId());
+					}
+				});*/
+				newsDto.setStatus(0);
+				newsDto.setPublishDate(new Date());
+				return newsService.updateNewsDto(newsDto);
+			}else {
+				// 更新保存
+				return newsService.updateNewsDto(newsDto);
+			}
+		}
+	}
+	
+	/**
+	 * 发布新闻，包括新闻可阅范围
+	 * @param json
+	 * @return
+	 */
+	@RequestMapping(value = "/publish", method = RequestMethod.POST, consumes = "application/json")
+	public Object publishNews(@RequestBody NewsDto newsDto) throws HioMybatisInsertException {
+		LoginUser loginUser = super.getLoginUser();
+		if(StringUtils.isEmpty(newsDto.getId())) {
+			// 新建发布
+			newsDto.setStatus(1);
+			newsDto.setPublishDate(new Date());
+			return newsService.saveNews(loginUser, newsDto);
+		} else {
+			News oldNews = (News) super.get(newsDto.getId());
+			if(oldNews == null || oldNews.getDelflag() == 1) {
+				return HioException.newsIsNull;
+			}
+			// 修改发布
+			if(0 == newsDto.getStatus()) {
+				newsDto.setOldStatus(0);
+				// 由草稿状态修改为发布状态
+				newsTypeService.addNewsCount(loginUser.getTendId(), newsDto.getTypeId());
+				/*syncNewsCountThreadPool.execute(new Runnable() {
+					@Override
+					public void run() {
+						newsTypeService.addNewsCount(loginUser.getTendId(), newsDto.getTypeId());
+					}
+				});*/
+			} else {
+				// 修改前后均为发布状态，需要判断是否改变了栏目类型
+				News news = (News) super.get(newsDto.getId());
+				if(!(newsDto.getTypeId()).equals(news.getTypeId())) {
+					// 栏目发生了改变
+					newsTypeService.addNewsCount(loginUser.getTendId(), newsDto.getTypeId());
+					newsTypeService.minusNewsCount(loginUser.getTendId(), news.getTypeId());
+					/*syncNewsCountThreadPool.execute(new Runnable() {
+						@Override
+						public void run() {
+							newsTypeService.addNewsCount(loginUser.getTendId(), newsDto.getTypeId());
+							newsTypeService.minusNewsCount(loginUser.getTendId(), news.getTypeId());
+						}
+					});*/
+				}
+			}
+			newsDto.setStatus(1);
+			newsDto.setPublishDate(new Date());
+			return newsService.updateNewsDto(newsDto);
+		}
+	}
+	
+	/**
+	 * 取消发布新闻
+	 * @param json
+	 * @return
+	 */
+	@RequestMapping(value = "/cancel/{id}", method = RequestMethod.PUT, consumes = "application/json")
+	public Object cancelPublishNews(@PathVariable("id") String newsId) throws HioMybatisInsertException {
+		News news = (News) get(newsId);
+		if(news == null || news.getDelflag() == 1) {
+			return HioException.newsIsNull;
+		}
+		LoginUser loginUser = super.getLoginUser();
+		newsService.cancelPublishNews(loginUser, newsId);
+		return null;
+	}
+	
+	/**
+	 * 逻辑删除新闻，物理删除新闻可阅范围
+	 * @param id
+	 * @return
+	 */
+	@RequestMapping(value = "/delete/{id}", method = RequestMethod.DELETE)
+	public Object delete(@PathVariable("id") String id) throws HioMybatisDeleteException {
+		LoginUser loginUser = super.getLoginUser();
+		return newsService.deleteNewsDto(loginUser, id);
+	}
+
+	/**
+	 * 新闻列表分页查询
+	 * @param newsParam
+	 * @return
+	 * @throws HioMybatisQueryException
+	 */
+	@SuppressWarnings("unchecked")
+	@RequestMapping(value = "/list", method = { RequestMethod.POST }, consumes = "application/json")
+	public Page<NewsDto> queryList(@RequestBody NewsListParam newsParam) throws HioMybatisQueryException {
+		// 人员id+角色id+组织id
+		List<String> orgIds = new ArrayList<String>();
+		List<String> roleIds = new ArrayList<String>();
+		LoginUser loginUser = super.getLoginUser();
+		boolean isSuper = loginUser.isSuper();
+		if(isSuper) {
+			return newsService.findAllNews(newsParam, loginUser);
+		}else {
+			orgIds.addAll(oaUserUtil.findAllOrgIds(loginUser.getTendId(), loginUser.getUserId()));
+			roleIds.addAll(loginUser.getRoleIds());
+			String userId = loginUser.getUserId();
+			return newsService.queryList(newsParam, userId, orgIds, roleIds);
+		}
+	}
+	
+	/**
+	 * 记录新闻浏览记录
+	 * @param id
+	 * @return
+	 * @throws HioMybatisUpdateException
+	 */
+	/*@RequestMapping(value = "/read/record/{id}", method = RequestMethod.GET)
+	public Object addNewsHitNum(@PathVariable("id") String id) throws HioMybatisUpdateException {
+		LoginUser loginUser = super.getLoginUser();// 获取当前登录用户
+		String loginUserId = loginUser.getUserId();// 当前登录用户的userID
+		return newsService.addReadRecord(id,loginUserId);
+	}*/
+	
+}

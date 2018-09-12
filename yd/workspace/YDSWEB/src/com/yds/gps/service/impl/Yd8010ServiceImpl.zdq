@@ -1,0 +1,251 @@
+package com.yds.gps.service.impl;
+
+import java.text.ParseException;
+import java.util.Date;
+import java.util.Iterator;
+import java.util.List;
+
+import org.springframework.stereotype.Service;
+
+import com.yds.base.service.AbstractBaseService;
+import com.yds.common.bean.ComIoData;
+import com.yds.common.bean.EmpInfo;
+import com.yds.common.dao.UserDao;
+import com.yds.common.service.SessionConstants;
+import com.yds.common.service.CommonConstants.MsgTypeEnum;
+import com.yds.common.service.CommonConstants.SparkMsgIDEnum;
+import com.yds.common.service.CommonConstants.SparkSysIDEnum;
+import com.yds.gps.bean.TansferCondA;
+import com.yds.gps.common.service.TansferService;
+import com.yds.gps.service.GpsConstants;
+import com.yds.util.bean.SparkMessagerBean;
+import com.yds.util.service.DateUtil;
+import com.yds.util.service.SendMessage;
+import com.yds.util.service.ServerInfo;
+import com.yds.ws.service.HandleService;
+
+@Service("yd8010Service")
+public class Yd8010ServiceImpl extends AbstractBaseService implements HandleService{
+	
+	private TansferService tansferService;
+	
+	private UserDao userDao;
+	
+	private static final String DATE_PATTERN = "yyyy-MM-dd";
+	private static final String TIME_PATTERN = "yyyy-MM-dd HH:mm:ss";
+	private static final String FEMALE = "F";
+	private static int[] FESTIVAL_NUMBER = {3, 8, 5, 4};
+	private static int YOUNG_YEAR = 28;
+	private static int DAYS_OF_YEAR = 365;
+	private static int EXMONEY = 1;
+	private static String MSG_KK = "0";
+	private static String MSG_ZJ = "1";
+
+	/**
+	 * {@inheritDoc}
+	 * @throws ParseException 
+	 */
+	@Override
+	public void handle(List<ComIoData> ioDataList) throws ParseException {
+		
+		Iterator<ComIoData> iter = ioDataList.iterator();
+		
+		//转入转出Flg(转出：true	转入：false 默认为true)
+		boolean ioFlg = true;
+		
+		//是否中奖(中奖：true 不中奖：false 默认为false)
+		boolean bingo = false;
+		
+		while(iter.hasNext()) {
+			ComIoData ioData = iter.next();
+			
+			//判断此人员是否存在(临时人员刷卡)
+			EmpInfo empInfo = userDao.getEmpInfoById(ioData.getEmpId());
+			if(null != empInfo) {	//执行扣款流程
+				
+				//1.扣款
+				transfer(ioData, ioFlg, bingo);
+				
+				//2.判断是否中奖
+				bingo = isWin(ioData, empInfo);
+				
+				//3.根据2判断是否还款
+				if(bingo) {
+					ioFlg = false;
+					transfer(ioData, ioFlg, bingo);
+					sendSparkMsg(ioData, MSG_ZJ);	//发送中奖消息
+				} else {
+					sendSparkMsg(ioData, MSG_KK);	//发送扣款消息
+				}
+				
+				//重置Flg
+				ioFlg = true;
+				bingo = false;
+			}
+		}
+	}
+	
+	/**
+	 * Spark信息的发送
+	 * 
+	 * @param ioData : 咖啡刷卡信息
+	 * @param mode ： 咖啡消息类型（"0"->扣款成功消息； "1"->中奖消息）
+	 * @return
+	 * @throws ParseException 
+	 */
+	private boolean sendSparkMsg(ComIoData ioData, String msgType) throws ParseException {
+		
+		// Spark信息的发送
+		SparkMessagerBean sparkMessagerBean = new SparkMessagerBean();
+		
+		// 消息的链接
+		sparkMessagerBean.setMsg_url(ServerInfo.getURLPath() + GpsConstants.SYSTEM_NAME + "/yd0010Init?"+ SessionConstants.REQUESTTARGET + "=1");
+		
+		// 发送消息的系统ID
+		sparkMessagerBean.setSystem_id(SparkSysIDEnum.CF);
+		
+		// 发送消息的消息类型ID
+		sparkMessagerBean.setMsg_id(SparkMsgIDEnum.CF_KK);
+		
+		// 消息内部用ID
+		sparkMessagerBean.setSign(null);
+		
+		// spark 消息类型
+		sparkMessagerBean.setStatus(MsgTypeEnum.INSERT);
+		
+		// 要发送的人员一览
+		sparkMessagerBean.setEmpid(new String[]{ioData.getEmpId()});
+		
+		// 消息的内容
+		Date ioTime = ioData.getIoTime();
+		String strTime = DateUtil.setDateFormat(ioTime, TIME_PATTERN);	//取得扣款时间
+		if(MSG_KK.equals(msgType)) {
+			sparkMessagerBean.setMsg_content(propMgr.getMessage("yds.gps.info.0023", strTime, EXMONEY));
+			
+		} else if (MSG_ZJ.equals(msgType)) {
+			sparkMessagerBean.setMsg_content(propMgr.getMessage("yds.gps.info.0024", strTime, EXMONEY));
+		}
+		
+		SendMessage.asyncSend(sparkMessagerBean);
+		
+		return true;
+	}
+	
+	/**
+	 * 根据刷卡信息判断刷卡人是否中奖
+	 * 
+	 * @param ioData 刷卡信息
+	 * @param empInfo 对应的人员信息
+	 * @return bingo:true->中奖 false->未中奖
+	 * @throws ParseException 
+	 */
+	private boolean isWin(ComIoData ioData, EmpInfo empInfo) throws ParseException {
+		
+		boolean bingo = false;
+		
+		
+		String today = DateUtil.getDate();
+		int month = DateUtil.getMonth(today);
+		int day = DateUtil.getDay(today);
+
+		Date birth = empInfo.getBirthday();
+		if(null != birth) {
+			
+			//1.生日
+			String birthday = DateUtil.setDateFormat(birth, DATE_PATTERN);
+			int month_emp = DateUtil.getMonth(birthday);
+			int day_emp = DateUtil.getDay(birthday);
+			
+			if(month == month_emp && day == day_emp) {
+				bingo = true;
+				return bingo;
+			}
+			
+			//2.青年节
+			if(month == FESTIVAL_NUMBER[2] && day == FESTIVAL_NUMBER[3]) {
+				int dayCnt = DateUtil.dateBetween(birthday, today);
+				int youngLine = YOUNG_YEAR * DAYS_OF_YEAR;
+				if(dayCnt < youngLine) {
+					bingo = true;
+					return bingo;
+				}
+			}
+		}
+		
+		//3.妇女节
+		if(month == FESTIVAL_NUMBER[0] && day == FESTIVAL_NUMBER[1]) {
+			String sex = empInfo.getEmpSex();
+			if(FEMALE.equals(sex)) {
+				bingo = true;
+				return bingo;
+			}
+		}
+		
+
+		
+		//4.固定概率 
+		double commonRate = Double.parseDouble(propMgr.getMessage("com.yds.ws.coffee.commonrate"));	//普通人员概率
+		double freeRate = Double.parseDouble(propMgr.getMessage("com.yds.ws.coffee.freerate"));		//开发人员概率
+		double rate = Math.random();	//当前人员概率
+		double fixRate = commonRate;	//固定概率（初始值为普通概率）
+		
+		//特殊人员
+		String freeEmp = propMgr.getMessage("com.yds.ws.coffee.freeemp");		//开发人员ID
+		if(null != freeEmp && !"".equals(freeEmp)) {
+			if(freeEmp.contains(ioData.getEmpId())) {
+				fixRate = freeRate;
+			}
+		}
+		if(rate < fixRate) {
+			bingo = true;
+		}
+		
+		return bingo;
+	}
+	
+	/**
+	 * 咖啡消费转账
+	 */
+	private boolean transfer(ComIoData ioData, boolean ioFlg, boolean bingo) {
+		
+		TansferCondA tansferCondA = new TansferCondA();
+		
+		String exRemarksO = null;
+		String exRemarksI = null;
+		if(bingo) {
+			exRemarksO = propMgr.getMessage("yds.gps.info.0016", EXMONEY);	//咖啡奖励
+			exRemarksI = exRemarksO;
+		} else {
+			exRemarksO = propMgr.getMessage("yds.gps.info.0014", EXMONEY);	//咖啡消费
+			exRemarksI = propMgr.getMessage("yds.gps.info.0015", EXMONEY);	//咖啡收入
+		}
+		
+		tansferCondA.setExTime(ioData.getIoTime());			//交易时间
+		tansferCondA.setExType(GpsConstants.EX_COFFEE);		//交易类型
+		tansferCondA.setIoFlag(GpsConstants.INCOME);		//收支区分
+		tansferCondA.setExMoney(EXMONEY);					//交易金额
+		tansferCondA.setExRemarksI(exRemarksI);				//转入对象备注
+		tansferCondA.setExRemarksO(exRemarksO);				//转出对象备注
+		
+		if(ioFlg) {
+			tansferCondA.setInId(GpsConstants.COFFEE_ACCOUNT);	//转入ID
+			tansferCondA.setOutId(ioData.getEmpId());			//转出ID
+
+		} else {
+			tansferCondA.setInId(ioData.getEmpId());			//转入ID
+			tansferCondA.setOutId(GpsConstants.COFFEE_ACCOUNT);	//转出ID
+		}
+		
+		tansferService.tansfer(tansferCondA, true);
+		
+		return true; 
+	}
+
+	public void setTansferService(TansferService tansferService) {
+		this.tansferService = tansferService;
+	}
+
+	public void setUserDao(UserDao userDao) {
+		this.userDao = userDao;
+	}
+}

@@ -1,0 +1,261 @@
+
+package com.jzy.hio.oa.office.service.impl;
+
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.aop.ThrowsAdvice;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.service.impl.BaseOaServiceImpl;
+import com.jzy.hio.entity.OfficeHouse;
+import com.jzy.hio.entity.OfficeInfo;
+import com.jzy.hio.entity.OfficeOut;
+import com.jzy.hio.entity.OfficeOutInfo;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.exception.HioMybatisInsertException;
+import com.jzy.hio.oa.OaConstant;
+import com.jzy.hio.oa.office.dto.OfficeInOutParam;
+import com.jzy.hio.oa.office.dto.OfficeInfoDto;
+import com.jzy.hio.oa.office.dto.OfficeOutDto;
+import com.jzy.hio.oa.office.dto.OfficeOutListDto;
+import com.jzy.hio.oa.office.mapper.OfficeOutMapper;
+import com.jzy.hio.oa.office.service.OfficeHouseService;
+import com.jzy.hio.oa.office.service.OfficeInfoService;
+import com.jzy.hio.oa.office.service.OfficeOutInfoService;
+import com.jzy.hio.oa.office.service.OfficeOutService;
+import com.jzy.hio.utils.LoginUser;
+import com.jzy.hio.utils.OaUserUtil;
+import com.jzy.hio.utils.Page;
+
+@Service("officeOutService")
+public class OfficeOutServiceImpl extends BaseOaServiceImpl<OfficeOut> implements OfficeOutService {
+
+	private static Logger logger = LoggerFactory.getLogger(OfficeOutServiceImpl.class);
+	
+	@Autowired
+	private OfficeOutInfoService officeOutInfoService;
+
+	@Autowired
+	private OfficeInfoService officeInfoService;
+	
+	@Autowired
+	private OfficeOutMapper officeOutMapper;
+	
+	@Autowired
+	private OaUserUtil oaUserUtil;
+	
+	@Autowired
+	private OfficeHouseService officeHouseService;
+	
+	@Override
+	public OfficeOutDto queryOfficeOutById(String id) {
+		OfficeOut officeOut = (OfficeOut) super.getObjectById(id);
+		OfficeOutDto officeOutDto = new OfficeOutDto();
+		BeanUtils.copyProperties(officeOut,officeOutDto);
+		String outPerson = officeOut.getOutPerson();// 出库人
+		// 获取当前登录用户
+		LoginUser loginUser = super.getLoginUser();
+		// 查询出库人姓名
+		String outPersonName = oaUserUtil.selectUserNameByTendIdAndStatus(outPerson,loginUser.getTendId(),OaConstant.OA_USER_QUERY_STATUS_3);
+		officeOutDto.setOutPersonName(outPersonName);// 出库人姓名
+		String getUserPerson = officeOut.getGetUserPerson();// 领用人
+		// 查询领用人姓名
+		String getUserPersonName =  oaUserUtil.selectUserNameByTendIdAndStatus(getUserPerson,loginUser.getTendId(),OaConstant.OA_USER_QUERY_STATUS_3);
+		officeOutDto.setGetUserPersonName(getUserPersonName);// 领用人姓名
+		OfficeOutInfo officeOutInfo = new OfficeOutInfo();
+		officeOutInfo.setOfficeOutId(id);
+		officeOutInfo.setDelflag(0);
+		List<OfficeOutInfo> officeOutInfoList = officeOutInfoService.queryList(officeOutInfo);
+		if (officeOutInfoList != null && officeOutInfoList.size() > 0) {
+			List<OfficeInfoDto> officeInfoDtoList = new ArrayList<OfficeInfoDto>();
+			for (OfficeOutInfo officeOutInfo2 : officeOutInfoList) {
+				OfficeInfoDto officeInfoDto = new OfficeInfoDto();
+				officeInfoDto.setOfficeinfoNum(officeOutInfo2.getOfficeinfoNum());// 本次出库数量
+				OfficeInfo officeInfo = officeInfoService.getObjectById(officeOutInfo2.getInfoId());
+				if (officeInfo != null) {
+					OfficeHouse officeHouse = officeHouseService.getObjectById(officeInfo.getHouseId());
+					if (officeHouse != null) {
+						officeInfoDto.setTypeName(officeHouse.getTypeName());// 类别名称
+					}
+					BeanUtils.copyProperties(officeInfo,officeInfoDto);
+				}
+				officeInfoDtoList.add(officeInfoDto);
+			}
+			officeOutDto.setOfficeInfoDtoList(officeInfoDtoList);
+		}
+		return officeOutDto;
+	}
+	
+	@Override
+	public Object saveOfficeOut(OfficeOutDto officeOutDto) throws HioMybatisInsertException{
+		String code = officeOutDto.getCode();// 出库单编号
+		Object lastCodeObj = createLastOfficeOutCode(code);// 查询出库单编号是否存在，如果存在则重新生成出库单编号
+		if (lastCodeObj == null || !String.valueOf(lastCodeObj).contains("SO")) {
+			return lastCodeObj;
+		} else {
+			officeOutDto.setCode(String.valueOf(lastCodeObj));
+		}
+		
+		OfficeOut officeOut = new OfficeOut();
+		BeanUtils.copyProperties(officeOutDto,officeOut);
+		Integer count = super.save(officeOut);
+		logger.info("保存出库表成功，出库id：{}",officeOut.getId());
+		
+		List<OfficeInfoDto> officeInfoDtoList = officeOutDto.getOfficeInfoDtoList();
+		if (officeInfoDtoList != null && officeInfoDtoList.size() > 0) {
+			for (OfficeInfoDto officeInfoDto : officeInfoDtoList) {
+				String officeInfoId = officeInfoDto.getId();// 物品ID
+				// 物品表
+				OfficeInfo officeInfo = officeInfoService.getObjectById(officeInfoId);
+				if (officeInfo == null) {
+					//return HioException.officeInfoNotExist;
+					throw new HioMybatisInsertException(HioException.officeInfoNotExist.getMessage());
+				}
+				if (officeInfoDto.getOfficeinfoNum() > officeInfo.getStockCount()) {
+					//return HioException.officeinfoNumToMax;
+					throw new HioMybatisInsertException(HioException.officeinfoNumToMax.getMessage());
+				}
+				officeInfo.setStockCount(officeInfo.getStockCount() - officeInfoDto.getOfficeinfoNum());
+				officeInfo.setUpdateDate(new Date());
+				officeInfoService.update(officeInfo);
+				logger.info("保存物品表成功，物品id：{}",officeInfo.getId());
+				
+				// 出库详单表
+				OfficeOutInfo officeOutInfo = new OfficeOutInfo();
+				officeOutInfo.setInfoId(officeInfo.getId());// 物品ID
+				officeOutInfo.setOfficeinfoNum(officeInfoDto.getOfficeinfoNum());// 本次出库数量
+				officeOutInfo.setOfficeOutId(officeOut.getId());// 出库表ID
+				officeOutInfo.setCreateDate(new Date());
+				officeOutInfoService.save(officeOutInfo);
+				logger.info("保存办公用品出库详单表成功，物品id：{}",officeInfo.getId());
+			}
+		}
+		return count;
+	}
+
+	/**
+	 * 查询出库单编号是否存在，如果存在则重新生成出库单编号
+	 * 
+	 * @author shangb
+	 * @date 2018年5月7日 下午3:07:38
+	 * @param code
+	 * @return
+	 */
+	public Object createLastOfficeOutCode(String code) {
+		Object lastCodeObj = null;
+		List<OfficeOut> officeOutList = queryOfficeOutCode(code);// 根据出库单编号查询数据库里是否存在，包括逻辑删除的
+		if (officeOutList != null && officeOutList.size() > 0) {
+			lastCodeObj = createOfficeOutCode();// 生成出库单编号
+			if (lastCodeObj != null && String.valueOf(lastCodeObj).contains("SO")) {
+				lastCodeObj = createLastOfficeOutCode(String.valueOf(lastCodeObj));
+			} else {
+				return lastCodeObj;
+			}
+		} else {
+			lastCodeObj = code;
+		}
+		return lastCodeObj;
+	}
+	
+	/**
+	 * 根据出库单编号查询数据库里是否存在，包括逻辑删除的
+	 * 
+	 * @author shangb
+	 * @date 2018年5月7日 下午2:19:45
+	 * @param code
+	 * @return
+	 */
+	public List<OfficeOut> queryOfficeOutCode(String code) {
+		OfficeOut dbOfficeOut = new OfficeOut();
+		dbOfficeOut.setCode(code);
+		List<OfficeOut> officeOutList = queryList(dbOfficeOut);
+		return officeOutList;
+	}
+	
+	/*生成出库单编号*/
+	@Override
+	public Object createOfficeOutCode() throws HioException {
+		//查询入库表里最大的入库单编号
+		String maxOfficeInCode = officeOutMapper.selectMaxOfficeOutCode();
+		SimpleDateFormat sdf = new SimpleDateFormat("yyyyMMdd");
+		String ymdStr = sdf.format(new Date());
+		String lastCode = null;
+		if (StringUtils.isEmpty(maxOfficeInCode)) {// 表为空
+			lastCode = "SO" + ymdStr + "001";
+		} else {
+			maxOfficeInCode = maxOfficeInCode.replace("SO", "");
+			if (ymdStr.equals(maxOfficeInCode.substring(0, 8))) {// 今天有数据
+				if (maxOfficeInCode.equals(ymdStr + "9999")) {
+					return HioException.officeOutCodeTooMax;
+				}
+				lastCode = "SO" + (Long.parseLong(maxOfficeInCode) + 1) + "";
+			} else {// 今天没数据
+				lastCode = "SO" + ymdStr + "001";
+			}
+		}
+		logger.info("生成出库单编号成功，编号:{}",lastCode);
+		return lastCode;
+	}
+	
+	@Override
+	public Page queryOfficeOutPage(Map<String, Object> map) {
+		Page page = (Page) super.getPage(map);
+		List<OfficeOut> officeOutList = (List<OfficeOut>) page.getList();
+		List<OfficeOutDto> officeOutDtoList = new ArrayList<OfficeOutDto>();
+		LoginUser loginUser = getLoginUser();
+		if (officeOutList != null && officeOutList.size() > 0) {
+			for (OfficeOut officeOut : officeOutList) {
+				OfficeOutDto officeOutDto = new OfficeOutDto();
+				BeanUtils.copyProperties(officeOut,officeOutDto);
+				String outPerson = officeOut.getOutPerson();// 出库人
+				// 查询出库人姓名
+				String outPersonName = oaUserUtil.selectUserNameByTendIdAndStatus(outPerson,loginUser.getTendId(),OaConstant.OA_USER_QUERY_STATUS_3);
+				officeOutDto.setOutPersonName(outPersonName);// 出库人姓名
+				String getUserPerson = officeOut.getGetUserPerson();// 领用人
+				// 查询领用人姓名
+				String getUserPersonName = oaUserUtil.selectUserNameByTendIdAndStatus(getUserPerson,loginUser.getTendId(),OaConstant.OA_USER_QUERY_STATUS_3);
+				officeOutDto.setGetUserPersonName(getUserPersonName);// 领用人姓名
+				
+				officeOutDtoList.add(officeOutDto);
+			}
+		}
+		page.setList(officeOutDtoList);
+		return page;
+	}
+	
+	@Override
+	public Page queryOfficeOutListDtoPage(OfficeInOutParam officeInOutParam) {
+		String pageNum = officeInOutParam.getPageNum();
+		String pageCount = officeInOutParam.getPageCount();
+		Map<String, Object> map = new HashMap<String, Object>();
+		map.put("pageNum", pageNum);
+		map.put("pageCount", pageCount);
+		pageStart(map);
+		List<OfficeOutListDto> officeOutListDtoList = officeOutMapper.queryOfficeOutList(officeInOutParam);
+		// 暂时注释，不确定以后用哪种方式获取姓名，现在是通过sql连user表查的姓名
+		/*if (officeOutListDtoList != null && officeOutListDtoList.size() > 0) {
+			for (OfficeOutListDto officeOutListDto : officeOutListDtoList) {
+				// 查询出库人姓名
+				String outPerson = officeOutListDto.getOutPerson();// 出库人
+				String outPersonName = oaUserUtil.selectUserName(outPerson);// 出库人名字
+				officeOutListDto.setOutPersonName(outPersonName);// 出库人姓名
+				// 查询领用人姓名
+				String getUserPerson = officeOutListDto.getGetUserPerson();// 领用人
+				String getUserPersonName = oaUserUtil.selectUserName(getUserPerson);// 领用人名字
+				officeOutListDto.setGetUserPersonName(getUserPersonName);// 领用人姓名
+			}
+		}*/
+		return super.pageReturn(officeOutListDtoList);
+	}
+
+}

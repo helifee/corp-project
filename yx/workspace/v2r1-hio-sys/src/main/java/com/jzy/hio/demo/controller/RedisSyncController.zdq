@@ -1,0 +1,317 @@
+package com.jzy.hio.demo.controller;
+
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.HashMap;
+import java.util.Map;
+
+import javax.servlet.http.HttpServletRequest;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.jzy.hio.annotation.ResponseBodyExt;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.controller.BaseController;
+import com.jzy.hio.init.RedisSyncInit;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.redis.RedisService;
+import com.jzy.hio.utils.StringUtil;
+
+/**
+ * redis辅助工具
+ * 
+ * @author wt.coffee<br/>
+ *         2018年3月8日上午10:00:15
+ */
+@RestController
+@RequestMapping("redis")
+public class RedisSyncController extends BaseController {
+
+	@Autowired
+	private RedisSyncInit redisSync;
+	@Autowired
+	private RedisService redisService;
+
+	/**
+	 * 把数据表的数据同步到reids<br>
+	 * mysql表和redis表一一对应
+	 * 
+	 * @return
+	 */
+	@RequestMapping("sync")
+	public String sync(String tendId, @RequestParam(value = "isForce", defaultValue = "false") boolean isForce) {
+		try {
+			if (isEmpty(tendId)) {
+				return "参数tendId为空";
+			} else {
+				// tendId 为 ALL表示同步所有的租户
+				if (isNotEquals(tendId, "ALL")) {
+					redisSync.syncTendData(tendId);
+				} else {
+					if (isForce) {
+						redisSync.syncAllData(true);
+					} else {
+						redisSync.syncAllData(false);
+					}
+				}
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		return "mysql表同步到redis成功";
+	}
+
+	/**
+	 * 同步老数据，仅操作一次
+	 * 
+	 * @author kimchou
+	 * @data 2018/6/22 下午2:41
+	 */
+	@RequestMapping("syncExternalUserToOaSysUser")
+	public Object syncExternalUserToOaSysUser(@RequestParam(value = "tendId", required = false) String tendId, @RequestParam(value = "key", required = true) String key) {
+		if (!key.equals("sync-secret")) {
+			return "error";
+		}
+		redisSync.syncExternalUserToOaSysUser(tendId);
+
+		return "syncExternalUserToOaSysUser success";
+	}
+
+	@RequestMapping("syncImUserIdAndUserId")
+	public String syncTendIdImUserAndUserId(@RequestParam(value = "tendId", required = false) String tendId, @RequestParam(value = "key", required = true) String key) {
+		if (!key.equals("sync-secret")) {
+			return "error";
+		}
+		redisSync.syncImUserIdAndUserId(tendId);
+
+		return "im_user_id - oa_user_id sync";
+	}
+
+	@RequestMapping("get")
+	@ResponseBodyExt
+	public Object get(HttpServletRequest request, @RequestParam("key") String key, @RequestParam(value = "field", required = true) String field) {
+		request.getHeader("Authorization");
+		String value = null;
+		if (key.contains(":")) {
+			value = JedisUtil.hget(key, field);
+		}
+		if (isEmpty(value)) {
+			value = JedisUtil.get(key);
+		}
+		if (isEmpty(value)) {
+			// 获取所有的数据
+			Map<String, String> map = JedisUtil.fetchRelationRow(key);
+			if (isEmpty(map)) {
+				return map;
+			} else {
+				if (isNotEmpty(field)) {
+					return map.get(field);
+				} else {
+					return mapStr2mapObj(map);
+				}
+			}
+		} else {
+			return value;
+		}
+	}
+
+	@RequestMapping("deleteByTend")
+	public String deleteByTend(String tendId, @RequestParam(value = "password") String password) {
+		try {
+			if (isEmpty(tendId)) {
+				return "删除失败,tendId为空";
+			}
+			if (isNotEquals(password, "*&&**&")) {
+				return "password err";
+			}
+			redisService.delAll(tendId + "*");
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		return "删除redis成功";
+	}
+
+	@RequestMapping("deleteByKeyId")
+	public String delete(String key, String id, @RequestParam(value = "password") String password) {
+		try {
+			if (isEmpty(key)) {
+				return "删除失败,key为空";
+			}
+			if (isNotEquals(password, "*&&**&")) {
+				return "password err";
+			}
+			if (isEmpty(id)) {
+				JedisUtil.del(key);
+			} else {
+				redisService.delRow(key, id);
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		return "删除redis成功";
+	}
+
+	/**
+	 * 获取数据表的最大主键,然后设置redis
+	 * 
+	 * @return
+	 */
+	@RequestMapping("syncPK2redis")
+	public Object syncPK2redis() {
+		// sequence:disk_personal_favorite
+		String url = "jdbc:mysql://192.168.3.81:3306/test_test014?useUnicode=true&characterEncoding=utf8&allowMultiQueries=true";
+		Map<String, Object> alls = new HashMap<>();
+		try {
+			Connection conn = DriverManager.getConnection(url, "putest", "putest123");
+			String catalog = conn.getCatalog();
+			DatabaseMetaData meta = conn.getMetaData();
+			ResultSet tablesRs = meta.getTables(catalog, null, null, new String[] { "TABLE" });
+			while (tablesRs.next()) {
+				String tableName = tablesRs.getString("TABLE_NAME");
+				// System.out.println(tableName);
+				String sql = "select max(id) maxId from " + tableName;
+				Statement stmt = conn.createStatement();
+				ResultSet rs = stmt.executeQuery(sql);
+				while (rs.next()) {
+					String maxId = rs.getString("maxId");
+					if (maxId != null && StringUtil.isNumeric(maxId)) {
+						String redisId = JedisUtil.generateKey(tableName);
+						if (Integer.valueOf(redisId) < Integer.valueOf(maxId)) {
+							int value = Integer.valueOf(maxId) - BaseConstants.MYSQL_ID_ORIGIN;
+							JedisUtil.set("sequence:" + tableName, value + "");
+						}
+						System.out.println(tableName + " " + maxId + " " + redisId);
+					}
+				}
+				rs.close();
+			}
+			tablesRs.close();
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+		return alls;
+	}
+
+	/**
+	 * 把数据库中的字段 生成javabean
+	 * 
+	 * @return
+	 */
+	@RequestMapping("db2javaBean")
+	public Object db2redis() {
+		String url = "jdbc:mysql://192.168.3.81:3306/test_test014?useUnicode=true&characterEncoding=utf8&allowMultiQueries=true";
+		Map<String, Object> alls = new HashMap<>();
+		try {
+			Connection conn = DriverManager.getConnection(url, "putest", "putest123");
+			String catalog = conn.getCatalog();
+			DatabaseMetaData meta = conn.getMetaData();
+			ResultSet tablesRs = meta.getTables(catalog, null, null, new String[] { "TABLE" });
+
+			while (tablesRs.next()) {
+				System.out.println("--------------------------------------");
+
+				StringBuilder java = new StringBuilder();
+				String tableName = tablesRs.getString("TABLE_NAME");
+
+				if ("pt_sys_org_orgnazation".equals(tableName) == false) {
+					continue;
+				}
+
+				java.append("@Entity").append("\n");
+				java.append("@Table(name=\"" + tableName + "\")").append("\n");
+				java.append("public class ").append(col2TuoFeng(tableName)).append("{");
+				java.append("\n");
+				String key = "mysql_table:" + tableName;
+				ResultSet columnRs = meta.getColumns(null, "%", tableName, "%");
+				Map<String, Object> values = new HashMap<>();
+				values.put("tableName", tableName);
+				Map<String, String> columns = new HashMap<>();
+				while (columnRs.next()) {
+					String columnName = columnRs.getString("COLUMN_NAME");
+					String columnType = columnRs.getString("TYPE_NAME");
+					String tableComment = columnRs.getString("REMARKS");
+
+					// 排除的字段
+					String export = "create_date,create_person_id,create_person_name,"//
+							+ "update_date,update_person_id,update_person_name,"//
+							+ "concurrency_version,delflag";
+					if ("id".equals(columnName) || export.contains(columnName)) {
+						continue;
+					}
+
+					columns.put(columnName, tableComment);
+					if ("id".equals(columnName)) {
+						java.append("@Id");
+					} else {
+						java.append("@Column(name=\"" + columnName + "\")");
+					}
+					java.append("\n");
+					// java.append(columnType).append("\n");
+					java.append("private ").append(getFiledType(columnType)).append(" ").append(col2TuoFeng(columnName)).append(";");
+					java.append("\n");
+					java.append("\n");
+				}
+				values.put("data", columns);
+				columnRs.close();
+				//
+				// redisService.put(key, values);
+				alls.put(key, values);
+				java.append("}");
+				System.out.println(java.toString());
+			}
+
+			tablesRs.close();
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+		return alls;
+	}
+
+	/**
+	 * 转化成驼峰结构
+	 * 
+	 * @return
+	 */
+	private static String col2TuoFeng(String column) {
+		StringBuilder sb = new StringBuilder();
+		boolean nextUp = false;
+		for (int i = 0; i < column.length(); i++) {
+			if (column.charAt(i) == '_') {
+				nextUp = true;
+				continue;
+			}
+			if (nextUp) {
+				sb.append(String.valueOf(column.charAt(i)).toUpperCase());
+				nextUp = false;
+			} else {
+				sb.append(String.valueOf(column.charAt(i)));
+			}
+		}
+		return sb.toString();
+	}
+
+	public static void main(String[] args) {
+		new RedisSyncController().db2redis();
+		// String cols = col2TuoFeng("sp_nam_ddd");
+		// System.out.println(cols);
+	}
+
+	private String getFiledType(String columnType) {
+		switch (columnType.toLowerCase()) {
+		case "bigint":
+			return "Integer";
+		case "Timestamp":
+			return "Date";
+		case "varchar":
+		default:
+			return "String";
+		}
+	}
+}

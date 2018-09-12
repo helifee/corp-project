@@ -1,0 +1,240 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.jzy.hio.sys.user.mapper.UserMapper">
+
+    <!-- 查询人员列表 -->
+    <select id="queryList" resultType="com.jzy.hio.sys.user.dto.UserDto">
+        SELECT u.uid uid,u.id, u.`real_name` realName,
+        <if test="isMainOrg">
+            u.id nodeId,
+        </if>
+        CASE u.`is_male` WHEN 1 THEN '男' WHEN 0 THEN '女' ELSE '' END AS sex,
+        u.mobile, u.`email`,
+        CASE u.`work_status` WHEN 1 THEN 'job' WHEN 2 THEN 'leave' WHEN  0 THEN 'no_confirmed' ELSE 'no_invited' END AS workStatus,
+        o.`name` organizationName ,
+        o.`id` organizationId,
+        up.position,
+        u.im_user_Id as imUserId,
+        u.pinyin_first_letter pinyinFirst, u.pinyin_full pinyinFull,
+        'user' userType
+        FROM oa_sys_user u
+        LEFT JOIN oa_sys_user_position up ON u.id = up.user_id
+        LEFT JOIN oa_sys_organization o ON up.organization_id = o.`id`
+        WHERE up.delflag = 0 AND o.delflag = 0 AND u.user_type = 1
+        -- 在职的 \ 员工
+        <choose>
+            <when test="workStatus != null and workStatus == 0">
+                AND u.work_status  = 0 AND u.delflag = 0
+            </when>
+            <when test="workStatus != null and workStatus == 1">
+                AND u.work_status  = 1 AND u.delflag = 0
+            </when>
+            <when test="workStatus != null and workStatus == 2">
+                AND u.work_status  = 2 AND u.delflag = 0
+            </when>
+            <when test="workStatus != null and workStatus == 3">
+                AND u.work_status  = 3 AND u.delflag = 0
+            </when>
+            <when test="workStatus != null and workStatus == 4">
+                AND u.work_status  IN (0,1) AND u.delflag = 0
+            </when>
+            <when test="workStatus != null and workStatus == 5">
+                AND u.work_status  IN (1,2) AND u.delflag = 0
+            </when>
+            <when test="workStatus != null and workStatus == 6">
+                AND u.work_status  IN (0,1,2) AND u.delflag = 0
+            </when>
+            <when test="workStatus != null and workStatus == 7">
+                AND u.work_status  IN (1,2)
+            </when>
+            <otherwise>
+                AND u.work_status  = 1 AND u.delflag = 0
+            </otherwise>
+        </choose>
+        -- 只查询主部门、不查询兼职部门的人员
+        <if test="isMainOrg">
+            and up.is_default = 1
+        </if>
+        <if test="organizationId != null ">
+            AND o.id = #{organizationId}
+        </if>
+
+        ORDER BY u.sort ASC,u.id ASC
+    </select>
+
+    <!--通过手机号查询用户-->
+    <select id="queryUserByMobile" resultType="int">
+        SELECT
+        COUNT(1)
+        FROM
+        oa_sys_user u
+        WHERE u.user_type = 1 and
+        u.mobile = #{mobile}
+        <if test="isDeleted!=true">
+            AND u.delflag = 0
+        </if>
+    </select>
+    <!--获取最大排序-->
+    <select id="getMaxSort" resultType="int">
+        SELECT IFNULL(MAX(u.sort),0)
+        FROM
+        oa_sys_user u
+    </select>
+    <!--queryUserListByName-->
+    <select id="queryUserListByName" resultType="com.jzy.hio.sys.user.dto.OAUserDto">
+        SELECT u.id,u.real_name name
+        FROM
+        oa_sys_user u
+        WHERE u.user_type = 1
+        <if test="queryCondition != null and queryCondition != ''">
+            AND ( (u.real_name LIKE CONCAT( '%',#{queryCondition}, '%' ))
+            OR (u.pinyin_first_letter LIKE CONCAT( '%',#{queryCondition}, '%' ))
+            OR (u.pinyin_full LIKE CONCAT( '%',#{queryCondition}, '%' )))
+        </if>
+
+    </select>
+
+    <!--批量更新时间-->
+    <update id="updateBatchUpdateTime">
+        UPDATE oa_sys_user o SET o.update_date = #{now}
+        <if test="userIds!=null and userIds.size()>0">
+            WHERE o.id IN
+            <foreach collection="userIds" index="index" item="item" open="(" separator="," close=")">
+                #{item}
+            </foreach>
+        </if>
+    </update>
+
+    <!--通过名字精确查询-->
+    <select id="queryUserMapByName" resultType="java.util.HashMap">
+        SELECT u.id userId,u.real_name userName FROM oa_sys_user u
+        WHERE u.user_type = 1 and u.real_name IN
+        <foreach collection="userNames" index="index" item="item" open="(" separator="," close=")">
+            #{item}
+        </foreach>
+    </select>
+
+    <!--通过imUserId查询oaId-->
+    <select id="queryOaUserIdByImId" resultType="String">
+        SELECT u.id FROM oa_sys_user u 
+        WHERE u.delflag = 0 AND u.im_user_id = #{imUserId} LIMIT 1;
+    </select>
+
+    <select id="queryUserStatusByIds" resultType="Map">
+        SELECT u.id id
+        FROM oa_sys_user u
+       	WHERE u.delflag = 0 AND u.work_status = 1  AND u.id IN
+        <foreach collection="ids" index="index" item="item" open="(" separator="," close=")">
+            #{item}
+        </foreach>
+    </select>
+
+    <select id="queryUserIsNormal" resultType="String">
+        SELECT GROUP_CONCAT(u.real_name)
+        FROM oa_sys_user u
+        WHERE u.user_type = 1 and  (u.delflag != 0 OR u.work_status != 1)  AND u.id IN
+        <foreach collection="ids" index="index" item="item" open="(" separator="," close=")">
+            #{item}
+        </foreach>
+    </select>
+
+    <select id="queryOrganizationAndExternalUsers" resultType="com.jzy.hio.sys.user.dto.UserDto">
+        (SELECT u.uid uid,u.id, u.`real_name` realName,u.id nodeId,
+        CASE u.`is_male` WHEN 1 THEN '男' WHEN 0 THEN '女' ELSE '' END AS sex,
+        u.mobile, u.`email`,
+        CASE u.`work_status` WHEN 1 THEN 'job' WHEN 2 THEN 'leave' WHEN  0 THEN 'no_confirmed' ELSE 'no_invited' END AS workStatus,
+        o.`name` organizationName ,
+        o.`id` organizationId,
+        up.position,
+        u.im_user_Id as imUserId,
+        u.pinyin_first_letter pinyinFirst,
+        u.pinyin_full pinyinFull,
+        null externalLabel,
+        null externalCompany
+        FROM oa_sys_user u
+        LEFT JOIN oa_sys_user_position up ON u.id = up.user_id
+        LEFT JOIN oa_sys_organization o ON up.organization_id = o.`id`
+        WHERE up.delflag = 0 AND o.delflag = 0 AND u.user_type = 1
+        -- 在职的 \ 员工
+        <choose>
+            <when test="workStatus != null and workStatus == 1">
+                AND u.delflag = 0 AND u.work_status  = 1
+            </when>
+            <when test="workStatus != null and workStatus == 2">
+                AND u.delflag = 0 AND u.work_status  IN (1,2)
+            </when>
+            <when test="workStatus != null and workStatus == 3">
+                AND u.work_status  IN (1,2)
+            </when>
+            <otherwise>
+               AND u.delflag = 0 AND u.work_status  = 1
+            </otherwise>
+        </choose>
+        -- 只查询主部门、不查询兼职部门的人员
+        AND up.is_default = 1
+        AND u.id IN
+        <foreach collection="userIds" index="index" item="item" open="(" separator="," close=")">
+            #{item}
+        </foreach>
+        ORDER BY u.pinyin_first_letter ASC,u.id ASC)
+
+        UNION ALL
+
+        (SELECT c.uid uid,c.id, c.`name` realName,c.id nodeId,
+        CASE c.`is_male` WHEN 1 THEN '男' WHEN 0 THEN '女' ELSE '' END AS sex,
+        c.mobile, c.`email`,
+        CASE c.`status` WHEN 1 THEN 'job' WHEN 2 THEN 'leave' WHEN  0 THEN 'no_confirmed' ELSE 'no_invited' END AS workStatus,
+        '外部联系人' organizationName ,
+        '-1' organizationId,
+        c.position,
+        c.im_user_Id as imUserId,
+        c.pinyin_first_letter pinyinFirst,
+        c.pinyin_full pinyinFull,
+        IFNULL(c.label,"")  externalLabel,
+        IFNULL(c.company,"") externalCompany
+        FROM oa_sys_external_contact c
+        WHERE
+        <choose>
+            <when test="workStatus != null and workStatus == 1">
+                c.delflag = 0 AND c.status  = 1
+            </when>
+            <when test="workStatus != null and workStatus == 2">
+                c.status  = 1
+            </when>
+            <when test="workStatus != null and workStatus == 3">
+                c.status  = 1
+            </when>
+            <otherwise>
+                c.delflag = 0 AND c.status  = 1
+            </otherwise>
+        </choose>
+        AND c.id IN
+        <foreach collection="userIds" index="index" item="item" open="(" separator="," close=")">
+            #{item}
+        </foreach>
+        ORDER BY c.pinyin_first_letter ASC,c.id ASC)
+    </select>
+
+
+    <resultMap type="com.jzy.hio.sys.organization.dto.SysCurrencyDto" id="sysCurrencyDto">
+        <id column="userId" property="userId"/>
+        <result column="userName" property="userName"/>
+        <result column="imUserId" property="imUserId"/>
+        <result column="userType" property="userType"/>
+    </resultMap>
+
+    <select id="queryUsersByIMUserIds" resultMap="sysCurrencyDto">
+        SELECT
+        u.im_user_id imUserId,
+        u.id userId,
+        u.user_type userType,
+        u.real_name userName
+        FROM oa_sys_user u WHERE u.delflag = 0 AND u.work_status !=3
+        AND u.im_user_id IN
+        <foreach collection="imUserIds" index="index" item="item" open="(" separator="," close=")">
+            #{item}
+        </foreach>
+    </select>
+</mapper>

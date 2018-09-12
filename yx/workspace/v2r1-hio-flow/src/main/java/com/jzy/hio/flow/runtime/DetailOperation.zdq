@@ -1,0 +1,257 @@
+package com.jzy.hio.flow.runtime;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+import java.util.stream.Collectors;
+
+import org.apache.commons.collections.CollectionUtils;
+
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.exception.ApiException;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.flow.entity.FlowInstanceApprovalRecord;
+import com.jzy.hio.flow.entity.dto.InstanceAcRecordDto;
+import com.jzy.hio.flow.entity.dto.InstanceDetailsDto;
+import com.jzy.hio.flow.entity.enums.FlowStateEnum;
+import com.jzy.hio.flow.entity.enums.InstanceApproverState;
+import com.jzy.hio.flow.entity.enums.InstanceNodeState;
+import com.jzy.hio.flow.entity.enums.RoleButtonEnum;
+import com.jzy.hio.flow.entity.param.InstanceDetailsParam;
+import com.jzy.hio.flow.utils.FlowConstants;
+import com.jzy.hio.utils.LoginUser;
+
+public class DetailOperation extends AbstractBaseOperation {
+
+	@Override
+	public OperateType getType() {
+
+		return null;
+	}
+
+	@Override
+	public InstanceDetailsDto detailOperation(InstanceDetailsParam instanceDetailsParam) {
+
+		LoginUser loginUser = this.getService().getLoginUser();
+
+		getTengId(loginUser);
+		
+		boolean isAdmin = this.getService().isSuper();
+		// 不是管理員也没有审批权限却带着监控字段为true
+		if ((!isAdmin && !this.getService().isRolePermission(BaseConstants.MYSQL_MENU_CODE_FLOW_MANAGE))
+				&& instanceDetailsParam.isMonitor()) {
+			logger.error(" 请求参数错误");
+			throw new ApiException("请求参数错误");
+		}
+
+		logger.info("进入流程详情方法  开始时间:" + System.currentTimeMillis());
+		String instanceId = instanceDetailsParam.getInstanceId();
+		String terminalType = instanceDetailsParam.getTerminalType();
+		String tendId = loginUser.getTendId();
+		String userId = loginUser.getUserId();
+		InstanceDetailsDto instanceDetailsDto = this.getService().getFlowInstanceDao()
+				.queryInstanceBasicInfoById(instanceId);
+
+		if (instanceDetailsDto == null) {
+			logger.error(FlowConstants.FLOW_NOT_EXIST.getMessage());
+			throw new HioException(FlowConstants.FLOW_NOT_EXIST.getMessage(), FlowConstants.FLOW_NOT_EXIST.getStatus());
+		}
+		instanceDetailsDto.setAppId(BaseConstants.App.FLOW.getId());
+		instanceDetailsDto.setAttachmentCategoryId(BaseConstants.AttachmentCategory.FLOW_INSTANCE.getId());
+
+		instanceDetailsDto.setTerminalType(terminalType);
+		// 2、按钮权限（当前用户、流程状态、用户在流程中的角色、只读参数）
+		Integer readOnly = instanceDetailsParam.getReadOnly();
+
+		if (FlowConstants.READONLY == readOnly) {
+
+			List<String> buttonList = queryUserButtonPermissions(instanceDetailsDto, userId, tendId,
+					instanceDetailsParam.isMonitor());
+			if (instanceDetailsDto.getState() == FlowStateEnum.REJECT_ALREADY_PROCESSED.getState()) {
+				instanceDetailsDto.setState(FlowStateEnum.REJECT.getState());
+				buttonList.remove(RoleButtonEnum.SUBMIT_FORM.getButtonCode());
+			}
+			
+			instanceDetailsDto.setButtonList(buttonList);
+		}
+
+		// 修改为已读
+		int count = this.getService().getFlowCopyDao().queryUnReadCount(instanceId, loginUser.getUserId());
+		if (count > 0) {
+			this.getService().getFlowCopyDao().updateIsReadByInstanceIdAndCopyUserId(instanceId, loginUser.getUserId(),
+					new Date());
+		}
+
+		// 给前端处理 修改审批人 标识
+		if ((isAdmin || this.getService().isRolePermission(BaseConstants.MYSQL_MENU_CODE_FLOW_MANAGE))
+				&& instanceDetailsParam.isMonitor()) {
+			instanceDetailsDto.setAdmin(isAdmin);
+		}
+		instanceDetailsDto.setAdmin(isAdmin);
+		// 3、查询审批记录
+		String instanceGroupId = instanceDetailsDto.getInstanceGroupId();
+		Date startDate = instanceDetailsDto.getStartDate();
+		String instanceIds = this.getService().getFlowInstanceDao().queryInstanceIdsByinstanceGroupId(instanceGroupId,
+				startDate);
+		List<InstanceAcRecordDto> approvalRecordList = null;
+		if (instanceIds.split(DELIMITER).length > 1 || (instanceIds.split(DELIMITER).length == 1
+				&& instanceDetailsDto.getState() != FlowStateEnum.DRAFT.getState())) {
+			logger.debug("查询审批详情 当前实例不是草稿，或者当前单据Id 生成多个实例,当前实例Id:{}" , instanceId);
+			approvalRecordList = this.getService().getFlowInstanceAcDao().queryInstanceAcApprovalRecord(instanceIds);
+		}
+		// 调用接口查询人的名称和 职位名称
+		this.getService().getTransitionUserNameUtils().updateIdsTransitionNames(approvalRecordList, tendId,
+				instanceDetailsDto);
+		instanceDetailsDto.setApprovalRecordList(approvalRecordList);
+		// 查询抄送人名称信息
+		List<String> copyUserIds = instanceDetailsDto.getCopyUserIds();
+
+		this.getService().getTransitionUserNameUtils().queryUserNameInfoByIds(copyUserIds, tendId, instanceDetailsDto);
+
+		logger.info("查询审批详情结束 当前用户:{}", userId + "结束时间：" + System.currentTimeMillis());
+		return instanceDetailsDto;
+	}
+
+	private List<String> queryUserButtonPermissions(InstanceDetailsDto instanceDetailsDto, String userId, String tendId,
+			boolean monitor) {
+		logger.info("查询按钮权限 开始 ");
+		String instanceId = instanceDetailsDto.getInstanceId();
+
+		List<String> buttonList = new ArrayList<>();
+		int instanceState = instanceDetailsDto.getState();
+
+		// 是否关注此流程
+		String roleButtonEnum = null;
+
+		Integer myFollow = this.getService().getFlowFollowInstanceDao().isMyFollow(instanceId, userId);
+
+		if (myFollow != null && myFollow.intValue() == FlowConstants.IS_FOLLOW) {
+			roleButtonEnum = RoleButtonEnum.UNFOLLOW.getButtonCode();
+
+		} else {
+			roleButtonEnum = RoleButtonEnum.FOLLOW.getButtonCode();
+		}
+
+		boolean isAdmin = this.getService().isSuper();
+		if ((isAdmin || this.getService().isRolePermission(BaseConstants.MYSQL_MENU_CODE_FLOW_MANAGE))
+				&& instanceDetailsDto.getState() == FlowStateEnum.RUN.getState() && monitor) {
+			buttonList.add(RoleButtonEnum.SKIP.getButtonCode());
+			buttonList.add(RoleButtonEnum.UNTREAD.getButtonCode());
+			buttonList.add(RoleButtonEnum.FRONT_ADD_LABEL.getButtonCode());
+			buttonList.add(RoleButtonEnum.AFTER_ADD_LABEL.getButtonCode());
+		}
+		// 当前人是发起人
+		if (userId.equals(instanceDetailsDto.getCreatePersonId())) {
+
+			if (FlowStateEnum.REJECT.getState() == instanceState || FlowStateEnum.RETURN.getState() == instanceState) {
+				buttonList.add(RoleButtonEnum.EDITOR_FORM.getButtonCode());
+				buttonList.add(RoleButtonEnum.SAVE_FORM.getButtonCode());
+
+				boolean isRole = this.getService().getFlowTemplateRoleService().getTemplateRole(userId, tendId,
+						instanceDetailsDto.getTemplateCode());
+				if (isRole) {
+					buttonList.add(RoleButtonEnum.SUBMIT_FORM.getButtonCode());
+				}
+				buttonList.add(roleButtonEnum);
+
+				// 驳回不能删除
+				if (FlowStateEnum.RETURN.getState() == instanceState) {
+					buttonList.add(RoleButtonEnum.DELETE_FORM.getButtonCode());
+				}
+
+			} else if (FlowStateEnum.DRAFT.getState() == instanceState) {
+				buttonList.add(RoleButtonEnum.EDITOR_FORM.getButtonCode());
+				buttonList.add(RoleButtonEnum.SAVE_FORM.getButtonCode());
+				boolean isRole = this.getService().getFlowTemplateRoleService().getTemplateRole(userId, tendId,
+						instanceDetailsDto.getTemplateCode());
+				if (isRole) {
+					buttonList.add(RoleButtonEnum.SUBMIT_FORM.getButtonCode());
+				}
+
+				buttonList.add(roleButtonEnum);
+				buttonList.add(RoleButtonEnum.DELETE_FORM.getButtonCode());
+
+			} else if (FlowStateEnum.RUN.getState() == instanceState) {
+				// 查询流程是否有人审批过
+				FlowInstanceApprovalRecord flowInstanceApprovalRecord = new FlowInstanceApprovalRecord();
+				flowInstanceApprovalRecord.setFlowInstanceId(instanceId);
+				flowInstanceApprovalRecord.setApprovalUser(userId);
+				flowInstanceApprovalRecord.setState(InstanceApproverState.NO_APPROVAL.getState());
+				flowInstanceApprovalRecord.setDelflag(0);
+				if (CollectionUtils.isNotEmpty(
+						this.getService().getFlowInstanceApprovalRecordDao().select(flowInstanceApprovalRecord))) {
+					if (!monitor) {
+						buttonList.add(RoleButtonEnum.PASS.getButtonCode());
+						buttonList.add(RoleButtonEnum.REJECT.getButtonCode());
+					}
+					if (!buttonList.contains(RoleButtonEnum.FRONT_ADD_LABEL.getButtonCode())) {
+						buttonList.add(RoleButtonEnum.FRONT_ADD_LABEL.getButtonCode());
+						buttonList.add(RoleButtonEnum.AFTER_ADD_LABEL.getButtonCode());
+					}
+				}
+				if (!monitor) {
+					buttonList.add(RoleButtonEnum.WITHDRAW.getButtonCode());
+				}
+				buttonList.add(RoleButtonEnum.CC.getButtonCode());
+				buttonList.add(roleButtonEnum);
+
+			} else {
+				buttonList.add(RoleButtonEnum.CC.getButtonCode());
+				buttonList.add(roleButtonEnum);
+			}
+			return buttonList;
+		}
+
+		// 我的审批 -- 判断是否是我的审批
+		List<FlowInstanceApprovalRecord> approval = this.getService().getFlowInstanceApprovalRecordDao()
+				.isMyApproval(instanceId, userId);
+		 if (CollectionUtils.isNotEmpty(approval)) {
+			List<FlowInstanceApprovalRecord> noApprovalList = approval.stream()
+					.filter(approver -> approver.getState() == InstanceNodeState.NOT_THROUGH.getState())
+					.collect(Collectors.toList());
+			if (CollectionUtils.isNotEmpty(noApprovalList) && FlowStateEnum.RUN.getState() == instanceState) {
+
+				if (!monitor) {
+					buttonList.add(RoleButtonEnum.PASS.getButtonCode());
+					buttonList.add(RoleButtonEnum.REJECT.getButtonCode());
+				}
+
+				if (!buttonList.contains(RoleButtonEnum.FRONT_ADD_LABEL.getButtonCode())) {
+					buttonList.add(RoleButtonEnum.FRONT_ADD_LABEL.getButtonCode());
+					buttonList.add(RoleButtonEnum.AFTER_ADD_LABEL.getButtonCode());
+				}
+
+			}
+			buttonList.add(RoleButtonEnum.CC.getButtonCode());
+			buttonList.add(roleButtonEnum);
+			return buttonList;
+		}
+		// 抄送我的
+		Integer result = this.getService().getFlowCopyDao().isMyCopy(instanceId, userId);
+		if (result != null && result.intValue() > 0) {
+			buttonList.add(roleButtonEnum);
+			return buttonList;
+		}
+		// 我关注的
+		if (myFollow != null && myFollow.intValue() > 0) {
+			buttonList.add(RoleButtonEnum.CC.getButtonCode());
+			buttonList.add(roleButtonEnum);
+			return buttonList;
+		}
+		// 是管理员
+		if ((isAdmin || this.getService().isRolePermission(BaseConstants.MYSQL_MENU_CODE_FLOW_MANAGE))
+				&& !userId.equals(instanceDetailsDto.getCreatePersonId())) {
+			buttonList.add(RoleButtonEnum.CC.getButtonCode());
+			buttonList.add(roleButtonEnum);
+		} else {
+
+			logger.error("当前用户没有权限查看");
+
+			throw new HioException(FlowConstants.NO_PERMISSION_TO_VIEW.getMessage(),
+					FlowConstants.NO_PERMISSION_TO_VIEW.getStatus());
+
+		}
+		return buttonList;
+	}
+
+}

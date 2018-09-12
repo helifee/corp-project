@@ -1,0 +1,33 @@
+package com.xinleju.platform.flow.service.impl;
+
+import java.util.List;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.flow.dao.InstanceTransitionRecordDao;
+import com.xinleju.platform.flow.dto.InstanceTransitionRecordDto;
+import com.xinleju.platform.flow.entity.InstanceTransitionRecord;
+import com.xinleju.platform.flow.service.InstanceTransitionRecordService;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class InstanceTransitionRecordServiceImpl extends  BaseServiceImpl<String,InstanceTransitionRecord> implements InstanceTransitionRecordService{
+	
+
+	@Autowired
+	private InstanceTransitionRecordDao instanceTransitionRecordDao;
+
+	@Override
+	public List<InstanceTransitionRecordDto> queryTransferList(String instanceId) {
+		return instanceTransitionRecordDao.queryTransferList(instanceId);
+	}
+	
+
+}

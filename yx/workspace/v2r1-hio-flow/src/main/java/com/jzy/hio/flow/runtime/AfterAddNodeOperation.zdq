@@ -1,0 +1,157 @@
+package com.jzy.hio.flow.runtime;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang3.StringUtils;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.flow.entity.FlowInstanceAc;
+import com.jzy.hio.flow.entity.FlowInstanceApprovalRecord;
+import com.jzy.hio.flow.entity.dto.FlowInstanceInfo;
+import com.jzy.hio.flow.entity.enums.FlowNodeType;
+import com.jzy.hio.flow.entity.enums.FlowStateEnum;
+import com.jzy.hio.flow.entity.enums.InstanceAcSource;
+import com.jzy.hio.flow.entity.enums.InstanceNodeState;
+import com.jzy.hio.flow.entity.param.AddLabelParam;
+import com.jzy.hio.flow.utils.FlowConstants;
+import com.jzy.hio.utils.LoginUser;
+
+/**
+ * @author chaoyang
+ *
+ */
+public class AfterAddNodeOperation extends AbstractBaseOperation {
+	
+	@Override
+	public String addLabelAction(AddLabelParam addLabelParam) {
+		/**
+		 * 1.判断当前流程是否 可以 后加签
+		 *
+		 */
+		try {
+			
+ 			// 需要加锁的代码
+			if (this.getService().getRedisLock().lock(addLabelParam.getInstanceId())) {
+				LoginUser loginUser = this.getService().getLoginUser();
+				String userId = loginUser.getUserId();
+				addLabelParam.setCurrentUserId(userId);
+				FlowInstanceInfo instanceInfo = this.getService().getFlowInstanceDao().getInstanceInfoById(addLabelParam.getInstanceId());
+				if (instanceInfo == null) {
+					logger.error("传入实例Id不正确");
+					throw new HioException(FlowConstants.FLOW_NOT_EXIST.getMessage(),
+							FlowConstants.FLOW_NOT_EXIST.getStatus());
+				}
+				Integer currentState = instanceInfo.getInstanceState();
+				if (currentState != FlowStateEnum.RUN.getState()) {
+					logger.error("当前流程状态已经不是运行时");
+					throw new HioException(FlowConstants.FLOW_STATE_CHANGE.getMessage(),
+							FlowConstants.FLOW_STATE_CHANGE.getStatus());
+				}
+
+				if (!this.getService().isSuper() && !this.getService().isRolePermission(BaseConstants.MYSQL_MENU_CODE_FLOW_MANAGE)) {
+					List<FlowInstanceApprovalRecord> queryApprovalRecord = this.getService().getFlowInstanceApprovalRecordDao()
+							.queryApprovalRecord(addLabelParam.getInstanceId(), userId);
+					if (CollectionUtils.isEmpty(queryApprovalRecord)) {
+						logger.error("没有审批权限");
+						throw new HioException(FlowConstants.FLOW_APPROVAL_NOT_EXIST.getMessage(),
+								FlowConstants.FLOW_APPROVAL_NOT_EXIST.getStatus());
+					}
+
+				}
+
+				String flowInstanceAcId = addLabelParam.getInstanceAcId();
+				List<FlowInstanceAc> instanceAcList = instanceInfo.getInstanceAcList();
+				FlowInstanceAc currentInstanceAc = null;
+				for (FlowInstanceAc instanceAc : instanceAcList) {
+					if (instanceAc.getId().equals(flowInstanceAcId)) {
+						currentInstanceAc = instanceAc;
+						break;
+					}
+				}
+
+				if (currentInstanceAc.getState() != InstanceNodeState.HAVE_ARRIV.getState()) {
+					logger.error("当前审批环节审批已经处理");
+					throw new HioException(FlowConstants.FLOW_STATE_CHANGE.getMessage(),
+							FlowConstants.FLOW_STATE_CHANGE.getStatus());
+				}
+
+				// 开始执行后加签
+				String newInstanceAcId = getAfterAddLabelInstanceAc(currentInstanceAc, addLabelParam);
+				// 当前环节的next--> 指向最后Id;
+				String nextNodeIds = currentInstanceAc.getNextNodeIds();
+				String[] nextInstanceNodeIds = nextNodeIds.split(DELIMITER);
+				List<FlowInstanceAc> updateInstanceAcPreList = new ArrayList<>();
+				for (String instanceAcId : nextInstanceNodeIds) {
+					for (FlowInstanceAc instanceAc : instanceAcList) {
+						if (instanceAc.getId().equals(instanceAcId)) {
+							String[] preNodeIds = instanceAc.getPreNodeIds().split(DELIMITER);
+							for (int i = 0; i < preNodeIds.length; i++) {
+								if (preNodeIds[i].equals(currentInstanceAc.getId())) {
+									preNodeIds[i] = newInstanceAcId;
+									break;
+								}
+							}
+							instanceAc.setPreNodeIds(StringUtils.join(preNodeIds, DELIMITER));
+							updateInstanceAcPreList.add(instanceAc);
+							break;
+						}
+					}
+				}
+
+				// 修改节点 指向新的InstanceAcId;
+				this.getService().getFlowInstanceAcDao().updateInstanceAcPreIdsList(updateInstanceAcPreList);
+
+				// 修改当前环节的next节点指向
+				currentInstanceAc.setNextNodeIds(newInstanceAcId);
+				currentInstanceAc.setUpdateDate(new Date());
+				this.getService().getFlowInstanceAcDao().updateByPrimaryKeySelective(currentInstanceAc);
+			}
+
+		} catch (InterruptedException e) {
+			 logger.error("流程后加签异常: {}", e.getMessage());
+		} finally {
+			
+			this.getService().getRedisLock().unlock(addLabelParam.getInstanceId());
+		}
+		return SUCCESS;
+	}
+
+	/**
+	 * 后加签 实例环节
+	 *
+	 * @param currentInstanceAc
+	 * @param addLabelParam
+	 * @return
+	 */
+	private String getAfterAddLabelInstanceAc(FlowInstanceAc currentInstanceAc, AddLabelParam addLabelParam) {
+		FlowInstanceAc flowInstanceAc = new FlowInstanceAc();
+		flowInstanceAc.setId(Base.generatePk(FlowInstanceAc.class));
+		flowInstanceAc.setPreNodeIds(currentInstanceAc.getId());
+		flowInstanceAc.setNextNodeIds(currentInstanceAc.getNextNodeIds());
+		flowInstanceAc.setCreateDate(new Date());
+		flowInstanceAc.setCreatePersonId(addLabelParam.getCurrentUserId());
+		flowInstanceAc.setFlowIntanceId(currentInstanceAc.getFlowIntanceId());
+		flowInstanceAc.setName(addLabelParam.getName());
+		flowInstanceAc.setState(InstanceNodeState.NOT_THROUGH.getState());
+		flowInstanceAc.setSource(InstanceAcSource.ADD_LABEL_SOURCE.getType());
+		flowInstanceAc.setNodeType(FlowNodeType.PROCESS.getType());
+		flowInstanceAc.setLeftNodeCount(FlowConstants.DEFAULT_ARRIVE_NUMBER);
+		flowInstanceAc.setType(addLabelParam.getApprovalType());
+		flowInstanceAc.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+		flowInstanceAc.setNoSkip(currentInstanceAc.getNoSkip());
+		this.getService().getFlowInstanceAcDao().insert(flowInstanceAc);
+		insertInstanceAcApprover(addLabelParam.getUserIds(), flowInstanceAc, addLabelParam.getCurrentUserId(), false);
+		return flowInstanceAc.getId();
+	}
+
+	@Override
+	public OperateType getType() {
+
+		return OperateType.AFTER_ADD_NODE;
+	}
+}

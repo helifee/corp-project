@@ -1,0 +1,431 @@
+package com.jzy.hio.base.controller;
+
+import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Date;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.InitializingBean;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.dto.BaseTreeDto;
+import com.jzy.hio.base.entity.BaseEntity;
+import com.jzy.hio.base.service.BaseService;
+import com.jzy.hio.exception.HioMybatisDeleteException;
+import com.jzy.hio.exception.HioMybatisGetException;
+import com.jzy.hio.exception.HioMybatisInsertException;
+import com.jzy.hio.exception.HioMybatisPageException;
+import com.jzy.hio.exception.HioMybatisPseudoDeleteException;
+import com.jzy.hio.exception.HioMybatisQueryException;
+import com.jzy.hio.exception.HioMybatisUpdateException;
+import com.jzy.hio.utils.ClassUtils;
+import com.jzy.hio.utils.Page;
+
+/**
+ * 提供基础的增删改查等操作<br/>
+ * 
+ * @author coffee<br>
+ *         2018年1月26日上午10:37:29
+ */
+@SuppressWarnings({ "rawtypes", "unchecked" })
+public abstract class BaseController extends Base implements InitializingBean {
+
+	protected Logger logger = LoggerFactory.getLogger(this.getClass());
+
+	/**
+	 * 如果需要调用子类独有的方法、则需要在子类中注入实现类<br/>
+	 * 
+	 * <pre>
+	 * &#64;Autuwired
+	 * ServeyService service;
+	 * service.getContentTypeByPage()
+	 * </pre>
+	 */
+	protected BaseService<?> service;
+
+	@Override
+	public void afterPropertiesSet() throws Exception {
+		if (this.getClass().getName().contains("AppService")) {
+			System.out.println("xxx");
+		}
+
+		Field[] fields = this.getClass().getDeclaredFields();
+		for (Field field : fields) {
+			// field.setAccessible(true);
+			// Object service = field.get(this);
+			// if (service instanceof BaseService) {
+			// if (ClassUtils.getGenericClass(field.getType(), 0) == ClassUtils.getGenericClass(getClass(), 0)) {
+			// this.service = (BaseService<?>) service;
+			// break;
+			// }
+			// }
+			String fieldType = field.getType().getSimpleName();
+			if (fieldType.contains("Service")) {
+				String mapperFieldName = fieldType.replace("Service", "");
+				if (this.getClass().getSimpleName().replaceAll("Controller", "").equals(mapperFieldName)) {
+					field.setAccessible(true);
+					Object service = field.get(this);
+					if (service instanceof BaseService) {
+						this.service = (BaseService<?>) service;
+						break;
+					}
+				}
+			}
+		}
+		if (service == null) {
+			logger.error("service 为空, {}", this);
+		}
+	}
+
+	public BaseController() {
+
+	}
+
+	/**
+	 * 根据Id获取业务对象
+	 * 
+	 * @param id
+	 *            业务对象主键
+	 * 
+	 * @return 业务对象
+	 */
+	// @RequestMapping(value = "/get/{id}", method = RequestMethod.GET)
+	public Object get(@PathVariable("id") String id) throws HioMybatisGetException {
+		try {
+			BaseEntity entity = (BaseEntity) service.getObjectById(id);
+			if (entity.getDelflag() != null && entity.getDelflag() == 1) {
+				return null;
+			} else {
+				return entity;
+			}
+		} catch (Exception e) {
+			throw new HioMybatisGetException(e);
+		}
+	}
+
+	/**
+	 * 返回符合条件的列表
+	 * 
+	 * @param map
+	 * @return
+	 */
+	// @RequestMapping(value = "/queryList", method = { RequestMethod.POST }, consumes = "application/json")
+	public List queryList(@RequestBody Map<String, Object> map) throws HioMybatisQueryException {
+		try {
+			if (map != null && map.size() > 0) {
+				List list = service.queryListByExample(map);
+				return list;
+			} else {
+				List list = service.queryList(null);
+				return list;
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+			throw new HioMybatisQueryException(e);
+		}
+	}
+
+	/**
+	 * 返回分页对象
+	 * 
+	 * @param map
+	 * @return
+	 */
+	// @RequestMapping(value = "/page", method = { RequestMethod.POST }, consumes = "application/json")
+	public Page<?> page(@RequestBody Map<String, Object> map) throws HioMybatisPageException {
+		try {
+			Page<?> page = service.getPage(map);
+			return page;
+		} catch (Exception e) {
+			throw new HioMybatisPageException(e);
+		}
+	}
+
+	/**
+	 * 返回分页对象
+	 * 
+	 * @param map
+	 * @return
+	 */
+	// @RequestMapping(value = "/pageByUser", method = { RequestMethod.POST }, consumes = "application/json")
+	public Object pageByUser(@RequestBody Map<String, Object> map) {
+		// SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+		// map.put("createPersonId", securityUserBeanInfo.getSecurityUserDto().getId());
+		return page(map);// 如果父类的page被覆盖，为啥不调用子类的page方法？？
+	}
+
+	/**
+	 * 保存实体对象
+	 * 
+	 * @param json
+	 * @return
+	 */
+	// @RequestMapping(value = "/save", method = RequestMethod.POST, consumes = "application/json")
+	public Object save(@RequestBody BaseEntity entity) throws HioMybatisInsertException {
+		try {
+			String pk = generatePk();
+			entity.setId(pk);
+			entity.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+			entity.setCreateDate(new Date());
+			// 其他通用字段 后续在优化
+			return service.save(entity);
+		} catch (Exception e) {
+			throw new HioMybatisInsertException(e);
+		}
+	}
+
+	/**
+	 * 修改修改实体对象
+	 * 
+	 * @param id
+	 * @param map
+	 * @return
+	 */
+	// @RequestMapping(value = "/update/{id}", method = RequestMethod.PUT, consumes = "application/json")
+	public Object update(@PathVariable("id") String id, @RequestBody BaseEntity entity) throws HioMybatisUpdateException {
+		int updateResult = -1;
+		try {
+			entity.setId(id);
+			entity.setUpdateDate(new Date());
+			updateResult = service.update(entity);
+		} catch (Exception e) {
+			logger.error("更新对象失败!" + e.getMessage());
+			throw new HioMybatisUpdateException(e);
+		}
+		if (updateResult > 0) {
+			return updateResult;
+		} else {
+			throw new HioMybatisUpdateException();
+		}
+	}
+
+	/**
+	 * 删除实体对象
+	 *
+	 * @param id
+	 * @return
+	 */
+	// @RequestMapping(value = "/delete/{id}", method = RequestMethod.DELETE)
+	public Object delete(@PathVariable("id") String id) throws HioMybatisDeleteException {
+		int delResult = -1;
+		try {
+			delResult = service.deleteObjectById(id);
+		} catch (Exception e) {
+			logger.error("删除对象失败! {} {} ", id, e.getMessage());
+			throw new HioMybatisDeleteException(e);
+		}
+		if (delResult > 0) {
+			return delResult;
+		} else {
+			throw new HioMybatisDeleteException("delResult == 0");
+		}
+	}
+
+	//
+	// /**
+	// * 删除实体对象
+	// *
+	// * @param ids
+	// * @return
+	// */
+	// @RequestMapping(value = "/deleteBatch/{ids}", method = RequestMethod.DELETE)
+	// public Object deleteBatch(@PathVariable("ids") String ids) {
+	// MessageResult result = new MessageResult();
+	// try {
+	// if (ids != null && ids.length() > 0) {
+	// List<String> list = Arrays.asList(ids.split(","));
+	// int delResult = service.deleteAllObjectByIds(list);
+	// result.setResult(delResult, "删除对象成功!");
+	// }
+	// } catch (Exception e) {
+	// log.error("删除对象失败!" + e.getMessage());
+	// result.setError("删除对象失败!");
+	// }
+	// return result;
+	// }
+	//
+	/**
+	 * 伪删除实体对象
+	 *
+	 * @param id
+	 * @return
+	 */
+	// @RequestMapping(value = "/deletePseudo/{id}", method = RequestMethod.DELETE)
+	public Object deletePseudo(@PathVariable("id") String id) throws HioMybatisPseudoDeleteException {
+		int delResult = -1;
+		try {
+			delResult = service.deletePseudoObjectById(id);
+		} catch (Exception e) {
+			throw new HioMybatisPseudoDeleteException(e);
+		}
+		if (delResult > 0) {
+			return delResult;
+		} else {
+			throw new HioMybatisPseudoDeleteException(this + " " + id);
+		}
+	}
+
+	// /**
+	// * 伪删除实体对象
+	// *
+	// * @param ids
+	// * @return
+	// */
+	// @RequestMapping(value = "/deletePseudoBatch/{ids}", method = RequestMethod.DELETE)
+	// public Object deletePseudoBatch(@PathVariable("ids") String ids) {
+	// MessageResult result = new MessageResult();
+	// try {
+	// List<String> list = Arrays.asList(ids.split(","));
+	// int delResult = service.deletePseudoAllObjectByIds(list);
+	// if (delResult > 0) {
+	// result.setResult(delResult, "删除对象成功!");
+	// } else {
+	// result.setError("删除对象失败!");
+	// }
+	// } catch (Exception e) {
+	// log.error("删除对象失败!" + e.getMessage());
+	// result.setError("删除更新对象失败!");
+	// }
+	// return result;
+	// }
+	//
+	// /**
+	// * 获取用户信息
+	// *
+	// * @return 用户信息JSON格式字符串
+	// */
+	// protected String getUserInfoJson() {
+	// SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+	// String userInfo = JacksonUtils.toJson(securityUserBeanInfo);
+	// return userInfo;
+	// }
+	//
+	// protected MessageResult getEmptyResult() {
+	// MessageResult empty = new MessageResult();
+	// empty.setSuccess(true);
+	// return empty;
+	// }
+
+	/******************************** 以下是工具方法 *****************************************************/
+
+	/**
+	 * 按照Service第一个泛型指定的Entity生成主键
+	 * 
+	 * @return
+	 */
+	public String generatePk() {
+		Class beanClass = ClassUtils.getGenericClass(service.getClass(), 0);
+		return Base.generatePk(beanClass);
+	}
+
+	public Long getLong(Map<?, ?> param, String key) {
+		Object obj = param.get(key);
+		if (obj == null) {
+			return null;
+		} else {
+			return Long.valueOf(obj + "");
+		}
+	}
+
+	public Long getLong(Map<?, ?> param, String key, Long defaultValue) {
+		Long value = getLong(param, key);
+		if (value == null) {
+			value = defaultValue;
+		}
+		return value;
+	}
+
+	/******************************** 工具方法 【End】 *****************************************************/
+
+	private static ThreadLocal<Integer> local = new ThreadLocal<>();
+
+	/**
+	 * 注意一下 treeNodes应该是同一个数据表的数据、否则id可能重复、导致结果出现问题
+	 * 
+	 * @param treeNodes
+	 * @return
+	 */
+	public static List<?> list2Tree(List<? extends BaseTreeDto> treeNodes) {
+		// key id --value 节点
+		LinkedHashMap<String, BaseTreeDto> resultMap = new LinkedHashMap<>();
+		for (BaseTreeDto node : treeNodes) {
+			resultMap.put(node.getId(), node);
+		}
+		// 只要resultMap有一个value的parentId不为null, 就继续遍历
+		local.set(0);
+		if (resultMap.size() > 1) {
+			treeTraversal(resultMap);
+		} else {
+			// 一个元素不需要组装、否则resultMap调用完treeTraversal后有可能变成空
+		}
+		local.remove();
+		//
+		List<BaseTreeDto> result = new ArrayList<>();
+		result.addAll((Collection<? extends BaseTreeDto>) resultMap.values());
+		return result;
+	}
+
+	/**
+	 * <pre>
+	 * 算法描述- 节点 [id-parentId]
+	 * 假设最开始6个节点 [1-null], [2-null], [11-1], [12-1], [3-null], [111-11]
+	 * 遍历 把元素放到父节点的children列表中
+	 * 同时查询出所有的顶级节点和父节点id [1, 2, 3, 11] 
+	 * 然后计算出所有不是parent的子节点 [12,111] (差集 [1-2-3-11-12-111] - [1-2-3-11]) 
+	 * 然后剩下的集合是[1-null], [2-null], [11-1], [3-null]
+	 * 然后递归遍历、一直计算到 所有的不是parent的子节点集合[]为空,则停止递归
+	 * </pre>
+	 * 
+	 * @param resultMap
+	 */
+	private static void treeTraversal(LinkedHashMap<String, BaseTreeDto> resultMap) {
+		// 用list -- 保证id的顺序
+		List<String> allKeys = new ArrayList<>();
+		Set<String> parendKeys = new HashSet<>();
+		for (String id : resultMap.keySet()) {
+			allKeys.add(id);//
+			BaseTreeDto treeNode = resultMap.get(id);
+			local.set(local.get() + 1);
+			treeNode.setNodeId(local.get() + "");
+			String parentId = treeNode.getParentId();
+			// 1、统计父节点和顶级节点
+			if (parentId == null || parentId.trim().length() == 0 || parentId.equals("0")) {
+				parendKeys.add(id);// 顶级节点
+			} else {
+				parendKeys.add(parentId);
+			}
+		}
+		// 2、计算叶子节点
+		allKeys.removeAll(parendKeys);
+		// 3、把所有叶子节点添加到对应的父节点的children列表中
+		if (allKeys.size() > 0) {
+			for (String key : allKeys) {
+				BaseTreeDto treeNode = resultMap.get(key);
+				local.set(local.get() + 1);
+				treeNode.setNodeId(local.get() + "");
+				String parentId = treeNode.getParentId();
+				BaseTreeDto parentNode = resultMap.get(parentId);
+				if (parentNode != null) {
+					if (parentNode.getChildren() == null) {
+						parentNode.setChildren(new ArrayList<>());
+					}
+					parentNode.getChildren().add(treeNode);
+				}
+				resultMap.remove(key);
+			}
+			treeTraversal(resultMap);
+		} else {
+			// 递归完成
+		}
+	}
+}

@@ -1,0 +1,46 @@
+package com.xinleju.platform.finance.service.impl;
+
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.finance.dao.AssMappingDao;
+import com.xinleju.platform.finance.dao.AssTypeDao;
+import com.xinleju.platform.finance.entity.AssType;
+import com.xinleju.platform.finance.service.AssTypeService;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class AssTypeServiceImpl extends  BaseServiceImpl<String,AssType> implements AssTypeService{
+	
+
+	@Autowired
+	private AssTypeDao assTypeDao;
+	@Autowired
+	private AssMappingDao assMappingDao;
+
+	@Override
+	public int deleteMasterTable(List<String> list) throws Exception {
+		int msg = 0;
+		if(list.size()>0){
+			for(int i=0;i<list.size();i++){
+				assMappingDao.deleteByTypeId(list.get(i));
+			}
+			msg = assTypeDao.deletePseudoAllObjectByIds(list);
+		}
+		return msg;
+	}
+	
+	@Override
+	public List queryTree(List<String> list) throws Exception {
+		return assTypeDao.queryTree(list);
+	}
+}

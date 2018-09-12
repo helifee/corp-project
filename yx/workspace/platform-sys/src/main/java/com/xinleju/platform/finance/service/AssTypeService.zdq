@@ -1,0 +1,20 @@
+package com.xinleju.platform.finance.service;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.finance.entity.AssType;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface AssTypeService extends  BaseService <String,AssType>{
+
+	int deleteMasterTable(List<String> list)throws Exception;
+
+	public List queryTree(List<String> list)throws Exception;
+}

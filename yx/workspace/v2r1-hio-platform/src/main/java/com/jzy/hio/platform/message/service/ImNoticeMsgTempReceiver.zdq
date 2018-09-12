@@ -1,0 +1,214 @@
+package com.jzy.hio.platform.message.service;
+
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
+
+import com.jzy.hio.platform.constant.UserOrFriendConstant;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.amqp.core.Message;
+import org.springframework.amqp.rabbit.annotation.RabbitHandler;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.config.HuanXinConfig;
+import com.jzy.hio.config.QueueConfig;
+import com.jzy.hio.entity.ImNoticeMsg;
+import com.jzy.hio.entity.ImNoticeMsgTemp;
+import com.jzy.hio.platform.message.comm.MessageConstant;
+import com.jzy.hio.platform.message.comm.StringUtil;
+import com.rabbitmq.client.Channel;
+
+import io.swagger.client.model.Msg;
+import io.swagger.client.model.MsgContent;
+import io.swagger.client.model.UserName;
+
+/**
+ * 创建消息消费者
+ */
+@Component
+public class ImNoticeMsgTempReceiver extends Base {
+	private static final Logger logger = LoggerFactory.getLogger(ImNoticeMsgTempReceiver.class);
+	@Autowired
+	QueueConfig queueConfig;
+	@Autowired
+	MessageService messageService;
+
+	@Autowired
+	ImNoticeMsgService imNoticeMsgService;
+
+	@Autowired
+	ImNoticeMsgTempService imNoticeMsgTempService;
+	
+	@Autowired
+	private HuanXinConfig huanXinConfig;
+
+	/**
+	 * 消息失败重发
+	 */
+	@RabbitListener(queues = "${queue.ImNoticeMsgTempQueue}", containerFactory = "rabbitListenerContainerFactory")
+	@RabbitHandler
+	public void process(Message message, Channel channel) {
+		try {
+			if(huanXinConfig.getIsSendMsg()) {
+				ImNoticeMsgTemp imNoticeMsg = json2obj(new String(message.getBody(), "utf-8"), ImNoticeMsgTemp.class);
+				if (imNoticeMsg != null) {
+					logger.info("ImNoticeMsgTempReceiver, sendMsgType {}" + imNoticeMsg.getSendMsgType());
+					// 文本消息
+					if ("text".equals(imNoticeMsg.getSendMsgType())) {
+						sendTextMsg(imNoticeMsg);
+					} else {// 透彻消息
+						sendCMDMsg(imNoticeMsg);
+					}
+				}
+			}
+		} catch (Exception e) {
+			logger.error("process, 发送环信消息失败!", e);
+		}finally {
+			try {
+				channel.basicAck(message.getMessageProperties().getDeliveryTag(), true);
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		}
+	}
+
+	/**
+	 * 发送文本消息
+	 */
+	public void sendTextMsg(ImNoticeMsgTemp imNoticeMsg) {
+		String resultStatus = "";
+		MsgContent msgContent = new MsgContent();
+		msgContent.type(MsgContent.TypeEnum.TXT).msg(imNoticeMsg.getMsg());
+		UserName toUserName = new UserName();
+		toUserName.add(imNoticeMsg.getToUserId());
+		String from = "";
+		Msg msg = new Msg();
+		Map<String, Object> ext = new HashMap<>();
+		ext.put("moduleType",imNoticeMsg.getModuleType());
+		ext.put("moduleName", imNoticeMsg.getModuleName());// 模块名称
+		ext.put("status", imNoticeMsg.getOpenStatus()); // 是否需要端上打开，0不打开，1打开
+		if (imNoticeMsg.getExt() != null) {
+			Map<String, Object> map = json2map(imNoticeMsg.getExt());
+			ext.put("param", map);
+		}
+		//系统消息 没有租户
+		if ("sys".equals(imNoticeMsg.getMsgType())) {
+			ext.put("cName", "系统消息");// 租户名称 巨洲云
+			from = "cchiosys";
+			msg.from(from).target(toUserName).targetType("users").msg(msgContent).ext(ext);
+		}else if(UserOrFriendConstant.SESSION_MSG_TYPE.equals(imNoticeMsg.getMsgType())) {
+			msg.from(imNoticeMsg.getFromUserId()).target(toUserName).targetType("users").msg(msgContent);
+		} else { //工作类消息 work,通知消息类 msg 从扩展字段获取租户
+			from = "cchio"  + imNoticeMsg.getMsgType()+ imNoticeMsg.getTendId();
+			ext.put("cName", imNoticeMsg.getTendName());// 租户名称 巨洲云
+			msg.from(from).target(toUserName).targetType("users").msg(msgContent).ext(ext);
+		}
+		try {
+			logger.info("发送环信text消息！消息体：" + obj2json(msg));
+			Object result = messageService.sendMessage(msg);
+			logger.info("调用环信发送text消息返回结果：{}", result);
+			resultStatus = MessageConstant.SEND_MSG_STATUS_SUC;
+		} catch (Exception e) {
+			logger.error("发送环信text消息失败！消息体：" + obj2json(msg), e);
+			resultStatus = MessageConstant.SEND_MSG_STATUS_FAIL;
+		} finally {
+			logger.info("resultStatus :{}", resultStatus);
+			// 成功
+			if (MessageConstant.SEND_MSG_STATUS_SUC.equals(resultStatus)) {
+				imNoticeMsg.setStatus(MessageConstant.SEND_MSG_STATUS_SUC);
+				// ImNoticeMsgTemp 修改成功
+				imNoticeMsgTempService.update(imNoticeMsg);
+				// imNoticeMsg表修改成功
+				imNoticeMsgService.update(imNoticeMsg(imNoticeMsg));
+			}
+			// 失败
+			else if (MessageConstant.SEND_MSG_STATUS_FAIL.equals(resultStatus)) {
+				// 重发失败 入库
+				imNoticeMsg.setStatus(MessageConstant.SEND_MSG_STATUS_RE_FAIL);
+				// ImNoticeMsgTemp 修改成功
+				imNoticeMsgTempService.update(imNoticeMsg);
+				// imNoticeMsg表修改成功
+				imNoticeMsgService.update(imNoticeMsg(imNoticeMsg));
+			}
+		}
+	}
+
+	/**
+	 * 发送透彻消息
+	 */
+	public void sendCMDMsg(ImNoticeMsgTemp imNoticeMsg) {
+		String resultStatus = "";
+		CMDMsgContent msgContent = new CMDMsgContent();
+		msgContent.action(imNoticeMsg.getModuleType()).type(MsgContent.TypeEnum.CMD);
+		UserName toUserName = new UserName();
+		toUserName.add(imNoticeMsg.getToUserId());
+		String from = "cchio" + imNoticeMsg.getSendMsgType() + imNoticeMsg.getModuleType();
+		logger.info("from: " + from);
+		Msg msg = new Msg();
+		// 业务扩展字段，消息内容了，邮寄个数了，待办个数了 等等。
+		Map ext = null;
+		if (imNoticeMsg.getExt() != null) {
+			ext = json2map(imNoticeMsg.getExt());
+		} else {
+			ext = new HashMap();
+		}
+		msg.from(from).target(toUserName).targetType("users").msg(msgContent).ext(ext);
+		try {
+			logger.info("发送环信cmd消息！消息体：" + obj2json(msg));
+			Object result = messageService.sendMessage(msg);
+			logger.info("调用环信发送cmd消息返回结果：{}", result);
+			resultStatus = MessageConstant.SEND_MSG_STATUS_SUC;
+		} catch (Exception e) {
+			logger.error("发送环信cmd消息失败！消息体：" + obj2json(msg), e);
+			resultStatus = MessageConstant.SEND_MSG_STATUS_FAIL;
+		} finally {
+			logger.info("resultStatus :{}", resultStatus);
+			// 成功
+			if (MessageConstant.SEND_MSG_STATUS_SUC.equals(resultStatus)) {
+				imNoticeMsg.setStatus(MessageConstant.SEND_MSG_STATUS_SUC);
+				// ImNoticeMsgTemp 修改成功
+				imNoticeMsgTempService.update(imNoticeMsg);
+				// imNoticeMsg表修改成功
+				imNoticeMsgService.update(imNoticeMsg(imNoticeMsg));
+			}
+			// 失败
+			else if (MessageConstant.SEND_MSG_STATUS_FAIL.equals(resultStatus)) {
+				// 重发失败 入库
+				imNoticeMsg.setStatus(MessageConstant.SEND_MSG_STATUS_RE_FAIL);
+				// ImNoticeMsgTemp 修改成功
+				imNoticeMsgTempService.update(imNoticeMsg);
+				// imNoticeMsg表修改成功
+				imNoticeMsgService.update(imNoticeMsg(imNoticeMsg));
+			}
+		}
+	}
+
+	public ImNoticeMsg imNoticeMsg(ImNoticeMsgTemp imNoticeMsgTemp) {
+		ImNoticeMsg imNoticeMsg = new ImNoticeMsg();
+		BeanUtils.copyProperties(imNoticeMsgTemp, imNoticeMsg);
+		return imNoticeMsg;
+	}
+
+	class CMDMsgContent extends MsgContent {
+
+		private String action;
+
+		public String getAction() {
+			return action;
+		}
+
+		public void setAction(String action) {
+			this.action = action;
+		}
+
+		CMDMsgContent action(String action) {
+			this.action = action;
+			return this;
+		}
+	}
+}

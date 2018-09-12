@@ -1,0 +1,222 @@
+package com.jzy.hio.platform.userinfo.controller;
+
+import java.security.Principal;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.amqp.core.AmqpTemplate;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.RedisKeyConstant;
+import com.jzy.hio.base.controller.BasePlatformController;
+import com.jzy.hio.config.QueueConfig;
+import com.jzy.hio.entity.ImFriendAlias;
+import com.jzy.hio.entity.UserInfo;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.exception.HioMybatisGetException;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.platform.constant.DelflagEnum;
+import com.jzy.hio.platform.dto.aliasdto.AliasDto;
+import com.jzy.hio.platform.dto.aliasdto.AliasDto.ImFriendAliasDto;
+import com.jzy.hio.platform.dto.tenantcompanyinfo.TendUserInfoDto;
+import com.jzy.hio.platform.friendinfo.dto.FriendInfoDto;
+import com.jzy.hio.platform.redis.PlatformRedis;
+import com.jzy.hio.platform.userinfo.mode.StarInfoModel;
+import com.jzy.hio.platform.userinfo.service.ImFriendAliasService;
+import com.jzy.hio.platform.userinfo.service.StarInfoService;
+import com.jzy.hio.platform.userinfo.service.UserInfoService;
+import com.jzy.hio.platform.utils.CommonUtils;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.springmvc.ApiResponse;
+import com.jzy.hio.sys.user.param.IMUserSyncParam;
+import com.jzy.hio.utils.Pinyin4jUtils;
+
+/**
+ * 备注名保存
+ * 
+ * @author
+ *
+ */
+@RestController
+@RequestMapping("/friendAlias")
+public class ImFriendAliasController extends BasePlatformController<ImFriendAliasService> {
+
+	private static final Logger logger = LoggerFactory.getLogger(ImFriendAliasController.class);
+	@Autowired
+	private QueueConfig queueConfig;
+	@Autowired
+	private StarInfoService starInfoService;
+	@Autowired
+	private UserInfoService userInfoService;
+	@Autowired
+	private ImFriendAliasService imFriendAliasService;
+	@Autowired
+	private AmqpTemplate rabbitTemplate;
+	@Autowired
+	private PlatformRedis platformRedis;
+	@Autowired
+	private SysFeignService sysFeignService;
+
+	/**
+	 * 保存备注名
+	 * 
+	 * @param paramMap
+	 * @return
+	 */
+	@PostMapping("/save")
+	public ApiResponse<Void> save(Principal user, @RequestBody Map<String, Object> paramMap) {
+		ApiResponse<Void> res = new ApiResponse<>(200, "修改成功");
+		try {
+			String uid = getUserIdIM();
+			String fid = getStr(paramMap, "fid");
+			if (StringUtils.isBlank(fid)) {
+				res.setStatus(102);
+				res.setMessage("请选择备注人");
+				return res;
+			}
+
+			UserInfo userInfo = userInfoService.findById(fid);
+			if (userInfo == null) {
+				res.setStatus(102);
+				res.setMessage("备注人不存在");
+				return res;
+			}
+
+			String aliasName = getStr(paramMap, "aliasName");
+			String tableName = CommonUtils.getTableName(ImFriendAlias.class);
+			String field = uid + "_" + fid;
+
+			ImFriendAlias alias = new ImFriendAlias();
+			alias.setUid(uid);
+			alias.setFid(fid);
+			// 不为空就新加一条数据
+			String aliasNameFull = "" ;
+			String aliasNameSimple = "";
+			if (StringUtils.isNotBlank(aliasName)) {
+				if(aliasName.length() > 20) {
+					res.setStatus(HioException.aliasNameLengthOut.getStatus());
+					res.setMessage(HioException.aliasNameLengthOut.getMessage());
+					return res;
+				}
+				alias.setAliasName(aliasName);
+				aliasNameFull = Pinyin4jUtils.getPinYin(aliasName).toString();
+				aliasNameSimple = Pinyin4jUtils.getShortPinyin(aliasName).toString();
+				alias.setAliasNameFull(aliasNameFull);
+				alias.setAliasNameSimple(aliasNameSimple);
+				
+				alias.setId(generatePk(ImFriendAlias.class));
+				alias.setDelflag(DelflagEnum.FALSE.getValue());
+				Date date = new Date();
+				alias.setCreateDate(date);
+				alias.setUpdateDate(date);
+				JedisUtil.hsetObject(tableName, field, alias);
+			} else {
+				alias = imFriendAliasService.getFriendAlias(uid, fid);
+				alias.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+				alias.setAliasName("");
+				alias.setAliasNameFull("");
+				alias.setAliasNameSimple("");
+				alias.setUpdateDate(new Date());
+				JedisUtil.hsetObject(tableName, field, alias);
+			}
+			//更新登录用户在租户的时间
+			List<TendUserInfoDto> tendInfoList = platformRedis.getTendUserList();
+			if(isNotEmpty(tendInfoList)) {
+				for(TendUserInfoDto dto : tendInfoList) {
+					IMUserSyncParam syncParam = new IMUserSyncParam();
+					syncParam.setTendId(dto.getTendId());
+					syncParam.setImUserId(uid);
+					syncParam.setType(dto.getOuterLinkman());
+					syncParam.setMobile(uid);
+					sysFeignService.syncUserUpdateOrg(syncParam);
+				}
+				
+			}
+
+			// 更新好友里此人的备注名
+			FriendInfoDto dto = JedisUtil.hgetObject(RedisKeyConstant.myfriendPrefix + uid, fid, FriendInfoDto.class);
+			if (isNotEmpty(dto)) {
+				dto.setAliasName(isEmpty(aliasName)?"":aliasName);
+				dto.setAliasNameFull(aliasNameFull);
+				dto.setAliasNameSimple(aliasNameSimple);
+				dto.setId(dto.getFid());
+				JedisUtil.addListRow(RedisKeyConstant.myfriendPrefix + uid, obj2map(dto));
+			}
+
+			// 更新特别关注里此人的备注名
+			StarInfoModel starInfoModel = new StarInfoModel();
+			starInfoModel.setFid(fid);
+			starInfoModel.setAliasName(isEmpty(aliasName)?"":aliasName);
+			starInfoModel.setAliasNameFull(aliasNameFull);
+			starInfoModel.setAliasNameSimple(aliasNameSimple);
+			starInfoService.cacheEdit(uid, starInfoModel);
+
+			/*// 更新同事里面此人的备注名 , 更新外部联系人此人的备注名
+			IMUserSyncParam userSyn = new IMUserSyncParam();
+			userSyn.setImUserId(uid);
+			ApiFeignResponse<Boolean> feignres = sysFeignService.syncUserUpdateOrg(userSyn);
+			logger.info("参数:{}，返回值:{}", map, obj2json(feignres));*/
+			// 更新数据库
+			rabbitTemplate.convertAndSend(queueConfig.getImFriendAliasQueue(), alias);
+		} catch (Exception e) {
+			res.setStatus(500);
+			res.setMessage("系统出现错误，请稍后重试");
+			logger.error("friendAlias/save error:{}", e);
+			throw new HioMybatisGetException(e);
+		}
+
+		return res;
+	}
+	
+	/**
+	 * 我备注的好友
+	 * 
+	 * @param paramMap
+	 * @return
+	 */
+	@PostMapping("/getList")
+	public ApiResponse<AliasDto> getList(@RequestBody Map<String, Object> paramMap) {
+		ApiResponse<AliasDto> res = new ApiResponse<>(200, "获取备注列表成功");
+		try {
+			String uid = getUserIdIM();
+			Long updateTime = getLong(paramMap, "updateTime", -1L);
+			List<ImFriendAliasDto> list = new ArrayList<ImFriendAliasDto>();
+			Map<String,String> map = JedisUtil.fetchRelationRow("im_friend_alias");
+			for(String key : map.keySet()) {
+				if(key.startsWith(uid+"_") && null != map.get(key)) {
+					ImFriendAlias alias = json2obj(map.get(key).toString(),ImFriendAlias.class);
+					Long time = alias.getUpdateDate() == null ? 1 : alias.getUpdateDate().getTime();
+					if(time > updateTime) {
+						ImFriendAliasDto imFriendAliasDto = new ImFriendAliasDto();
+						Base.copyProperties(alias, imFriendAliasDto);
+						imFriendAliasDto.setUpdateTime(time + "");
+						list.add(imFriendAliasDto);
+					}
+				}
+			}
+			AliasDto alias = new AliasDto();
+			alias.setAliasList(list);
+			alias.setUpdateTime(System.currentTimeMillis() + "");
+			res.setResult(alias);
+		} catch (Exception e) {
+			res.setStatus(500);
+			res.setMessage("系统出现错误，请稍后重试");
+			logger.error("friendAlias/getList error:{}", e);
+			throw new HioMybatisGetException(e);
+		}
+
+		return res;
+	}
+}

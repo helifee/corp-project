@@ -1,0 +1,56 @@
+package com.xinleju.platform.flow.dao;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.dao.BaseDao;
+import com.xinleju.platform.flow.dto.BusinessObjectVariableDto;
+import com.xinleju.platform.flow.entity.BusinessObject;
+import com.xinleju.platform.flow.entity.BusinessObjectVariable;
+
+/**
+ * @author admin
+ *
+ */
+
+public interface BusinessObjectVariableDao extends BaseDao<String, BusinessObjectVariable> {
+
+	List<BusinessObjectVariable> queryBusiVariableListByTemlateId(String flId);
+
+	/**
+	 * 查询指定业务对象变更下面的可用于分支的变量
+	 * 
+	 * @param businessObjectId
+	 * @return
+	 */
+	List<BusinessObjectVariable> queryVariableUsedInExpressionBy(String businessObjectId);
+
+	int deleteVariableListByObjectId(String busiObjectId);
+
+	List<BusinessObjectVariableDto> queryListByCondition(Map paramMap);
+
+	List<String> selectAllParentId(Map paramMap);
+
+	List<BusinessObjectVariableDto> getVariableTreeByBusiObject(Map<String, String> paramMap);
+
+	int updateObjectPrefixIdByParamMap(Map<String, String> paramMap);
+
+	Integer queryRelatedCountByPrefixMap(Map paramMap);
+
+	Integer deleteObjectAndChileren(Map<String, String> paramMap);
+
+	List<BusinessObjectVariableDto> queryListByParamMap(Map<String, Object> paramMap);
+
+	List<BusinessObjectVariable> queryBusinessObjectVariableListByParam(Map<String, Object> param);
+
+	void updateAllNodes(Map<String, Object> params1);
+
+	void updateAllNodesSortAndPrefix(Map<String, Object> updateMap);
+
+	List<BusinessObjectVariable> queryToFixDataList();
+
+	void doFixDataUpdate(Map<String, Object> udpateMap);
+	
+	
+
+}

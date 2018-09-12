@@ -1,0 +1,191 @@
+package com.xinleju.platform.flow.utils;
+
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.base.utils.SecurityUserBeanInfo;
+import com.xinleju.platform.flow.dao.SysNoticeMsgTempDao;
+import com.xinleju.platform.flow.entity.SysNoticeMsgTemp;
+import com.xinleju.platform.flow.entity.SysNoticeMsgUserConfig;
+import com.xinleju.platform.flow.service.SysNoticeMsgUserConfigService;
+import com.xinleju.platform.sys.org.entity.User;
+import com.xinleju.platform.sys.org.service.UserService;
+import com.xinleju.platform.tools.data.JacksonUtils;
+import org.apache.commons.lang.StringUtils;
+import org.apache.http.HttpEntity;
+import org.apache.http.HttpResponse;
+import org.apache.http.client.ClientProtocolException;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.entity.StringEntity;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.util.EntityUtils;
+
+import java.io.IOException;
+import java.util.*;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+/**
+ * Created by luoro on 2017/10/14.
+ */
+public  class FlowNoticeMsgUtils {
+    private String userJson;//当前登陆人信息json
+    private Map param;//消息参数
+    private SysNoticeMsgUserConfigService sysNoticeMsgUserConfigService;
+    private UserService userService;
+    private SysNoticeMsgTempDao sysNoticeMsgTempDao;
+    private String deployPath;//服务部署ip路径
+    public FlowNoticeMsgUtils(String userJson, Map param, SysNoticeMsgUserConfigService sysNoticeMsgUserConfigService, UserService userService, SysNoticeMsgTempDao sysNoticeMsgTempDao, String deployPath) {
+        this.userJson = userJson;
+        this.param = param;
+        this.sysNoticeMsgUserConfigService = sysNoticeMsgUserConfigService;
+        this.userService = userService;
+        this.sysNoticeMsgTempDao = sysNoticeMsgTempDao;
+        this.deployPath = deployPath;
+    }
+    public void sendNotice(){
+        System.out.println("同步外部用户消息开始--------发送待办 sendNotice start sendNotice");
+        List<SysNoticeMsgUserConfig> userConfigs = getUserConfig();
+        System.out.println("同步外部用户消息开始--------改变消息状态 sendNotice userConfigs "+JacksonUtils.toJson(userConfigs));
+        for (SysNoticeMsgUserConfig userConfig : userConfigs) {
+                   /* if (userConfig.getPostUrl().indexOf(deployPath) > -1) {
+                        continue;
+                    }*/
+
+            System.out.println("同步外部用户消息开始--------发送待办  sendNotice start url:"+userConfig.getPostUrl());
+            Map<String, Object> reqContent = new HashMap<String, Object>();//请求map
+            try {
+                reqContent.put("tendCode", userConfig.getTendCode());
+                reqContent.put("loginName", userConfig.getLoginName());
+                SecurityUserBeanInfo userBeanInfo = JacksonUtils.fromJson(userJson, SecurityUserBeanInfo.class);
+                String url = String.valueOf(param.get("url")) + "&loginName=" + userConfig.getLoginName() + "&tend_code=" + userBeanInfo.getTendCode();
+                if (url.indexOf("http://") == -1) {
+                    url = deployPath + url;
+                    param.put("url", url);
+                }
+                String mobibleUrl =  String.valueOf(param.get("mobibleUrl")) + "&loginName=" + userConfig.getLoginName() + "&tend_code=" + userBeanInfo.getTendCode();
+                if(mobibleUrl.indexOf("http://") == -1){
+                    mobibleUrl = deployPath + mobibleUrl;
+                    param.put("mobibleUrl", mobibleUrl);
+                }
+                reqContent.put("param", param);
+                CloseableHttpClient httpClient= HttpClients.createDefault();
+                HttpPost httpPost = new HttpPost(userConfig.getPostUrl());
+                httpPost.addHeader("Content-Type", "application/json; charset=utf-8");
+                httpPost.addHeader("User-Agent",
+                        "Mozilla/5.0 (Windows NT 6.1; WOW64; rv:50.0) Gecko/20100101 Firefox/50.0");
+                StringEntity se = new StringEntity(JacksonUtils.toJson(reqContent), "utf-8");
+                httpPost.setEntity(se);
+                try {
+                    HttpResponse response = httpClient.execute(httpPost);
+                    if (response != null) {
+                        HttpEntity resEntity = response.getEntity();
+                        if (resEntity != null) {
+                            String result = EntityUtils.toString(resEntity, "utf-8");
+                            System.out.println("同步外部用户消息结束 sendNotice result:" + result);
+                        }
+                    }
+                } catch (ClientProtocolException e) {
+                    saveFailMsg(userConfig.getPostUrl(), JacksonUtils.toJson(reqContent), "", "", "httpClient", JacksonUtils.toJson(userJson));
+                    e.printStackTrace();
+                } catch (IOException e) {
+                    saveFailMsg(userConfig.getPostUrl(), JacksonUtils.toJson(reqContent), "", "", "httpClient", JacksonUtils.toJson(userJson));
+                    e.printStackTrace();
+                }
+//                        String result = LoginUtils.httpPost(userConfig.getPostUrl(), JacksonUtils.toJson(reqContent));
+            } catch (Exception e) {
+                saveFailMsg(userConfig.getPostUrl(), JacksonUtils.toJson(reqContent), "", "", "httpClient", JacksonUtils.toJson(userJson));
+            }
+        }
+
+    }
+
+    public void modifyNotice(){
+        System.out.println("同步外部用户消息开始--------改变消息状态 modifyNotice start modifyNotice");
+        List<SysNoticeMsgUserConfig> userConfigs = getUserConfig();
+        System.out.println("同步外部用户消息开始--------改变消息状态 modifyNotice userConfigs "+JacksonUtils.toJson(userConfigs));
+        Map<String, Object> reqContent = new HashMap<String, Object>();//请求map
+        for(SysNoticeMsgUserConfig userConfig:userConfigs){
+            try {
+                       /* if(userConfig.getModifyUrl().indexOf(deployPath)>-1){
+                            continue;
+                        }*/
+                System.out.println("同步外部用户消息开始--------改变消息状态 modifyNotice start url:"+userConfig.getModifyUrl());
+                reqContent.put("tendCode",userConfig.getTendCode());
+                reqContent.put("loginName",userConfig.getLoginName());
+                SecurityUserBeanInfo userBeanInfo = JacksonUtils.fromJson(userJson,SecurityUserBeanInfo.class);
+                String url = String.valueOf(param.get("url"))+"&loginName="+userConfig.getLoginName()+"&tend_code="+userBeanInfo.getTendCode();
+                if(url.indexOf("http://")==-1){
+                    url = deployPath+url;
+                    param.put("url",url);
+                }
+                reqContent.put("param",param);
+
+                CloseableHttpClient httpClient= HttpClients.createDefault();
+                HttpPost httpPost = new HttpPost(userConfig.getModifyUrl());
+                httpPost.addHeader("Content-Type", "application/json; charset=utf-8");
+                httpPost.addHeader("User-Agent",
+                        "Mozilla/5.0 (Windows NT 6.1; WOW64; rv:50.0) Gecko/20100101 Firefox/50.0");
+                StringEntity se = new StringEntity(JacksonUtils.toJson(reqContent), "utf-8");
+                httpPost.setEntity(se);
+                try {
+                    HttpResponse response = httpClient.execute(httpPost);
+                    if (response != null) {
+                        HttpEntity resEntity = response.getEntity();
+                        if (resEntity != null) {
+                            String result = EntityUtils.toString(resEntity, "utf-8");
+                            System.out.println("同步外部用户消息结束--------改变消息状态 modifyNotice result:"+result);
+                        }
+                    }
+                } catch (ClientProtocolException e) {
+                    saveFailMsg(userConfig.getModifyUrl(), JacksonUtils.toJson(reqContent), "", "", "httpClient", JacksonUtils.toJson(userJson));
+                    e.printStackTrace();
+                } catch (IOException e) {
+                    saveFailMsg(userConfig.getModifyUrl(), JacksonUtils.toJson(reqContent), "", "", "httpClient", JacksonUtils.toJson(userJson));
+                    e.printStackTrace();
+                }
+//                        String result = LoginUtils.httpPost(userConfig.getModifyUrl(), JacksonUtils.toJson(reqContent));
+
+            }catch (Exception e){
+                saveFailMsg(userConfig.getModifyUrl(),JacksonUtils.toJson(reqContent),"","","httpClient",JacksonUtils.toJson (userJson));
+            }
+        }
+    }
+
+
+    private  List<SysNoticeMsgUserConfig> getUserConfig(){
+        List<SysNoticeMsgUserConfig> userConfigs = new ArrayList<>();
+        try{
+            String loginName = null;
+            if(param.get("loginName")!=null){
+                loginName = String.valueOf(param.get("loginName"));
+            }else{
+                String userId = String.valueOf(param.get("userId"));
+                User user  = userService.getObjectById(userId);
+                loginName = user!=null?user.getLoginName():"";
+            }
+            if(StringUtils.isNotBlank(loginName)){
+                Map queryMap = new HashMap();
+                queryMap.put("loginName",loginName);
+                queryMap.put("delflag",false);
+                userConfigs = sysNoticeMsgUserConfigService.queryList(queryMap);
+            }
+        }catch (Exception e){
+
+        }
+        return userConfigs;
+    }
+
+    private void saveFailMsg(String postUrl, String postParam, String webService, String webServiceMethod, String postType,String userInfoJson){
+        SysNoticeMsgTemp temp = new SysNoticeMsgTemp ();
+        temp.setPostParam (postParam);
+        temp.setPostUrl (postUrl);
+        temp.setWebService (webService);
+        temp.setWebServiceMethod (webServiceMethod);
+        temp.setPostType (postType);
+        temp.setSuccess (false);
+        temp.setId (IDGenerator.getUUID ());
+        temp.setUserInfoJson (userInfoJson);
+        sysNoticeMsgTempDao.save (temp);
+    }
+}

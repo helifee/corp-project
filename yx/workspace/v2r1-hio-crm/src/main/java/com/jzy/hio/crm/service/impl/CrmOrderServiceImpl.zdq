@@ -1,0 +1,335 @@
+package com.jzy.hio.crm.service.impl;
+
+import java.text.MessageFormat;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.constant.CrmConstant;
+import com.jzy.hio.constant.CrmCustomerEnum;
+import com.jzy.hio.constant.CrmCustomerStatusEnum;
+import com.jzy.hio.crm.dto.AttachmentParamDto;
+import com.jzy.hio.crm.dto.CrmOrderDto;
+import com.jzy.hio.crm.dto.CrmOrderPageDto;
+import com.jzy.hio.crm.dto.CrmOrderProductDto;
+import com.jzy.hio.crm.mapper.CrmCustomerChangeMapper;
+import com.jzy.hio.crm.mapper.CrmCustomerMapper;
+import com.jzy.hio.crm.mapper.CrmOrderMapper;
+import com.jzy.hio.crm.mapper.CrmOrderProductMapper;
+import com.jzy.hio.crm.mapper.CrmSalesRankingsMapper;
+import com.jzy.hio.crm.param.CrmOrderSearchParam;
+import com.jzy.hio.crm.service.CrmOrderService;
+import com.jzy.hio.crm.utils.CrmCommonInvokeUtil;
+import com.jzy.hio.crm.utils.DateUtil;
+import com.jzy.hio.crm.utils.PageResult;
+import com.jzy.hio.entity.CrmCustomer;
+import com.jzy.hio.entity.CrmCustomerChange;
+import com.jzy.hio.entity.CrmOrder;
+import com.jzy.hio.entity.CrmOrderProduct;
+import com.jzy.hio.entity.CrmSalesRankings;
+import com.jzy.hio.exception.HioException;
+
+@Service
+public class CrmOrderServiceImpl extends BaseServiceImpl<CrmOrder> implements CrmOrderService {
+
+	@Autowired
+	private CrmOrderMapper crmOrderMapper;
+	@Autowired
+	private CrmOrderProductMapper crmOrderProductMapper;
+	@Autowired
+    private CrmCustomerMapper crmCustomerMapper;
+	@Autowired
+	private CrmCustomerChangeMapper crmCustomerChangeMapper;
+    @Autowired
+    private CrmSalesRankingsMapper crmSalesRankingsMapper;
+	@Autowired
+    private CrmCommonInvokeUtil crmCommonInvokeUtil;
+	/**
+	 * 新增和修改订单
+	 */
+	@Override
+	public boolean saveOrder(CrmOrderDto orderDto) {
+		String uid = getUserIdOA();
+		String userNameOA = getUserNameOA();
+		String id = orderDto.getSid();
+		Date date = new Date();
+		CrmCustomer customerFind = null;
+		String customerId = orderDto.getCustomerId();
+		if (StringUtils.isNotBlank(id)) {
+			CrmOrder orderFind = crmOrderMapper.selectByPrimaryKey(id);
+
+			if(StringUtils.isNotBlank(customerId)){
+				customerFind = crmCustomerMapper.selectByPrimaryKey(customerId);
+				if (customerFind == null || customerFind.getDelflag().equals(CrmConstant.DEL_TRUE)) {
+					throw new HioException("客户不存在");
+				} else if(!isRolePermission(BaseConstants.MYSQL_MENU_CODE_CRM_MANAGE)) {
+					if (!customerFind.getOwnerPersonId().equals(uid)) {
+						throw new HioException("您没有该客户权限");
+					}
+				}
+			}
+
+			if (StringUtils.isNotBlank(orderDto.getPersonChargeOur())) {
+				boolean flag = crmCommonInvokeUtil.getUserStatus(orderDto.getPersonChargeOur());
+				if (!flag) {
+					throw new HioException("我方负责人不存在或已离职");
+				}
+			}
+
+			if (orderFind == null) {
+				CrmOrder orderSave = new CrmOrder();
+				BeanUtils.copyProperties(orderDto, orderSave);
+				orderSave.setId(id);
+				orderSave.setDelflag(CrmConstant.DEL_FALSE);
+				orderSave.setUpdateDate(date);
+				orderSave.setCreateDate(date);
+				orderSave.setCreatePersonId(uid);
+				orderSave.setUpdatePersonId(uid);
+				orderSave.setCreatePersonName(userNameOA);
+				orderSave.setUpdatePersonName(userNameOA);
+//				if (orderSave.getOrderStatus() != null && orderSave.getOrderStatus().equals(CrmConstant.ORDER_BESIGNED)) {
+//					orderSave.setDealDate(date);
+//				}
+				//  新增订单
+				crmOrderMapper.insert(orderSave);
+
+				//添加订单动态	xx创建了订单xx
+				if (orderSave.getOrderStatus().equals(CrmConstant.ORDER_BESIGNED)) {
+					String format = MessageFormat.format(CrmCustomerEnum.CREATE_ORDER.getCode(), userNameOA, orderSave.getName());
+					CrmCustomerChange crmCustomerChange=new CrmCustomerChange();
+					crmCustomerChange.setCustomerId(orderSave.getCustomerId());
+					crmCustomerChange.setOpportunityId(orderSave.getOpportunityId());
+					crmCustomerChange.setChangeContent(format);
+					crmCustomerChange.setId(Base.generatePk(CrmCustomerChange.class));
+					crmCustomerChange.setCreatePersonId(uid);
+					crmCustomerChange.setUpdatePersonId(uid);
+					crmCustomerChange.setCreateDate(date);
+					crmCustomerChange.setUpdateDate(date);
+					crmCustomerChange.setCreatePersonName(userNameOA);
+					crmCustomerChange.setUpdatePersonName(userNameOA);
+					crmCustomerChangeMapper.insert(crmCustomerChange);
+				}
+
+			} else if (orderFind != null && orderFind.getDelflag().equals(CrmConstant.DEL_FALSE)) {
+				if(orderFind.getOrderStatus().equals(CrmConstant.ORDER_BESIGNED)) {
+					throw new HioException("已签订单不能更改");
+				}
+				CrmOrder orderSave = new CrmOrder();
+				BeanUtils.copyProperties(orderDto, orderSave);
+				orderSave.setId(id);
+				orderSave.setUpdateDate(date);
+				orderSave.setUpdatePersonId(uid);
+				orderSave.setUpdatePersonName(userNameOA);
+//				if (orderSave.getOrderStatus() != null && orderSave.getOrderStatus().equals(CrmConstant.ORDER_BESIGNED)) {
+//					orderSave.setDealDate(date);
+//				}
+
+				//crmOrderMapper.updateByPrimaryKeySelective(orderSave);
+				crmOrderMapper.updateById(orderSave);
+				
+				// 删除商机下商品
+				crmOrderProductMapper.deleteByOrderId(id, date, uid);
+			} else {
+				throw new HioException("未找到订单");
+			}
+			
+		} else {
+			throw new HioException("有必填项未传递");
+		}
+		if (orderDto.getOrderStatus().equals(CrmConstant.ORDER_BESIGNED) && customerFind != null) {
+
+			CrmCustomer customer = new CrmCustomer();
+			customer.setId(customerId);
+			if (customerFind.getStatus() < CrmCustomerStatusEnum.IMPORT_FOLLOWING.getStatus()) {
+				// 标记失败、重点跟进和已签约客户的无需修改(标记的状态优先级高于其他)
+				customer.setStatus(CrmCustomerStatusEnum.AREADY_SIGNED.getStatus());
+			}
+			
+			if (customerFind.getDealStatus() == null || customerFind.getDealStatus() == CrmConstant.DEAL_NO) {
+				customer.setDealStatus(CrmConstant.DEAL_YES);
+				crmCustomerMapper.updateByPrimaryKeySelective(customer);
+			}
+		}
+		
+		// 记录排行榜
+		if (orderDto.getOrderStatus().equals(CrmConstant.ORDER_BESIGNED)) {
+			// 一旦为已签订单就不能修改，并计入订单排行榜
+			saveCustRanking(orderDto.getPersonChargeOur(), uid, orderDto.getDealDate());
+		}
+		
+		// 组织订单商品数据
+		List<CrmOrderProductDto> orderDtoProductList = orderDto.getOrderProducts();
+		if (orderDtoProductList != null && orderDtoProductList.size() > 0) {
+			List<CrmOrderProduct> orderProductList = new ArrayList<>();
+			CrmOrderProduct orderProduct = null;
+			for (CrmOrderProductDto crmOrderProductDto : orderDtoProductList) {
+				orderProduct = new CrmOrderProduct();
+				BeanUtils.copyProperties(crmOrderProductDto, orderProduct);
+				orderProduct.setOrderId(id);
+				orderProduct.setId(Base.generatePk(orderProduct.getClass()));
+				orderProduct.setDelflag(CrmConstant.DEL_FALSE);
+				orderProduct.setUpdateDate(date);
+				orderProduct.setCreateDate(date);
+				orderProduct.setCreatePersonId(uid);
+				orderProduct.setUpdatePersonId(uid);
+				orderProductList.add(orderProduct);
+			}
+			// 批量插入商品订单
+			crmOrderProductMapper.insertList(orderProductList);
+		}
+		return true;
+	}
+
+	/**
+	 * 根据id 查询订单
+	 */
+	@Override
+	public CrmOrderDto selectOrder(String id) {
+		
+		// 查询订单
+		CrmOrder orderFind = crmOrderMapper.selectByPrimaryKey(id);
+		
+		if (orderFind == null || orderFind.getDelflag().equals(CrmConstant.DEL_TRUE)) {
+			throw new HioException("订单不存在或已删除");
+		}
+		
+		CrmOrderDto orderDto = new CrmOrderDto();
+		BeanUtils.copyProperties(orderFind, orderDto);
+		orderDto.setSid(orderFind.getId());
+		
+		CrmCustomer customer = crmCustomerMapper.selectByPrimaryKey(orderDto.getCustomerId());
+		if (customer != null) {
+			if (!isRolePermission(BaseConstants.MYSQL_MENU_CODE_CRM_MANAGE)) {
+				String uid = getUserIdOA();
+				if (!customer.getOwnerPersonId().equals(uid)) {
+					throw new HioException("您没有该客户权限");
+				}
+			}
+		}
+		
+		List<CrmOrderProductDto> orderDtoProductList = new ArrayList<>();
+		
+		// 查询订单下商品
+		CrmOrderProduct orderProdutSelect = new CrmOrderProduct();
+		orderProdutSelect.setOrderId(id);
+		orderProdutSelect.setDelflag(CrmConstant.DEL_FALSE);
+		List<CrmOrderProduct> orderProductList  = crmOrderProductMapper.select(orderProdutSelect);
+		
+		AttachmentParamDto attachmentParamDto = new AttachmentParamDto();
+		attachmentParamDto.setApp(BaseConstants.App.CRM.getId());
+		attachmentParamDto.setCategory(BaseConstants.AttachmentCategory.CRM_ORDER.getId());
+		attachmentParamDto.setBusinessId(id);
+		orderDto.setAttachmentParam(attachmentParamDto);
+		
+		AttachmentParamDto contractParam = new AttachmentParamDto();
+		contractParam.setApp(BaseConstants.App.CRM.getId());
+		contractParam.setCategory(BaseConstants.AttachmentCategory.CRM_ORDER_CONTRACT.getId());
+		contractParam.setBusinessId(id);
+		orderDto.setContractParam(contractParam);
+		
+		// 转为dto对象
+		CrmOrderProductDto orderProductDto = null;
+		for (CrmOrderProduct item : orderProductList) {
+			orderProductDto = new CrmOrderProductDto();
+			BeanUtils.copyProperties(item, orderProductDto);
+			orderDtoProductList.add(orderProductDto);
+		}
+		
+		orderDto.setOrderProducts(orderDtoProductList);
+		
+		return orderDto;
+	}
+
+    /**
+     * 更新客户数量排行榜
+     * @param saleId
+     * @param uid
+     */
+    private void saveCustRanking(String saleId, String uid, Date dealDate) {
+    	CrmSalesRankings rangkingSelect = new CrmSalesRankings();
+    	rangkingSelect.setSalesmanId(saleId);
+    	int month = Integer.valueOf(new SimpleDateFormat("yyyyMM").format(dealDate));
+    	rangkingSelect.setMonth(month);
+    	rangkingSelect.setDelflag(CrmConstant.DEL_FALSE);
+    	int count = crmSalesRankingsMapper.selectCount(rangkingSelect);
+    	Date date = new Date();
+    	if (count == 0) {
+    		CrmSalesRankings rangkingSave = new CrmSalesRankings();
+    		rangkingSave.setId(Base.generatePk(rangkingSave.getClass()));
+			rangkingSave.setSalesmanId(saleId);
+			rangkingSave.setMonth(month);
+			// 新增客户数0，订单数1
+			rangkingSave.setNewCustomerCount(0);
+			rangkingSave.setNewOrderCount(1);
+			rangkingSave.setCreateDate(date);
+			rangkingSave.setUpdateDate(date);
+			rangkingSave.setCreatePersonId(uid);
+			rangkingSave.setUpdatePersonId(uid);
+			crmSalesRankingsMapper.insert(rangkingSave);
+		} else {
+			CrmSalesRankings rangkingUpdate = new CrmSalesRankings();
+			rangkingUpdate.setSalesmanId(saleId);
+			rangkingUpdate.setMonth(month);
+			rangkingUpdate.setUpdateDate(date);
+			rangkingUpdate.setUpdatePersonId(uid);
+			crmSalesRankingsMapper.addOrderCount(rangkingUpdate);
+		}
+    	
+    	
+    }
+	/**	
+	 * 订单分页
+	 */
+	@Override
+	public PageResult getPageOrders(CrmOrderSearchParam crmOrderSearchParam) {
+		
+		// 排序
+		String signAmountSort = crmOrderSearchParam.getSignAmountSort();
+		if (CrmConstant.ASC.equalsIgnoreCase(signAmountSort) || CrmConstant.DESC.equalsIgnoreCase(signAmountSort)) {
+			signAmountSort = "crmorder.sign_amount " + signAmountSort + ",";
+			crmOrderSearchParam.setSignAmountSort(signAmountSort);
+		} else {
+			crmOrderSearchParam.setSignAmountSort("");
+		}
+		// 分页查询订单列表
+		List<CrmOrderPageDto> list = crmOrderMapper.getPageOrders(crmOrderSearchParam);
+		
+		List<String> userIds = new ArrayList<>();
+		list.forEach(obj -> {
+			if (StringUtils.isNotBlank(obj.getPersonChargeOur())) {
+				userIds.add(obj.getPersonChargeOur());
+			}
+		});
+		
+		if (userIds.size() > 0) {
+			String tendId = getTendId();
+			Map<String, String> unameMap = crmCommonInvokeUtil.getUserName(tendId, userIds);
+			list.forEach(obj -> {
+				if (StringUtils.isNotBlank(obj.getPersonChargeOur())) {
+					if (unameMap.get(obj.getPersonChargeOur()) == null) {
+						logger.error(obj.getPersonChargeOur() + "未找到订单对应的我方负责人名称");
+						throw new HioException("我方负责人未找到");
+					}
+					obj.setPersonOurName(unameMap.get(obj.getPersonChargeOur()));
+				}
+			});
+		}
+		
+		// 查询订单总条数
+		int count = crmOrderMapper.getPageOrdersCount(crmOrderSearchParam);
+		return PageResult.pageResult(crmOrderSearchParam, count, list);
+	}
+
+	
+	
+}

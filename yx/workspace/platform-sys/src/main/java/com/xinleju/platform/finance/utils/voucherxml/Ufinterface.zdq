@@ -1,0 +1,117 @@
+package com.xinleju.platform.finance.utils.voucherxml;
+
+import javax.xml.bind.annotation.XmlAccessType;
+import javax.xml.bind.annotation.XmlAccessorType;
+import javax.xml.bind.annotation.XmlAttribute;
+import javax.xml.bind.annotation.XmlElement;
+import javax.xml.bind.annotation.XmlRootElement;
+import javax.xml.bind.annotation.XmlType;
+
+@XmlAccessorType(XmlAccessType.FIELD)
+@XmlRootElement
+@XmlType(name = "ufinterface", propOrder = {})
+public class Ufinterface {
+	public String getRoottag() {
+		return roottag;
+	}
+
+	public void setRoottag(String roottag) {
+		this.roottag = roottag;
+	}
+
+	public String getBilltype() {
+		return billtype;
+	}
+
+	public void setBilltype(String billtype) {
+		this.billtype = billtype;
+	}
+
+	public String getReplace() {
+		return replace;
+	}
+
+	public void setReplace(String replace) {
+		this.replace = replace;
+	}
+
+	public String getReceiver() {
+		return receiver;
+	}
+
+	public void setReceiver(String receiver) {
+		this.receiver = receiver;
+	}
+
+	public String getSender() {
+		return sender;
+	}
+
+	public void setSender(String sender) {
+		this.sender = sender;
+	}
+
+	public String getIsexchange() {
+		return isexchange;
+	}
+
+	public void setIsexchange(String isexchange) {
+		this.isexchange = isexchange;
+	}
+
+	public String getFilename() {
+		return filename;
+	}
+
+	public void setFilename(String filename) {
+		this.filename = filename;
+	}
+
+	public String getProc() {
+		return proc;
+	}
+
+	public void setProc(String proc) {
+		this.proc = proc;
+	}
+
+	public String getOperation() {
+		return operation;
+	}
+
+	public void setOperation(String operation) {
+		this.operation = operation;
+	}
+
+	public Voucher getVoucher() {
+		return voucher;
+	}
+
+	public void setVoucher(Voucher voucher) {
+		this.voucher = voucher;
+	}
+
+	// <ufinterface roottag="voucher" billtype="gl" replace="Y"
+	// receiver="ce@ce-0001" sender="1101" isexchange="Y"
+	// filename="ƾ֤������ļ�.xml" proc="add" operation="req">
+	@XmlAttribute
+	private String roottag;
+	@XmlAttribute
+	private String billtype;
+	@XmlAttribute
+	private String replace;
+	@XmlAttribute
+	private String receiver;
+	@XmlAttribute
+	private String sender;
+	@XmlAttribute
+	private String isexchange;
+	@XmlAttribute
+	private String filename;
+	@XmlAttribute
+	private String proc;
+	@XmlAttribute
+	private String operation;
+	@XmlElement
+	private Voucher voucher;
+}

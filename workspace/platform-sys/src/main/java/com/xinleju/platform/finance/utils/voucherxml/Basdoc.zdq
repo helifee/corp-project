@@ -1,0 +1,35 @@
+package com.xinleju.platform.finance.utils.voucherxml;
+
+import javax.xml.bind.annotation.XmlAccessType;
+import javax.xml.bind.annotation.XmlAccessorType;
+import javax.xml.bind.annotation.XmlAttribute;
+import javax.xml.bind.annotation.XmlElement;
+import javax.xml.bind.annotation.XmlType;
+
+@XmlAccessorType(XmlAccessType.FIELD)  
+@XmlType(name = "basdoc", propOrder = {})
+public class Basdoc {
+
+	@XmlAttribute
+	private String id;
+	public String getId() {
+		return id;
+	}
+	public void setId(String id) {
+		this.id = id;
+	}
+	
+	@XmlElement(name="basdoc_head")
+	private VoucherHead basdochead;
+	public VoucherHead getBasdochead() {
+		return basdochead;
+	}
+	public void setBasdochead(VoucherHead basdochead) {
+		this.basdochead = basdochead;
+	}
+	
+	
+	
+	
+
+}

@@ -1,0 +1,168 @@
+/*
+ * @(#)ErrorLoggingAroundAspect.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 共通系统
+ */
+package com.yds.common.service.impl;
+
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.util.Date;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.aspectj.lang.annotation.Around;
+import org.aspectj.lang.annotation.Aspect;
+import org.aspectj.lang.ProceedingJoinPoint;
+import org.springframework.stereotype.Service;
+
+import com.yds.common.bean.ComErrorLog;
+import com.yds.common.dao.ErrorLogDao;
+import com.yds.common.service.SessionService;
+import com.yds.util.service.ApplicationContextHolder;
+
+/**
+ * 异常日志采集
+ * 
+ * @author zhaodong
+ * @version 1.00 2010/12/15
+ */
+@Aspect
+@Service("errorLoggingAroundAspect")
+public class ErrorLoggingAroundAspect implements Runnable {
+
+	/** 日志. */
+	protected static final Log LOG = LogFactory.getLog(ErrorLoggingAroundAspect.class);
+
+	/** 异常日志Dao. */
+	private ErrorLogDao errorLogDao;
+	
+	/** Service抛出的异常. */
+	private Throwable t;
+	
+	/** Service的切入点. */
+	private ProceedingJoinPoint pjp;
+	
+	/** 当前登录用户ID. */
+	private String lastUserId;
+
+	/**
+	 * 默认的构造方法
+	 */
+	public ErrorLoggingAroundAspect() {
+
+	}
+
+	/**
+	 * 构造方法
+	 * @param t 异常
+	 * @param pjp 切入点
+	 * @param lastUserId 当前用户ID.
+	 */
+	private ErrorLoggingAroundAspect(Throwable t, ProceedingJoinPoint pjp,
+			String lastUserId) {
+		// 异常
+		this.t = t;
+		// 切点
+		this.pjp = pjp;
+		// 当前用户ID
+		this.lastUserId = lastUserId;
+
+	}
+
+	/**
+	 * 捕获所有Service的异常
+	 * @param pjp
+	 * @return
+	 * @throws Throwable
+	 */
+	@Around("execution(* com.yds..*.service.impl.*Service*.*(..))")
+	public Object doBaseicProfiling(ProceedingJoinPoint pjp) throws Throwable {
+		try {
+			return pjp.proceed();
+		} catch (Throwable t) {
+			// Service出现异常的情况
+			String lastUserId = SessionService.getLoginUserId();
+			Thread th = new Thread(new ErrorLoggingAroundAspect(t, pjp,lastUserId));
+			th.start();
+			throw t;
+			
+		}
+	}
+
+	/**
+	 * 插入异常统计表
+	 * （加锁是为了防止同时插入两条同一类型异常的错误）
+	 * @param t
+	 * @param pjp
+	 * @throws IOException
+	 */
+	private synchronized void insertThrowable(Throwable t, ProceedingJoinPoint pjp, String lastUserId)
+			throws IOException {
+		// 堆栈信息构造
+		StringWriter writer = new StringWriter();
+		t.printStackTrace(new PrintWriter(writer));
+		writer.close();
+
+		// 检索条件
+		ComErrorLog comErrorLog = new ComErrorLog();
+		// 方法名
+		comErrorLog.setMethodName(pjp.getSignature().getName());
+		// 类名
+		comErrorLog.setClassName(pjp.getSignature().getDeclaringTypeName());
+		// 异常名称
+		comErrorLog.setExceptionName(t.getClass().getCanonicalName());
+		// 检索是否有相同类相同方法的相同异常
+		comErrorLog = errorLogDao.getComLogByPk(comErrorLog);
+		Date now = new Date();
+		if (comErrorLog != null) {
+			// 有相同的异常，更新件数等信息
+			comErrorLog.setUpdateTime(now);
+			comErrorLog.setLastUserId(lastUserId);
+			comErrorLog.setReportCount(comErrorLog.getReportCount() + 1);
+			comErrorLog.setStackTrace(writer.toString());
+			errorLogDao.updateComLog(comErrorLog);
+		} else {
+			// 没有相同的异常，插入一条异常信息
+			comErrorLog = new ComErrorLog();
+			comErrorLog.setClassName(pjp.getSignature().getDeclaringTypeName());
+			comErrorLog.setExceptionName(t.getClass().getCanonicalName());
+			comErrorLog.setUpdateTime(now);
+			comErrorLog.setCreateTime(now);
+			comErrorLog.setLastUserId(lastUserId);
+			comErrorLog.setMethodName(pjp.getSignature().getName());
+			comErrorLog.setReportCount(1);
+			comErrorLog.setStackTrace(writer.toString());
+			errorLogDao.insertComLog(comErrorLog);
+		}
+
+	}
+
+	/**
+	 * @param errorLogDao
+	 *            the errorLogDao to set
+	 */
+	public synchronized void setErrorLogDao(ErrorLogDao errorLogDao) {
+		this.errorLogDao = errorLogDao;
+	}
+
+	/**
+	 * 新的线程插入异常日志统计表
+	 */
+	@Override
+	public void run() {
+		try {
+			ErrorLoggingAroundAspect eaa = (ErrorLoggingAroundAspect) ApplicationContextHolder
+					.getBean("errorLoggingAroundAspect");
+			eaa.insertThrowable(t, pjp, lastUserId);
+		} catch (Exception e) {
+			// 异常日志统计的异常仅作记录，不再抛出
+			LOG.error(e);
+		}
+
+	}
+
+}

@@ -1,0 +1,95 @@
+package com.jzy.hio.platform.userinfo.service.impl;
+
+import java.util.Date;
+import java.util.List;
+
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.annotation.DataSource;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.entity.ImFriendAlias;
+import com.jzy.hio.platform.constant.DelflagEnum;
+import com.jzy.hio.platform.userinfo.mapper.ImFriendAliasMapper;
+import com.jzy.hio.platform.userinfo.service.ImFriendAliasService;
+import com.jzy.hio.platform.utils.CommonUtils;
+import com.jzy.hio.redis.JedisUtil;
+
+/**
+ * 备注名
+ * @author 
+ *
+ */
+@Service
+public class ImFriendAliasServiceImpl extends BaseServiceImpl<ImFriendAlias> implements ImFriendAliasService {
+
+	@Autowired
+	private ImFriendAliasMapper imFriendAliasMapper;
+	
+	/**
+	 * 查询根据uid和fid备注名
+	 */
+	@Override
+	public ImFriendAlias findByUIdFid(String uid, String fid) {
+		String tableName = CommonUtils.getTableName(ImFriendAlias.class);
+		String field = uid + "_" + fid;
+		// 缓存获取
+		ImFriendAlias alias = JedisUtil.hgetObject(tableName,field , ImFriendAlias.class);
+		if (alias == null) {
+			alias = new ImFriendAlias();
+			alias.setUid(uid);
+			alias.setFid(fid);
+			alias.setDelflag(DelflagEnum.FALSE.getValue());
+			logger.info("查询根据uid和fid查询备注名,参数：：{}",obj2json(alias));
+			alias = imFriendAliasMapper.selectOne(alias);
+			if (alias != null) {
+				JedisUtil.hsetObject(tableName, field, alias);
+			}
+		}
+		return alias;
+	}
+
+	/**
+	 * 保存备注名
+	 */
+	@Override
+	public void saveFriendAlias(ImFriendAlias alias) {
+		// 先按uid和fid删除
+		imFriendAliasMapper.deleteByUidAndFid(alias);
+		String tableName = CommonUtils.getTableName(ImFriendAlias.class);
+		JedisUtil.delRow(tableName, alias.getUid() + "_" + alias.getFid());
+		if (StringUtils.isNotBlank(alias.getAliasName())) {
+			alias.setId(CommonUtils.getTablePKId(ImFriendAlias.class));
+			alias.setDelflag(DelflagEnum.FALSE.getValue());
+			alias.setCreateDate(new Date());
+			imFriendAliasMapper.insert(alias);
+			JedisUtil.addRowCustomKey(alias.getUid() + "_" + alias.getFid() , alias);
+		}
+	}
+
+	/**
+	 * 查询好友备注
+	 * @param uid
+	 * @param fid
+	 * @return
+	 */
+	@Override
+	public ImFriendAlias getFriendAlias(String uid,String fid) {
+		String json = JedisUtil.fetchRow("im_friend_alias", uid + "_" + fid);
+		ImFriendAlias ifa = new ImFriendAlias();
+		if(StringUtils.isNotBlank(json)) {
+			ifa = Base.json2obj(json,ImFriendAlias.class);
+		}else {
+			ifa.setUid(uid);
+			ifa.setFid(fid);
+			List<ImFriendAlias> list = queryList(ifa);
+			if(null != list && list.size() > 0) {
+				ifa = list.get(0);
+				JedisUtil.addRowCustomKey(uid + "_" + fid , ifa);
+			}
+		}
+		return ifa;
+	}
+}

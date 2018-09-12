@@ -1,0 +1,71 @@
+package com.xinleju.platform.flow;
+
+import java.io.BufferedWriter;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
+import java.util.List;
+
+public class DataHandler {
+
+	public static void main(String[] args) throws IOException {
+		
+//		String baseUrl = "http://oa.xyre.com/platform-app";
+//		String pcUrl = baseUrl + "/" + msg.getUrl() + "&tendCode=" + securityUserBeanInfo.getTendCode() + "&uid=" + msg.getUserId();
+//		
+//		String mobileUrl = baseUrl + "/" + msg.getMobibleUrl();
+//		
+//		mobileUrl = SSOTokenService.processUrlTextWithSSOTokenByUserInfo(mobileUrl, 
+//				msg.getId(), msg.getLoginName(), securityUserBeanInfo.getTendId(), 
+//				securityUserBeanInfo.getTendCode());
+//		
+//		try {
+//			String redirectUrl = baseUrl + "/flowhub?pcUrl=" 
+//					+ URLEncoder.encode(pcUrl, "UTF-8") + "&mobileUrl=" + URLEncoder.encode(mobileUrl, "UTF-8");
+//			log.info("同步旧OA消息URL=" + redirectUrl);
+//			oaMsg.setLink(redirectUrl);
+//		} catch(Exception e) {
+//			
+//		}
+		
+		List<String> lines = FileUtils.readLines("new2.txt");
+		BufferedWriter writer = new BufferedWriter(new FileWriter("E:\\update.sql"));
+		for(String line : lines) {
+//			System.out.println(line);
+			String[] split = line.split(",");
+			String fdLink = convert(split[1]);
+			String update = "update sys_notify_todo set fd_link = '" + fdLink  + "' where fd_id='" + split[0]  + "'";
+			writer.write(update);
+			writer.newLine();
+		}
+		
+		writer.close();
+	}
+
+	private static String convert(String fdLink) throws UnsupportedEncodingException {
+		int indexOf = fdLink.indexOf("get+platform+token+is+fail");
+		String header = fdLink.substring(0, indexOf);
+		String mobileUrl = generateMobileUrl(fdLink);
+//		mobileUrl = URLEncoder.encode(mobileUrl, "UTF-8");
+		return header + mobileUrl;
+	}
+
+	private static String generateMobileUrl(String fdLink) {
+		
+		String baseUrl = "http://oa.xyre.com/platform-app";
+		int indexOf = fdLink.indexOf("msgId%3D");
+		int indexOf2 = fdLink.indexOf("%26tendCode%3D");
+		String msgId = fdLink.substring(indexOf + 8, indexOf2);
+		String mobileUrl = baseUrl + "/mobile/approve/approve_detail.html?msgId=" + msgId +"&users=&isback=N&opCode=NA&tabIdx=0";
+		
+		String token = "0b05108cbba24474ac39dafeb2cfa9df";
+		String redirectUri = org.apache.commons.codec.binary.Base64.encodeBase64String(mobileUrl.getBytes());
+		
+		String newMobileUrl = "http%3A%2F%2Foa.xyre.com%2Fplatform-app%2Fsys%2FthirdPartyAuthentication%2Fredirect%3Ftoken%3D"
+				+ token + "%26redirectUri%3D" + redirectUri;
+		
+		return newMobileUrl;
+	}
+
+}

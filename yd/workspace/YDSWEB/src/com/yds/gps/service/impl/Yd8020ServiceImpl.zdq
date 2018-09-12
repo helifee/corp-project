@@ -1,0 +1,154 @@
+/*
+ * @(#) Yd8020ServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东计算机社内网
+ *    SubSystem: 团购系统
+ */
+
+package com.yds.gps.service.impl;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.Iterator;
+import java.util.List;
+
+import org.springframework.stereotype.Service;
+
+import com.yds.base.service.AbstractBaseService;
+import com.yds.batch.service.BatchJobRun;
+import com.yds.common.bean.EmpInfo;
+import com.yds.common.dao.UserDao;
+import com.yds.common.service.CommonConstants.MsgTypeEnum;
+import com.yds.common.service.CommonConstants.SparkMsgIDEnum;
+import com.yds.common.service.CommonConstants.SparkSysIDEnum;
+import com.yds.gps.service.Yd8020Service;
+import com.yds.util.bean.SparkMessagerBean;
+import com.yds.util.service.DateUtil;
+import com.yds.util.service.SendMessage;
+
+@Service("yd8020Service")
+public class Yd8020ServiceImpl extends AbstractBaseService implements Yd8020Service, BatchJobRun {
+	
+	private static int[] FESTIVAL_NUMBER = {3, 8, 5, 4};
+	private static final String FEMALE = "F";
+	private static final String DATE_PATTERN = "yyyy-MM-dd";
+	private static int YOUNG_YEAR = 28;
+	private static int DAYS_OF_YEAR = 365;
+	private static String MSG_FEMAL_NOTICE = "0";
+	private static String MSG_YONG_NOTICE = "1";
+	private static String MSG_BIRTH_NOTICE = "2";
+	
+	private UserDao userDao;
+	
+	@Override
+	public void jobRun() throws Throwable {
+		
+		//通知人员IDList
+		List<String> femalIdList = new ArrayList<String>();
+		List<String> yongIdList = new ArrayList<String>();
+		List<String> birthIdList = new ArrayList<String>();
+		
+		//取得今天日期
+		String today = DateUtil.getDate();
+		int month = DateUtil.getMonth(today);
+		int day = DateUtil.getDay(today);
+		
+		//取得所有在职员工
+		List<EmpInfo> empList = this.userDao.getEmpList();
+		Iterator<EmpInfo> iter = empList.iterator();
+		while(iter.hasNext()) {
+			
+			EmpInfo empInfo = iter.next();
+			Date birth = empInfo.getBirthday();
+			if(birth == null) {
+				continue;
+			}
+			String birthday = DateUtil.setDateFormat(birth, DATE_PATTERN);
+			int month_emp = DateUtil.getMonth(birthday);
+			int day_emp = DateUtil.getDay(birthday);
+			
+			//1.妇女节
+			if(month == FESTIVAL_NUMBER[0] && day == FESTIVAL_NUMBER[1]) {
+				if(FEMALE.equals(empInfo.getEmpSex())) {
+					femalIdList.add(empInfo.getEmpId());
+				}
+			}
+			
+			//2.青年节
+			if(month == FESTIVAL_NUMBER[2] && day == FESTIVAL_NUMBER[3]) {
+				int dayCnt = DateUtil.dateBetween(birthday, today);
+				int youngLine = YOUNG_YEAR * DAYS_OF_YEAR;
+				if(dayCnt < youngLine) {
+					yongIdList.add(empInfo.getEmpId());
+				}
+			}
+			
+			//3.生日
+			if(month == month_emp && day == day_emp) {
+				birthIdList.add(empInfo.getEmpId());
+			}
+			
+		}
+		
+		//spark通知
+		if(!femalIdList.isEmpty()) {
+			sendSparkMsg(femalIdList.toArray(new String[1]), MSG_FEMAL_NOTICE);
+		}
+		if(!yongIdList.isEmpty()) {
+			sendSparkMsg(yongIdList.toArray(new String[1]), MSG_YONG_NOTICE);
+		}
+		if(!birthIdList.isEmpty()) {
+			sendSparkMsg(birthIdList.toArray(new String[1]), MSG_BIRTH_NOTICE);						
+		}
+
+	}
+	
+	/**
+	 * Spark信息的发送
+	 * 
+	 * @param idList : 被通知人ID
+	 * @param msgType ： 消息类型（"0"->妇女节提醒； "1"->青年节提醒； "2"->生日提醒）
+	 * @return
+	 */
+	private boolean sendSparkMsg(String[] idList, String msgType) {
+		
+		// Spark信息的发送
+		SparkMessagerBean sparkMessagerBean = new SparkMessagerBean();
+			
+		// 发送消息的系统ID
+		sparkMessagerBean.setSystem_id(SparkSysIDEnum.CF);
+		
+		// 发送消息的消息类型ID
+		sparkMessagerBean.setMsg_id(SparkMsgIDEnum.CF_KK);
+		
+		// 消息内部用ID
+		sparkMessagerBean.setSign(null);
+		
+		// spark 消息类型
+		sparkMessagerBean.setStatus(MsgTypeEnum.INSERT);
+		
+		// 要发送的人员一览
+		sparkMessagerBean.setEmpid(idList);
+		
+		// 消息的内容
+		if(MSG_FEMAL_NOTICE.equals(msgType)) {
+			sparkMessagerBean.setMsg_content(propMgr.getMessage("yds.gps.info.0025"));
+			
+		} else if (MSG_YONG_NOTICE.equals(msgType)) {
+			sparkMessagerBean.setMsg_content(propMgr.getMessage("yds.gps.info.0026"));
+			
+		} else if (MSG_BIRTH_NOTICE.equals(msgType)) {
+			sparkMessagerBean.setMsg_content(propMgr.getMessage("yds.gps.info.0027"));
+		} 
+		
+		SendMessage.asyncSend(sparkMessagerBean);
+		
+		return true;
+	}
+
+	public void setUserDao(UserDao userDao) {
+		this.userDao = userDao;
+	}
+
+}

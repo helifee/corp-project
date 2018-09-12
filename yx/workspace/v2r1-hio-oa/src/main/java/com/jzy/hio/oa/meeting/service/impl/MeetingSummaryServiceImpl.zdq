@@ -1,0 +1,494 @@
+
+package com.jzy.hio.oa.meeting.service.impl;
+
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.commons.lang.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cloud.context.config.annotation.RefreshScope;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.entity.MeetingActualAttendees;
+import com.jzy.hio.entity.MeetingBoardroom;
+import com.jzy.hio.entity.MeetingInfo;
+import com.jzy.hio.entity.MeetingSummary;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.exception.HioMybatisGetException;
+import com.jzy.hio.exception.HioMybatisInsertException;
+import com.jzy.hio.exception.HioMybatisQueryException;
+import com.jzy.hio.exception.HioMybatisUpdateException;
+import com.jzy.hio.oa.OaConstant;
+import com.jzy.hio.oa.contract.dto.ResultMsg;
+import com.jzy.hio.oa.meeting.controller.MeetingReserveBoardroomController;
+import com.jzy.hio.oa.meeting.dto.AccessoryIdDto;
+import com.jzy.hio.oa.meeting.dto.MeetingActualAttendeesDto;
+import com.jzy.hio.oa.meeting.dto.MeetingInfoDto;
+import com.jzy.hio.oa.meeting.dto.MeetingSummaryDto;
+import com.jzy.hio.oa.meeting.mapper.MeetingInfoMapper;
+import com.jzy.hio.oa.meeting.mapper.MeetingSummaryMapper;
+import com.jzy.hio.oa.meeting.service.MeetingActualAttendeesService;
+import com.jzy.hio.oa.meeting.service.MeetingAttendeesService;
+import com.jzy.hio.oa.meeting.service.MeetingBoardroomService;
+import com.jzy.hio.oa.meeting.service.MeetingInfoService;
+import com.jzy.hio.oa.meeting.service.MeetingSummaryService;
+import com.jzy.hio.sys.organization.dto.SkyDriveDto;
+import com.jzy.hio.utils.LoginUser;
+import com.jzy.hio.utils.OaUserUtil;
+
+@Service("meetingSummaryService")
+@RefreshScope
+public class MeetingSummaryServiceImpl extends BaseServiceImpl<MeetingSummary> implements MeetingSummaryService {
+
+	private static Logger logger = LoggerFactory.getLogger(MeetingReserveBoardroomController.class);
+	
+	@Autowired
+	private MeetingSummaryMapper meetingSummaryMapper;
+	
+	@Autowired
+	private MeetingActualAttendeesService meetingActualAttendeesService;
+	
+	@Autowired
+	private MeetingInfoService meetingInfoService;
+	
+	@Autowired
+	private MeetingInfoMapper meetingInfoMapper;
+	
+	@Autowired
+	private OaUserUtil oaUserUtil;
+	
+	@Autowired
+	private MeetingBoardroomService meetingBoardroomService;
+	
+	@Autowired
+	private MeetingAttendeesService meetingAttendeesService;
+	
+	@Value("${meetingSummaryMobileUrl}")
+	private String meetingSummaryMobileUrl;// 会议纪要移动端 url
+	
+	@Value("${meetingSummaryPcUrl}")
+	private String meetingSummaryPcUrl;// 会议纪要PC客户端url
+	
+	@Override
+	public MeetingSummaryDto queryMeetingSummaryById(String id) throws HioMybatisGetException{
+		LoginUser loginUser = super.getLoginUser();// 获取当前登录用户
+		String loginUserId = loginUser.getUserId();// 当前登录用户的userID
+		MeetingSummary meetingSummary = (MeetingSummary)super.getObjectById(id);
+		
+		if(Base.isEmpty(meetingSummary) 
+				|| Base.isEquals(OaConstant.OA_DELETE_FLAG_1, meetingSummary.getDelflag())){
+			throw new HioMybatisQueryException("查询数据不存在或者已删除!");
+		}
+		
+		// 实际参会人名字
+		// 根据会议纪要ID查询会议实际参会人员表中的实际参会人userID的list
+		List<String> meetingActualAttendeesUserIdList = meetingActualAttendeesService.queryMeetingActualAttendeesUserIdListByMeetingSummaryId(id);
+		
+		String meetingInfoId = meetingSummary.getMeetingInfoId();// 会议详情表ID
+		MeetingInfo meetingInfo = meetingInfoService.getObjectById(meetingInfoId);
+		//实际参与人不包含当前人时,进行会议人校验
+		if(!loginUser.isSuper() && (Base.isEmpty(meetingActualAttendeesUserIdList) 
+				|| !meetingActualAttendeesUserIdList.contains(meetingActualAttendeesUserIdList))){
+			//校验当前登陆人查看该会议的权限
+			ResultMsg resultMsg = meetingInfoService.checkRightForMeetingDetail(meetingInfo);
+			if(Base.isNotEmpty(resultMsg) && !resultMsg.isSuccess()){
+				throw new HioMybatisGetException(resultMsg.getMsg());
+			}
+		}
+		
+		MeetingSummaryDto meetingSummaryDto = new MeetingSummaryDto();// 往前台返回的
+		BeanUtils.copyProperties(meetingSummary, meetingSummaryDto);
+		logger.info("根据Id获取会议纪要，id:{}",id);
+		
+		if(Base.isNotEmpty(meetingActualAttendeesUserIdList)){
+			List<SkyDriveDto> dtoList = oaUserUtil.selectUsersByListAndStatus(meetingActualAttendeesUserIdList,loginUser.getTendId(),OaConstant.OA_USER_QUERY_STATUS_3);
+			if(Base.isNotEmpty(dtoList)){
+				List<MeetingActualAttendeesDto> meetingActualAttendeesDtoList = new ArrayList<MeetingActualAttendeesDto>();
+				//TODO 后续删除idList、nameList
+				List<String> nameList = new ArrayList<String>();
+				List<String> idList = new ArrayList<String>();
+				for(SkyDriveDto t : dtoList){
+					MeetingActualAttendeesDto actualAtt = new MeetingActualAttendeesDto();
+					actualAtt.setActualAttendeesId(t.getId());
+					actualAtt.setActualAttendeesName(t.getName());
+					meetingActualAttendeesDtoList.add(actualAtt);
+					nameList.add(t.getName());
+					idList.add(t.getId());
+				}
+				meetingSummaryDto.setMeetingActualAttendeesDtoList(meetingActualAttendeesDtoList);
+				meetingSummaryDto.setMeetingActualAttendeesIdList(idList);
+				// 实际参会人名字
+				meetingSummaryDto.setActualAttendeesNameList(nameList);
+			}
+		}
+		
+		// 根据表名bean生成Redis里的表主键id
+		AccessoryIdDto accessoryIdDto = meetingInfoService.createRedisId("MeetingSummary",MeetingSummary.class);
+		accessoryIdDto.setBusinessId(id);
+		meetingSummaryDto.setAccessoryIdDto(accessoryIdDto);
+		
+		if (meetingInfo != null) {
+			String mtTitle = meetingInfo.getMtTitle();
+			meetingSummaryDto.setMtTitle(mtTitle);
+			String boardroomType = meetingInfo.getBoardroomType();// 会议室类型：1预定，0不是预定
+			String boardroomAddress = meetingInfo.getBoardroomAddress();// 会议室地点
+			if (!StringUtils.isEmpty(boardroomType)) {
+				if (OaConstant.BOARDROOM_TRUE.equals(boardroomType)) {
+					MeetingBoardroom meetingBoardroom = meetingBoardroomService.getObjectById(boardroomAddress);// 查询会议室
+					if (meetingBoardroom != null) {
+						String meetingBoardroomName = meetingBoardroom.getName();// 会议室名称
+						meetingSummaryDto.setBoardroomAddressName(meetingBoardroomName);// 计划召开地点
+					}
+				} else {
+					meetingSummaryDto.setBoardroomAddressName(boardroomAddress);// 计划召开地点
+				}
+			}
+			Date beginDate = meetingInfo.getBeginDate();// 预计开始日期
+			meetingSummaryDto.setBeginDate(beginDate);
+			Date endDate = meetingInfo.getEndDate();// 预计结束日期
+			meetingSummaryDto.setEndDate(endDate);
+
+			// 通过会议ID查询计划会议参会人员userId
+		    List<String> meetingAttendeesUserIdList = meetingAttendeesService.selectMeetingAttendeesUserIdListByMeetingId(meetingInfo.getId());	    
+		    if(Base.isEmpty(meetingAttendeesUserIdList)){
+		    	meetingAttendeesUserIdList = new ArrayList<String>();
+		    }
+		    //组织人
+		    if(Base.isNotEmpty(meetingInfo.getMeetingOrganizationId()) 
+		    		&& !meetingAttendeesUserIdList.contains(meetingInfo.getMeetingOrganizationId())){
+		    	meetingAttendeesUserIdList.add(meetingInfo.getMeetingOrganizationId());
+		    }
+		    
+		    //主持人
+		    if(Base.isNotEmpty(meetingInfo.getEmceeId()) 
+		    		&& !meetingAttendeesUserIdList.contains(meetingInfo.getEmceeId())){
+		    	meetingAttendeesUserIdList.add(meetingInfo.getEmceeId());
+		    }
+		    
+		    //要求会议参会人员名字
+		    List<String> meetingAttendeesNameList = oaUserUtil.selectUserNameByListAndStatus(meetingAttendeesUserIdList,loginUser.getTendId(),OaConstant.OA_USER_QUERY_STATUS_3);
+		    meetingSummaryDto.setMeetingAttendeesNameList(meetingAttendeesNameList);
+		    
+		    // 查询记录人姓名
+		    String recorderId = meetingInfo.getRecorderId();// 记录人员id
+		    String recorderName = oaUserUtil.selectUserNameByTendIdAndStatus(recorderId, loginUser.getTendId(),OaConstant.OA_USER_QUERY_STATUS_3);
+			meetingSummaryDto.setRecorderName(recorderName);
+		    if (!StringUtils.isEmpty(loginUserId) && !StringUtils.isEmpty(recorderId)) {
+				if (loginUserId.equals(recorderId)) {
+					meetingSummaryDto.setExistUpdateButton(OaConstant.UPDATE_BUTTON_TRUE);
+				}
+			}
+			
+		}
+		return meetingSummaryDto;
+	}
+	
+	@Override
+	public Object saveMeetingSummaryDto(MeetingSummaryDto meetingSummaryDto) throws HioMybatisInsertException{
+		String loginUserId = meetingSummaryDto.getLoginUserId();// 当前登录用户的userID
+		String meetingInfoId = meetingSummaryDto.getMeetingInfoId();
+		
+		// 查询数据库里该会议是否有会议纪要，如果有，不让新建
+		MeetingSummary dbMeetingSummary = new MeetingSummary();
+		dbMeetingSummary.setMeetingInfoId(meetingInfoId);
+		dbMeetingSummary.setDelflag(0);
+		List<MeetingSummary> dbMeetingSummaryList = queryList(dbMeetingSummary);
+		if (dbMeetingSummaryList != null && dbMeetingSummaryList.size() > 0) {
+			throw new HioMybatisInsertException(HioException.meetingSummaryExist.getMessage());
+		}
+		//人员离职/删除提示不能保存
+		ResultMsg resultMsg = this.checkUserEffective(meetingSummaryDto, OaConstant.OA_MEETING_SAVE);
+		if(Base.isNotEmpty(resultMsg) && !resultMsg.isSuccess()){
+			throw new HioMybatisInsertException(resultMsg.getMsg());
+		}
+		
+		MeetingSummary meetingSummary = new MeetingSummary();
+		BeanUtils.copyProperties(meetingSummaryDto,meetingSummary);
+		Integer count = super.save(meetingSummary);
+		logger.info("保存会议纪要表成功，会议详情表ID：{}",meetingInfoId);
+		String meetingSummaryId = meetingSummary.getId();
+		
+		// 会议实际参会人员
+		List<String> meetingActualAttendeesIdList = meetingSummaryDto.getMeetingActualAttendeesIdList();
+		if (meetingActualAttendeesIdList != null && meetingActualAttendeesIdList.size() > 0) {
+			for (String meetingActualAttendeesId : meetingActualAttendeesIdList) {
+				MeetingActualAttendees meetingActualAttendees = new MeetingActualAttendees();
+				meetingActualAttendees.setMeetingSummaryId(meetingSummaryId);
+				meetingActualAttendees.setActualAttendeesId(meetingActualAttendeesId);
+				meetingActualAttendeesService.save(meetingActualAttendees);
+			}
+			logger.info("保存会议纪要表成功，会议详情表ID：{}",meetingInfoId);
+		}
+
+		// 发送cc
+		// 3、创建会议纪要，发送给除会议纪要记录人之外的所有（会议+会议纪要）相关人员，一定要去重
+		List<String> ccUserIdList = makeCcUserIdList(meetingSummaryDto);
+		if (ccUserIdList != null && ccUserIdList.size() > 0) {
+			if (ccUserIdList.contains(getUserIdIM())) {
+				ccUserIdList.remove(getUserIdIM());
+			}
+		}
+		// 调用吴飞发送cc消息的方法
+		if (ccUserIdList != null && ccUserIdList.size() > 0) {
+			Map<String, Object> map = new HashMap<String, Object>();
+			map.put("summaryUser", meetingSummary.getCreatePersonName());
+			SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm");
+			String summaryTime = sdf.format(meetingSummary.getCreateDate());
+			map.put("summaryTime", summaryTime);
+			map.put("meetingType", 4);
+			MeetingInfo meeting = meetingInfoService.getObjectById(meetingInfoId);
+			String msg = meeting.getMtTitle()+"纪要";
+			map.put("mobileUrl", meetingSummaryMobileUrl + meetingSummaryId + "?tendId="+getTendId());
+			//TODO 暂时这版打开会议详情页面
+	  		map.put("pcUrl", meetingSummaryPcUrl + meetingInfoId + "?tendId="+getTendId());
+			meetingInfoService.sendCcMessage(ccUserIdList, map, msg);
+			logger.info("发送cc消息成功，会议id为：{},会议纪要id为：{}",meetingSummaryDto.getMeetingInfoId(),meetingSummaryId);
+		} else {
+			logger.info("发送cc消息失败，会议id为：{},会议纪要id为：{}",meetingSummaryDto.getMeetingInfoId(),meetingSummaryId);
+		}
+		
+		return count;
+	}
+
+	@Override
+	public Object updateMeetingSummaryDto(MeetingSummaryDto meetingSummaryDto) throws HioMybatisUpdateException{
+		String loginUserId = meetingSummaryDto.getLoginUserId();// 当前登录用户的userID
+		
+		MeetingSummary meetingSummary = new MeetingSummary();
+		BeanUtils.copyProperties(meetingSummaryDto, meetingSummary);
+		String meetingInfoId = meetingSummary.getMeetingInfoId();
+		String id = meetingSummaryDto.getId();
+		String meetingSummaryId = meetingSummary.getId();
+
+		//人员离职/删除提示不能保存
+		ResultMsg resultMsg = this.checkUserEffective(meetingSummaryDto, OaConstant.OA_MEETING_UPDATE);
+		if(Base.isNotEmpty(resultMsg) && !resultMsg.isSuccess()){
+			throw new HioMybatisUpdateException(resultMsg.getMsg());
+		}
+		// 发送cc
+		// 4、编辑会议纪要中的实际与会人员（新增+变更）要求补发
+		MeetingSummary oldMeetingSummary = super.getObjectById(id);
+		// 4、编辑会议纪要中的实际与会人员（新增+变更）要求补发，发送cc消息的userid的list，需去重
+		
+		//需修改 校验会议中包含此人的，也不用发消息
+		//TODO
+		
+		List<String> ccUserIdList = compareOleNewMeetingSummary(oldMeetingSummary,meetingSummaryDto);
+		if (ccUserIdList != null && ccUserIdList.size() > 0) {
+			if (ccUserIdList.contains(getUserIdIM())) {
+				ccUserIdList.remove(getUserIdIM());
+			}
+		}
+		
+		Integer count = super.update(meetingSummary);	
+		
+		// 调用吴飞发送cc消息的方法
+		if (ccUserIdList != null && ccUserIdList.size() > 0) {
+			Map<String, Object> map = new HashMap<String, Object>();
+			map.put("summaryUser", meetingSummary.getUpdatePersonName());
+			SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm");
+			String summaryTime = sdf.format(oldMeetingSummary.getCreateDate());
+			map.put("summaryTime", summaryTime);
+			map.put("meetingType", 4);
+			map.put("mobileUrl",  meetingSummaryMobileUrl + meetingSummaryId + "?tendId="+getTendId());
+	  		map.put("pcUrl", meetingSummaryPcUrl + meetingInfoId + "?tendId="+getTendId());
+			MeetingInfo meeting = meetingInfoService.getObjectById(meetingInfoId);
+			String msg = meeting.getMtTitle()+"纪要";
+			meetingInfoService.sendCcMessage(ccUserIdList, map, msg);
+			logger.info("发送cc消息成功，会议id为：{},会议纪要id为：{}",meetingInfoId,id);
+		} else {
+			logger.info("发送cc消息失败，会议id为：{},会议纪要id为：{}",meetingInfoId,id);
+		}
+		
+		logger.info("编辑会议纪要表成功，会议id为：{},会议纪要id为：{}",meetingInfoId,id);
+		
+		// 先全部删除，再全部添加
+		MeetingActualAttendees delMeetingActualAttendees = new MeetingActualAttendees();
+		delMeetingActualAttendees.setMeetingSummaryId(meetingSummaryId);
+		delMeetingActualAttendees.setDelflag(0);
+		List<MeetingActualAttendees> delMeetingActualAttendeesList = meetingActualAttendeesService.queryList(delMeetingActualAttendees);
+		if (delMeetingActualAttendeesList != null && delMeetingActualAttendeesList.size() > 0) {
+			for (MeetingActualAttendees meetingActualAttendees : delMeetingActualAttendeesList) {
+				meetingActualAttendeesService.deletePseudoObjectById(meetingActualAttendees.getId());
+			}
+			logger.info("删除会议实际参会人员成功，会议id为：{},会议纪要id为：{}",meetingInfoId,id);
+		}
+		
+		// 会议实际参会人员
+		List<String> meetingActualAttendeesIdList = meetingSummaryDto.getMeetingActualAttendeesIdList();
+		if (meetingActualAttendeesIdList != null && meetingActualAttendeesIdList.size() > 0) {
+			for (String meetingActualAttendeesId : meetingActualAttendeesIdList) {
+				MeetingActualAttendees meetingActualAttendees = new MeetingActualAttendees();
+				meetingActualAttendees.setMeetingSummaryId(meetingSummaryId);
+				meetingActualAttendees.setActualAttendeesId(meetingActualAttendeesId);
+				meetingActualAttendeesService.save(meetingActualAttendees);
+			}
+			logger.info("保存会议实际参会人员成功，会议id为：{},会议纪要id为：{}",meetingInfoId,id);
+		}
+		return count;
+	}
+
+	/**
+	 * 3、创建会议纪要，发送给除会议纪要记录人之外的所有（会议+会议纪要）相关人员，一定要去重
+	 * 查询出发送cc消息的userid的list
+	 * 
+	 * @author shangb
+	 * @date 2018年4月3日 下午8:53:20
+	 * @param meetingInfo
+	 * @return
+	 */
+	public List<String> makeCcUserIdList(MeetingSummaryDto meetingSummaryDto) {
+		List<String> summerUserIdList = new ArrayList<String>();// 需要发送cc消息的userID的list
+		String meetingInfoId = meetingSummaryDto.getMeetingInfoId();// 会议详情表ID
+		LoginUser loginUser = getLoginUser();
+		String loginId = loginUser.getUserId();
+		String tendId = loginUser.getTendId();
+		
+		//会议对象
+		MeetingInfoDto meetingInfoDto = meetingInfoService.queryMeetingInfoById(meetingInfoId);
+		//查询出发送cc消息的userid的list，需去重
+		//1、创建纪要时发送给出创建人之外的所有相关人员
+		List<String> ccUserIdList = meetingInfoService.makeCcUserIdList(meetingInfoDto);
+		//会议创建人需加上
+		if(Base.isNotEmpty(meetingInfoDto.getCreatePersonId())){
+			summerUserIdList.add(meetingInfoDto.getCreatePersonId());
+		}
+		//实际参加人
+		List<String> meetingActualAttendeesList = meetingSummaryDto.getMeetingActualAttendeesIdList();
+		if (Base.isNotEmpty(meetingActualAttendeesList)) {
+			summerUserIdList.addAll(meetingActualAttendeesList);
+		}
+		
+		//查询imId
+		if (Base.isNotEmpty(summerUserIdList)) {
+			//调用接口获取用户信息
+			List<SkyDriveDto> uList = oaUserUtil.selectUsersByListAndStatus(
+					summerUserIdList, tendId,OaConstant.OA_USER_QUERY_STATUS_0);
+			//循环获取imId
+			if(Base.isNotEmpty(uList)){
+				for(SkyDriveDto dto : uList){
+					//去重
+					if(Base.isNotEmpty(dto) && Base.isNotEmpty(dto.getImUserId()) 
+							&& !ccUserIdList.contains(dto.getImUserId())){
+						
+						ccUserIdList.add(dto.getImUserId());
+					}
+				}
+			}		
+		}
+		//去除会议纪要人
+		String loginImId = oaUserUtil.queryImUserIdByOaUserId(loginId, tendId);
+		if(Base.isNotEmpty(ccUserIdList) && ccUserIdList.contains(loginImId)){
+			ccUserIdList.remove(loginId);
+		}
+		
+		logger.info("创建会议纪要，查询出发送cc消息的userid的list成功");
+		return ccUserIdList;
+	}
+	
+	/**
+	 * 4、编辑会议纪要中的实际与会人员（新增）要求补发
+	 * @author shangb
+	 * @date 2018年4月23日 下午3:30:46
+	 * @return
+	 */
+	public List<String> compareOleNewMeetingSummary(MeetingSummary oldMeetingSummary,MeetingSummaryDto meetingSummaryDto) {
+		String oldId = oldMeetingSummary.getId();
+		// 根据会议纪要ID查询会议实际参会人员表中的实际参会人userID的list
+	    List<String> oldMeetingActualAttendeesUserIdList = meetingActualAttendeesService.queryMeetingActualAttendeesUserIdListByMeetingSummaryId(oldId);
+	    
+		//String id = meetingSummary.getId();
+		// 根据会议纪要ID查询会议实际参会人员表中的实际参会人userID的list
+	    //List<String> meetingActualAttendeesUserIdList = meetingActualAttendeesService.queryMeetingActualAttendeesUserIdListByMeetingSummaryId(id);
+	    List<String> meetingActualAttendeesUserIdList = meetingSummaryDto.getMeetingActualAttendeesIdList();
+	    Set<String> ccUserIdSet = new HashSet<String>();// 需要发送cc消息的userID的set
+		
+		// 实际参会人员userId
+		if (oldMeetingActualAttendeesUserIdList != null && oldMeetingActualAttendeesUserIdList.size() > 0 
+				&& meetingActualAttendeesUserIdList != null && meetingActualAttendeesUserIdList.size() > 0 
+				&& !oldMeetingActualAttendeesUserIdList.containsAll(meetingActualAttendeesUserIdList)) {
+			for (String meetingActualAttendeesUserId : meetingActualAttendeesUserIdList) {
+				if (!oldMeetingActualAttendeesUserIdList.contains(meetingActualAttendeesUserId)) {
+					ccUserIdSet.add(meetingActualAttendeesUserId);
+				}
+			}
+		} else if ((oldMeetingActualAttendeesUserIdList == null || oldMeetingActualAttendeesUserIdList.size() <= 0) 
+				&& (meetingActualAttendeesUserIdList != null && meetingActualAttendeesUserIdList.size() > 0)) {
+			ccUserIdSet.addAll(meetingActualAttendeesUserIdList);
+		}
+		
+		List<String> ccUserIdList = new ArrayList<String>();
+		if (ccUserIdSet != null && ccUserIdSet.size() > 0) {
+			ccUserIdList.addAll(ccUserIdSet);
+		}
+		logger.info("编辑会议纪要，查询出发送cc消息的userid的list成功");
+		List<String> imIdList = new ArrayList<String>();
+		for(String userId : ccUserIdList) {
+			String imId = oaUserUtil.queryImUserIdByOaUserId(userId, getLoginUser().getTendId());
+			imIdList.add(imId);
+		}
+		return imIdList;
+	}
+	
+	
+	/**
+	 * 
+	 * <p>校验参与人是否有效:离职/删除<br>
+	 * @author wliang
+	 * @date 2018年6月27日 下午10:17:59 
+	 * @param meetingSummaryDto
+	 * @param type:1-保存,2-修改
+	 * @return
+	 * @throws HioMybatisQueryException
+	 */
+	public ResultMsg checkUserEffective(MeetingSummaryDto meetingSummaryDto,int type) throws HioMybatisQueryException{
+		ResultMsg resMsg = new ResultMsg();
+		resMsg.setSuccess(true);
+		LoginUser loginUser = getLoginUser();
+		
+		if(Base.isNotEmpty(meetingSummaryDto)){
+			//会议实际参会人员
+			List<String> userList = meetingSummaryDto.getMeetingActualAttendeesIdList();
+			
+			if(Base.isNotEmpty(userList)){
+				//获取人员信息
+				List <SkyDriveDto> uList = oaUserUtil.selectUsersByListAndStatus(
+						userList,loginUser.getTendId(),OaConstant.OA_USER_QUERY_STATUS_3);
+				if(Base.isNotEmpty(uList)){
+					StringBuffer sb = null;
+					for(SkyDriveDto dto : uList){
+						//用户删除/离职不能保存
+						if(Base.isEquals(OaConstant.CONTRACT_DEL_FLAG_1, dto.getDelflag())
+								|| Base.isEquals(OaConstant.OA_WORK_STATUS_2, dto.getWorkStatus())){
+							if(Base.isEmpty(sb)){
+								sb = new StringBuffer();
+								sb.append("存在离职/删除人员:");
+							}
+							sb.append(dto.getName()).append(",");
+						}			
+					}
+					if(Base.isNotEmpty(sb)){
+						sb.append("请重新选择!");
+						resMsg.setSuccess(false);
+						resMsg.setMsg(sb.toString());
+					}
+				}
+			}
+		}
+		return resMsg;
+	}
+	
+	
+}

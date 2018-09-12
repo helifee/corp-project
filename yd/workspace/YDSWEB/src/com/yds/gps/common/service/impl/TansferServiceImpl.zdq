@@ -1,0 +1,364 @@
+/*
+ * @(#)TansferServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 社内团购
+ */
+
+package com.yds.gps.common.service.impl;
+
+import java.util.Date;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.springframework.stereotype.Service;
+
+import com.yds.base.dao.AbstractBaseDao;
+import com.yds.base.service.AbstractBaseService;
+import com.yds.common.bean.ComCodeMaint;
+import com.yds.common.service.ComCodeInfoService;
+import com.yds.common.service.ComSequenceService;
+import com.yds.common.service.SessionService;
+import com.yds.common.service.CommonConstants.MsgTypeEnum;
+import com.yds.common.service.CommonConstants.SparkMsgIDEnum;
+import com.yds.common.service.CommonConstants.SparkSysIDEnum;
+import com.yds.gps.bean.GpsAccount;
+import com.yds.gps.bean.GpsExchangeHis;
+import com.yds.gps.bean.TansferCondA;
+import com.yds.gps.common.dao.TansferDao;
+import com.yds.gps.common.service.TansferService;
+import com.yds.gps.service.GpsConstants;
+import com.yds.gps.service.TansferException;
+import com.yds.gps.service.GpsConstants.TansferStatusEnum;
+import com.yds.util.bean.SparkMessagerBean;
+import com.yds.util.service.DateUtil;
+import com.yds.util.service.NumberUtil;
+import com.yds.util.service.SendMessage;
+
+/**
+ * @see TansferService
+ */
+@Service("tansferService")
+public class TansferServiceImpl extends AbstractBaseService implements TansferService {
+	
+	private static final Log LOG = LogFactory.getLog(AbstractBaseDao.class);
+	
+	private TansferDao tansferDao;
+	private ComSequenceService comSequenceService;
+	private ComCodeInfoService comCodeInfoService;
+	private static final String DATE_FORMAT = "yyyy-MM-dd HH:mm:ss";
+	
+	/**
+	 * 转账处理，生成对应的履历
+	 * @param tansferCondA (交易类型、交易金额、收支区分为必须项)
+	 * @param isLess 是否允许余额为负
+	 * @return 转账状态消息
+	 */
+	@Override
+	public void tansfer(TansferCondA tansferCondA, boolean...isLess) throws TansferException {
+		// 转入ID
+		String inId = tansferCondA.getInId();
+		// 转出ID
+		String outId = tansferCondA.getOutId();
+		// 交易类型
+		String exType = tansferCondA.getExType();
+		// 收支区分
+		String ioFlag = tansferCondA.getIoFlag();
+		// 转入备注
+		String inRemark = tansferCondA.getExRemarksI();
+		// 转出备注
+		String outRemark = tansferCondA.getExRemarksO();
+		
+		// 判断参数格式
+		// 转入参数
+		if ((inId != null && !"".equals(inId)) && (null == inRemark || "".equals(inRemark))) {
+			throw new TansferException(TansferStatusEnum.ERRORFORMAT);
+		}
+		// 转出参数
+		if ((outId != null && !"".equals(outId)) && (null == outRemark || "".equals(outRemark))) {
+			throw new TansferException(TansferStatusEnum.ERRORFORMAT);
+		}
+		// 收支
+		if (null == ioFlag	|| "".equals(ioFlag)) {
+			throw new TansferException(TansferStatusEnum.ERRORFORMAT);
+		}
+		// 交易类型
+		if (null == exType	|| "".equals(exType)) {
+			throw new TansferException(TansferStatusEnum.ERRORFORMAT);
+		}
+		
+		// 现金交易
+		if (GpsConstants.EX_CASH.equals(exType)) {
+			if (GpsConstants.INCOME.equals(ioFlag)) {
+				// 转入员工账户取得
+				GpsAccount account = tansferDao.getGpsAccount(inId);
+				// 账户不存在
+				if (account == null) {
+					// 设置新账户
+					GpsAccount newAcc = new GpsAccount();
+					newAcc.setAccId(inId);
+					newAcc.setAccFlag(GpsConstants.ACC_PERSON);
+					newAcc.setAccSum(0D);
+					// 生成新账户
+					tansferDao.insertGpsAccount(newAcc);
+				}
+			} else {
+				// 转出账户的余额取得
+				double accSum = tansferDao.getGpsAccount(outId).getAccSum();
+				if ((isLess.length == 0 || !isLess[0]) && accSum < tansferCondA.getExMoney()) {
+					
+					// 账户余额不足
+					throw new TansferException(TansferStatusEnum.FUNDSLIMITED);
+				}
+			}
+		// 转账、团购、咖啡
+		} else {
+		
+			if (!"".equals(inId) && inId != null) {
+				// 转入员工账户取得
+				GpsAccount account = tansferDao.getGpsAccount(inId);
+				// 账户不存在
+				if (account == null) {
+
+					// 设置新账户
+					GpsAccount newAcc = new GpsAccount();
+					newAcc.setAccId(inId);
+					newAcc.setAccFlag(GpsConstants.ACC_PERSON);
+					newAcc.setAccSum(0D);
+					// 生成新账户
+					tansferDao.insertGpsAccount(newAcc);
+				}
+			}
+			
+			if (!"".equals(outId) && outId != null) {
+				// 转出账户的余额取得
+				GpsAccount gpsAccount = tansferDao.getGpsAccount(outId);
+				if (null == gpsAccount){
+					gpsAccount = new GpsAccount();
+					gpsAccount.setAccId(outId);
+					gpsAccount.setAccFlag(GpsConstants.ACC_PERSON);
+					gpsAccount.setAccSum(0);
+					
+				}
+				double accSum = gpsAccount.getAccSum();
+				
+				if ((isLess.length == 0 || !isLess[0]) && accSum < tansferCondA.getExMoney()) {
+					
+					// 账户余额不足
+					throw new TansferException(TansferStatusEnum.FUNDSLIMITED);
+				}
+			}
+		}
+
+		// 转账处理
+		try {
+			tansferDeal(tansferCondA);
+			try {
+				if (isLess[0] && null != outId && !"".equals(outId) && (!GpsConstants.CUSTOMERS_ACCOUNT.equals(outId) || !GpsConstants.COFFEE_ACCOUNT.equals(outId))) {
+					// 转出账户的余额取得
+					double account = tansferDao.getGpsAccount(outId).getAccSum();
+					if (account < 0) {
+						// Spark信息的发送
+						SparkMessagerBean sparkMessagerBean = new SparkMessagerBean();
+						// 消息的链接
+						sparkMessagerBean.setMsg_url("");
+						// 发送消息的系统ID
+						sparkMessagerBean.setSystem_id(SparkSysIDEnum.AC);
+						// 发送消息的消息类型ID
+						sparkMessagerBean.setMsg_id(SparkMsgIDEnum.AC);
+						// 消息内部用ID
+						sparkMessagerBean.setSign("");
+						// spark 消息类型
+						sparkMessagerBean.setStatus(MsgTypeEnum.INSERT);
+						// 要发送的人员一览
+						sparkMessagerBean.setEmpid(new String[]{outId});
+						// 消息的内容
+						sparkMessagerBean.setMsg_content(propMgr.getMessage("yds.gps.error.0003"));
+						
+						SendMessage.asyncSend(sparkMessagerBean);
+					}
+				}
+			} catch (Exception e) {
+				LOG.error(e);
+			}
+		} catch (Exception e) {
+			LOG.error(e);
+			throw new TansferException(TansferStatusEnum.ERROR);
+		}
+	}
+
+	/**
+	 * 条件bean转化为数据库bean
+	 * @param tansferCondA
+	 * @return
+	 * @throws Exception 
+	 */
+	private GpsExchangeHis tansferCondATOexchangeHis(TansferCondA tansferCondA, GpsAccount account, String ioFlag) throws Exception {
+		// 交易ID生成
+		String exchangeNo = comSequenceService.getNextSequence("GPS_EXCHANGE_HIS","EXCHANGE_NO", 8);
+
+		// 取得登录用户ID
+		String userId = SessionService.getLoginUserId();
+		
+		GpsExchangeHis exchangeHis = new GpsExchangeHis();
+		// 交易NO
+		exchangeHis.setExchangeNo(exchangeNo);
+		// 账户ID
+		exchangeHis.setAccId(account.getAccId());
+		// 账户区分
+		exchangeHis.setAccFlag(account.getAccFlag());
+		// 交易类型
+		exchangeHis.setExType(tansferCondA.getExType());
+		// 交易时间
+		if (null != tansferCondA.getExTime()) {
+			exchangeHis.setExTime(DateUtil.dateToString(tansferCondA.getExTime(),DATE_FORMAT));
+		} else {
+			exchangeHis.setExTime(DateUtil.dateToString(new Date(),DATE_FORMAT));
+		}
+		// 收支区分
+		exchangeHis.setIoFlag(ioFlag);
+		// 交易金额
+		exchangeHis.setExMoney(tansferCondA.getExMoney());
+		// 剩余金额
+		exchangeHis.setBalance(account.getAccSum());
+		// 订单ID
+		exchangeHis.setOrderId(tansferCondA.getOrderId());
+		// 备注
+		if (GpsConstants.INCOME.equals(ioFlag)) {		
+			exchangeHis.setExRemarks(tansferCondA.getExRemarksI());
+		} else {
+			exchangeHis.setExRemarks(tansferCondA.getExRemarksO());
+		}
+		// 操作者ID
+		exchangeHis.setOperatorId(userId);
+		
+		return exchangeHis;
+	}
+	
+	/**
+	 * 转账处理
+	 * @return
+	 * @throws Exception 
+	 */
+	private void tansferDeal(TansferCondA tansferCondA) throws Exception {
+		// 转入账户
+		GpsAccount accountI = new GpsAccount();
+		
+		// 转出账户
+		GpsAccount accountO = new GpsAccount();
+		
+		// 转入ID
+		String inId = tansferCondA.getInId();
+		
+		// 转出ID
+		String outId = tansferCondA.getOutId();
+		
+		// 交易类型
+		String exType = tansferCondA.getExType();
+		
+		// 收支区分
+		String ioFlag = tansferCondA.getIoFlag();
+		
+		// 区分表收支的附加属性
+		// 收入
+		ComCodeMaint codeMaintI = comCodeInfoService.getDetailComCodeInfo("GPS", "IO_FLAG", GpsConstants.INCOME);
+		String budgetI = codeMaintI == null ? "1" : codeMaintI.getPro1();
+		// 支出		
+		ComCodeMaint codeMaintO = comCodeInfoService.getDetailComCodeInfo("GPS", "IO_FLAG", GpsConstants.EXPENSES);
+		String budgetO = codeMaintO == null ? "-1" : codeMaintO.getPro1();
+		
+		// 现金交易
+		if (GpsConstants.EX_CASH.equals(exType)) {
+			if (GpsConstants.INCOME.equals(ioFlag)) {
+
+				// 账户设置
+				accountI = tansferDao.getGpsAccount(inId);
+				accountI.setAccSum(NumberUtil.doubleFormat(accountI.getAccSum() + tansferCondA.getExMoney()*Double.valueOf(budgetI)));
+				
+				// 转账处理
+				tansferDao.updateGpsAccount(accountI);
+				// 生成交易履历
+				tansferDao.insertGpsExchangeHis(tansferCondATOexchangeHis(tansferCondA, accountI, ioFlag));
+			} else {
+
+				// 账户设置
+				accountO = tansferDao.getGpsAccount(outId);
+				accountO.setAccSum(NumberUtil.doubleFormat(accountO.getAccSum() + tansferCondA.getExMoney()*Double.valueOf(budgetO)));
+				
+				// 转账处理
+				tansferDao.updateGpsAccount(accountO);
+				// 生成交易履历
+				tansferDao.insertGpsExchangeHis(tansferCondATOexchangeHis(tansferCondA, accountO, ioFlag));
+			}
+		// 转账、团购、咖啡
+		} else {
+			// 单方处理flag
+			boolean singleFlag = false;
+			// 交易对象临时Id
+			String tempId = "";
+			String budget = "1";
+			// 只有转入的时候
+			if ((!"".equals(inId) && inId != null) && ("".equals(outId) || outId == null)) {
+				singleFlag = true;
+				tempId = inId;
+				budget = budgetI;
+			}
+			// 只有转出的时候
+			if ((!"".equals(outId) && outId != null) && ("".equals(inId) || inId == null)) {
+				singleFlag = true;
+				tempId = outId;
+				budget = budgetO;
+			}
+			// 单方处理情况
+			if (singleFlag) {
+				// 账户取得
+				GpsAccount account = tansferDao.getGpsAccount(tempId);
+
+				// 转账设置
+				account.setAccSum(NumberUtil.doubleFormat(account.getAccSum() + tansferCondA.getExMoney()*Double.valueOf(budget)));
+				
+				// 转账处理
+				tansferDao.updateGpsAccount(account);
+				// 生成交易履历
+				tansferDao.insertGpsExchangeHis(tansferCondATOexchangeHis(tansferCondA, account, ioFlag));
+			} else {
+				try {
+					// 转入账户处理
+					accountI = tansferDao.getGpsAccountForUpdate(inId);
+					accountI.setAccSum(NumberUtil.doubleFormat(accountI.getAccSum() + tansferCondA.getExMoney()*Double.valueOf(budgetI)));
+					tansferDao.updateGpsAccount(accountI);
+					tansferDao.insertGpsExchangeHis(tansferCondATOexchangeHis(tansferCondA, accountI, GpsConstants.INCOME));
+					// 转出账户处理
+					accountO = tansferDao.getGpsAccountForUpdate(outId);
+					accountO.setAccSum(NumberUtil.doubleFormat(accountO.getAccSum() + tansferCondA.getExMoney()*Double.valueOf(budgetO)));
+					tansferDao.updateGpsAccount(accountO);
+					tansferDao.insertGpsExchangeHis(tansferCondATOexchangeHis(tansferCondA, accountO, GpsConstants.EXPENSES));
+				} catch (Exception e) {
+					throw e;
+				} finally {
+					tansferDao.updateGpsAccountForUpdate(accountI);
+					tansferDao.updateGpsAccountForUpdate(accountO);
+				}
+			}
+		}
+		
+	}
+	
+	public TansferDao getTansferDao() {
+		return tansferDao;
+	}
+
+	public void setTansferDao(TansferDao tansferDao) {
+		this.tansferDao = tansferDao;
+	}
+
+	public void setComSequenceService(ComSequenceService comSequenceService) {
+		this.comSequenceService = comSequenceService;
+	}
+
+	public void setComCodeInfoService(ComCodeInfoService comCodeInfoService) {
+		this.comCodeInfoService = comCodeInfoService;
+	}
+
+}

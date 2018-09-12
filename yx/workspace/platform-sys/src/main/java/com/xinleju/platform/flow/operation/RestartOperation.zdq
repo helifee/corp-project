@@ -1,0 +1,250 @@
+package com.xinleju.platform.flow.operation;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.log4j.Logger;
+
+import com.xinleju.platform.flow.dto.ApprovalSubmitDto;
+import com.xinleju.platform.flow.enumeration.ACStatus;
+import com.xinleju.platform.flow.enumeration.ApproverStatus;
+import com.xinleju.platform.flow.enumeration.InstanceStatus;
+import com.xinleju.platform.flow.enumeration.PostStatus;
+import com.xinleju.platform.flow.enumeration.TaskStatus;
+import com.xinleju.platform.flow.model.ACUnit;
+import com.xinleju.platform.flow.model.ApproverUnit;
+import com.xinleju.platform.flow.model.InstanceUnit;
+import com.xinleju.platform.flow.model.PostUnit;
+import com.xinleju.platform.flow.model.TaskUnit;
+import com.xinleju.platform.flow.operation.concurrent.CompetitionStrategy;
+import com.xinleju.platform.flow.operation.concurrent.ConcurrentStrategy;
+import com.xinleju.platform.flow.service.InstanceTaskService;
+
+/**
+ * 流程放行，恢复运行状态（针对挂起态的流程）
+ * 自动挂起的情况：
+ * 1、岗位，审批人为空，模板配置为挂起：有人，没有
+ * 2、流程发起监控配置为挂起
+ * 3、审批人收到待办监控挂起
+ * 
+ * @author daoqi
+ *
+ */
+public class RestartOperation extends DefaultOperation implements Operation{
+	
+	private static Logger log = Logger.getLogger(RestartOperation.class);
+
+	public RestartOperation() {
+		super(OperationType.RESTART);
+	}
+
+	@Override
+	protected void operate(InstanceUnit instanceUnit, ApprovalSubmitDto approvalDto) throws Exception {
+		
+		//检查流程挂起位置
+		Map<String, Object> pauseLocation = checkPauseLocation(instanceUnit);
+		if(pauseLocation != null) {
+			instanceUnit.setStatus(InstanceStatus.RUNNING.getValue());
+		}
+		
+		//流程发起监控挂起
+		if("instance".equals(pauseLocation.get("pauseType"))) {
+			StartOperation startOperation = new StartOperation();
+			startOperation.setService(this.getService());
+			startOperation.setInstanceUnit(instanceUnit);
+			startOperation.restart(instanceUnit, approvalDto);
+			
+			//放行岗位为空的自动挂起	环节暂停
+		} else if("ac".equals(pauseLocation.get("pauseType"))) {
+			letItGoWhenPostNull(instanceUnit);
+			
+			//放行审批人为空的自动挂起	岗位暂停
+		} else if("post".equals(pauseLocation.get("pauseType"))) {
+			letItGoWhenApproverNull(instanceUnit);
+
+			//审批人收到待办前监控挂起	人员暂停
+		} else if("approver".equals(pauseLocation.get("pauseType"))) {
+			letItGoWhenApproverHangup((ApproverUnit)pauseLocation.get("pauseLocation"));
+			
+		}
+		
+		//撤回此流程实例中其他管理员没有处理的待办
+		service.getMsgService().deleteMsgOfAdminBy(instanceUnit.getId());
+	}
+	
+	/**
+	 * 人员挂起时放时
+	 * 
+	 * @param approver：实际是点亮挂起人时的操作人
+	 * @throws Exception
+	 */
+	private void letItGoWhenApproverHangup(ApproverUnit approver) throws Exception {
+		this.setCurrentLocation(approver.getOwner().getOwner(), 
+				approver.getOwner(), approver);
+		approver.setStatus(ApproverStatus.RUNNING.getValue());
+		this.turnOnSelf(approver);
+		this.currentAc.setAcStatus(ACStatus.RUNNING.getValue());
+		this.currentPost.setPostStatus(PostStatus.RUNNING.getValue());
+		
+//		this.next(instanceUnit, approvalDto);
+		log.info("人员挂起放行成功！" + approver.getId());
+	}
+
+	/**
+	 * 检查流程挂起位置 TODO 重构
+	 * @param instanceUnit
+	 * @return
+	 */
+	private Map<String, Object> checkPauseLocation(InstanceUnit instanceUnit) {
+		Map<String, Object> result = new HashMap<String, Object>();
+		if(InstanceStatus.HANGUP.getValue().equals(instanceUnit.getStatus())) {
+			for(ACUnit acUnit : instanceUnit.getAcList()) {
+				
+				//环节挂起处理
+				if(ACStatus.HANGUP.getValue().equals(acUnit.getAcStatus())) {
+					log.info("流程挂起检查点：ac=" + acUnit.getAcId() + ", " + acUnit.getAcName());
+					result.put("pauseType", "ac");
+					result.put("pauseLocation", acUnit);
+					return result;
+				}
+				List<PostUnit> posts = acUnit.getPosts();
+				if(CollectionUtils.isEmpty(posts)) {
+					continue;
+				}
+				for(PostUnit post : posts) {
+					//岗位挂起处理
+					if(PostStatus.HANGUP.getValue().equals(post.getPostStatus())) {
+						log.info("流程挂起检查点：post=" + post.getId() + ", " + post.getPostName());
+						result.put("pauseType", "post");
+						result.put("pauseLocation", post);
+						return result;
+					}
+					
+					List<ApproverUnit> approvers = post.getApprovers();
+					if(CollectionUtils.isEmpty(approvers)) {
+						continue;
+					}
+					for(ApproverUnit approver : approvers) {
+						if(ApproverStatus.HANGUP.getValue().equals(approver.getStatus())) {
+							log.info("流程挂起检查点：approver=" + approver.getApproverId() + ", " + approver.getApproverName());
+							result.put("pauseType", "approver");
+							result.put("pauseLocation", approver);
+							return result;
+						}
+					}
+				}
+			}
+			log.info("流程挂起检查点：instance=" + instanceUnit.getId());
+			result.put("pauseType", "instance");
+			result.put("pauseLocation", instanceUnit);
+			return result;
+		}
+		return null;
+	}
+
+	@Override
+	public void handleMessages(InstanceUnit instanceUnit, ApprovalSubmitDto approvalDto) throws Exception {
+		
+		//给点亮行审批人发送消息
+//		newMesssages(instanceUnit);
+		sendMessages(instanceUnit.getMessages());
+	}
+
+	private void letItGoWhenApproverNull(InstanceUnit instanceUnit) throws Exception {
+		for(ACUnit acUnit : instanceUnit.getAcList()) {
+			List<PostUnit> posts = acUnit.getPosts();
+			if(CollectionUtils.isEmpty(posts)) {
+				continue;
+			}
+			for(PostUnit post : posts) {
+				if(PostStatus.HANGUP.getValue().equals(post.getPostStatus())) {
+					if(CollectionUtils.isEmpty(post.getApprovers())) {
+						this.setCurrentAc(post.getOwner());
+						this.setCurrentPost(post);
+						super.next(instanceUnit, post);
+					} else {
+						super.turnOn(post, instanceUnit, acUnit);
+					}
+					
+					//点亮由于与挂起的岗位是竞争关系而挂起的岗位 #12692
+					ConcurrentStrategy postStrategy = getPostStrategy(acUnit);
+					if(postStrategy instanceof CompetitionStrategy) {
+						for(PostUnit p : posts) {
+							if(!p.getId().equals(post.getId())
+									&& PostStatus.NOT_RUNNING.getValue().equals(p.getPostStatus())) {
+								super.turnOn(p, instanceUnit, acUnit);
+							}
+						}
+					}
+				}
+			}
+		}
+		
+		log.info("岗位挂起放行成功！");
+	}
+
+	private void letItGoWhenPostNull(InstanceUnit instanceUnit) throws Exception {
+		for(ACUnit acUnit : instanceUnit.getAcList()) {
+			if(ACStatus.HANGUP.getValue().equals(acUnit.getAcStatus())) {
+				List<PostUnit> posts = acUnit.getPosts();
+				this.setCurrentAc(acUnit);
+				
+				//岗位为空时完成本环节并点亮下一环节
+				if(CollectionUtils.isEmpty(posts)) {
+					complate(acUnit);
+					turnOn(acUnit.getNextAcs(), instanceUnit);
+				} else {
+					turnOn(acUnit, instanceUnit);
+				}
+			}
+		}
+		
+		log.info("环节挂起放行成功！");
+	}
+
+	/**
+	 * 每个点亮行审批人生成一个消息
+	 * 
+	 * @param instanceUnit
+	 */
+	private void newMesssages(InstanceUnit instanceUnit) {
+		for(ACUnit acUnit : instanceUnit.getAcList()) {
+			List<PostUnit> posts = acUnit.getPosts();
+			if(CollectionUtils.isEmpty(posts)) {
+				continue;
+			}
+			for(PostUnit postUnit : posts) {
+				List<ApproverUnit> approvers = postUnit.getApprovers();
+				if(CollectionUtils.isEmpty(approvers)) {
+					continue;
+				}
+				for(ApproverUnit approverUnit : approvers) {
+					TaskUnit task = approverUnit.getTask();
+					if(task == null) {
+						continue;
+					}
+					if(TaskStatus.RUNNING.getValue().equals(task.getTaskStatus())) {
+						String msgId = newMessage(instanceUnit, approverUnit, acUnit.getApprovalTypeId());
+						updateMsgid(task.getTaskId(), msgId);
+					}
+				}
+			}
+		}
+	}
+
+	private void updateMsgid(String taskId, String msgId) {
+		InstanceTaskService taskService = service.getInstanceTaskService();
+		taskService.updateMsgId(taskId, msgId);
+	}
+
+//	private void updateInstanceStatus(InstanceUnit instanceUnit) {
+//		InstanceDao instanceDao = service.getInstanceDao();
+//		Map<String, Object> params = new HashMap<String, Object>();
+//		params.put("status", InstanceStatus.RUNNING.getValue());
+//		params.put("instanceId", instanceUnit.getId());
+//		instanceDao.update(Instance.class.getName() + ".sync", params);
+//	}
+
+}

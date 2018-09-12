@@ -1,0 +1,1155 @@
+package com.jzy.hio.crm.service.impl;
+
+import java.math.BigDecimal;
+import java.text.MessageFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.constant.CrmConstant;
+import com.jzy.hio.constant.CrmContactDecisionRoleEnum;
+import com.jzy.hio.constant.CrmCustomerEnum;
+import com.jzy.hio.constant.CrmCustomerSourceEnum;
+import com.jzy.hio.constant.CrmCustomerStatusEnum;
+import com.jzy.hio.constant.CrmCustomerTypeEnum;
+import com.jzy.hio.crm.dto.AttachmentParamDto;
+import com.jzy.hio.crm.dto.CrmCustomerChangeDto;
+import com.jzy.hio.crm.dto.CrmCustomerImportDto;
+import com.jzy.hio.crm.dto.CrmCustomerPageDto;
+import com.jzy.hio.crm.dto.CrmStatisticalCountDto;
+import com.jzy.hio.crm.dto.CrmStatusCountDto;
+import com.jzy.hio.crm.dto.CustomerNamesDto;
+import com.jzy.hio.crm.mapper.CrmContactMapper;
+import com.jzy.hio.crm.mapper.CrmCustomerChangeMapper;
+import com.jzy.hio.crm.mapper.CrmCustomerFollowHisMapper;
+import com.jzy.hio.crm.mapper.CrmCustomerFollowPlanMapper;
+import com.jzy.hio.crm.mapper.CrmCustomerMapper;
+import com.jzy.hio.crm.mapper.CrmCustomerOpportunitiesMapper;
+import com.jzy.hio.crm.mapper.CrmCustomerSalesmanMapper;
+import com.jzy.hio.crm.mapper.CrmOrderMapper;
+import com.jzy.hio.crm.mapper.CrmSalesRankingsMapper;
+import com.jzy.hio.crm.param.CrmAssignedCustParam;
+import com.jzy.hio.crm.param.CrmAssignedMsgParam;
+import com.jzy.hio.crm.param.CrmCommonParam;
+import com.jzy.hio.crm.param.CrmCustomerSearchParam;
+import com.jzy.hio.crm.param.CrmCustomerparam;
+import com.jzy.hio.crm.param.CustomerContactsParam;
+import com.jzy.hio.crm.param.CustomerParam;
+import com.jzy.hio.crm.param.CustomerSalesmansParam;
+import com.jzy.hio.crm.service.CrmCustomerChangeService;
+import com.jzy.hio.crm.service.CrmCustomerService;
+import com.jzy.hio.crm.utils.CrmCommonInvokeUtil;
+import com.jzy.hio.crm.utils.DateUtil;
+import com.jzy.hio.crm.utils.PageResult;
+import com.jzy.hio.entity.CrmContact;
+import com.jzy.hio.entity.CrmCustomer;
+import com.jzy.hio.entity.CrmCustomerChange;
+import com.jzy.hio.entity.CrmCustomerFollowHis;
+import com.jzy.hio.entity.CrmCustomerFollowPlan;
+import com.jzy.hio.entity.CrmCustomerOpportunities;
+import com.jzy.hio.entity.CrmCustomerSalesman;
+import com.jzy.hio.entity.CrmOrder;
+import com.jzy.hio.entity.CrmSalesRankings;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.sys.organization.dto.FlowUserDto;
+import com.jzy.hio.utils.LoginUser;
+
+/**
+ * 客户
+ *
+ * @author
+ */
+@Service
+public class CrmCustomerServiceImpl extends BaseServiceImpl<CrmCustomer> implements CrmCustomerService {
+
+    @Autowired
+    private CrmCustomerMapper crmCustomerMapper;
+    @Autowired
+    private CrmCustomerSalesmanMapper crmCustomerSalesmanMapper;
+    @Autowired
+    private CrmContactMapper crmContactMapper;
+    @Autowired
+    private CrmCustomerChangeMapper crmCustomerChangeMapper;
+    @Autowired
+    private CrmCustomerChangeService crmCustomerChangeService;
+    @Autowired
+    private CrmSalesRankingsMapper crmSalesRankingsMapper;
+	@Autowired
+	private CrmCustomerOpportunitiesMapper crmCustomerOpportunitiesMapper;
+	@Autowired
+	private CrmOrderMapper crmOrderMapper;
+	@Autowired
+	private CrmCustomerFollowHisMapper crmCustomerFollowHisMapper;
+    @Autowired
+    private CrmCustomerFollowPlanMapper crmCustomerFollowPlanMapper;
+    
+    @Autowired
+    private CrmCommonInvokeUtil crmCommonInvokeUtil;
+    
+    /**
+     * 保存客户，及相关销售和联系人
+     */
+    @Override
+    public boolean saveCustomer(CustomerParam customersParam) {
+    	LoginUser loginUser = getLoginUser();
+        String uid = loginUser.getUserId();
+        String tendId = loginUser.getTendId();
+        String uName = getUserNameOA();
+        String custId = customersParam.getSid();
+        Date date = new Date();
+        
+        boolean canUse = this.queryCustNameCanUse(custId, customersParam.getName());
+		if (!canUse) {
+			throw new HioException("客户名称已存在！");
+		}
+        
+        // 保存的联系人
+        List<CrmCustomerSalesman> salesSaveList = new ArrayList<>();
+        // 当前数据库联系人列表
+//        List<CrmContact> contactSelectList = null;
+        List<CrmCustomerSalesman> salesmanSelectList = null;
+        //客户有附件，id从前端传入
+        if (StringUtils.isNotBlank(custId)) {
+        	CrmCustomer customerFind = crmCustomerMapper.selectByPrimaryKey(custId);
+        	if (customerFind == null) {
+                CrmCustomer customer = new CrmCustomer();
+                BeanUtils.copyProperties(customersParam, customer);
+                customer.setOwnerPersonId(uid);
+                customer.setStatus(CrmCustomerStatusEnum.NOT_CONTACT.getStatus());
+                customer.setDealStatus(CrmConstant.DEAL_NO);
+
+                customer.setId(custId);
+                customer.setDelflag(CrmConstant.DEL_FALSE);
+                customer.setCreateDate(date);
+                customer.setCreatePersonId(uid);
+                customer.setUpdateDate(date);
+                customer.setUpdatePersonId(uid);
+                crmCustomerMapper.insert(customer);
+
+                saveCustRanking(uid, uid);
+                //获取登录人名称    添加动态
+                String content = MessageFormat.format(CrmCustomerEnum.CREATE_CUSTOMER.getCode(), uName, customer.getName());
+                crmCustomerChangeService.saveCustChange(custId, content, uid);
+
+                // 默认当前登陆者为主责人，其他为 共享人
+                CrmCustomerSalesman saleAddItem = new CrmCustomerSalesman();
+                saleAddItem = new CrmCustomerSalesman();
+                saleAddItem.setId(Base.generatePk(CrmCustomerSalesman.class));
+                saleAddItem.setCustomerId(custId);
+                saleAddItem.setSalesmanId(uid);
+                saleAddItem.setType(CrmConstant.SALETYPE_MAIN);
+                
+                saleAddItem.setDelflag(CrmConstant.DEL_FALSE);
+                saleAddItem.setCreateDate(date);
+                saleAddItem.setCreatePersonId(uid);
+                saleAddItem.setUpdateDate(date);
+                saleAddItem.setUpdatePersonId(uid);
+                salesSaveList.add(saleAddItem);
+        	} else if (customerFind != null && customerFind.getDelflag().equals(CrmConstant.DEL_FALSE)) {
+            	 CrmCustomer customer = new CrmCustomer();
+                 BeanUtils.copyProperties(customersParam, customer);
+                 customer.setId(custId);
+                 customer.setUpdateDate(date);
+                 customer.setUpdatePersonId(uid);
+                 crmCustomerMapper.updateByPrimaryKeySelective(customer);
+
+                 //添加动态  变更客户状态
+                 Integer typeOld = customerFind.getType();
+                 Integer typeNew = customersParam.getType();
+                 if (!typeOld.equals(typeNew)) {
+                     String content = MessageFormat.format(CrmCustomerEnum.CUSTOMER_TYPE_CHANGE.getCode(), uName,
+                    		 CrmCustomerTypeEnum.getNameByType(typeOld),
+                    		 CrmCustomerTypeEnum.getNameByType(typeNew));
+                     crmCustomerChangeService.saveCustChange(custId, content, uid);
+                 }
+
+                 // 查询共享人列表，用于后比较
+                 CrmCustomerSalesman customerSalesSelect = new CrmCustomerSalesman();
+                 customerSalesSelect.setCustomerId(custId);
+                 customerSalesSelect.setType(CrmConstant.SALETYPE_SECONDARY);
+                 customerSalesSelect.setDelflag(CrmConstant.DEL_FALSE);
+                 salesmanSelectList = crmCustomerSalesmanMapper.select(customerSalesSelect);
+                 
+                 // 删除客户共享人，不删除负责人，因为页面修改的时候不修改负责人
+                 CrmCustomerSalesman customerSales = new CrmCustomerSalesman();
+                 customerSales.setCustomerId(custId);
+                 customerSales.setUpdatePersonId(uid);
+                 customerSales.setUpdateDate(date);
+                 customerSales.setType(CrmConstant.SALETYPE_SECONDARY);
+                 crmCustomerSalesmanMapper.deleteByCustIdAndType(customerSales);
+
+                 // 查询联系人
+//                 CrmContact contactSelect = new CrmContact();
+//                 contactSelect.setCustomerId(custId);
+//                 contactSelect.setDelflag(CrmConstant.DEL_FALSE);
+//                 contactSelectList = crmContactMapper.select(contactSelect);
+            } else {
+            	throw new HioException("客户不存在");
+            }
+        } else {
+        	throw new HioException("未找到客户唯一标识");
+        }
+        
+        // 共享人
+        List<CustomerSalesmansParam> salesList = customersParam.getSalesmans();
+        if (salesList != null && salesList.size() > 0) {
+        	List<String> saleIdList = new ArrayList<>();
+            boolean isFind;
+        	for (CustomerSalesmansParam saleManParam : salesList) {
+        		isFind = false;
+        		if (salesmanSelectList != null) {
+        			for (CrmCustomerSalesman salesman : salesmanSelectList) {
+        				if (saleManParam.getSalesmanId().equals(salesman.getSalesmanId())) {
+        					isFind = true;
+        					break;
+        				}
+        			}
+        		}
+        		// 没找到说明是新增的
+        		if (!isFind) {
+                     saleIdList.add(saleManParam.getSalesmanId());
+    			}
+        		
+        		CrmCustomerSalesman saleAddItem = new CrmCustomerSalesman();
+                saleAddItem.setId(Base.generatePk(CrmCustomerSalesman.class));
+                saleAddItem.setCustomerId(custId);
+                saleAddItem.setSalesmanId(saleManParam.getSalesmanId());
+                saleAddItem.setType(CrmConstant.SALETYPE_SECONDARY);
+
+                saleAddItem.setDelflag(CrmConstant.DEL_FALSE);
+                saleAddItem.setCreateDate(date);
+                saleAddItem.setCreatePersonId(uid);
+                saleAddItem.setUpdateDate(date);
+                saleAddItem.setUpdatePersonId(uid);
+                salesSaveList.add(saleAddItem);
+    		}
+    		
+        	if (saleIdList.size() > 0) {
+        		// 查询销售名称列表
+            	Map<String, String> saleNamesMap = crmCommonInvokeUtil.getUserName(tendId, saleIdList);
+                String[] saleArr = new String[saleIdList.size()];
+                for (int i = 0; i < saleArr.length; i++) {
+                	saleArr[i] = saleNamesMap.get(saleIdList.get(i));
+        		}
+                String joinStr = String.join(",", saleArr);
+                String content = MessageFormat.format(CrmCustomerEnum.CUSTOMER_SHARING.getCode(), uName, joinStr);
+                crmCustomerChangeService.saveCustChange(custId, content, uid);
+    		}
+        	
+		}
+        // 保存共享人和主责人
+        if (salesSaveList.size() > 0) {
+            crmCustomerSalesmanMapper.insertList(salesSaveList);
+        }
+        
+    	
+        List<CustomerContactsParam> contactsList = customersParam.getContacts();
+//        //联系人
+//        if (contactSelectList != null) {
+//        	List<String> contactNameDeleteList = new ArrayList<>();
+//            for (CrmContact contactSelect : contactSelectList) {
+//            	boolean isFind = false;
+//            	if (contactsList != null && contactsList.size() > 0) {
+//            		for (CustomerContactsParam contactsParam : contactsList) {
+//						if (contactSelect.getId().equals(contactsParam.getSid())) {
+//							isFind = true;
+//							break;
+//						}
+//					}
+//            	}
+//            	
+//            	if (!isFind) {
+//            		CrmCustomerFollowHis followHisSelect = new CrmCustomerFollowHis();
+//            		followHisSelect.setCustomerId(custId);
+//            		followHisSelect.setContactId(contactSelect.getId());
+//            		followHisSelect.setDelflag(CrmConstant.DEL_FALSE);
+//            		int followHisCount = crmCustomerFollowHisMapper.selectCount(followHisSelect);
+//            		
+//            		if (followHisCount > 0) {
+//            			throw new HioException("联系人" + contactSelect.getName() + "下有跟进记录不能删除");
+//        			} else {
+//        				CrmCustomerFollowPlan followPlanSelect = new CrmCustomerFollowPlan();
+//        	    		followPlanSelect.setCustomerId(custId);
+//        	    		followPlanSelect.setContactId(contactSelect.getId());
+//        	    		followPlanSelect.setDelflag(CrmConstant.DEL_FALSE);
+//        	    		int followPlanCount = crmCustomerFollowPlanMapper.selectCount(followPlanSelect);
+//        	    		if (followPlanCount > 0) {
+//        	    			throw new HioException("联系人" + contactSelect.getName() + "下有跟进计划不能删除");
+//        				}
+//        			}
+//            		
+//            		contactNameDeleteList.add(contactSelect.getName());
+//				}
+//            	
+//            }
+//            
+//            if (contactNameDeleteList.size() > 0) {
+//            	String joinStr = String.join(",", contactNameDeleteList);
+//            	String content = MessageFormat.format(CrmCustomerEnum.DELETE_CONTACT.getCode(), uName, joinStr);
+//            	crmCustomerChangeService.saveCustChange(custId, content, uid);
+//    		}
+//            
+//        }
+//        
+        List<CrmContact> contactSaveList = new ArrayList<>();
+//        List<CrmContact> contactUpdateList = new ArrayList<>();
+        CrmContact contact;
+//        // 保存联系人，如果传入的有sid,需要去验证原来是否存在，存在就修改，不存在就删除
+        //注意: 直接新增联系人，修改客户的时候不能修改联系人，需求如此6月12日更新
+        if (contactsList != null && contactsList.size() > 0) {
+        	List<String> contactNameAddList = new ArrayList<>();
+            for (int i = 0; i < contactsList.size(); i++) {
+                CustomerContactsParam contactsParam = contactsList.get(i);
+
+//                String sid = contactsParam.getSid();
+//                boolean isFind = false;
+//                if (contactSelectList != null && StringUtils.isNotBlank(sid)) {
+//                    for (CrmContact contactSelect : contactSelectList) {
+//                        if (contactSelect.getId().equals(sid)) {
+//                            isFind = true;
+//                            break;
+//                        }
+//                    }
+//                }
+
+                contact = new CrmContact();
+
+                contact.setName(contactsParam.getName());
+                contact.setTitle(contactsParam.getTitle());
+                contact.setPhoneNumber(contactsParam.getPhoneNumber());
+                contact.setEmail(contactsParam.getEmail());
+                contact.setDecisionRole(contactsParam.getDecisionRole());
+                
+                contact.setCustomerId(custId);
+                // 默认第一个联系人为主联系人
+                Integer masterContact = i == 0 ? CrmConstant.ISMASTERCONTACT_TRUE : CrmConstant.ISMASTERCONTACT_FALSE;
+                contact.setMasterContact(masterContact);
+                contact.setUpdateDate(date);
+                contact.setUpdatePersonId(uid);
+//                if (isFind) {
+//                    contact.setId(sid);
+//                    // 需要设置delflag,在后边逻辑中，第一步会删除所有就的联系人，需要在后边的修改，设置回来，设置为未删除
+//                    contact.setDelflag(CrmConstant.DEL_FALSE);
+//                    contactUpdateList.add(contact);
+//                } else {
+                	contactNameAddList.add(contactsParam.getName());
+                    contact.setId(Base.generatePk(CrmContact.class));
+                    contact.setDelflag(CrmConstant.DEL_FALSE);
+                    contact.setCreateDate(date);
+                    contact.setCreatePersonId(uid);
+                    contactSaveList.add(contact);
+//                }
+            }
+            
+            if (contactNameAddList.size() > 0) {
+            	String joinStr = String.join(",", contactNameAddList);
+            	String content = MessageFormat.format(CrmCustomerEnum.CREATE_CONTACT.getCode(), uName, joinStr);
+            	crmCustomerChangeService.saveCustChange(custId, content, uid);
+    		}
+//            
+        }
+//    	
+//        // 删除旧的联系人
+//        if (contactSelectList != null) {
+//            contact = new CrmContact();
+//            for (CrmContact contactSelect : contactSelectList) {
+//                contact.setId(contactSelect.getId());
+//                contact.setDelflag(CrmConstant.DEL_TRUE);
+//                contact.setCreateDate(date);
+//                contact.setCreatePersonId(uid);
+//                crmContactMapper.updateByPrimaryKeySelective(contact);
+//            }
+//        }
+//
+        // 保存新的联系人
+        if (contactSaveList.size() > 0) {
+            crmContactMapper.insertList(contactSaveList);
+        }
+//        
+//        // 修改本来存在联系人
+//        for (CrmContact crmContact : contactUpdateList) {
+//            crmContactMapper.updateByPrimaryKeySelective(crmContact);
+//        }
+        
+    	return true;
+    }
+    
+    /**
+     * 更新客户数量排行榜
+     * @param saleId
+     * @param uid
+     */
+    private void saveCustRanking(String saleId, String uid) {
+    	CrmSalesRankings rangkingSelect = new CrmSalesRankings();
+    	rangkingSelect.setSalesmanId(saleId);
+    	int month = DateUtil.getYearMonth();
+    	rangkingSelect.setMonth(month);
+    	rangkingSelect.setDelflag(CrmConstant.DEL_FALSE);
+    	int count = crmSalesRankingsMapper.selectCount(rangkingSelect);
+    	Date date = new Date();
+    	if (count == 0) {
+    		CrmSalesRankings rangkingSave = new CrmSalesRankings();
+    		rangkingSave.setId(Base.generatePk(rangkingSave.getClass()));
+			rangkingSave.setSalesmanId(saleId);
+			rangkingSave.setMonth(month);
+			// 新增客户数1，订单数0
+			rangkingSave.setNewCustomerCount(1);
+			rangkingSave.setNewOrderCount(0);
+			rangkingSave.setCreateDate(date);
+			rangkingSave.setUpdateDate(date);
+			rangkingSave.setCreatePersonId(uid);
+			rangkingSave.setUpdatePersonId(uid);
+			crmSalesRankingsMapper.insert(rangkingSave);
+		} else {
+			CrmSalesRankings rangkingUpdate = new CrmSalesRankings();
+			rangkingUpdate.setSalesmanId(saleId);
+			rangkingUpdate.setMonth(month);
+			rangkingUpdate.setUpdateDate(date);
+			rangkingUpdate.setUpdatePersonId(uid);
+			crmSalesRankingsMapper.addCustomerCount(rangkingUpdate);
+		}
+    	
+    	
+    }
+    
+
+    /**
+     * 查询客户，及相关销售和联系人
+     */
+    @Override
+    public CustomerParam selectCustomer(String id) {
+        // 查询客户
+        CrmCustomer customer = this.getObjectById(id);
+        // 未查到或者已删除返回null
+        if (customer == null || customer.getDelflag().equals(CrmConstant.DEL_TRUE)) {
+            throw new HioException("客户不存在或已删除");
+        }
+
+        // 查询共享人
+        CrmCustomerSalesman sale = new CrmCustomerSalesman();
+        sale.setCustomerId(id);
+        sale.setType(CrmConstant.SALETYPE_SECONDARY);
+        sale.setDelflag(CrmConstant.DEL_FALSE);
+        List<CrmCustomerSalesman> salesList = crmCustomerSalesmanMapper.select(sale);
+
+        // 查询联系人
+        CrmContact contact = new CrmContact();
+        contact.setCustomerId(id);
+        contact.setDelflag(CrmConstant.DEL_FALSE);
+        List<CrmContact> contactList = crmContactMapper.select(contact);
+
+
+        CustomerParam customersParam = new CustomerParam();
+        customersParam.setSid(customer.getId());
+        BeanUtils.copyProperties(customer, customersParam);
+
+        // 查询用户名称列表，(主责人和共享人名称列表)
+        LoginUser loginUser = getLoginUser();
+        String tendId = loginUser.getTendId();
+        List<String> uids = new ArrayList<>();
+        uids.add(customersParam.getOwnerPersonId());
+        for (CrmCustomerSalesman salesItem : salesList) {
+        	uids.add(salesItem.getSalesmanId());
+		}
+        Map<String, String> userNameMap = crmCommonInvokeUtil.getUserName(tendId, uids);
+
+        //设置主责人名称，类型名称，状态名称，来源名称,上传参数
+        customersParam.setOwnerPersonName(userNameMap.get(customersParam.getOwnerPersonId()));
+//        String typeName = CrmCustomerTypeEnum.getNameByType(customersParam.getType());
+//        customersParam.setTypeName(typeName);
+//        String statusName = CrmCustomerStatusEnum.getNameByStatus(customersParam.getStatus());
+//        customersParam.setStatusName(statusName);
+//        String sourceName = CrmCustomerSourceEnum.getNameBySource(customersParam.getStatus());
+//        customersParam.setSourceName(sourceName);
+        AttachmentParamDto attachmentParamDto = new AttachmentParamDto();
+		attachmentParamDto.setApp(BaseConstants.App.CRM.getId());
+		attachmentParamDto.setCategory(BaseConstants.AttachmentCategory.CRM_CUSTOMER.getId());
+		attachmentParamDto.setBusinessId(id);
+		customersParam.setAttachmentParam(attachmentParamDto);
+        
+        List<CustomerSalesmansParam> salesParamList = new ArrayList<>();
+        CustomerSalesmansParam salesmansParam;
+        for (CrmCustomerSalesman salesItem : salesList) {
+            salesmansParam = new CustomerSalesmansParam();
+            salesmansParam.setSalesmanId(salesItem.getSalesmanId());
+            salesmansParam.setSalesmanName(userNameMap.get(salesItem.getSalesmanId()));
+            salesParamList.add(salesmansParam);
+        }
+        customersParam.setSalesmans(salesParamList);
+
+        List<CustomerContactsParam> contactsParamList = new ArrayList<>();
+        CustomerContactsParam contactsParam;
+        // 倒序排列
+        for (int i = contactList.size() - 1; i >= 0 ; i--) {
+            CrmContact contactsItem = contactList.get(i);
+            contactsParam = new CustomerContactsParam();
+            BeanUtils.copyProperties(contactsItem, contactsParam);
+            contactsParam.setSid(contactsItem.getId());
+            contactsParamList.add(contactsParam);
+        }
+        customersParam.setContacts(contactsParamList);
+        
+        return customersParam;
+    }
+
+    @Override
+    public CustomerParam queryCustomerForMobile(String id) {
+    	CustomerParam cust = selectCustomer(id);
+    	BigDecimal orderAmountSum = crmOrderMapper.selectCustSignAmount(id);
+    	BigDecimal opportunityAmountSum = crmCustomerOpportunitiesMapper.selectCustEstimateAmount(id);
+    	cust.setOrderAmountSum(orderAmountSum);
+    	cust.setOpportunityAmountSum(opportunityAmountSum);
+    	return cust;
+    }
+    
+    /**
+     * 根据客户名称模糊查询
+     */
+    @Override
+    public List<CustomerNamesDto> selectCustNames(String uid, String name) {
+        Map<String, Object> map = new HashMap<>();
+        map.put("uid", uid);
+        map.put("name", name);
+        return crmCustomerMapper.selectCustNames(map);
+    }
+
+    /**
+     * 查询客户各个状态数量
+     */
+    @Override
+    public List<CrmStatusCountDto> selectCustStatusCount(String uid) {
+        List<CrmStatusCountDto> statusCountDtoList = crmCustomerMapper.selectCustCountGoupByStatus(uid);
+
+        List<CrmStatusCountDto> statusCountDtoReturnList = new ArrayList<>();
+
+        CrmCustomerStatusEnum[] statusArr = CrmCustomerStatusEnum.values();
+        int zero = 0;
+        for (CrmCustomerStatusEnum statusItem : statusArr) {
+            CrmStatusCountDto statusCountDto = null;
+            for (CrmStatusCountDto statusCountDtoItem : statusCountDtoList) {
+                if (statusCountDtoItem.getStatus().equals(statusItem.getStatus())) {
+                    statusCountDto = new CrmStatusCountDto();
+                    statusCountDto.setCount(statusCountDtoItem.getCount());
+                    break;
+                }
+            }
+
+            if (statusCountDto == null) {
+                statusCountDto = new CrmStatusCountDto();
+                statusCountDto.setCount(zero);
+            }
+
+            statusCountDto.setStatus(statusItem.getStatus());
+            statusCountDto.setStatusName(statusItem.getStatusName());
+            statusCountDtoReturnList.add(statusCountDto);
+        }
+        return statusCountDtoReturnList;
+    }
+
+    /**
+     * 作废客户
+     */
+    @Override
+    public void saveRepealed(String id, String uid) {
+        CrmCustomer customerFind = crmCustomerMapper.selectByPrimaryKey(id);
+        if (customerFind == null || customerFind.getDelflag().equals(CrmConstant.DEL_TRUE)) {
+            throw new HioException("客户不存在或已删除");
+        }
+
+        if (!isRolePermission(BaseConstants.MYSQL_MENU_CODE_CRM_MANAGE)) {
+            if (!customerFind.getOwnerPersonId().equals(uid)) {
+                throw new HioException("您没有该客户权限");
+            }
+        }
+
+        if (StringUtils.isBlank(customerFind.getOwnerPersonId())) {
+            throw new HioException("客户已作废或没有指定负责人");
+        }
+
+    	Date date = new Date();
+    	CrmCustomer customerUpdate = new CrmCustomer();
+    	customerUpdate.setId(id);
+    	customerUpdate.setUpdateDate(date);
+    	customerUpdate.setUpdatePersonId(uid);
+    	// 清空负责人
+    	customerUpdate.setOwnerPersonId("");
+    	crmCustomerMapper.updateByPrimaryKeySelective(customerUpdate);
+
+        String uName = getUserNameOA();
+        //获取登录人名称    添加动态
+        String content = MessageFormat.format(CrmCustomerEnum.CUSTOMER_REPEALED.getCode(), uName, customerFind.getName());
+        crmCustomerChangeService.saveCustChange(id, content, uid);
+    	
+        // 作废客户就把客户的主责人清空
+        CrmCustomerSalesman sale = new CrmCustomerSalesman();
+        sale.setCustomerId(id);
+        sale.setType(CrmConstant.SALETYPE_MAIN);
+        sale.setDelflag(CrmConstant.DEL_FALSE);
+        List<CrmCustomerSalesman> salesList = crmCustomerSalesmanMapper.select(sale);
+
+        CrmCustomerSalesman saleUpdate = null;
+        for (CrmCustomerSalesman customerSalesman : salesList) {
+            saleUpdate = new CrmCustomerSalesman();
+            saleUpdate.setId(customerSalesman.getId());
+            saleUpdate.setDelflag(CrmConstant.DEL_TRUE);
+            saleUpdate.setUpdatePersonId(uid);
+            saleUpdate.setUpdateDate(date);
+            crmCustomerSalesmanMapper.updateByPrimaryKeySelective(saleUpdate);
+        }
+    }
+
+    /**
+     * 客户分页
+     *
+     * @param customerSearchParam
+     * @return
+     */
+    @Override
+    public PageResult queryPageCustomers(CrmCustomerSearchParam customerSearchParam) {
+    	Integer notfollowDay = customerSearchParam.getNotfollowDay();
+    	if (notfollowDay != null) {
+			long time = System.currentTimeMillis();
+			time = time - 1000*60*60*24L * notfollowDay;
+			customerSearchParam.setFollowTimeEnd(new Date(time));
+		}
+    	
+    	// 排序
+		String lastContactTimeSort = customerSearchParam.getLastContactTimeSort();
+		String createDateSort = customerSearchParam.getCreateDateSort();
+		if (CrmConstant.ASC.equalsIgnoreCase(lastContactTimeSort) || CrmConstant.DESC.equalsIgnoreCase(lastContactTimeSort)) {
+			lastContactTimeSort = "cust.last_contact_time " + lastContactTimeSort + ",";
+			customerSearchParam.setLastContactTimeSort(lastContactTimeSort);
+		} else {
+			customerSearchParam.setLastContactTimeSort("");
+		}
+		if (CrmConstant.ASC.equalsIgnoreCase(createDateSort) || CrmConstant.DESC.equalsIgnoreCase(createDateSort)) {
+			createDateSort = "cust.create_date " + createDateSort + ",";
+			customerSearchParam.setCreateDateSort(createDateSort);
+		} else {
+			customerSearchParam.setCreateDateSort("");
+		}
+    	
+        // 分页查询客户列表
+        List<CrmCustomerPageDto> list = crmCustomerMapper.getPageCustomers(customerSearchParam);
+        
+        List<String> uids = new ArrayList<>();
+        for (CrmCustomerPageDto crmCustomerPageDto : list) {
+        	if (StringUtils.isNotBlank(crmCustomerPageDto.getSalesmanId())) {
+        		uids.add(crmCustomerPageDto.getSalesmanId());
+			}
+		}
+        String tendId = getTendId();
+        Map<String, String> userNameMap = crmCommonInvokeUtil.getUserName(tendId, uids);
+        
+        list.forEach(o ->{
+        	if (StringUtils.isNotBlank(o.getSalesmanId())) {
+        		o.setSalesmanName(userNameMap.get(o.getSalesmanId()));
+			}
+        });
+        // 查询客户总条数
+        int count = crmCustomerMapper.getPageCustomersCount(customerSearchParam);
+        return PageResult.pageResult(customerSearchParam, count, list);
+    }
+
+    /**
+	 * 保存导入数据
+	 */
+	@Override
+	public boolean saveImportCust(CrmCustomerImportDto importDto, Map<String,FlowUserDto> uidMap,  String uid, String uName, List<CrmAssignedMsgParam> assignedMsgList) {
+        Date date = new Date();
+
+        // 客户验证
+        String custName = importDto.getCustName();
+        if (StringUtils.isBlank(custName)) {
+        	importDto.setErrMsg("客户名称不能为空！");
+			return false;
+		}
+        custName = custName.trim();
+        if (custName.length() > 100) {
+        	importDto.setErrMsg("客户名称不能超过100个字符");
+			return false;
+		}
+        if (!this.queryCustNameCanUse(null , custName)) {
+        	importDto.setErrMsg("客户名称已存在！");
+        	return false;
+		}
+        
+        String phone = importDto.getPhone();
+        if(StringUtils.isNotBlank(phone) && !phone.matches("\\d{1,20}")) {
+			importDto.setErrMsg("客户联系电话不能超过20个字符且必须为数字");
+			return false;
+		}
+        
+        String custEmail = importDto.getEmail();
+        if(StringUtils.isNotBlank(custEmail)) {
+        	custEmail = custEmail.trim();
+        	if (!custEmail.matches("^[a-zA-Z0-9_-]+@[a-zA-Z0-9_-]+(\\.[a-zA-Z0-9_-]+)+$") || custEmail.length() > 100) {
+        		importDto.setErrMsg("客户邮箱必须为有效邮件格式且不能超过100个字符");
+    			return false;
+			}
+        	
+		}
+        
+        int source = CrmCustomerSourceEnum.getSourceByName(importDto.getSourceName());
+		if (source == -1) {
+			importDto.setErrMsg("客户来源不正确！");
+			return false;
+		}
+
+		int type = CrmCustomerTypeEnum.getTypeByName(importDto.getTypeName());
+		if (type == -1) {
+			importDto.setErrMsg("客户类型不正确！");
+			return false;
+		}
+		
+		String address = importDto.getAddress();
+		if(StringUtils.isNotBlank(address)) {
+			address = address.trim();
+			if (address.length() > 100) {
+				importDto.setErrMsg("联系地址不能超过100个字符");
+				return false;
+			}
+		}
+		
+		String webSite = importDto.getWebSite();
+		if(StringUtils.isNotBlank(webSite)) {
+			webSite = webSite.trim();
+			if (webSite.length() > 100) {
+				importDto.setErrMsg("企业网站不能超过100个字符");
+				return false;
+			}
+		}
+		
+		// 为空时，salesmanId存空字符，负责人可以没有，填写了负责人需要判断是否存在
+		String salesName = importDto.getSalesName();
+		String salesmanId = "";
+		if (StringUtils.isNotBlank(salesName)) {
+			FlowUserDto user = uidMap.get(salesName);
+			if (user == null) {
+				importDto.setErrMsg("客户负责人不存在");
+				return false;
+			}
+			
+			salesmanId = user.getUserId();
+		}
+		
+		// 联系人验证----------------
+		String contactName = importDto.getContactName();
+		if (StringUtils.isBlank(contactName)) {
+			importDto.setErrMsg("联系人名称不能为空");
+			return false;
+		}
+		contactName = contactName.trim();
+		if (contactName.length() > 100) {
+			importDto.setErrMsg("联系人名称不能超过100个字符");
+			return false;
+		}
+		
+		String phoneNumer = importDto.getContactPhone();
+		if (StringUtils.isBlank(phoneNumer)) {
+			importDto.setErrMsg("联系人手机不能为空");
+			return false;
+		} else if(!phoneNumer.matches("1[3-9][0-9]\\d{8}")) {
+			importDto.setErrMsg("联系人手机号码必须为11位有效手机号码");
+			return false;
+		}
+		
+		String title = importDto.getTitle();
+		if(StringUtils.isNotBlank(title)) {
+			title = title.trim();
+			if (title.length() > 100) {
+				importDto.setErrMsg("联系人职务不能超过100个字符");
+				return false;
+			}
+		}
+		
+		
+		int decisionRole = CrmContactDecisionRoleEnum.getCodeByValue(importDto.getDecisionRoleName());
+		if (decisionRole == -1) {
+			importDto.setErrMsg("联系人决策关系不正确");
+			return false;
+		}
+		String contactEmail = importDto.getContactEmail();
+		if(StringUtils.isNotBlank(contactEmail)) {
+			contactEmail = contactEmail.trim();
+        	if (!contactEmail.matches("^[a-zA-Z0-9_-]+@[a-zA-Z0-9_-]+(\\.[a-zA-Z0-9_-]+)+$") || contactEmail.length() >= 100) {
+        		importDto.setErrMsg("联系人邮箱必须为有效邮件格式且不能超过100个字符");
+    			return false;
+			}
+        	
+		}
+		
+		CrmCustomer saveCust = new CrmCustomer();
+		String custId = Base.generatePk(saveCust.getClass());
+		saveCust.setId(custId);
+		saveCust.setName(custName);
+		saveCust.setPhoneNumber(phone);
+		saveCust.setEmail(custEmail);
+		saveCust.setSource(source);
+		saveCust.setType(type);
+		saveCust.setStatus(CrmCustomerStatusEnum.NOT_CONTACT.getStatus());
+		saveCust.setAddress(address);
+		saveCust.setWebSite(webSite);
+		saveCust.setOwnerPersonId(salesmanId);
+		saveCust.setDealStatus(CrmConstant.DEAL_NO);
+
+		saveCust.setDelflag(CrmConstant.DEL_FALSE);
+		saveCust.setCreateDate(date);
+		saveCust.setUpdateDate(date);
+		saveCust.setCreatePersonId(uid);
+		saveCust.setUpdatePersonId(uid);
+
+		CrmCustomerSalesman saveSales = new CrmCustomerSalesman();
+		saveSales.setId(Base.generatePk(saveSales.getClass()));
+		saveSales.setCustomerId(custId);
+		saveSales.setSalesmanId(salesmanId);
+		saveSales.setType(CrmConstant.SALETYPE_MAIN);
+		saveSales.setDelflag(CrmConstant.DEL_FALSE);
+		saveSales.setCreateDate(date);
+		saveSales.setUpdateDate(date);
+		saveSales.setCreatePersonId(uid);
+		saveSales.setUpdatePersonId(uid);
+
+		CrmContact saveContact = new CrmContact();
+		saveContact.setId(Base.generatePk(saveContact.getClass()));
+		saveContact.setCustomerId(custId);
+		saveContact.setName(contactName);
+		saveContact.setPhoneNumber(phoneNumer);
+		saveContact.setTitle(title);
+		saveContact.setDecisionRole(decisionRole);
+		saveContact.setEmail(contactEmail);
+		saveContact.setMasterContact(CrmConstant.ISMASTERCONTACT_TRUE);
+
+		saveContact.setDelflag(CrmConstant.DEL_FALSE);
+		saveContact.setCreateDate(date);
+		saveContact.setUpdateDate(date);
+		saveContact.setCreatePersonId(uid);
+		saveContact.setUpdatePersonId(uid);
+
+		//获取登录人名称    添加动态
+        String content = MessageFormat.format(CrmCustomerEnum.CREATE_CUSTOMER.getCode(), uName, custName);
+        crmCustomerChangeService.saveCustChange(custId, content, uid);
+        content = MessageFormat.format(CrmCustomerEnum.CREATE_CONTACT.getCode(), uName, contactName);
+        crmCustomerChangeService.saveCustChange(custId, content, uid);
+        // 没有导入负责人，不计入排行榜
+        if (StringUtils.isNotBlank(salesmanId)) {
+        	saveCustRanking(salesmanId, uid);
+		}
+		crmCustomerMapper.insert(saveCust);
+		crmContactMapper.insert(saveContact);
+		crmCustomerSalesmanMapper.insert(saveSales);
+		
+//		if (!salesmanId.equals("")) {
+//			CrmAssignedMsgParam msg = new CrmAssignedMsgParam();
+//			msg.setCustomerId(custId);
+//			msg.setUserId(salesmanId);
+//			msg.setCustomerName(custName);
+//			assignedMsgList.add(msg);
+//		}
+		
+		return true;
+	}
+
+	/**
+	 * 客户名称是否可用
+	 */
+	@Override
+	public boolean queryCustNameCanUse(String id, String name) {
+		return crmCustomerMapper.selectCustNameCount(id, name) == 0;
+	}
+
+    @Override
+    public PageResult getAll(CrmCustomerparam crmCustomerparam) {
+        List<CrmCustomerChangeDto> list = crmCustomerChangeMapper.getAll(crmCustomerparam);
+        int count = crmCustomerChangeMapper.getCount(crmCustomerparam);
+        return PageResult.pageResult(crmCustomerparam, count, list);
+    }
+
+    /**
+     * 客户分配
+     */
+	@Override
+	public boolean saveAssignedCust(CrmAssignedCustParam assignedCustParam) {
+        String uid = getUserIdOA();
+        boolean isCrmAdmin = isRolePermission(BaseConstants.MYSQL_MENU_CODE_CRM_MANAGE);
+        if (!isCrmAdmin) {
+            throw new HioException("您没有分配客户的权限");
+        }
+		Date date = new Date();
+		// 选择的负责人列表
+		List<String> saleIds = assignedCustParam.getSaleIds();
+		int saleSize = saleIds.size();
+		
+		int next = 0;
+		List<CrmCustomer> custUpdateList = new ArrayList<>();
+        List<CrmAssignedMsgParam> assignedMsgList = new ArrayList<>();
+		if (assignedCustParam.getCustRangeType().equals(CrmConstant.CUSTRANGETYPE_SERCHARESULT)) {
+			CrmCustomerSearchParam searchParam = assignedCustParam.getCustomerSearch();
+			if(searchParam == null) {
+				throw new HioException("参数不正确");
+			}
+			// 设为最大，不分页
+			searchParam.setPageNum(1);
+			searchParam.setPageCount(Integer.MAX_VALUE);
+			List<CrmCustomerPageDto> list = crmCustomerMapper.getPageCustomers(assignedCustParam.getCustomerSearch());
+			for (CrmCustomerPageDto customerPageDto : list) {
+				if (next == saleSize) {
+					next = 0;
+				}
+				String saleId = saleIds.get(next);
+				String custId = customerPageDto.getCustomerId();
+				
+				CrmCustomer custUpdate = new CrmCustomer();
+				custUpdate.setId(custId);
+				custUpdate.setOwnerPersonId(saleId);
+				custUpdate.setUpdateDate(date);
+				custUpdate.setUpdatePersonId(uid);
+				custUpdateList.add(custUpdate);
+
+                CrmAssignedMsgParam msg = new CrmAssignedMsgParam();
+                msg.setCustomerId(custId);
+                msg.setUserId(saleId);
+                msg.setCustomerName(customerPageDto.getCustomerName());
+                assignedMsgList.add(msg);
+				next ++;
+			}
+		} else {
+
+			List<String> custIds = assignedCustParam.getCustIds();
+			Map<String, Object> mapParam = new HashMap<>();
+            mapParam.put("custIds", custIds);
+			Map<String, CustomerNamesDto> map = crmCustomerMapper.selectCustNameByIds(mapParam);
+            String custName;
+			for (String custId : custIds) {
+			    if(map.containsKey(custId)) {
+                    custName = map.get(custId).getCustomerName();
+                } else {
+			        // 数据库未查到就忽略
+			        continue;
+                }
+				if (next == saleSize) {
+					next = 0;
+				}
+				String saleId = saleIds.get(next);
+				
+				CrmCustomer custUpdate = new CrmCustomer();
+				custUpdate.setId(custId);
+				custUpdate.setOwnerPersonId(saleId);
+				custUpdate.setUpdateDate(date);
+				custUpdate.setUpdatePersonId(uid);
+				custUpdateList.add(custUpdate);
+
+                CrmAssignedMsgParam msg = new CrmAssignedMsgParam();
+                msg.setCustomerId(custId);
+                msg.setUserId(saleId);
+                msg.setCustomerName(custName);
+                assignedMsgList.add(msg);
+				next ++;
+			}
+		}
+		
+        String tendId = getTendId();
+        String uName = getUserNameOA();
+        Map<String, String> saleNamesMap = crmCommonInvokeUtil.getUserName(tendId, saleIds);
+        
+		for (CrmCustomer crmCustomer : custUpdateList) {
+			// 修改客户表的主责人
+			crmCustomerMapper.updateByPrimaryKeySelective(crmCustomer);
+			
+			// 删除客户销售表主责人
+			CrmCustomerSalesman customerSales = new CrmCustomerSalesman();
+			customerSales.setCustomerId(crmCustomer.getId());
+			customerSales.setUpdatePersonId(uid);
+			customerSales.setUpdateDate(date);
+			customerSales.setType(CrmConstant.SALETYPE_MAIN);
+			crmCustomerSalesmanMapper.deleteByCustIdAndType(customerSales);
+			
+			// 新增客户销售主责人
+			CrmCustomerSalesman customerSalesmanSave = new CrmCustomerSalesman();
+			customerSalesmanSave.setSalesmanId(crmCustomer.getOwnerPersonId());
+			customerSalesmanSave.setCustomerId(crmCustomer.getId());
+			customerSalesmanSave.setType(CrmConstant.SALETYPE_MAIN);
+			String id = Base.generatePk(customerSalesmanSave.getClass());
+			customerSalesmanSave.setId(id);
+			customerSalesmanSave.setDelflag(CrmConstant.DEL_FALSE);
+			customerSalesmanSave.setUpdateDate(date);
+			customerSalesmanSave.setCreateDate(date);
+			customerSalesmanSave.setCreatePersonId(uid);
+			customerSalesmanSave.setUpdatePersonId(uid);
+			crmCustomerSalesmanMapper.insert(customerSalesmanSave);
+			
+			String ownerName = saleNamesMap.get(crmCustomer.getOwnerPersonId());
+			
+			String content = MessageFormat.format(CrmCustomerEnum.CHANGE_PERSON_CHANGE.getCode(), uName, ownerName);
+            crmCustomerChangeService.saveCustChange(crmCustomer.getId(), content, uid);
+            
+		}
+		try {
+    		crmCommonInvokeUtil.sendAssignMessage(assignedMsgList);
+		} catch (Exception e) {
+			logger.error("分配客户发消息异常：{}", e);
+		}
+		return true;
+	}
+
+	/**
+	 * 标记重点切换
+	 */
+	@Override
+	public boolean saveSignImport(CrmCommonParam param) {
+		LoginUser loginUser = getLoginUser();
+        String uid = loginUser.getUserId();
+		String custId = param.getCustomerId();
+		String uName = getUserNameOA();
+		CrmCustomer customerFind = crmCustomerMapper.selectByPrimaryKey(custId);
+		
+		if (customerFind == null) {
+			throw new HioException("未找到客户");
+		}
+
+        if (!isRolePermission(BaseConstants.MYSQL_MENU_CODE_CRM_MANAGE)) {
+            if (!customerFind.getOwnerPersonId().equals(uid)) {
+                throw new HioException("您没有该客户权限");
+            }
+        }
+		/*
+		 * 标记重点切换
+		 * 1.如果已经标记重点，需要重新计算
+		 * 如果有签约订单，则状态为已签约
+		 * 否则继续判断，有跟进记录，则状态为跟进中
+		 * 否则状态为未跟进
+		 * 2.如果没有标记重点，则直接标记成重点
+		 */
+		Integer status;
+		if (customerFind.getStatus().equals(CrmCustomerStatusEnum.IMPORT_FOLLOWING.getStatus())) {
+			if (customerFind.getDealStatus().equals(CrmConstant.DEAL_YES)) {
+				status = CrmCustomerStatusEnum.AREADY_SIGNED.getStatus();
+			} else if (customerFind.getLastContactTime() != null) {
+				status = CrmCustomerStatusEnum.FOLLOWING.getStatus();
+			} else {
+				status = CrmCustomerStatusEnum.NOT_CONTACT.getStatus();
+			}
+		} else {
+			status = CrmCustomerStatusEnum.IMPORT_FOLLOWING.getStatus();
+		}
+		
+		CrmCustomer custUpdate = new CrmCustomer();
+		custUpdate.setId(custId);
+		custUpdate.setStatus(status);
+		custUpdate.setUpdatePersonId(uid);
+		custUpdate.setUpdateDate(new Date());
+		crmCustomerMapper.updateByPrimaryKeySelective(custUpdate);
+		
+		String oldStatusName = CrmCustomerStatusEnum.getNameByStatus(customerFind.getStatus());
+		String newStatusName = CrmCustomerStatusEnum.getNameByStatus(status);
+		String content = MessageFormat.format(CrmCustomerEnum.CUSTOMER_CHANGE.getCode(), uName, oldStatusName, newStatusName);
+        crmCustomerChangeService.saveCustChange(custId, content, uid);
+		return true;
+	}
+
+	/**
+	 * 标记失败切换
+	 */
+	@Override
+	public boolean saveSignFail(CrmCommonParam param) {
+		LoginUser loginUser = getLoginUser();
+		String uid = loginUser.getUserId();
+		String custId = param.getCustomerId();
+		String uName = getUserNameOA();
+		CrmCustomer customerFind = crmCustomerMapper.selectByPrimaryKey(custId);
+		
+		if (customerFind == null) {
+			throw new HioException("未找到客户");
+		}
+
+        if (!isRolePermission(BaseConstants.MYSQL_MENU_CODE_CRM_MANAGE)) {
+            if (!customerFind.getOwnerPersonId().equals(uid)) {
+                throw new HioException("您没有该客户权限");
+            }
+        }
+		/*
+		 * 标记失败切换
+		 * 1.如果已经标记失败，需要重新计算
+		 * 如果有签约订单，则状态为已签约
+		 * 否则继续判断，有跟进记录，则状态为跟进中
+		 * 否则状态为未跟进
+		 * 2.如果没有标记失败，则直接标记成失败
+		 */
+		Integer status;
+		if (customerFind.getStatus().equals(CrmCustomerStatusEnum.FAILED.getStatus())) {
+			if (customerFind.getDealStatus().equals(CrmConstant.DEAL_YES)) {
+				status = CrmCustomerStatusEnum.AREADY_SIGNED.getStatus();
+			} else if (customerFind.getLastContactTime() != null) {
+				status = CrmCustomerStatusEnum.FOLLOWING.getStatus();
+			} else {
+				status = CrmCustomerStatusEnum.NOT_CONTACT.getStatus();
+			}
+		} else {
+			status = CrmCustomerStatusEnum.FAILED.getStatus();
+		}
+		
+		CrmCustomer custUpdate = new CrmCustomer();
+		custUpdate.setId(custId);
+		custUpdate.setStatus(status);
+		custUpdate.setUpdatePersonId(uid);
+		custUpdate.setUpdateDate(new Date());
+		crmCustomerMapper.updateByPrimaryKeySelective(custUpdate);
+		
+		String oldStatusName = CrmCustomerStatusEnum.getNameByStatus(customerFind.getStatus());
+		String newStatusName = CrmCustomerStatusEnum.getNameByStatus(status);
+		String content = MessageFormat.format(CrmCustomerEnum.CUSTOMER_CHANGE.getCode(), uName, oldStatusName, newStatusName);
+        crmCustomerChangeService.saveCustChange(custId, content, uid);
+		return true;
+	}
+
+	/**
+	 * 客户详情统计数量
+	 */
+	@Override
+	public CrmStatisticalCountDto queryStatistical(String customerId) {
+		CrmCustomerChange changeSelect = new CrmCustomerChange();
+		changeSelect.setCustomerId(customerId);
+		changeSelect.setDelflag(CrmConstant.DEL_FALSE);
+		int changeCount = crmCustomerChangeMapper.selectCount(changeSelect);
+		
+		CrmContact contactSelect = new CrmContact();
+		contactSelect.setCustomerId(customerId);
+		contactSelect.setDelflag(CrmConstant.DEL_FALSE);
+		int contactCount = crmContactMapper.selectCount(contactSelect);
+		
+		CrmCustomerOpportunities opportunitySelect = new CrmCustomerOpportunities();
+		opportunitySelect.setCustomerId(customerId);
+		opportunitySelect.setDelflag(CrmConstant.DEL_FALSE);
+		int opportunityCount = crmCustomerOpportunitiesMapper.selectCount(opportunitySelect);
+		
+		CrmOrder orderSelect = new CrmOrder();
+		orderSelect.setCustomerId(customerId);
+		orderSelect.setDelflag(CrmConstant.DEL_FALSE);
+		int orderCount = crmOrderMapper.selectCount(orderSelect);
+		
+		CrmCustomerFollowHis followHisSelect = new CrmCustomerFollowHis();
+		followHisSelect.setCustomerId(customerId);
+		followHisSelect.setDelflag(CrmConstant.DEL_FALSE);
+		int followHisCount = crmCustomerFollowHisMapper.selectCount(followHisSelect);
+		
+		CrmCustomerFollowPlan followPlanSelect = new CrmCustomerFollowPlan();
+		followPlanSelect.setCustomerId(customerId);
+		followPlanSelect.setDelflag(CrmConstant.DEL_FALSE);
+		int followPlanCount = crmCustomerFollowPlanMapper.selectCount(followPlanSelect);
+		
+		return new CrmStatisticalCountDto(changeCount, contactCount, opportunityCount,
+				orderCount, followHisCount, followPlanCount);
+	}
+	
+}
+

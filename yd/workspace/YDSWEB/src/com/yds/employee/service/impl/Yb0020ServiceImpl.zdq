@@ -1,0 +1,578 @@
+/*
+ * @(#) Yb0020ServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 员工管理
+ */
+
+package com.yds.employee.service.impl;
+
+import java.io.File;
+import java.text.DateFormat;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+//import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+
+import org.apache.commons.io.FileUtils;
+import org.springframework.stereotype.Service;
+
+import com.yds.base.service.AbstractBaseService;
+import com.yds.common.bean.EmpInfo;
+import com.yds.common.bean.EmpPos;
+import com.yds.common.bean.UserResult;
+import com.yds.common.service.CommonConstants;
+import com.yds.common.service.LogService;
+import com.yds.common.service.SessionService;
+import com.yds.employee.bean.EmpGrpHis;
+import com.yds.employee.bean.EmpPosHis;
+import com.yds.employee.bean.EmpStaffOrgRelation;
+import com.yds.employee.bean.EmpStaffPos;
+import com.yds.employee.bean.EmpStateInfo;
+import com.yds.employee.dao.Yb0020Dao;
+import com.yds.employee.service.Yb0020Service;
+import com.yds.util.service.EncryptionPW;
+import com.yds.util.service.StringUtil;
+
+/**
+ * @see com.yds.employee.service.Yb0020Service
+ */
+@Service("yb0020Service")
+public class Yb0020ServiceImpl extends AbstractBaseService implements
+		Yb0020Service {
+
+	private Yb0020Dao yb0020Dao;
+	//======2010/08/06  滕长龙对应系统日志  start =========== 
+	// 日志信息
+	String logMsg = "";
+	// 日志 service
+	private LogService logService;
+	//======2010/08/06  滕长龙对应系统日志  end   ===========
+
+	public void setYb0020Dao(Yb0020Dao yb0020Dao) {
+		this.yb0020Dao = yb0020Dao;
+	}
+
+	@Override
+	public EmpInfo getEmpInfo(String empId){
+		return yb0020Dao.getEmpInfoFromId(empId);
+	}
+
+//	@Override
+//	public EmpStaffPos getEmpPos(String empId) {
+//		return yb0020Dao.getEmpPos(empId);
+//	}
+	
+	@Override
+	public void insertEmpInfo(EmpInfo empInfo,String posId,String empState) {
+
+		
+		// 社内信箱编辑
+		empInfo.setEmpEmailComp(empInfo.getEmpEmailComp()+"@ysys");
+		// 员工信息登记
+		yb0020Dao.insertEmpInfo(empInfo);
+		// 用户信息登记
+		insertComUserInfo(StringUtil.leftPadYd(empInfo.getEmpId()));
+		// 员工职位信息登记
+		insertEmpStaffPosIns(empInfo, posId);
+		// 员工职位历史信息登记
+		insertEmpPosHisIns(empInfo, posId);
+		
+		// 主管部门ID的取得
+		if (empInfo.getChargeOrgId() != null && !"".equals(empInfo.getChargeOrgId())) {
+			if (empInfo.getChargeOrgId().indexOf(",") != -1) {
+				String[] orgId = empInfo.getChargeOrgId().split(",");
+				empInfo.setChargeOrgId(orgId[orgId.length - 1]);
+			}
+		}
+		// 员工组织信息登记
+		insertEmpStaffOrgRelationIns(empInfo);
+		// 员工组织历史信息登记
+		insertEmpGrpHisIns(empInfo);
+		// 员工状态信息登记
+		insertEmpStateInfoIns(empInfo,empState);
+		
+		//======2010/08/24  滕长龙对应系统日志  start ===========
+		// 日志信息的编辑
+		logMsg = "ID为" + empInfo.getEmpId() + "的员工信息注册成功。";
+		// 日志的追加  日志级别未定
+		logService.insertLogInfo(CommonConstants.LoglevelEnum.Not_Delete.toString(), CommonConstants.SubIdEnum.Sub_EMP.toString(), SessionService.getLoginUserId(), logMsg, "");
+		//======2010/08/24  滕长龙对应系统日志  end   ===========
+	}
+	
+	@Override
+	public void updateEmpInfo(EmpInfo empInfo,Integer mode) {
+		
+		if(mode!=5){
+			
+			// 社内信箱编辑
+			empInfo.setEmpEmailComp(empInfo.getEmpEmailComp()+"@ysys");
+		}
+//		String tempOrgId = yb0020Dao.getOrgId(empInfo.getEmpId());
+//		if(!tempOrgId.equals(empInfo.getChargeOrgId())){
+//			// 员工组织信息变更
+//			delInsertUpdateEmpStaffOrgRelation(empInfo);
+//		}
+		// 员工信息更新
+		yb0020Dao.updateEmpInfo(empInfo);
+		
+		//======2010/08/24  滕长龙对应系统日志  start ===========
+		// 日志信息的编辑
+		logMsg = "ID为" + empInfo.getEmpId() + "的员工信息修改成功。";
+		// 日志的追加  日志级别未定
+		logService.insertLogInfo(CommonConstants.LoglevelEnum.Not_Delete.toString(), CommonConstants.SubIdEnum.Sub_EMP.toString(), SessionService.getLoginUserId(), logMsg, "");
+		//======2010/08/24  滕长龙对应系统日志  end   ===========
+		
+
+	}
+
+	/**
+	 * 域用户名存在check
+	 * 
+	 * @return true/false
+	 */
+	public boolean empDmnmExitCheck(String empDmnm, String empId) {
+
+		if (yb0020Dao.getEmpInfoFromDmnm(empDmnm) == null || empId.equals(yb0020Dao.getEmpInfoFromDmnm(empDmnm))) {
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * 社内信箱ID存在check
+	 * 
+	 * @return true/false
+	 */
+	public boolean empEmailCompExitCheck(String empEmailComp, String empId) {
+
+		if (yb0020Dao.getEmpInfoFromEmailComp(empEmailComp) == null || empId.equals(yb0020Dao.getEmpInfoFromEmailComp(empEmailComp))) {
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * 员工ID存在check
+	 * 
+	 * @return true/false
+	 */
+	public boolean empIdExitCheckIns(String empId) {
+
+		if (null == yb0020Dao.getViewFromId(empId)) {
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * 域用户名存在check
+	 * 
+	 * @return true/false
+	 */
+	public boolean empDmnmExitCheckIns(String empDmnm) {
+
+		if (yb0020Dao.getEmpInfoFromDmnmIns(empDmnm).equals("0")) {
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * 社内信箱ID存在check
+	 * 
+	 * @return true/false
+	 */
+	public boolean empEmailCompExitCheckIns(String empEmailComp) {
+
+		if (yb0020Dao.getEmpInfoFromEmailCompIns(empEmailComp).equals("0")) {
+			return false;
+		}
+
+		return true;
+	}
+
+
+//	/**
+//	 * 员工组织信息登记
+//	 * 
+//	 * @param empInfo  员工信息
+//	 */
+//	private void delInsertUpdateEmpStaffOrgRelation(EmpInfo empInfo) {
+//		
+//		// 主管部门ID的取得
+//		if (empInfo.getChargeOrgId() != null && !"".equals(empInfo.getChargeOrgId())) {
+//			if (empInfo.getChargeOrgId().indexOf(",") != -1) {
+//				String[] orgId = empInfo.getChargeOrgId().split(",");
+//				empInfo.setChargeOrgId(orgId[orgId.length - 1]);
+//			}
+//		}
+//		
+//		// 删除既存员工主管部门信息
+//		EmpStaffOrgRelation tempEmpStaffOrgRelation = new EmpStaffOrgRelation();
+//		tempEmpStaffOrgRelation.setEmpId(empInfo.getEmpId());
+//		tempEmpStaffOrgRelation.setOrgId(yb0020Dao.getOrgId(empInfo.getEmpId()));
+//		yb0020Dao.deleteEmpStaffOrgRelation(tempEmpStaffOrgRelation);
+//		
+//		// 初始化员工组织信息 bean
+//		EmpStaffOrgRelation empStaffOrgRelation = new EmpStaffOrgRelation();
+//		EmpGrpHis empGrpHis = new EmpGrpHis();
+//		// 设置员工ID
+//		empStaffOrgRelation.setEmpId(empInfo.getEmpId());
+//		empGrpHis.setEmpId(empInfo.getEmpId());
+//		// 设置组织ID
+//		empStaffOrgRelation.setOrgId(empInfo.getChargeOrgId());
+//		empGrpHis.setOrgId(empInfo.getChargeOrgId());
+//		// 设置登录者
+//		empGrpHis.setUpdateUser(empInfo.getUpdateUser());
+//		// 员工组织信息登记
+//		yb0020Dao.insertEmpStaffOrgRelation(empStaffOrgRelation);
+//		// 员工组织历史信息登记
+//		SimpleDateFormat tempDate = new SimpleDateFormat("yyyy-MM-dd");
+//		String datetime = tempDate.format(new java.util.Date());
+//		List<String> startTimeList=yb0020Dao.getStartTime(empGrpHis);
+//		if(startTimeList.size()!=0){
+//			if(!startTimeList.get(0).equals(datetime)){
+//				yb0020Dao.insertEmpGrpHis(empGrpHis);
+//			}
+//			else{
+//				yb0020Dao.updateEmpGrpHis2(empGrpHis);
+//			}
+//		}else{
+//			yb0020Dao.insertEmpGrpHis(empGrpHis);
+//		}
+//		
+//		
+//		// 初始化员工组织历史信息 bean
+//		EmpGrpHis tempEmpGrpHis = new EmpGrpHis();
+//		// 设置员工ID
+//		tempEmpGrpHis.setEmpId(tempEmpStaffOrgRelation.getEmpId());
+//		// 设置组织ID
+//		tempEmpGrpHis.setOrgId(tempEmpStaffOrgRelation.getOrgId());
+//		// 设置更新者
+//		tempEmpGrpHis.setUpdateUser(empInfo.getUpdateUser());
+//        // 员工组织历史信息更新
+//        yb0020Dao.updateEmpGrpHis(tempEmpGrpHis);
+//
+//	}
+
+	/**
+	 * 员工照片上传
+	 * 
+	 * @param File 图片文件
+	 * @param String 文件名
+	 * @return String 保存后文件名
+	 * 
+	 */
+	@Override
+	public String uploadEmpImgId(File upload, String fileName) throws Exception {
+
+		// 生成文件名
+		String targetFileName = generateFileName(fileName);
+
+		// 生成文件
+		File target = new File(propMgr.getParameter(CommonConstants.FILE_PATH.EMP_IMAGE.value()), targetFileName);
+
+		// 上传文件
+		FileUtils.copyFile(upload, target);
+
+		return targetFileName;
+	}
+
+	/**
+	 * 生成文件名
+	 * 
+	 * @param fileName
+	 *            上传文件名
+	 * @return String 处理后文件名
+	 */
+	private String generateFileName(String fileName) {
+		DateFormat format = new SimpleDateFormat("yyMMddHHmmssSSS");
+		StringBuilder formatDate = new StringBuilder(format.format(new Date()));
+
+		int position = fileName.lastIndexOf(".");
+		String extension = fileName.substring(position);
+
+		return formatDate.append(extension).toString();
+	}
+
+	/**
+	 * 毕业院校信息取得
+	 * 
+	 * @param 
+	 * @return  List<String>
+	 */
+	public List<String> getGraduatedList() {
+		
+//		List<String> temp = new ArrayList<String>();
+//		List<String> graduatedList = new ArrayList<String>();
+//		List<String> tempArray = yb0020Dao.getGraduateList();
+//		
+//		int length = tempArray.size();
+//		int tempLength = 0;
+//		// 剔除空白名称
+//		for(int i = 0; i < length; i++){
+//			if(tempArray.get(i) != null && !tempArray.get(i).equals("")){
+//				graduatedList.add(tempLength, tempArray.get(i));
+//				tempLength++;
+//			}
+//		}
+//		
+//		// 剔除重复名称
+//		int tempSize = temp.size();
+//		graduatedList.add(0, temp.get(0));
+//		for(int i = 0; i < tempSize; i++){
+//			int size = graduatedList.size();
+//			for(int j = 0; j < size; j++){
+//				if(graduatedList.get(j).equals(temp.get(i))){
+//					break;
+//				}else if((j < size) && (j+1 != size)){
+//					continue;
+//				}else{
+//					graduatedList.add(size,temp.get(i));
+//					break;
+//				}
+//			}
+//		}
+		
+		return yb0020Dao.getGraduateList();
+	}
+
+	/**
+	 * 学历信息取得
+	 * 
+	 * @param 
+	 * @return  List<String>
+	 */
+	public List<String> getMajorList() {
+		
+//		List<String> temp = new ArrayList<String>();
+//		List<String> majorList = new ArrayList<String>();
+//		List<String> tempArray = yb0020Dao.getMajorList();
+//		
+//		int length = tempArray.size();
+//		int tempLength = 0;
+//		// 剔除空白名称
+//		for(int i = 0; i < length; i++){
+//			if(tempArray.get(i) != null && !tempArray.get(i).equals("")){
+//				majorList.add(tempLength, tempArray.get(i));
+//				tempLength++;
+//			}
+//		}
+//		
+//		// 剔除重复名称
+//		int tempSize = temp.size();
+//		majorList.add(0, temp.get(0));
+//		for(int i = 0; i < tempSize; i++){
+//			int size = majorList.size();
+//			for(int j = 0; j < size; j++){
+//				if(majorList.get(j).equals(temp.get(i))){
+//					break;
+//				}else if((j < size) && (j+1 != size)){
+//					continue;
+//				}else{
+//					majorList.add(size,temp.get(i));
+//					break;
+//				}
+//			}
+//		}
+		
+		return yb0020Dao.getMajorList();
+	}
+
+	/**
+	 * 员工职位信息登记
+	 * 
+	 * @param empInfo  员工信息
+	 *        empPosList     职位信息
+	 */
+	private void insertEmpStaffPosIns(EmpInfo empInfo,String posId) {
+
+			// 初始化员工职位信息 bean
+			EmpStaffPos empStaffPos = new EmpStaffPos();
+			// 设置员工ID
+			empStaffPos.setEmpId(empInfo.getEmpId());
+			// 设置职位ID
+			empStaffPos.setPosId(posId);
+			// 员工职位信息登记
+		
+			yb0020Dao.insertEmpStaffPos(empStaffPos);
+			
+
+	}
+
+	/**
+	 * 员工职位历史信息登记
+	 * 
+	 * @param empInfo  员工信息
+	 *        empPosList     职位信息
+	 */
+	private void insertEmpPosHisIns(EmpInfo empInfo, String posId) {
+		
+		
+	
+			// 初始化员工职位历史信息 bean
+			EmpPosHis empPosHis = new EmpPosHis();
+			// 设置员工ID
+			empPosHis.setEmpId(empInfo.getEmpId());
+			// 设置职位ID
+			empPosHis.setPosId(posId);
+			String endTime="9999-12-31";
+			try {                      
+			      DateFormat sdf=new SimpleDateFormat("yyyy-MM-dd");         
+				  empPosHis.setEndTime(sdf.parse(endTime));
+				} 
+			catch (ParseException e) {                   
+				System.out.println("String to Date error");   
+			}
+
+			// 设置登录者
+			empPosHis.setUpdateUser(empInfo.getUpdateUser());
+			// 员工职位历史信息登记
+			yb0020Dao.insertEmpPosHis(empPosHis);
+		  
+		
+	}
+
+	/**
+	 * 员工组织信息登记
+	 * 
+	 * @param empInfo  员工信息
+	 */
+	private void insertEmpStaffOrgRelationIns(EmpInfo empInfo) {
+	
+		// 初始化员工组织信息 bean
+		EmpStaffOrgRelation empStaffOrgRelation = new EmpStaffOrgRelation();
+		// 设置员工ID
+		empStaffOrgRelation.setEmpId(empInfo.getEmpId());
+		// 设置组织ID
+		empStaffOrgRelation.setOrgId(empInfo.getChargeOrgId());
+		// 员工组织信息登记
+		yb0020Dao.insertEmpStaffOrgRelation(empStaffOrgRelation);
+	}
+
+	/**
+	 * 员工组织历史信息登记
+	 * 
+	 * @param empInfo  员工信息
+	 */
+	private void insertEmpGrpHisIns(EmpInfo empInfo) {
+
+		// 初始化员工组织历史信息 bean
+		EmpGrpHis empGrpHis = new EmpGrpHis();
+		// 设置员工ID
+		empGrpHis.setEmpId(empInfo.getEmpId());
+		// 设置组织ID
+		empGrpHis.setOrgId(empInfo.getChargeOrgId());
+		// 设置登录者
+		empGrpHis.setUpdateUser(empInfo.getUpdateUser());
+		// 员工组织历史信息登记
+		yb0020Dao.insertEmpGrpHis(empGrpHis);
+		
+	}
+
+	/**
+	 * 员工状态信息登记
+	 * 
+	 * @param empInfo  员工信息
+	 */
+	private void insertEmpStateInfoIns(EmpInfo empInfo,String empState) {
+
+		// 初始化员工状态信息 bean
+		EmpStateInfo empStateInfo = new EmpStateInfo();
+		// 设置员工ID
+		empStateInfo.setEmpId(empInfo.getEmpId());
+		// 设置状态ID
+		empStateInfo.setEmpState(empState);
+		// 设置登录者
+		empStateInfo.setUpdateUser(empInfo.getUpdateUser());
+		// 员工状态信息登记
+		yb0020Dao.insertEmpStateInfoIns(empStateInfo);
+		
+	}
+
+	/**
+	 * 职位Id取得
+	 * 
+	 * @param 
+	 * @return String 职位Id
+	 */
+	public String getPosId(String empId){
+
+		String posId = yb0020Dao.getPosId(empId);
+		return posId;
+	}
+	/**
+	 * 职位名称取得
+	 * 
+	 * @param 
+	 * @return String 职位名称
+	 */
+	public String getDiffName(String empState){
+
+		String diffName = yb0020Dao.getDiffName(empState);
+		return diffName;
+	}
+	/**
+	 * 职位类别名称取得
+	 * 
+	 * @param 
+	 * @return String 职位类别名称
+	 */
+	public String getPosName(String posTypeId){
+
+		String posSname = yb0020Dao.getPosName(posTypeId);
+		return posSname;
+	}
+	/**
+	 * 职位信息取得
+	 * 
+	 * @param 
+	 * @return EmpInfo 职位信息
+	 */
+	public EmpPos getPos(String posId){
+
+		return yb0020Dao.getPos(posId);
+		 
+	}
+	/**
+	 *离职日期取得
+	 * 
+	 * @param 
+	 * @return EmpInfo 离职日期
+	 */
+	public EmpInfo getQuitDate(String empId){
+
+		return yb0020Dao.getQuitDate(empId);
+		 
+	}
+
+	/**
+	 * 用户基本信息登记
+	 * 
+	 * @param empId  员工ID
+	 */
+	private void insertComUserInfo(String empId) {
+
+		// 初始化用户基本信息 bean
+		UserResult userResult = new UserResult();
+		userResult.setUserId(empId);
+		userResult.setUserPassword(EncryptionPW.md5("111111",empId));
+		yb0020Dao.insertComUserInfo(userResult);
+	}
+	
+	/**
+	 * @param logService
+	 *            the logService to set
+	 */
+	public void setLogService(LogService logService) {
+		this.logService = logService;
+	}
+
+}

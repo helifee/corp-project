@@ -1,0 +1,725 @@
+package com.xinleju.platform.flow.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.platform.base.annotation.Description;
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.flow.dao.BusinessObjectDao;
+import com.xinleju.platform.flow.dto.BusinessObjectDto;
+import com.xinleju.platform.flow.dto.BusinessObjectVariableDto;
+import com.xinleju.platform.flow.entity.BusinessObject;
+import com.xinleju.platform.flow.entity.BusinessObjectVariable;
+import com.xinleju.platform.flow.service.BusinessObjectService;
+import com.xinleju.platform.flow.service.BusinessObjectVariableService;
+import com.xinleju.platform.flow.utils.SortType;
+import com.xinleju.platform.sys.res.dto.AppSystemDto;
+import com.xinleju.platform.sys.res.dto.service.AppSystemDtoServiceCustomer;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class BusinessObjectServiceImpl extends  BaseServiceImpl<String,BusinessObject> implements BusinessObjectService{
+	
+
+	@Autowired
+	private BusinessObjectDao businessObjectDao;
+	
+	@Autowired
+	private BusinessObjectVariableService businessObjectVariableService;
+	
+	@Autowired
+	private AppSystemDtoServiceCustomer appSystemDtoServiceCustomer;
+
+	@Override
+	@Description(instruction = "获取业务对象树")
+	public List<BusinessObjectDto> getTree(Map<String, Object> paramater) throws Exception {
+		// TODO Auto-generated method stub
+		return businessObjectDao.getTree(paramater);
+	}
+
+	@Override
+	public List<BusinessObjectDto> seachKeyword(Map<String, String> paramater) {
+		return businessObjectDao.seachKeyword(paramater);
+	}
+
+	@Override
+	public String saveObjectAndVariableData(String userInfo, BusinessObjectDto objectDto) throws Exception {
+		String appCode = objectDto.getAppCode();
+		String appId = getSystemAPPInfo(userInfo, appCode);//根据appCode去查询到对应的appSystemId
+		System.out.println("\n 000 saveObjectAndVariableData appCode="+appCode+" appId="+appId);
+		if("".equals(appId)){
+			System.out.println("saveObjectAndVariableData appId 找不到对应值");
+		}else{
+			String systemAppId = appId;//先进行重新赋值
+			objectDto.setAppId(systemAppId);
+            String parentCode = objectDto.getParentCode();
+            //目前只处理OA_CUSTOMIZED_FORM和OA_NEWS_DATA两大类的业务对象和分类
+            //OA_NEWS_DATA是OA新闻知识,不需要处理业务分类,直接处理业务对象即可
+            BusinessObject busiTypeObject = null;
+            //OA_CUSTOMIZED_FORM是OA自定义表单的,需要处理业务分类
+            if("OA_NEWS_DATA".equals(parentCode)){//不属于OA_NEWS_DATA则属于自定义表单下的
+            	busiTypeObject = queryOACustomizedFormInfo(parentCode, systemAppId);//
+            	System.out.println(" 001 queryOACustomizedFormInfo()... OA_NEWS_DATA is called. busiTypeObject.id="+busiTypeObject.getId());
+            }else{
+            	//查询OA自定义表单的相关数据
+    			BusinessObject oaCustomizedForm = queryOACustomizedFormInfo("OA_CUSTOMIZED_FORM", systemAppId);//
+    			System.out.println(" 001 queryOACustomizedFormInfo is called. id="+oaCustomizedForm.getId());
+    			//先保存或更新业务对象分类并返回
+    			busiTypeObject = saveOrUpdateAndReturnBusinessType(objectDto, oaCustomizedForm);
+    			System.out.println(" 002 saveOrUpdateAndReturnBusinessType is called. busiTypeObject.id="+busiTypeObject.getId());
+            }
+			
+			//此处需要添加对parentId为空进行处理
+			objectDto.setParentId(busiTypeObject.getId());
+			objectDto.setDataType("2");
+			
+			//1-先保存业务对象的数据
+			BusinessObject object = new BusinessObject();
+			BeanUtils.copyProperties(objectDto, object);
+			//此处不需要设置Id,因为还需要判断是否已经存在
+			String busiObjectId = objectDto.getId();
+			object.setParentId(busiTypeObject.getId());
+			
+			System.out.println("003 saveObjectAndVariableData  busiObjectId="+busiObjectId);
+			BusinessObject tempObject = this.getObjectById(busiObjectId);
+			if(tempObject!=null && tempObject.getCode()!=null){
+				object.setConcurrencyVersion(tempObject.getConcurrencyVersion());
+				//object.setCode(tempObject.getCode());
+				BusinessObject updateObject = new BusinessObject();
+				BeanUtils.copyProperties(object, updateObject);
+				updateObject.setSort(tempObject.getSort());
+				updateObject.setPrefixId(tempObject.getPrefixId());
+				businessObjectVariableService.deleteVariableListByObjectId(busiObjectId);
+				System.out.println("004 --001--- 业务对象更新的操作 deleteVariableListByObjectId() busiObjectId="+busiObjectId);
+				this.updateBusinessObject(updateObject);
+				System.out.println("004 --002--- 业务对象更新的操作 updateBusinessObject() busiObjectId="+busiObjectId);
+				saveDefaultBusinessVariableWithSortAndPrefixId(updateObject);
+				System.out.println("004 --002--- 业务对象更新的操作 saveDefaultBusinessVariableWithSortAndPrefixId() busiObjectId="+busiObjectId);
+				System.out.println("004... 业务对象更新的三个关键操作已经完成....");
+			}else{
+				Map<String, Object> paramater =  new HashMap<String, Object>();
+				paramater.put("code", object.getCode());
+				paramater.put("delflag", "0");
+				paramater.put("parentId", object.getParentId());
+				paramater.put("appId", systemAppId);//校验某个系统下的业务对象编码是否重复
+				List<BusinessObject> objectList = this.queryList(paramater);
+				if(objectList!=null && objectList.size()>0){
+					return "业务对象的编码校验不通过";
+				}
+				System.out.println("004  业务对象的编码校验通过....");
+				object.setConcurrencyVersion(0);
+				object.setDelflag(false);
+				this.saveBusinessObject(object);
+				saveDefaultBusinessVariableWithSortAndPrefixId(object);
+				System.out.println("005  业务对象的this.saveBusinessObject(object) 已经执行....");
+			}
+			int defaultSum = 0;
+			
+			//2-保存业务变量量表的数据
+			List<BusinessObjectVariableDto> variableList = objectDto.getVariableList();
+			System.out.println(" 007 ---- variableList.size="+variableList.size());
+			for( BusinessObjectVariableDto variableDto : variableList){
+				System.out.println(" 0008 ---- variableDto="+variableDto.getCode());
+				BusinessObjectVariable variable = new BusinessObjectVariable();
+				BeanUtils.copyProperties(variableDto, variable);
+				variable.setBusinessObjectId(busiObjectId);
+				variable.setSystemAppId(systemAppId);
+				variable.setConcurrencyVersion(0);
+				variable.setId(IDGenerator.getUUID());
+				variable.setPrefixId(variable.getBusinessObjectId()+"-"+variable.getId());
+				variable.setKeyName(variable.getCode());
+				//businessObjectVariableService.save(variable);
+				businessObjectVariableService.saveBusinessObjectVariable(variable);
+				System.out.println("\n009 save variable.getId()="+variable.getId());
+			}
+		}
+		return "保存成功";
+		
+	}
+	
+	/**
+	 * 指定code,name和parentId来保存或更新业务对象分类，并返回一个新的业务对象分类
+	 * @param code
+	 * @param name
+	 * @param parentId
+	 * @return
+	 * @throws Exception 
+	 */
+	private BusinessObject saveOrUpdateAndReturnBusinessType(String code, String name, String parentId,String appId) throws Exception{
+		BusinessObject tempTypeObject = new BusinessObject();
+		tempTypeObject.setId(IDGenerator.getUUID());
+		tempTypeObject.setCode(code);
+		tempTypeObject.setName(name);
+		tempTypeObject.setAppId(appId);
+		tempTypeObject.setParentId(parentId);
+		tempTypeObject.setDelflag(false);
+		tempTypeObject.setDataType("1");//设置为业务对象分类
+		
+		//查询是否存在该业务对象分类
+		Map<String, Object>queryMap = new HashMap<String, Object>();
+		queryMap.put("code", tempTypeObject.getCode());
+		queryMap.put("appId", tempTypeObject.getAppId());
+		queryMap.put("parentId", tempTypeObject.getParentId());
+		queryMap.put("delflag", tempTypeObject.getDelflag());
+		queryMap.put("dataType", tempTypeObject.getDataType());
+		List<BusinessObject> dataList = this.queryList(queryMap);
+		if(dataList!=null && dataList.size()>0){//存在该业务对象分类
+			BusinessObject newBusinessObject = dataList.get(0);
+			newBusinessObject.setName(name);
+			this.update(newBusinessObject);//只更新名称即可
+			//this.updateBusinessObject(newBusinessObject);
+			tempTypeObject = newBusinessObject;
+		}else{
+			tempTypeObject = this.saveBusinessObject(tempTypeObject);
+		}
+		return tempTypeObject;
+	}
+	
+	private BusinessObject saveOrUpdateAndReturnBusinessType(BusinessObjectDto objectDto,  BusinessObject oaCustomizedForm) throws Exception {
+		BusinessObject busiTypeObject = new BusinessObject();
+		
+		String parentCode = objectDto.getParentCode();
+		String parentName = objectDto.getParentName();
+		String parentCodeArray[] = null;
+		String parentNameArray[] = null;
+		System.out.println("-------------------0001  parentCode>>="+parentCode);
+		if(parentCode.indexOf("@@")>0){
+			parentCodeArray = parentCode.split("@@");
+			parentNameArray = parentName.split("@@");
+			String code1 = parentCodeArray[0];
+			String name1 = parentNameArray[0];
+			String parentId1 = oaCustomizedForm.getId();
+			String appId = objectDto.getAppId();
+			System.out.println("-------------------0002  parentId1>>="+parentId1);
+			BusinessObject firstTypeObject = saveOrUpdateAndReturnBusinessType(code1, name1, parentId1, appId);
+			System.out.println("-------------------0003  firstTypeObject.id>>="+firstTypeObject.getId());
+			String code2 = parentCodeArray[1];
+			String name2 = parentNameArray[1];
+			String parentId2 = firstTypeObject.getId();
+			System.out.println("-------------------0004  code2>>="+code2+"; name2="+name2);
+			busiTypeObject = saveOrUpdateAndReturnBusinessType(code2, name2, parentId2, appId);
+			System.out.println("-------------------0005  busiTypeObject.id>>="+busiTypeObject.getId());
+			System.out.println(">>>>>>> 已经保存的二级分类的数据: "+JacksonUtils.toJson(busiTypeObject));
+		}else{//如果parentCode中不含有&&,走原来老的逻辑
+			String code = objectDto.getParentCode();
+			String name = objectDto.getParentName();
+			String parentId = oaCustomizedForm.getId();
+			String appId = objectDto.getAppId();
+			busiTypeObject = saveOrUpdateAndReturnBusinessType(code, name, parentId, appId);
+		}
+		return busiTypeObject;
+	}
+	
+    //根据appCode去查询到对应的appSystemId
+	private String getSystemAPPInfo(String userInfo, String appCode) {
+		String appId = "";
+		if(appCode!=null && appCode.length()!=32){
+			Map<String,String> appMap = new HashMap<String,String>();
+			appMap.put("code", appCode);
+			appMap.put("appStatus", "1");
+			appMap.put("appDelFlag", "0");
+			   
+			String appParam = JacksonUtils.toJson(appMap);
+			String appResultInfo = appSystemDtoServiceCustomer.queryList(userInfo, appParam);
+			DubboServiceResultInfo appServiceResultInfo= JacksonUtils.fromJson(appResultInfo, DubboServiceResultInfo.class);
+			if(appServiceResultInfo.isSucess()){
+				String resultInfo= appServiceResultInfo.getResult();
+				List<AppSystemDto> list=JacksonUtils.fromJson(resultInfo, ArrayList.class, AppSystemDto.class);
+				String returnAppId = "";
+				for(AppSystemDto appDto : list){
+					if(appCode.equals(appDto.getCode()) && appDto.getDelflag()==false ){
+						returnAppId = appDto.getId();
+						break;
+					}
+				}
+				appId = returnAppId;
+		    }
+		}
+		return appId;
+	}
+
+	private BusinessObject queryOACustomizedFormInfo(String typeCode, String systemAppId) {
+		Map<String,Object> typeMap = new HashMap<String,Object>();
+		typeMap.put("code", typeCode);
+		typeMap.put("appId", systemAppId);
+		typeMap.put("delflag", "0");
+		typeMap.put("dataType", "1");
+		List<BusinessObject> list = businessObjectDao.queryList(typeMap);
+		if(list!=null && list.size()>0){
+			BusinessObject rootType = list.get(0);
+			System.out.println("queryOACustomizedFormInfo >>> appId="+rootType.getAppId()+"; id="+rootType.getId()
+			+" code="+rootType.getCode()+";name="+rootType.getName());
+			return rootType;
+		}else{
+			BusinessObject businessObject = new BusinessObject();
+			return businessObject;
+		}
+		
+	}
+
+	@Override
+	public int saveBusiObjectAndDefaultVariables(BusinessObject businessObject) throws Exception {
+		String parentId = businessObject.getParentId();
+		System.out.println("saveBusiObjectAndDefaultVariables>>> parentId="+parentId);
+		String parentPrefixId = businessObject.getAppId();
+		String parentPrefixSort = businessObject.getAppId();
+		if(parentId!=null && !"".equals(parentId) 
+				&& parentId.length()>=32){//parentId的值有效
+			BusinessObject parentObj = this.getObjectById(parentId);
+			parentPrefixId = parentObj.getPrefixId();
+		} else {
+			//如果是应用下的根节点, 则把parentId的值设置为appId;
+			//businessObject.setParentId(businessObject.getAppId());
+		}
+		businessObject.setPrefixId(parentPrefixId+"-"+businessObject.getId());
+		String dataType = businessObject.getDataType();
+		if("1".equals(dataType) ){//如果是普通的业务对象分类
+			businessObject.setPcUrl("");
+			businessObject.setParamUrl("");
+			businessObject.setPhoneUrl("");
+			
+			businessObject.setApproveClass("");
+			businessObject.setBusidataClass("");
+			businessObject.setBusidataMethod("");
+			businessObject.setCallbackClass("");
+			businessObject.setCallbackMethod("");
+		}
+		
+		int result = this.save(businessObject); 
+		int sum = 0;
+		if(result>=1){//保存成功
+			sum = saveDefaultVariables(businessObject);
+		}
+		return result+sum;
+	}
+	
+	public int saveDefaultVariables(BusinessObject businessObject)throws Exception {
+		System.out.println("\nsaveDefaultVariables() is called...");
+		String codeArray[] = {"flow_business_company_id", "flow_business_dept_id", "flow_business_project_id", 
+				              //"flow_business_project_branch_id", "business_object_name", "start_user_id",
+				              "flow_business_project_branch_id", "business_object_id", "start_user_id",
+				               //"flow_business_company_id_value", "flow_business_dept_id_value", "flow_business_project_id_value", 
+				               //"flow_business_project_branch_id_value", "business_object_name_value", "start_user_id_value",
+				               "flow_business_company_name", "flow_business_dept_name", "flow_business_project_name", 
+				               "flow_business_project_branch_name", "business_object_name", "start_user_name",
+				               };
+		//String nameArray[] = { "公司名称", "部门名称","项目名称","分期名称","业务对象","发起人",
+		//		"公司名称ID", "部门名称ID","项目名称ID","分期名称ID","业务对象ID","发起人ID" };
+		String nameArray[] = { "经办公司ID", "经办部门ID","经办项目ID","经办分期ID","业务对象ID","经办人ID",
+							   "经办公司", "经办部门","经办项目","经办分期","业务对象","经办人" };
+		int resultSum = 0;
+		for(int idx=0; idx<codeArray.length; idx++){
+			BusinessObjectVariable variable = new BusinessObjectVariable();
+			variable.setCode(codeArray[idx]);
+			variable.setName(nameArray[idx]);
+			variable.setType("1");//变量类型
+			variable.setBusinessObjectId(businessObject.getId());
+			variable.setId(IDGenerator.getUUID());
+			variable.setPrefixId(variable.getBusinessObjectId()+"-"+variable.getId());
+			variable.setPrefixSort(variable.getBusinessObjectId()+"-"+variable.getName());
+			variable.setPrefixName(variable.getBusinessObjectId()+"-"+variable.getName());
+			variable.setKeyName(codeArray[idx]);
+			variable.setForFinance(true);
+			variable.setForFlowBranch(true);
+			variable.setSystemAppId(businessObject.getAppId());
+			variable.setComment("流程的业务对象默认的变量");
+			int result = businessObjectVariableService.save(variable);
+			resultSum +=  result;
+		}
+		System.out.println("\nsaveDefaultVariables() is done, 成功保存了"+resultSum+"默认变量的数据");
+		return resultSum;
+	}
+	
+	@Override
+	public List<BusinessObjectDto> queryListByCondition(Map<String, Object> map) throws Exception{
+		return businessObjectDao.queryListByCondition(map);
+	}
+	/**
+	 * 查询所有父节点
+	 * @param map appId系统ID
+	 * @return
+	 * @throws Exception
+	 */
+	public List<String> selectAllParentId(Map<String, Object> map) throws Exception{
+		return businessObjectDao.selectAllParentId(map);
+	}
+
+	@Override
+	public List<BusinessObjectDto> getTreeBySystemApp(Map<String, String> paramMap) {
+		return businessObjectDao.getTreeBySystemApp(paramMap);
+	}
+
+	@Override
+	public BusinessObjectDto getObjectByCode(String businessObjectCode) throws Exception {
+		return businessObjectDao.getObjectByCode(businessObjectCode);
+	}
+
+	@Override
+	public BusinessObjectDto getObjectByFlCode(String flCode) throws Exception {
+		return businessObjectDao.getObjectByFlCode(flCode);
+	}
+
+	@Override
+	public int updateObjectByDataType(BusinessObject businessObject) throws Exception {
+		String dataType = businessObject.getDataType();
+		if( "1".equals(dataType) ) {//业务对象的分类
+			businessObject.setPcUrl("");
+			businessObject.setParamUrl("");
+			businessObject.setPhoneUrl("");
+			
+			businessObject.setApproveClass("");
+			businessObject.setBusidataClass("");
+			businessObject.setBusidataMethod("");
+			businessObject.setCallbackClass("");
+			businessObject.setCallbackMethod("");
+			
+			BusinessObject oldObject = this.getObjectById(businessObject.getId());
+			String oldPrefixId = oldObject.getPrefixId();
+			String newPrefixId = businessObject.getPrefixId();
+			
+			Map<String ,String> paramMap = new HashMap<String ,String>();
+			paramMap.put("oldPrefixId", oldPrefixId);
+			paramMap.put("newPrefixId", newPrefixId);//oldPrefixId  newPrefixId
+			int result = businessObjectDao.updateObjectPrefixIdByParamMap(paramMap);
+		}
+		
+		return this.update(businessObject);
+	}
+
+	@Override
+	public Integer queryCountLikePrefixMap(Map paramMap) {
+		return businessObjectDao.queryCountLikePrefixMap(paramMap);
+	}
+
+	@Override
+	public List<BusinessObjectDto> getCategoryTreeBySystemApp(Map<String, String> paramMap) {
+		return businessObjectDao.getCategoryTreeBySystemApp(paramMap);
+	}
+
+	@Override
+	public Integer queryRelatedCountByPrefixMap(Map paramMap) throws Exception {
+		return businessObjectDao.queryRelatedCountByPrefixMap(paramMap);
+	}
+
+	@Override
+	public int deleteObjectAndChileren(Map<String, String> paramMap) throws Exception {
+		return businessObjectDao.deleteObjectAndChileren(paramMap);
+	}
+
+	@Override
+	public BusinessObject saveBusinessObject(BusinessObject businessObject) throws Exception {
+		if(businessObject.getId()==null || businessObject.getId().length()<10){
+			businessObject.setId(IDGenerator.getUUID());
+		}
+		businessObject.setDelflag(false);
+		//step 1: 处理sort排序字段的值
+		String parentId = businessObject.getParentId();
+		BusinessObject parentBusinessObject = null; 
+		String sortText = calculateSortTextByParam(parentId, businessObject.getAppId());
+		System.out.println("\n\n 001 calculateSortTextByParam() sortText="+sortText);
+		businessObject.setSort(sortText);
+			
+		//step 2: 处理prefixId排序字段的值
+		if(parentId != null && parentId.length()>10){
+			parentBusinessObject = businessObjectDao.getObjectById(parentId);
+			businessObject.setPrefixId(parentBusinessObject.getPrefixId()+"-"+businessObject.getId());
+		}else{
+			businessObject.setPrefixId(businessObject.getId());
+		}
+		
+		System.out.println("002 .... businessObject = "+businessObject.getPrefixId());
+		List<BusinessObject> repeatObject = this.getRepeatObject(businessObject);
+		if(repeatObject!=null && repeatObject.size()>0){
+			businessObject = repeatObject.get(0);
+		}else{
+			System.out.println("002 .... businessObjectDao.save() is done. "+businessObject.getPrefixId());
+			String saveParentId = businessObject.getParentId();
+			if("".equals(saveParentId) || "null".equals(saveParentId)){
+				businessObject.setParentId(null); 
+			}
+			businessObjectDao.save(businessObject);
+			//追加默认的若干个业务变量
+			if("2".equals(businessObject.getDataType() )){
+				saveDefaultBusinessVariableWithSortAndPrefixId(businessObject);
+				System.out.println("003  saveDefaultBusinessVariableWithSortAndPrefixId()....");
+			}
+		}
+		return businessObject;
+	}
+
+	private void saveDefaultBusinessVariableWithSortAndPrefixId(BusinessObject businessObject) throws Exception {
+		System.out.println("\n saveDefaultBusinessVariableWithSortAndPrefixId() is called...");
+		String codeArray[] = {"flow_business_company_id", "flow_business_dept_id", "flow_business_project_id", 
+				              "flow_business_project_branch_id", "business_object_id", "start_user_id",
+				               "flow_business_company_name", "flow_business_dept_name", "flow_business_project_name", 
+				               "flow_business_project_branch_name", "business_object_name", "start_user_name",
+				               };
+		String nameArray[] = { "经办公司ID", "经办部门ID","经办项目ID","经办分期ID","业务对象ID","经办人ID",
+							   "经办公司", "经办部门","经办项目","经办分期","业务对象","经办人" };
+		int resultSum = 0;
+		for(int idx=0; idx<codeArray.length; idx++){
+			BusinessObjectVariable variable = new BusinessObjectVariable();
+			variable.setCode(codeArray[idx]);
+			variable.setName(nameArray[idx]);
+			variable.setType("1");//变量类型
+			variable.setBusinessObjectId(businessObject.getId());
+			variable.setId(IDGenerator.getUUID());
+			variable.setKeyName(codeArray[idx]);
+			variable.setForFinance(true);
+			variable.setForFlowBranch(true);
+			variable.setSystemAppId(businessObject.getAppId());
+			variable.setComment("流程的业务对象默认的变量");
+			resultSum += businessObjectVariableService.saveBusinessObjectVariable(variable);
+		}
+		System.out.println("\n saveDefaultBusinessVariableWithSortAndPrefixId() is done, 成功保存了"+resultSum+"默认变量的数据");
+	}
+
+	//根据相应的参数计算出正确的sort的值
+	private String calculateSortTextByParam(String parentId, String appId) {
+		BusinessObject parentBusinessObject = null;
+		String sortText = "";
+		Map<String,Object> param=new HashMap<>();
+		param.put("appId", appId);
+		System.out.println("calculateSortTextByParam >>> parentId="+parentId);
+		if(parentId != null && parentId.length()>10){
+			param.put("parentId", parentId);
+			parentBusinessObject = businessObjectDao.getObjectById(parentId);
+		} else {
+			param.put("parentId", "-1");//-1表示去查询parent_id为空的
+		}
+		
+		List<BusinessObject> businessObjectList = businessObjectDao.queryBusiObjectListByParam(param);
+		if(businessObjectList!=null && businessObjectList.size()>0){
+			BusinessObject lastObject = businessObjectList.get(businessObjectList.size()-1);
+			String sort = lastObject.getSort();
+			if(parentId != null && parentId.length()>10){
+				int i=sort.lastIndexOf("-");
+			    String parentSort = sort.substring(0,i);
+			    String oldSort = sort.substring(i+1,sort.length());
+			    int oldNumber =Integer.parseInt(oldSort);
+			    int newNumber=(oldNumber+1);
+			    sortText = parentSort+"-"+ String.format("%04d", newNumber);
+			} else {
+				String[] s =sort.split("\\$");
+				int oldNumber =Integer.parseInt(s[1]);
+				int newNumber=(oldNumber+1);
+				sortText = "$"+String.format("%04d", newNumber);
+			}
+		}else{
+			System.out.println("parentId="+parentId);
+			if(parentId != null && parentId.length()>10){
+				String parentSort = parentBusinessObject.getSort();
+				sortText = parentSort + "-" + "0001";
+			}else{
+				sortText = "$0001";
+			}
+		}
+		return sortText;
+	}
+	
+	public List<BusinessObject> getRepeatObject(BusinessObject businessObject){
+		String name = businessObject.getName();
+		String code = businessObject.getCode();
+		Map<String,Object> map = new HashMap<>();
+		//map.put("name", name);
+		map.put("code", code);
+		map.put("delflag", 0);
+	    List<BusinessObject> resultProjectTypeList = businessObjectDao.queryList(map);
+		 return resultProjectTypeList;
+	}
+
+	/**
+	 * author:zhengjiajie
+	 * describe: 修改排序
+	 * param:ids
+	 * thinking：排序  需要把子集的编号 也变化   这样 拿到变动的对象的排序号  然后查询所有like 这个排序号的子集  然后统一把第一个“-”前面的排序号 换成新的排序号  updateBatch
+	 */
+	@Override
+	public int updateSort(BusinessObject baseBusinessObject, Map<String, Object> map) throws Exception{
+		String  sortType= String.valueOf(map.get("sortType"));
+		String sort1 = baseBusinessObject.getSort();
+		String parentId = baseBusinessObject.getParentId();
+		Map<String,Object> param=new HashMap<>();
+		
+		param.put("appId", baseBusinessObject.getAppId());
+		if(parentId != null && parentId.length()>10){
+			param.put("parentId", parentId);
+		} else {
+			param.put("parentId", "-1");//-1表示去查询parent_id为空的
+		}
+		List<BusinessObject> baseProjectList = businessObjectDao.queryBusiObjectListByParam(param);
+		System.out.println("001 sortType="+sortType+" baseProjectList.size()="+baseProjectList.size());
+		if(SortType.UP_ONE.getCode().equals(sortType)){//上移一位
+			for (int i = 0; i < baseProjectList.size(); i++) {
+				String sort2 = baseProjectList.get(i).getSort();
+				if(sort2.equals(sort1)&&i!=0){
+					String sort3 = baseProjectList.get(i-1).getSort();
+					baseProjectList.get(i-1).setSort(sort2);
+					baseProjectList.get(i).setSort(sort3);
+					businessObjectDao.update(baseProjectList.get(i-1));
+					businessObjectDao.update(baseProjectList.get(i));	
+					Map<String,Object> params1=new HashMap<String, Object>();
+					params1.put("oldSort", sort2);
+					params1.put("newSort", sort3);
+					params1.put("prefixId",baseProjectList.get(i).getPrefixId());
+					businessObjectDao.updateAllNodes(params1);
+					Map<String,Object> params2=new HashMap<String, Object>();
+					params2.put("oldSort", sort3);
+					params2.put("newSort", sort2);
+					params2.put("prefixId",baseProjectList.get(i-1).getPrefixId());
+					businessObjectDao.updateAllNodes(params2);
+					break;
+				}
+			}	
+			System.out.println("0033 sortType="+sortType+" is done...");
+		}else if(SortType.DOWN_ONE.getCode().equals(sortType)){//下移一位
+			 for (int i = 0; i < baseProjectList.size(); i++) {
+				String sort2 = baseProjectList.get(i).getSort();
+				if(sort2.equals(sort1)){
+					if(i!=baseProjectList.size()-1){
+						String sort3 = baseProjectList.get(i+1).getSort();
+						String PrefixId1=baseProjectList.get(i).getPrefixId();
+						String PrefixId2=baseProjectList.get(i+1).getPrefixId();
+						baseProjectList.get(i+1).setSort(sort2);
+						baseProjectList.get(i).setSort(sort3);
+						businessObjectDao.update(baseProjectList.get(i+1));
+						businessObjectDao.update(baseProjectList.get(i));	
+						Map<String,Object> params1=new HashMap<String, Object>();
+						params1.put("oldSort", sort2);
+						params1.put("newSort", sort3);
+						params1.put("prefixId",PrefixId1);
+						businessObjectDao.updateAllNodes(params1);
+						Map<String,Object> params2=new HashMap<String, Object>();
+						params2.put("oldSort", sort3);
+						params2.put("newSort", sort2);
+						params2.put("prefixId",PrefixId2);
+						businessObjectDao.updateAllNodes(params2);
+						break;
+					}	
+				}
+			}
+			System.out.println("0033 sortType="+sortType+" is done...");
+		}else if(SortType.TO_TOP.getCode().equals(sortType)){//置顶
+			String firstSort = baseProjectList.get(0).getSort();
+			for (int i = 0; i < baseProjectList.size(); i++) {
+				String sort2 = baseProjectList.get(i).getSort();
+				if(sort2.equals(sort1)){
+					if(i!=0){
+						Map<String,Object> params1=new HashMap<String, Object>();
+					    String oldSort = baseProjectList.get(i).getSort();
+					    baseProjectList.get(i).setSort(firstSort);
+					    businessObjectDao.update(baseProjectList.get(i));
+					    params1.put("newSort",firstSort);
+					    params1.put("oldSort",oldSort);
+						params1.put("prefixId",baseProjectList.get(i).getPrefixId());
+						businessObjectDao.updateAllNodes(params1);
+						break;
+					}else{
+						break;
+				    }
+				}else{
+					String newSort=baseProjectList.get(i+1).getSort();
+					String oldSort=baseProjectList.get(i).getSort();
+					String prefixId = baseProjectList.get(i).getPrefixId();
+					baseProjectList.get(i).setSort(baseProjectList.get(i+1).getSort());
+					businessObjectDao.update(baseProjectList.get(i));
+					Map<String,Object> params2=new HashMap<String, Object>();
+					params2.put("oldSort", oldSort);
+					params2.put("newSort", newSort);
+					params2.put("prefixId",prefixId);
+					businessObjectDao.updateAllNodes(params2);
+				}	
+			}
+			System.out.println("0033 sortType="+sortType+" is done...");
+		}else if(SortType.TO_BOTTOM.getCode().equals(sortType)){//置底
+			String endSort = baseProjectList.get(baseProjectList.size()-1).getSort();
+			for (int i = baseProjectList.size()-1; i >-1; i--) {
+				String sort2 = baseProjectList.get(i).getSort();
+				if(sort2.equals(sort1)){
+					if(i!=baseProjectList.size()-1){
+						String oldSort = baseProjectList.get(i).getSort();
+						baseProjectList.get(i).setSort(endSort);
+						businessObjectDao.update(baseProjectList.get(i));
+						Map<String,Object> params1=new HashMap<String, Object>();
+						params1.put("oldSort", oldSort);
+						params1.put("newSort", endSort);
+						params1.put("prefixId",baseProjectList.get(i).getPrefixId());
+						businessObjectDao.updateAllNodes(params1);
+						break;
+					}else{
+						break;
+					}
+				}else{
+					String newSort=baseProjectList.get(i-1).getSort();
+					String oldSort=baseProjectList.get(i).getSort();
+					baseProjectList.get(i).setSort(newSort);
+					businessObjectDao.update(baseProjectList.get(i));
+					Map<String,Object> params2=new HashMap<String, Object>();
+					params2.put("oldSort", oldSort);
+					params2.put("newSort", newSort);
+					params2.put("prefixId",baseProjectList.get(i).getPrefixId());
+					businessObjectDao.updateAllNodes(params2);
+				}	
+			}
+			System.out.println("0033 sortType="+sortType+" is done...");
+		}
+		return 1;
+	}
+
+	@Override
+	public int updateBusinessObject(BusinessObject businessObject) throws Exception {
+		BusinessObject oldBusinessObject = this.getObjectById(businessObject.getId());
+		String oldParentId = oldBusinessObject.getParentId();
+		String newParentId = businessObject.getParentId();
+		if(oldParentId == null || "null".equals(oldParentId)){			oldParentId = "";
+		}
+		if(newParentId ==null || "null".equals(newParentId)){
+			newParentId = "";		}
+		if(!oldParentId.equals(newParentId)){//parentId发生变化,则要调整相应的sort和prefix_id的值
+			Map<String,Object> updateMap=new HashMap<String, Object>();
+			BusinessObject parentBO = this.getObjectById(newParentId);//父节点
+			String oldPrefixId = businessObject.getPrefixId();
+			String newPrefixId = businessObject.getId();
+			/*if("".equals(newParentId)){
+				newPrefixId = newParentId+"-"+businessObject.getId();
+			}
+			*/
+			if(parentBO!=null&&StringUtils.isNotBlank(parentBO.getPrefixId())){
+				newPrefixId=parentBO.getPrefixId()+"-"+businessObject.getId();
+			}
+			String newSort = this.calculateSortTextByParam(newParentId, businessObject.getAppId());
+			updateMap.put("oldSort", businessObject.getSort());
+			updateMap.put("newSort", newSort);
+			updateMap.put("oldPrefixId", oldPrefixId);
+			updateMap.put("newPrefixId", newPrefixId);
+			businessObjectDao.updateAllNodesSortAndPrefix(updateMap);
+			businessObject.setPrefixId(newPrefixId);
+			businessObject.setSort(newSort);
+		}
+		businessObject.setParentId(newParentId);
+		businessObjectDao.update(businessObject);
+		
+		return 1;
+	}
+	/**
+	 * 根据流程实例查询业务对象callbackUrl 
+	 */
+	public String selectCallBackUrlByInstanceId(Map<String, Object> param)throws Exception{
+		return businessObjectDao.selectCallBackUrlByInstanceId(param);
+	}
+}

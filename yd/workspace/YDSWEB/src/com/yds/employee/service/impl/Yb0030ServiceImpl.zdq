@@ -1,0 +1,394 @@
+package com.yds.employee.service.impl;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.Enumeration;
+import java.util.Hashtable;
+import java.util.List;
+
+import org.springframework.stereotype.Service;
+
+import com.yds.base.service.AbstractBaseService;
+import com.yds.common.bean.EmpInfo;
+import com.yds.common.service.CommonConstants;
+import com.yds.common.service.LogService;
+import com.yds.common.service.SessionService;
+import com.yds.employee.bean.EmpStateInfo;
+import com.yds.employee.common.dao.EmpStateInfoDao;
+import com.yds.employee.dao.Yb0030Dao;
+import com.yds.employee.service.Yb0030Service;
+import com.yds.util.service.DateUtil;
+import com.yds.util.service.StringUtil;
+
+/**
+ * @see com.yds.employee.service.Yb0030Service
+ */
+@Service("yb0030Service")
+public class Yb0030ServiceImpl extends AbstractBaseService implements
+		Yb0030Service {
+
+	private Yb0030Dao yb0030Dao;
+	private EmpStateInfoDao empStateInfoDao;
+	// ======2010/08/06  滕长龙对应系统日志 start ===========
+	// 日志信息
+	String logMsg = "";
+	// 日志 service
+	private LogService logService;
+	// ======2010/08/06  滕长龙对应系统日志 end ===========
+	public void setYb0030Dao(Yb0030Dao yb0030Dao) {
+		this.yb0030Dao = yb0030Dao;
+	}
+
+	public void setEmpStateInfoDao(EmpStateInfoDao empStateInfoDao) {
+		this.empStateInfoDao = empStateInfoDao;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public List<EmpStateInfo> getEmpStateList(String empId) {
+		// 员工ID左侧加YD检索
+		List<EmpStateInfo> empStates = yb0030Dao.getEmpStateList(StringUtil
+				.leftPadYd(empId));
+
+		// 第一条【状态名称】是“过去”的数据的【可操作标志】重新设定
+		// TODO 取得系统月结的时间
+		String strMonFinDate = "2010-04-30";
+		long lMonFinDate = DateUtil.parseDateTime(strMonFinDate)
+				.getTimeInMillis();
+
+		// 循环处理 修改第一条
+		long eiEndDate = 0;
+		for (EmpStateInfo ei : empStates) {
+
+			// 只修改【状态名称】是”过去“的数据
+			if ("过去".equals(ei.getPrescription())) {
+
+				eiEndDate = ei.getEndTime().getTime();
+
+				// 月结的状态不可修改
+				if (eiEndDate <= lMonFinDate) {
+					ei.setOperableFlg("2");
+				} else {
+					ei.setOperableFlg("0");
+				}
+				break;
+			}
+		}
+
+		return empStates;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public boolean empIdCheck(List<EmpStateInfo> esli, String empId) {
+
+		for (EmpStateInfo ei : esli) {
+			// 不能为空
+			if ("".equals(ei.getEmpId())) {
+				return false;
+			}
+			// 不能和输入的员工ID不一致
+			else if (!StringUtil.leftPadYd(empId).equals(ei.getEmpId())) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public String empStatesDateCheck(List<EmpStateInfo> esli) {
+
+		boolean bFstFlg = true;
+		Hashtable<String, String> ht = new Hashtable<String, String>();
+		String startDate = "";
+		String endDate = "";
+		String tmp = "";
+		String fstDate;
+		int cnt = 0; // 件数保存
+		for (EmpStateInfo ei : esli) {
+			// 删除的数据所以检查跳过
+			if ("1".equals(ei.getDelFlg())) {
+				continue;
+			}
+			// 开始日期是否为空
+			if (null == ei.getStartTime()) {
+				return "1";
+			}
+			// 结束日期是否为空
+			if (!bFstFlg && null == ei.getEndTime()) {
+				return "1";
+			}
+			// 日期是否连续
+			try {
+				if (null == ei.getEndTime()) {
+					ht.put(DateUtil.setDateFormat(ei.getStartTime(),
+							"yyyy-MM-dd"), "9999-12-31");
+					// 有过为NULL的数据
+					bFstFlg = false;
+				} else {
+					ht.put(DateUtil.setDateFormat(ei.getStartTime(),
+							"yyyy-MM-dd"), DateUtil.setDateFormat(ei
+							.getEndTime(), "yyyy-MM-dd"));
+				}
+			} catch (Exception ex) {
+				ex.printStackTrace();
+			}
+		}
+		// 没有结束日期是空的员工状态
+		// 最后状态的日期只能是NULL即9999/12/31
+		if (bFstFlg) {
+			return "3";
+		}
+		// 日期是否连续
+		startDate = "";
+		fstDate = "";
+
+		for (Enumeration<String> e = ht.keys(); e.hasMoreElements();) {
+			if ("".equals(startDate)) {
+				startDate = (String) e.nextElement();
+				fstDate = startDate;
+				endDate = (String) ht.get(startDate);
+				continue;
+			}
+			startDate = (String) e.nextElement();
+			endDate = (String) ht.get(startDate);
+			// 找开始日期最小的状态
+			if (DateUtil.parse(startDate).getTime() < DateUtil.parse(fstDate)
+					.getTime()) {
+				fstDate = startDate;
+			}
+			if ("9999-12-31".equals(endDate)) {
+				continue;
+			}
+			// 后一个状态小
+			if (DateUtil.parse(startDate).getTime() > DateUtil.parse(endDate)
+					.getTime()) {
+				return "2";
+			}
+		}
+		if (!"".equals(fstDate)) {
+			endDate = "";
+			while (true) {
+				cnt++;
+				endDate = (String) ht.get(fstDate);
+				if ("9999-12-31".equals(endDate)) {
+					break;
+				}
+				tmp = DateUtil.dateAdd(endDate, 1, 2);
+				if (ht.get(tmp) == null) {
+					return "2";
+				} else {
+					fstDate = tmp;
+				}
+			}
+			if (ht.size() != cnt) {
+				return "2";
+			}
+		}
+
+		return "0";
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void updateEmpStates(String modeFlg, String empInfoUpdTime,
+			List<EmpStateInfo> esli) {
+		List<EmpStateInfo> toDel = new ArrayList<EmpStateInfo>();
+		List<EmpStateInfo> toAdd = new ArrayList<EmpStateInfo>();
+		List<EmpStateInfo> toMod = new ArrayList<EmpStateInfo>();
+		// String strState = "";
+		String nowState = "";
+		// EmpStateInfo toUpdate = null;
+		// boolean sameFlg = false;
+		// Date startDate = null;
+		String empId = "";
+		EmpInfo eri;
+		for (EmpStateInfo ei : esli) {
+			// 未修改的数据 不处理
+			if ("0".equals(ei.getModFlg())) {
+				continue;
+			}
+			if (null == ei.getEndTime()) {
+				ei.setEndTime(DateUtil.parse("9999-12-31"));
+			}
+			// 删除处理(新规又取消的不处理)
+			if ("1".equals(ei.getDelFlg()) && !"2".equals(ei.getModFlg())) {
+				toDel.add(ei);
+				continue;
+			}
+
+			// 更新处理
+			if ("1".equals(ei.getModFlg()) && !"1".equals(ei.getDelFlg())) {
+				toMod.add(ei);
+				continue;
+			}
+
+			// 登录处理
+			if ("2".equals(ei.getModFlg()) && !"1".equals(ei.getDelFlg())) {
+				toAdd.add(ei);
+				continue;
+			}
+		}
+		// 删除处理
+		for (EmpStateInfo ei : toDel) {
+			empStateInfoDao.deleteEmpStateInfo(chgEmpStateList2EmpInfo(ei));
+
+
+		}
+		// 更新处理
+		for (EmpStateInfo ei : toMod) {
+			empStateInfoDao.updateEmpStateInfo(chgEmpStateList2EmpInfo(ei));
+
+		}
+		// 追加处理
+		for (EmpStateInfo ei : toAdd) {
+			empStateInfoDao.insertEmpStateInfo(chgEmpStateList2EmpInfo(ei));
+
+		}
+		// ==========================2010/08/09 滕长龙对应障害 NO.10 start =========================
+		// // 状态相同的合并处理
+		// esli = yb0030Dao.getEmpStateList(esli.get(0).getEmpId());
+		//		
+		// for(EmpStateInfo ei:esli){
+		// if("现在".equals(ei.getPrescription())){
+		// nowState = ei.getEmpState();
+		// }
+		// if(!"".equals(strState)){
+		// if(strState.equals(ei.getEmpState()) ){
+		// // 前后项相等 后项删除 当前项修改
+		// startDate = ei.getStartTime();
+		// empStateInfoDao.deleteEmpStateInfo(chgEmpStateList2EmpInfo(ei));
+		// sameFlg = true;
+		// }else{
+		// // 前几次相同状态更新到第一个上
+		// if(sameFlg){
+		// toUpdate.setStartTime(startDate);
+		// empStateInfoDao.updateEmpStateInfo(chgEmpStateList2EmpInfo(toUpdate));
+		// sameFlg = false;
+		// }
+		// strState = ei.getEmpState();
+		// toUpdate = ei;
+		// }
+		//				
+		// }else{
+		// strState = ei.getEmpState();
+		// toUpdate = ei;
+		// empId = ei.getEmpId();
+		// }
+		// }
+		// ==========================2010/08/09 滕长龙对应障害 NO.10 end=========================
+
+		// 用现在的员工状态更新员工基本信息表
+		esli = yb0030Dao.getEmpStateList(esli.get(0).getEmpId());
+		for (EmpStateInfo ei : esli) {
+			if ("现在".equals(ei.getPrescription())) {
+				nowState = ei.getEmpState();
+				empId = ei.getEmpId();
+				break;
+			}
+		}
+
+		if (!"".equals(nowState)) {
+			eri = yb0030Dao.getEmpInfo(empId);
+			// TODO 重要 排他处理
+			// 员工信息是否被删除
+			if (null == eri) {
+				// TODO 重要 排他处理
+				return;
+			} else {
+				//if (!String.valueOf(eri.getUpdateTime().getTime()).equals(
+				//		empInfoUpdTime)) {
+					// TODO 重要 排他处理
+					// return;
+				//}
+			}
+
+			eri.setEmpState(nowState);
+
+			// 从menu过来的话要多更新更新者和更新时间
+			if ("1".equals(modeFlg)) {
+				eri.setUpdateUser(SessionService.getLoginUserId());
+				eri.setUpdateTime(new Date());
+			}
+			yb0030Dao.updateEmpInfo(eri);
+
+			// ======2010/08/24 滕长龙对应系统日志 start ===========
+			// 日志信息的编辑
+			logMsg = "ID为" + eri.getEmpId() + "的员工状态修改成功。";
+			// 日志的追加  日志级别未定
+			logService.insertLogInfo(CommonConstants.LoglevelEnum.Not_Delete.toString(),CommonConstants.SubIdEnum.Sub_EMP.toString(),SessionService.getLoginUserId(), logMsg, "");
+			// ======2010/08/24 滕长龙对应系统日志 end ===========
+		}
+
+		// TODO 重要 -> batch联动 （1.通知batch 变更日的考勤状态重新设定 2.对于公差的状态要加假条）
+	}
+
+	/**
+	 * 将画面上的员工状态转换为数据库的格式
+	 * 
+	 * @param el
+	 * @return
+	 */
+	private EmpStateInfo chgEmpStateList2EmpInfo(EmpStateInfo el) {
+		EmpStateInfo ei = new EmpStateInfo();
+
+		ei.setEmpId(el.getEmpId());
+		ei.setStartTime(el.getStartTime());
+		ei.setEndTime(el.getEndTime());
+		ei.setEmpState(el.getEmpState());
+
+		ei.setUpdateUser(SessionService.getLoginUserId());
+
+		ei.setStartTimeInWhere(el.getStartTimeBeforeUpdate());
+
+		ei.setUpdateTime(new Date());
+
+		return ei;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public boolean empStateListEmptyCheck(List<EmpStateInfo> esli) {
+		int delCnt = 0;
+		// TODO Auto-generated method stub
+		if (null == esli || esli.size() == 0) {
+			return false;
+		}
+		for (EmpStateInfo ei : esli) {
+			// 是否是删除的数据
+			if ("1".equals(ei.getDelFlg())) {
+				delCnt++;
+			}
+		}
+		if (delCnt == esli.size()) {
+			return false;
+		}
+		return true;
+	}
+
+	@Override
+	public EmpInfo getEmpInfo(String empId) {
+
+		return yb0030Dao.getEmpInfo(StringUtil.leftPadYd(empId));
+	}
+
+	/**
+	 * @param logService
+	 *            the logService to set
+	 */
+	public void setLogService(LogService logService) {
+		this.logService = logService;
+	}
+
+}

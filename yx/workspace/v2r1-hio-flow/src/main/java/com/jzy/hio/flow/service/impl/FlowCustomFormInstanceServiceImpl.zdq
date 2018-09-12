@@ -1,0 +1,195 @@
+package com.jzy.hio.flow.service.impl;
+
+import java.util.HashMap;
+import java.util.Map;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestTemplate;
+
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.flow.entity.FlowCustomForm;
+import com.jzy.hio.flow.entity.FlowCustomFormInstance;
+import com.jzy.hio.flow.entity.dto.FormItem;
+import com.jzy.hio.flow.entity.enums.FlowStateEnum;
+import com.jzy.hio.flow.mapper.FlowCustomFormInstanceDao;
+import com.jzy.hio.flow.service.FlowCustomFormInstanceService;
+import com.jzy.hio.flow.service.FlowCustomFormService;
+import com.jzy.hio.springmvc.ApiResponse;
+
+/**
+ * 自定义表单实例服务
+ * 
+ * @author daoqi
+ *
+ */
+@Service
+public class FlowCustomFormInstanceServiceImpl extends BaseServiceImpl<FlowCustomFormInstance> implements FlowCustomFormInstanceService {
+	
+	private Logger logger = LoggerFactory.getLogger(FlowCustomFormInstanceServiceImpl.class);
+	
+	@Autowired
+	private FlowCustomFormInstanceDao customFormInstanceDao;
+	
+	@Autowired
+	private FlowCustomFormService flowCustomFormService;
+	
+	@Autowired
+	private RestTemplate restTemplate;
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public FlowCustomFormInstance getCustomFormInstanceById(String customFormId, String businessId) {
+		return customFormInstanceDao.queryInstanceAndFormBy(customFormId, businessId);
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@SuppressWarnings("unchecked")
+	@Override
+	public void saveCustomForm(FlowCustomFormInstance formInstance) {
+		//自定义表单处理
+		int operateType;
+		if(formInstance.isSaveOrUpdate()) {
+			customFormInstanceDao.insert(formInstance);
+			logger.info("草稿保存成功：id=" + formInstance.getId());
+			
+			operateType = 1;
+			
+		} else {
+			String businessId = formInstance.getBusinessId();
+			String customFormId = formInstance.getCustomFormId();
+			String id = customFormInstanceDao.selectIdBy(businessId, customFormId);
+			formInstance.setId(id);
+			customFormInstanceDao.updateByPrimaryKeySelective(formInstance);
+			logger.info("草稿更新成功：id=" + formInstance.getId());
+			
+			operateType = 2;
+		}
+		
+		//第三方表单处理
+		String customFormId = formInstance.getCustomFormId();
+		FlowCustomForm customForm = flowCustomFormService.getObjectById(customFormId);
+		if(customForm.getType() == 0) {
+			String dataSaveUrl = customForm.getDataSaveUrl();
+			String callBackParam = customForm.getCallBackParam();
+			Map<String, Object> businessData = new HashMap<String, Object>();
+			
+			for(FormItem item : formInstance.getBusinessData()) {
+				businessData.put(item.getCode(), item.getValue());	
+			}
+			businessData.put("businessType", callBackParam);
+			businessData.put("businessId", formInstance.getBusinessId());		//可能被冲掉
+			businessData.put("operateType", operateType);
+			businessData.put("instanceId", formInstance.getInstanceId());
+			businessData.put("approvalStatus", FlowStateEnum.DRAFT.getState());
+			
+			ApiResponse<String> result = null;
+			try {
+				result = restTemplate.postForObject(dataSaveUrl, businessData, ApiResponse.class);
+				logger.info("保存第三方系统数据：dataSaveUrl = " + dataSaveUrl + ", businessData = " + businessData);
+				
+			} catch(ResourceAccessException e) {
+				throw new HioException("第三方保存表单数据失败，流程系统事务回滚，第三方接口访问不通：" + dataSaveUrl, e);
+				
+			} catch(Exception e) {
+				throw new HioException("第三方保存表单数据失败，流程系统事务回滚！", e);
+				
+			}
+			if(result.getStatus() != 200) {
+				throw new HioException("第三方保存表单数据失败，流程系统事务回滚！" + result.getMessage());
+			} 
+		}
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@SuppressWarnings("unchecked")
+	@Override
+	public int updateFormInstanceStatus(String customFormId, String businessId, int status) {
+		
+		//自定义表单与第三方分别处理
+		FlowCustomForm customForm = flowCustomFormService.getObjectById(customFormId);
+		//自定义表单处理
+		if(customForm.getType() == 1) {
+			customFormInstanceDao.updateInstanceStatus(customFormId, businessId, status);
+			
+		} else {
+			String dataStatusUrl = customForm.getDataStatusUrl();
+			String callBackParam = customForm.getCallBackParam();
+			Map<String, Object> params = new HashMap<String, Object>();
+			params.put("businessType", callBackParam);
+			params.put("businessId", businessId);
+			params.put("approvalStatus", status);
+
+			ApiResponse<String> result = null;
+			try {
+				result = restTemplate.postForObject(dataStatusUrl, params, ApiResponse.class);
+				logger.info("通知第三方系统数据：dataStatusUrl = " + dataStatusUrl + ", params = " + params);
+				
+			} catch(ResourceAccessException e) {
+				throw new HioException("第三方更新表单数据状态失败，流程系统事务回滚，第三方接口访问不通：" + dataStatusUrl);
+				
+			} catch(Exception e) {
+				throw new HioException("第三方更新表单数据状态失败，流程系统事务回滚！", e);
+			}
+			if(result.getStatus() != 200) {
+				throw new HioException("第三方更新表单数据状态失败，流程系统事务回滚！" + result.getMessage());
+			}
+		}
+		
+		return 0;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@SuppressWarnings("unchecked")
+	@Override
+	public int deleteFormInstance(String customFormId, String businessId) {
+		
+		//自定义表单与第三方分别处理
+		FlowCustomForm customForm = flowCustomFormService.getObjectById(customFormId);
+		
+		//自定义表单处理
+		if(customForm.getType() == 1) {
+			customFormInstanceDao.deleteByBusinessIdAndCustomFormId(businessId, customFormId);
+			
+		} else {
+			String dataDeleteUrl = customForm.getDataDeleteUrl();
+			String callBackParam = customForm.getCallBackParam();
+			Map<String, String> params = new HashMap<String, String>();
+			params.put("businessType", callBackParam);
+			params.put("businessId", businessId);
+			
+			ApiResponse<String> result = null;
+			try {
+				result = restTemplate.postForObject(dataDeleteUrl, params, ApiResponse.class);
+				logger.info("删除第三方业务数据：dataDeleteUrl = " + dataDeleteUrl + ", params = " + params);
+				
+			} catch(ResourceAccessException e) {
+				throw new HioException("第三方删除表单数据失败，流程系统事务回滚，第三方接口访问不通：" + dataDeleteUrl);
+				
+			} catch (Exception e) {
+				throw new HioException("第三方删除表单数据失败，流程系统事务回滚！", e);
+				
+			}
+			if(result.getStatus() != 200) {
+				logger.error("第三方删除表单数据失败，流程系统事务回滚！" + result.getMessage() 
+				+ "dataDeleteUrl=" + dataDeleteUrl + ", params=" + params);
+//				throw new HioException("第三方删除表单数据失败，流程系统事务回滚！" + result.getMessage());
+			}
+		}
+		
+		return 0;
+	}
+
+}

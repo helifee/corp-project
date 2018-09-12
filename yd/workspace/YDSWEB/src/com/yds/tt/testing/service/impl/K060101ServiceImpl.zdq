@@ -1,0 +1,875 @@
+/*
+ * @(#) K060101ServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 教育考试培训系统
+ *    SubSystem: 教育子系统
+ */
+package com.yds.tt.testing.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Service;
+
+import com.yds.base.service.AbstractBaseService;
+import com.yds.common.service.SessionConstants;
+import com.yds.tt.manager.service.TtCommonService;
+import com.yds.tt.manager.service.TtCommonUtil;
+import com.yds.tt.manager.service.TtConstants;
+import com.yds.tt.testing.bean.AnswerPointInfo;
+import com.yds.tt.testing.bean.ExamEmployeeInfo;
+import com.yds.tt.testing.bean.K060031ExamQuestionInfo;
+import com.yds.tt.testing.bean.K060031SearchInfo;
+import com.yds.tt.testing.bean.K060031SingleQuesInfo;
+import com.yds.tt.testing.bean.K060101EmployeeAnswerInfo;
+import com.yds.tt.testing.bean.K060101ValuateSingleInfo;
+import com.yds.tt.testing.bean.MarkTaskAssignInfo;
+import com.yds.tt.testing.bean.PaperBigQuestionInfo;
+import com.yds.tt.testing.bean.TestEmployeeAnswerInfo;
+import com.yds.tt.testing.bean.TestPaperInfo;
+import com.yds.tt.testing.dao.K060101Dao;
+import com.yds.tt.testing.dao.TestingCommonDao;
+import com.yds.tt.testing.service.K060091Service;
+import com.yds.tt.testing.service.K060101Service;
+import com.yds.util.service.Session;
+
+/**
+ * @see com.yds.tt.testing.service.K060101Service
+ */
+@Service("k060101Service")
+public class K060101ServiceImpl extends AbstractBaseService implements
+		K060101Service {
+
+	// 大题题号
+	public final String[] bigquestionShowNums = { "一", "二", "三", "四", "五", "六",
+			"七", "八", "九", "十" };
+	// 编辑选项内容Map
+	private Map<String, String[]> optionContentMap;
+	
+	private K060101Dao k060101Dao;
+
+	private TtCommonService ttCommonService;
+
+	private TestingCommonDao testingCommonDao;
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public boolean checkPerm(List<String> markTaskList, String examId,
+			String markMode) {
+		// 调用对象权限检查共通处理
+		if (!checkMarkerPerm(examId.trim().substring(0, 6) + "00")) {
+			for (String item : markTaskList) {
+				// 生成评分任务信息bean
+				MarkTaskAssignInfo markTaskAssignInfo = new MarkTaskAssignInfo();
+				markTaskAssignInfo.setExamineId(examId);
+				if (TtConstants.C15.C15_1.toString().equals(markMode)) {
+					//markTaskAssignInfo.setEmployeesId("");
+					//markTaskAssignInfo.setBigquestionSerialNo(Integer
+					//		.parseInt(item));
+					markTaskAssignInfo.setEmployeesId(item.trim());
+					markTaskAssignInfo.setBigquestionSerialNo(0);
+					markTaskAssignInfo = k060101Dao
+							.getMarkTaskAssignInfo(markTaskAssignInfo);
+				} else if (TtConstants.C15.C15_2.toString().equals(markMode)) {
+					markTaskAssignInfo.setEmployeesId("");
+					markTaskAssignInfo.setBigquestionSerialNo(Integer
+							.parseInt(item));
+					markTaskAssignInfo = k060101Dao
+							.getMarkTaskAssignInfo(markTaskAssignInfo);
+				}
+
+				if (!TtCommonUtil.getLoginUserId().equals(
+						markTaskAssignInfo.getExamineMarkerId())) {
+					return false;
+				}
+			}
+
+		}
+		return true;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@SuppressWarnings("unchecked")
+	@Override
+	public K060101ValuateSingleInfo getValuateSingleInfo() {
+		K060101ValuateSingleInfo k060101ValuateSingleInfo = new K060101ValuateSingleInfo();
+		List<String> markTaskList = (List<String>) Session
+				.get(SessionConstants.TT_K060101_MARK_LIST);
+		String markMode = (String) Session
+				.get(SessionConstants.TT_K060101_MARK_MODE);
+		String examId = (String) Session
+				.get(SessionConstants.TT_K060101_EXAM_ID);
+		// 试卷所有大题列表
+		List<PaperBigQuestionInfo> paperBigQuestionInfoList;
+		// 待评试卷所属员工列表
+		List<ExamEmployeeInfo> examEmployeeInfoList;
+
+		// 试卷ID
+		String paperId;
+		// 试卷版本号
+		Integer paperVersionNo;
+
+		k060101ValuateSingleInfo.setExamineId(examId);
+		ExamEmployeeInfo examEmployeeInfo = new ExamEmployeeInfo();
+		// 若评分方式为按整卷
+		if (TtConstants.C15.C15_1.toString().equals(markMode)) {
+			// 设定检索参数
+			examEmployeeInfo.setExamineId(examId);
+			examEmployeeInfo.setEmployeesId(markTaskList.get(0));
+			// 取得考试试卷信息
+			examEmployeeInfo = k060101Dao.getExamEmployeeInfo(examEmployeeInfo);
+			// 取得试卷ID、试卷版本号
+			paperId = examEmployeeInfo.getPaperId();
+			paperVersionNo = examEmployeeInfo.getPaperVersionNo();
+
+			// 取得试卷所有大题信息
+			PaperBigQuestionInfo paperBigQuestionInfo = new PaperBigQuestionInfo();
+			paperBigQuestionInfo.setPaperId(paperId);
+			paperBigQuestionInfo.setPaperVersionNo(paperVersionNo);
+			paperBigQuestionInfoList = k060101Dao
+					.getPaperBigQuestionInfos(paperBigQuestionInfo);
+			paperBigQuestionInfoList = clearNotMarkBigquestion(examId,
+					paperBigQuestionInfoList, markTaskList);
+
+			examEmployeeInfoList = new ArrayList<ExamEmployeeInfo>();
+			// 取得员工参加次数的信息
+			for (String item : markTaskList) {
+				examEmployeeInfo.setExamineId(examId);
+				examEmployeeInfo.setEmployeesId(item);
+				ExamEmployeeInfo temp = k060101Dao
+						.getExamEmployeeInfo(examEmployeeInfo);
+				temp.setEmployeesId(item);
+				// 追加入待评试卷所属员工列表
+				examEmployeeInfoList.add(temp);
+			}
+		} else {
+			// 设定检索参数
+			examEmployeeInfo.setExamineId(examId);
+			examEmployeeInfo.setEmpExamStatus(TtConstants.R13.R13_7.value());
+			// 取得此次考试所有的员工信息
+			examEmployeeInfoList = k060101Dao
+					.getExamEmployeeInfos(examEmployeeInfo);
+			// 试卷ID
+			paperId = examEmployeeInfoList.get(0).getPaperId();
+			// 试卷版本号
+			paperVersionNo = examEmployeeInfoList.get(0).getPaperVersionNo();
+
+			// 待评大题详细列表
+			paperBigQuestionInfoList = new ArrayList<PaperBigQuestionInfo>();
+
+			// 取得大题列表中每道大题的详细信息
+			for (String item : markTaskList) {
+				PaperBigQuestionInfo paperBigQuestionInfo = new PaperBigQuestionInfo();
+				paperBigQuestionInfo.setBigquestionSerialNo(Integer
+						.parseInt(item));
+				paperBigQuestionInfo.setPaperId(paperId);
+				paperBigQuestionInfo.setPaperVersionNo(paperVersionNo);
+				PaperBigQuestionInfo temp = k060101Dao
+						.getPaperBigQuestionInfo(paperBigQuestionInfo);
+				paperBigQuestionInfoList.add(temp);
+			}
+		}
+		// wanqiuhong 10/25 修改： 因为paperBigQuestionInfoList为空时，以下操作会出错，所以追加判断
+		if (0 != paperBigQuestionInfoList.size()) {
+			// 设置大题题号
+			setBigquestionShowNum(paperBigQuestionInfoList);
+			// 检出试卷的详细信息
+			examEmployeeInfo.setPaperId(paperId);
+			examEmployeeInfo.setPaperVersionNo(paperVersionNo);
+			TestPaperInfo testPaperInfo = k060101Dao
+					.getTestPaperInfo(examEmployeeInfo);
+			// 设置试卷ID
+			k060101ValuateSingleInfo.setPaperId(paperId);
+
+			// 设置试卷概要
+			k060101ValuateSingleInfo.setPaperDescription(testPaperInfo
+					.getPaperDescription());
+			// 设置试卷说明
+			k060101ValuateSingleInfo.setPaperTitle(testPaperInfo.getPaperTitle());
+
+			// 设置大题信息
+			k060101ValuateSingleInfo.setBigQuestionInfo(paperBigQuestionInfoList
+					.get(0));
+
+			// 检索bean条件设定
+			K060031SearchInfo k060031SearchInfo = new K060031SearchInfo();
+			k060031SearchInfo.setExamineId(examId);
+			k060031SearchInfo.setEmployeesId(examEmployeeInfoList.get(0)
+					.getEmployeesId());
+			k060031SearchInfo.setExamineJoinTimes(examEmployeeInfoList.get(0)
+					.getExamineJoinTimes());
+			k060031SearchInfo.setBigquestionSerialNo(paperBigQuestionInfoList
+					.get(0).getBigquestionSerialNo());
+			k060031SearchInfo.setQuestionOrder(1);
+
+			// 设置小题和小题标准答案信息
+			k060101ValuateSingleInfo
+					.setExamQuestion(getExamQuestionInfo(k060031SearchInfo));
+
+			// 取得考试员工的答案信息
+			List<K060101EmployeeAnswerInfo> k060101EmployeeAnswerInfo = getEmployeeAnswerInfos(
+					examEmployeeInfoList, k060101ValuateSingleInfo);
+			// 设置考试员工的答案信息
+			k060101ValuateSingleInfo
+					.setEmployeeAnswerInfos(k060101EmployeeAnswerInfo);
+		}
+		Session.set(SessionConstants.TT_K060101_BIGQUESTION_LIST,
+				paperBigQuestionInfoList);
+		Session.set(SessionConstants.TT_K060101_EMP_LIST, examEmployeeInfoList);
+		Session.set(SessionConstants.TT_K060101_PAGEINFO,
+				k060101ValuateSingleInfo);
+		return k060101ValuateSingleInfo;
+	}
+
+	/**
+	 * 去除未评分的自动评分大题(整卷评分时)
+	 * 
+	 * @param examId
+	 *            考试ID
+	 * @param paperBigQuestionInfoList
+	 *            大题列表
+	 * @param markTaskList
+	 *            评分任务列表
+	 * @return
+	 */
+	private List<PaperBigQuestionInfo> clearNotMarkBigquestion(String examId,
+			List<PaperBigQuestionInfo> paperBigQuestionInfoList,
+			List<String> markTaskList) {
+		List<PaperBigQuestionInfo> clearBigQuestionResult = new ArrayList<PaperBigQuestionInfo>();
+		for (int i = 0; i < paperBigQuestionInfoList.size(); i++) {
+			// 若大题为自动评分
+			if (TtConstants.C02.C02_1.value() == paperBigQuestionInfoList
+					.get(i).getAtuoMarkFlg()) {
+
+				TestEmployeeAnswerInfo testEmployeeAnswerInfo = new TestEmployeeAnswerInfo();
+				testEmployeeAnswerInfo.setExamineId(examId);
+				testEmployeeAnswerInfo
+						.setBigquestionSerialNo(paperBigQuestionInfoList.get(i)
+								.getBigquestionSerialNo());
+				testEmployeeAnswerInfo.setEmployeesId(markTaskList.get(0));
+				TestEmployeeAnswerInfo result = k060101Dao
+						.getEmpAnswerInfo(testEmployeeAnswerInfo);
+				// 若大题已评分且评分者为考试实施者
+				if (TtConstants.C02.C02_1.value() == result.getMarkFlg()
+						&& checkMarkerPerm(examId)) {
+					clearBigQuestionResult.add(paperBigQuestionInfoList.get(i));
+				}
+
+			} else {
+				clearBigQuestionResult.add(paperBigQuestionInfoList.get(i));
+			}
+		}
+		return clearBigQuestionResult;
+	}
+
+	/**
+	 * 取得考试员工的答案信息.
+	 * 
+	 * @param examEmployeeInfoList
+	 *            员工列表
+	 * @param k060101ValuateSingleInfo
+	 *            阅卷单题信息bean
+	 * @param paperBigQuestionInfo
+	 *            大题信息bean
+	 * @return List<K060101EmployeeAnswerInfo>
+	 */
+	private List<K060101EmployeeAnswerInfo> getEmployeeAnswerInfos(
+			List<ExamEmployeeInfo> examEmployeeInfoList,
+			K060101ValuateSingleInfo k060101ValuateSingleInfo) {
+		// 生成考试员工的答案信息列表
+		List<K060101EmployeeAnswerInfo> k060101EmployeeAnswerInfo = new ArrayList<K060101EmployeeAnswerInfo>();
+		// 取得考试信息
+		K060031ExamQuestionInfo examQuestionInfo = k060101ValuateSingleInfo
+				.getExamQuestion();
+		// 生成检索条件bean
+		K060031SearchInfo searchInfo = new K060031SearchInfo();
+		// 循环检出考试员工的答案信息
+		for (ExamEmployeeInfo item : examEmployeeInfoList) {
+			// 生成考试员工的答案信息 bean
+			K060101EmployeeAnswerInfo temp = new K060101EmployeeAnswerInfo();
+			// 设置员工ID
+			temp.setEmployeesId(item.getEmployeesId());
+			// 设置员工参加次数
+			temp.setExamineJoinTimes(item.getExamineJoinTimes());
+			// 设置员工答案信息检索条件bean
+			searchInfo.setExamineId(k060101ValuateSingleInfo.getExamineId());
+			searchInfo.setEmployeesId(item.getEmployeesId());
+			searchInfo.setExamineJoinTimes(item.getExamineJoinTimes());
+			searchInfo.setQuestionId(k060101ValuateSingleInfo.getExamQuestion()
+					.getQuestionId());
+			searchInfo.setBigquestionSerialNo(k060101ValuateSingleInfo
+					.getBigQuestionInfo().getBigquestionSerialNo());
+			searchInfo.setQuestionVersionNo(examQuestionInfo
+					.getQuestionVersionNo());
+			// 取得员工答案信息列表
+			List<K060031SingleQuesInfo> singleQuesInfoList = k060101Dao
+					.getExamEmployeeAnswerInfos(searchInfo);
+			// 取得员工答案信息列表
+			temp.setSingleQuestions(singleQuesInfoList);
+
+			// 编辑员工答案信息
+			for (K060031SingleQuesInfo singleAnswer : singleQuesInfoList) {
+				// 填空题时，编辑画面显示考生答案
+				if (TtConstants.R03.R03_1.value() == singleAnswer.getAnswerType()
+						|| TtConstants.R03.R03_2.value() == singleAnswer.getAnswerType()
+						|| TtConstants.R03.R03_3.value() == singleAnswer.getAnswerType()) {
+					// 设置本道小题选项
+					StringBuilder questionAnswerKey = new StringBuilder();
+					questionAnswerKey.append(singleAnswer.getQuestionId()).append(
+							QUESTION_ANSWER).append(singleAnswer.getAnswerSerialNo());
+					if (optionContentMap == null
+							|| optionContentMap.get(questionAnswerKey.toString()) == null
+							|| singleAnswer.getStandardAnswer() == null
+							|| singleAnswer.getStandardAnswer().isEmpty()) {
+						singleAnswer.setAnswerContent("");
+						continue;
+					} 
+					int optionOrder = new Integer(singleAnswer
+							.getStandardAnswer());
+					if (optionOrder < optionContentMap.get(questionAnswerKey
+							.toString()).length) {
+						singleAnswer.setAnswerContent(optionContentMap
+										.get(questionAnswerKey.toString())[optionOrder]);
+					} else {
+						singleAnswer.setAnswerContent("");
+					}
+				}
+			}
+
+			// 追加考试员工的答案信息列表
+			k060101EmployeeAnswerInfo.add(temp);
+		}
+		return k060101EmployeeAnswerInfo;
+	}
+
+	/**
+	 * 取得小题及小题标准答案信息.
+	 * 
+	 * @param k060031SearchInfo
+	 *            检索条件bean
+	 * @return K060031ExamQuestionInfo
+	 */
+	private K060031ExamQuestionInfo getExamQuestionInfo(
+			K060031SearchInfo k060031SearchInfo) {
+		// 检出小题的详细信息
+		K060031ExamQuestionInfo examQuestionInfo = k060101Dao
+				.getExamQuestionOfBigQuestion(k060031SearchInfo);
+
+		// 检出该小题对应的答案信息
+		List<K060031SingleQuesInfo> singleQuestions = k060101Dao
+				.getSingleQuesInfos(examQuestionInfo);
+
+		// 试卷试题表中试题分数
+		int paperQuestionScore = examQuestionInfo.getPaperQuestionScore();
+		// 题库表中试题分数
+		int qBQuestionScore = examQuestionInfo.getQuestionScore();
+		optionContentMap = new HashMap<String, String[]>();
+		
+		// 整理小题及答案信息
+		for (K060031SingleQuesInfo item : singleQuestions) {
+			// 答案表中的试题分数
+			int answerScore = item.getAnswerScore();
+			// 计算答案分数
+			item.setAnswerScore(paperQuestionScore * answerScore
+					/ qBQuestionScore);
+
+			// 设置得分点检索条件
+			AnswerPointInfo condition = new AnswerPointInfo();
+			condition.setQuestionId(examQuestionInfo.getQuestionId());
+			condition.setQuestionVersionNo(examQuestionInfo
+					.getQuestionVersionNo());
+			condition.setAnswerSerialNo(item.getAnswerSerialNo());
+
+			// 检出答案对应的得分点信息
+			List<AnswerPointInfo> answerPointInfos = k060101Dao
+					.getAnswerPointInfos(condition);
+			List<String> temp = new ArrayList<String>();
+			for (AnswerPointInfo answerPointInfo : answerPointInfos) {
+				StringBuffer answerPoints = new StringBuffer();
+				int pointScore = answerPointInfo.getPointScore();
+				// 计算得分点分数
+				pointScore = pointScore * paperQuestionScore / qBQuestionScore;
+				answerPointInfo.setPointScore(pointScore);
+				// 编辑得分点内容
+				answerPoints.append(answerPointInfo.getPointSerialNo()).append(
+						K060091Service.POINT).append(
+						answerPointInfo.getPointContent()).append(
+						K060091Service.LEFT_BRACKET).append(pointScore).append(
+						K060091Service.SCORE).append(
+						K060091Service.RIGHT_BRACKET);
+				temp.add(answerPoints.toString());
+			}
+			// 设置答案得分点信息
+			item.setPointOfScore(temp);
+
+			// 填空题时，重新编辑填空题答案
+			if (TtConstants.R03.R03_1.value() == item.getAnswerType()
+					|| TtConstants.R03.R03_2.value() == item.getAnswerType()
+					|| TtConstants.R03.R03_3.value() == item.getAnswerType()) {
+				// 单选、多选和判断题，设置表示选项
+				String[] options;
+				if (TtConstants.R03.R03_3.value() == item.getAnswerType()) {
+					options = item.getOptionContent().split(SLASH);
+				} else {
+					options = item.getOptionContent().split(COMMA);
+				}
+				// 设置本道小题选项列表
+				StringBuilder questionAnswerKey = new StringBuilder();
+				questionAnswerKey.append(item.getQuestionId()).append(
+						QUESTION_ANSWER).append(item.getAnswerSerialNo());
+				optionContentMap.put(questionAnswerKey.toString(), options);
+				
+				// 标准答案选项
+				if (item.getStandardAnswer() != null
+						&& !item.getStandardAnswer().isEmpty()) {
+					item.setStandardAnswer(options[new Integer(item
+							.getStandardAnswer())]);
+
+				}
+			}
+		}
+		examQuestionInfo.setSingleQuestions(singleQuestions);
+		return examQuestionInfo;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@SuppressWarnings("unchecked")
+	@Override
+	public K060101ValuateSingleInfo getNextBigquestion(Boolean isSkipMarked) {
+
+		K060101ValuateSingleInfo k060101ValuateSingleInfo = (K060101ValuateSingleInfo) Session
+				.get(SessionConstants.TT_K060101_PAGEINFO);
+		// 试卷所有大题列表
+		List<PaperBigQuestionInfo> paperBigQuestionInfoList = (List<PaperBigQuestionInfo>) Session
+				.get(SessionConstants.TT_K060101_BIGQUESTION_LIST);
+		// 待评试卷所属员工列表
+		List<ExamEmployeeInfo> examEmployeeInfoList = (List<ExamEmployeeInfo>) Session
+				.get(SessionConstants.TT_K060101_EMP_LIST);
+		PaperBigQuestionInfo currentBigquestion = k060101ValuateSingleInfo
+				.getBigQuestionInfo();
+		Integer index = -1;
+		for (int i = 0; i < paperBigQuestionInfoList.size(); i++) {
+			if (paperBigQuestionInfoList.get(i).getBigquestionSerialNo()
+					.equals(currentBigquestion.getBigquestionSerialNo())) {
+				if (i + 1 <= paperBigQuestionInfoList.size()) {
+					k060101ValuateSingleInfo
+							.setBigQuestionInfo(paperBigQuestionInfoList
+									.get(i + 1));
+					index = i + 1;
+				}
+			}
+		}
+		if (index < 0) {
+			return null;
+		}
+		K060031SearchInfo k060031SearchInfo = new K060031SearchInfo();
+		List<K060101EmployeeAnswerInfo> k060101EmployeeAnswerInfo;
+		int questionNum = k060101ValuateSingleInfo.getBigQuestionInfo()
+				.getQuestionNum();
+		K060031ExamQuestionInfo examQuestionInfo;
+		Integer questionOrder = 1;
+
+		// 跳过已评完分试题信息处理
+		do {
+			// 待评分试题、答案及考生答案取得
+			// 检索bean条件设定
+			k060031SearchInfo.setExamineId(k060101ValuateSingleInfo
+					.getExamineId());
+			k060031SearchInfo.setEmployeesId(examEmployeeInfoList.get(0)
+					.getEmployeesId());
+			k060031SearchInfo.setExamineJoinTimes(examEmployeeInfoList.get(0)
+					.getExamineJoinTimes());
+			k060031SearchInfo.setBigquestionSerialNo(k060101ValuateSingleInfo
+					.getBigQuestionInfo().getBigquestionSerialNo());
+			k060031SearchInfo.setQuestionOrder(questionOrder);
+
+			// 取得小题和小题标准答案信息
+			examQuestionInfo = getExamQuestionInfo(k060031SearchInfo);
+			// 设置小题和小题标准答案信息
+			k060101ValuateSingleInfo.setExamQuestion(examQuestionInfo);
+			// 取得考试员工的答案信息
+			k060101EmployeeAnswerInfo = getEmployeeAnswerInfos(
+					examEmployeeInfoList, k060101ValuateSingleInfo);
+			questionOrder++;
+		} while (isSkipMarked && checkAllMarkFlg(k060101EmployeeAnswerInfo)
+				&& examQuestionInfo.getQuestionOrder() != questionNum);
+
+		// 设置考试员工的答案信息
+		k060101ValuateSingleInfo
+				.setEmployeeAnswerInfos(k060101EmployeeAnswerInfo);
+
+		Session.set(SessionConstants.TT_K060101_PAGEINFO,
+				k060101ValuateSingleInfo);
+
+		return k060101ValuateSingleInfo;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@SuppressWarnings("unchecked")
+	@Override
+	public K060101ValuateSingleInfo getPreBigquestion(Boolean isSkipMarked) {
+		K060101ValuateSingleInfo k060101ValuateSingleInfo = (K060101ValuateSingleInfo) Session
+				.get(SessionConstants.TT_K060101_PAGEINFO);
+		// 试卷所有大题列表
+		List<PaperBigQuestionInfo> paperBigQuestionInfoList = (List<PaperBigQuestionInfo>) Session
+				.get(SessionConstants.TT_K060101_BIGQUESTION_LIST);
+		// 待评试卷所属员工列表
+		List<ExamEmployeeInfo> examEmployeeInfoList = (List<ExamEmployeeInfo>) Session
+				.get(SessionConstants.TT_K060101_EMP_LIST);
+		PaperBigQuestionInfo currentBigquestion = k060101ValuateSingleInfo
+				.getBigQuestionInfo();
+		Integer index = -1;
+		for (int i = 0; i < paperBigQuestionInfoList.size(); i++) {
+			if (paperBigQuestionInfoList.get(i).getBigquestionSerialNo()
+					.equals(currentBigquestion.getBigquestionSerialNo())) {
+				if (i > 0) {
+					k060101ValuateSingleInfo
+							.setBigQuestionInfo(paperBigQuestionInfoList
+									.get(i - 1));
+					index = i - 1;
+				}
+			}
+		}
+		if (index < 0) {
+			return null;
+		}
+
+		K060031SearchInfo k060031SearchInfo = new K060031SearchInfo();
+		List<K060101EmployeeAnswerInfo> k060101EmployeeAnswerInfo;
+		K060031ExamQuestionInfo examQuestionInfo;
+		int questionNum = k060101ValuateSingleInfo.getBigQuestionInfo()
+				.getQuestionNum();
+		Integer questionOrder = questionNum;
+		// 跳过已评完分试题信息处理
+		do {
+			// 检索bean条件设定
+			k060031SearchInfo.setExamineId(k060101ValuateSingleInfo
+					.getExamineId());
+			k060031SearchInfo.setEmployeesId(examEmployeeInfoList.get(0)
+					.getEmployeesId());
+			k060031SearchInfo.setExamineJoinTimes(examEmployeeInfoList.get(0)
+					.getExamineJoinTimes());
+			k060031SearchInfo.setBigquestionSerialNo(k060101ValuateSingleInfo
+					.getBigQuestionInfo().getBigquestionSerialNo());
+			k060031SearchInfo.setQuestionOrder(questionOrder);
+
+			// 取得小题和小题标准答案信息
+			examQuestionInfo = getExamQuestionInfo(k060031SearchInfo);
+			// 设置小题和小题标准答案信息
+			k060101ValuateSingleInfo.setExamQuestion(examQuestionInfo);
+			// 取得考试员工的答案信息
+			k060101EmployeeAnswerInfo = getEmployeeAnswerInfos(
+					examEmployeeInfoList, k060101ValuateSingleInfo);
+			questionOrder--;
+		} while (isSkipMarked && checkAllMarkFlg(k060101EmployeeAnswerInfo)
+				&& examQuestionInfo.getQuestionOrder() != 1);
+		// 设置考试员工的答案信息
+		k060101ValuateSingleInfo
+				.setEmployeeAnswerInfos(k060101EmployeeAnswerInfo);
+
+		Session.set(SessionConstants.TT_K060101_PAGEINFO,
+				k060101ValuateSingleInfo);
+		return k060101ValuateSingleInfo;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@SuppressWarnings("unchecked")
+	@Override
+	public K060101ValuateSingleInfo getPreExamquestion(Boolean isSkipMarked) {
+		K060101ValuateSingleInfo k060101ValuateSingleInfo = (K060101ValuateSingleInfo) Session
+				.get(SessionConstants.TT_K060101_PAGEINFO);
+		// 待评试卷所属员工列表
+		List<ExamEmployeeInfo> examEmployeeInfoList = (List<ExamEmployeeInfo>) Session
+				.get(SessionConstants.TT_K060101_EMP_LIST);
+		K060031SearchInfo k060031SearchInfo = new K060031SearchInfo();
+		List<K060101EmployeeAnswerInfo> k060101EmployeeAnswerInfo;
+		K060031ExamQuestionInfo examQuestionInfo;
+		Integer questionOrder = k060101ValuateSingleInfo.getExamQuestion()
+				.getQuestionOrder();
+		// 跳过已评完分试题信息处理
+		do {
+			questionOrder--;
+			// 检索bean条件设定
+			k060031SearchInfo.setExamineId(k060101ValuateSingleInfo
+					.getExamineId());
+			k060031SearchInfo.setEmployeesId(examEmployeeInfoList.get(0)
+					.getEmployeesId());
+			k060031SearchInfo.setExamineJoinTimes(examEmployeeInfoList.get(0)
+					.getExamineJoinTimes());
+			k060031SearchInfo.setBigquestionSerialNo(k060101ValuateSingleInfo
+					.getBigQuestionInfo().getBigquestionSerialNo());
+			k060031SearchInfo.setQuestionOrder(questionOrder);
+			// 取得小题和小题标准答案信息
+			examQuestionInfo = getExamQuestionInfo(k060031SearchInfo);
+			// 设置小题和小题标准答案信息
+			k060101ValuateSingleInfo.setExamQuestion(examQuestionInfo);
+			// 取得考试员工的答案信息
+			k060101EmployeeAnswerInfo = getEmployeeAnswerInfos(
+					examEmployeeInfoList, k060101ValuateSingleInfo);
+
+		} while (isSkipMarked && checkAllMarkFlg(k060101EmployeeAnswerInfo)
+				&& examQuestionInfo.getQuestionOrder() != 1);
+		// 设置考试员工的答案信息
+		k060101ValuateSingleInfo
+				.setEmployeeAnswerInfos(k060101EmployeeAnswerInfo);
+
+		Session.set(SessionConstants.TT_K060101_PAGEINFO,
+				k060101ValuateSingleInfo);
+		return k060101ValuateSingleInfo;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	@SuppressWarnings("unchecked")
+	public K060101ValuateSingleInfo getNextExamquestion(Boolean isSkipMarked) {
+		K060101ValuateSingleInfo k060101ValuateSingleInfo = (K060101ValuateSingleInfo) Session
+				.get(SessionConstants.TT_K060101_PAGEINFO);
+		// 待评试卷所属员工列表
+		List<ExamEmployeeInfo> examEmployeeInfoList = (List<ExamEmployeeInfo>) Session
+				.get(SessionConstants.TT_K060101_EMP_LIST);
+
+		K060031SearchInfo k060031SearchInfo = new K060031SearchInfo();
+		List<K060101EmployeeAnswerInfo> k060101EmployeeAnswerInfo;
+		K060031ExamQuestionInfo examQuestionInfo;
+		Integer questionOrder = k060101ValuateSingleInfo.getExamQuestion()
+				.getQuestionOrder();
+		int questionNum = k060101ValuateSingleInfo.getBigQuestionInfo()
+				.getQuestionNum();
+		// 跳过已评完分试题信息处理
+		do {
+			questionOrder++;
+			// 检索bean条件设定
+			k060031SearchInfo.setExamineId(k060101ValuateSingleInfo
+					.getExamineId());
+			k060031SearchInfo.setEmployeesId(examEmployeeInfoList.get(0)
+					.getEmployeesId());
+			k060031SearchInfo.setExamineJoinTimes(examEmployeeInfoList.get(0)
+					.getExamineJoinTimes());
+			k060031SearchInfo.setBigquestionSerialNo(k060101ValuateSingleInfo
+					.getBigQuestionInfo().getBigquestionSerialNo());
+			k060031SearchInfo.setQuestionOrder(questionOrder);
+			// 取得小题和小题标准答案信息
+			examQuestionInfo = getExamQuestionInfo(k060031SearchInfo);
+			// 设置小题和小题标准答案信息
+			k060101ValuateSingleInfo.setExamQuestion(examQuestionInfo);
+			// 取得考试员工的答案信息
+			k060101EmployeeAnswerInfo = getEmployeeAnswerInfos(
+					examEmployeeInfoList, k060101ValuateSingleInfo);
+		} while (isSkipMarked && checkAllMarkFlg(k060101EmployeeAnswerInfo)
+				&& examQuestionInfo.getQuestionOrder() != questionNum);
+		// 设置考试员工的答案信息
+		k060101ValuateSingleInfo
+				.setEmployeeAnswerInfos(k060101EmployeeAnswerInfo);
+
+		Session.set(SessionConstants.TT_K060101_PAGEINFO,
+				k060101ValuateSingleInfo);
+		return k060101ValuateSingleInfo;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	@SuppressWarnings("unchecked")
+	public K060101ValuateSingleInfo getJumpQuestion(Integer questionOrder) {
+		K060101ValuateSingleInfo k060101ValuateSingleInfo = (K060101ValuateSingleInfo) Session
+				.get(SessionConstants.TT_K060101_PAGEINFO);
+		// 待评试卷所属员工列表
+		List<ExamEmployeeInfo> examEmployeeInfoList = (List<ExamEmployeeInfo>) Session
+				.get(SessionConstants.TT_K060101_EMP_LIST);
+		K060031SearchInfo k060031SearchInfo = new K060031SearchInfo();
+		List<K060101EmployeeAnswerInfo> k060101EmployeeAnswerInfo;
+		K060031ExamQuestionInfo examQuestionInfo;
+		k060031SearchInfo.setExamineId(k060101ValuateSingleInfo.getExamineId());
+		k060031SearchInfo.setEmployeesId(examEmployeeInfoList.get(0)
+				.getEmployeesId());
+		k060031SearchInfo.setExamineJoinTimes(examEmployeeInfoList.get(0)
+				.getExamineJoinTimes());
+		k060031SearchInfo.setBigquestionSerialNo(k060101ValuateSingleInfo
+				.getBigQuestionInfo().getBigquestionSerialNo());
+		k060031SearchInfo.setQuestionOrder(questionOrder);
+		// 取得小题和小题标准答案信息
+		examQuestionInfo = getExamQuestionInfo(k060031SearchInfo);
+		// 设置小题和小题标准答案信息
+		k060101ValuateSingleInfo.setExamQuestion(examQuestionInfo);
+		// 取得考试员工的答案信息
+		k060101EmployeeAnswerInfo = getEmployeeAnswerInfos(
+				examEmployeeInfoList, k060101ValuateSingleInfo);
+		// 设置考试员工的答案信息
+		k060101ValuateSingleInfo
+				.setEmployeeAnswerInfos(k060101EmployeeAnswerInfo);
+
+		Session.set(SessionConstants.TT_K060101_PAGEINFO,
+				k060101ValuateSingleInfo);
+		return k060101ValuateSingleInfo;
+	}
+
+	/**
+	 * 检查所有答案是否为已评分
+	 * 
+	 * @param k060101EmployeeAnswerInfo
+	 *            员工答案信息列表
+	 * @return true/false
+	 */
+	private boolean checkAllMarkFlg(
+			List<K060101EmployeeAnswerInfo> k060101EmployeeAnswerInfo) {
+		for (K060101EmployeeAnswerInfo item : k060101EmployeeAnswerInfo) {
+			for (K060031SingleQuesInfo single : item.getSingleQuestions()) {
+				if (null == single.getMarkFlg()) {
+					return false;
+				}
+				int markFlg = single.getMarkFlg();
+				if (TtConstants.C18.C18_1.value() != markFlg) {
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void updateTestEmployeeAnswerInfo(
+			TestEmployeeAnswerInfo testEmployeeAnswerInfo) {
+		// 设置评分者
+		testEmployeeAnswerInfo.setMarkerId(TtCommonUtil.getLoginUserId());
+
+		// 设置评分区分(已评分)
+		testEmployeeAnswerInfo.setMarkFlg(TtConstants.C18.C18_1.value());
+
+		// 检索考试员工答案信息
+		TestEmployeeAnswerInfo temp = k060101Dao
+				.getTestEmployeeAnswerInfo(testEmployeeAnswerInfo);
+
+		// 若信息不存在 ,则插入,反之,则更新
+		if (temp == null) {
+			// 设置试题区分
+			if (testEmployeeAnswerInfo.getAnswerSerialNo() == 0) {
+				testEmployeeAnswerInfo.setQuestionFlg(TtConstants.C17.C17_1
+						.value());
+			} else {
+				testEmployeeAnswerInfo.setQuestionFlg(TtConstants.C17.C17_3
+						.value());
+			}
+			testingCommonDao
+					.insertTestEmployeeAnswerInfo(testEmployeeAnswerInfo);
+		} else {
+			testingCommonDao
+					.updateTestEmployeeAnswerInfo(testEmployeeAnswerInfo);
+		}
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void updateResetTestEmployeeAnswerInfo(
+			TestEmployeeAnswerInfo testEmployeeAnswerInfo) {
+		// 设置评分者
+		testEmployeeAnswerInfo.setMarkerId(TtCommonUtil.getLoginUserId());
+
+		// 设置评分区分(未评分)
+		testEmployeeAnswerInfo.setMarkFlg(TtConstants.C18.C18_2.value());
+
+		// 设置评分
+		testEmployeeAnswerInfo.setQuestionPoint(0);
+
+		// 重置得分
+		testingCommonDao.updateTestEmployeeAnswerInfo(testEmployeeAnswerInfo);
+
+	}
+
+	/**
+	 * 评分者权限检查
+	 * 
+	 * @param examId
+	 *            考试ID
+	 * @return true/false
+	 */
+	private boolean checkMarkerPerm(String examId) {
+
+		// 设置对象ID
+		List<String> objectId = new ArrayList<String>();
+		objectId.add(examId);
+		// 对象区分
+		Integer typeId = TtConstants.C43.C43_3.value();
+		// 权限
+		ArrayList<Integer> authoritys = new ArrayList<Integer>();
+		authoritys.add(TtConstants.C24.C24_12.value());
+		// 画面个别权限检查处理
+		return ttCommonService.checkObjectAuthority(objectId, typeId,
+				authoritys).getRetFlag();
+	}
+
+	/**
+	 * 设置大题题号
+	 * 
+	 * @param bigQuestionInfos
+	 *            大题列表
+	 */
+	private void setBigquestionShowNum(
+			List<PaperBigQuestionInfo> bigQuestionInfos) {
+		// 设置大题题号
+		StringBuilder showNum;
+		for (int i = 0; i < bigQuestionInfos.size(); i++) {
+			showNum = new StringBuilder();
+			Integer questionOrder = bigQuestionInfos.get(i)
+					.getBigquestionOrder();
+			if (questionOrder / DECIMALSM > 0) {
+				if (questionOrder / DECIMALSM > 1) {
+					showNum.append(bigquestionShowNums[questionOrder
+							/ DECIMALSM - 1]);
+				}
+				// 设置十
+				showNum
+						.append(bigquestionShowNums[bigquestionShowNums.length - 1]);
+			}
+			int j = questionOrder % DECIMALSM;
+			if (j != 0) {
+				showNum.append(bigquestionShowNums[j - 1]);
+			}
+			bigQuestionInfos.get(i).setBigquestionShowNum(showNum.toString());
+		}
+	}
+
+	/**
+	 * @param dao
+	 *            the k060101Dao to set
+	 */
+	public void setK060101Dao(K060101Dao dao) {
+		k060101Dao = dao;
+	}
+
+	/**
+	 * @param ttCommonService
+	 *            the ttCommonService to set
+	 */
+	public void setTtCommonService(TtCommonService ttCommonService) {
+		this.ttCommonService = ttCommonService;
+	}
+
+	/**
+	 * @param testingCommonDao
+	 *            the testingCommonDao to set
+	 */
+	public void setTestingCommonDao(TestingCommonDao testingCommonDao) {
+		this.testingCommonDao = testingCommonDao;
+	}
+}

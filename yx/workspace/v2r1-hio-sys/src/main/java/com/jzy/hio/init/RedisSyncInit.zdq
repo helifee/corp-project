@@ -1,0 +1,214 @@
+package com.jzy.hio.init;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.database.DataSourceContextHolder;
+import com.jzy.hio.entity.OaSysButton;
+import com.jzy.hio.entity.OaSysExternalContact;
+import com.jzy.hio.entity.OaSysMenu;
+import com.jzy.hio.entity.OaSysOrganization;
+import com.jzy.hio.entity.OaSysRolePermission;
+import com.jzy.hio.entity.OaSysRoleUser;
+import com.jzy.hio.entity.OaSysUser;
+import com.jzy.hio.entity.OaSysUserPosition;
+import com.jzy.hio.mapper.DataSourceBeanMapper;
+import com.jzy.hio.mapper.DataSourceBeanMapper.TendDataSource;
+import com.jzy.hio.redis.RedisService;
+import com.jzy.hio.redis.service.RedisSetService;
+import com.jzy.hio.sys.external.service.ExternalContactService;
+import com.jzy.hio.sys.menu.service.MenuService;
+import com.jzy.hio.sys.organization.service.OrganizationService;
+import com.jzy.hio.sys.role.service.RoleButtonService;
+import com.jzy.hio.sys.role.service.RolePermissionService;
+import com.jzy.hio.sys.role.service.RoleUserService;
+import com.jzy.hio.sys.user.service.UserPositionService;
+import com.jzy.hio.sys.user.service.UserService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * redis同步<br/>
+ * 把数据表中的数据同步到数据库
+ *
+ * @author wt.coffee<br       />
+ * 2018年3月16日下午3:34:03
+ */
+@Component
+public class RedisSyncInit extends Base {
+
+    private Logger logger = LoggerFactory.getLogger(this.getClass());
+
+    @Autowired
+    private DataSourceBeanMapper dataSourceBeanMapper;
+    @Autowired
+    private RedisService redisService;
+    @Autowired
+    private OrganizationService organizationService;
+    @Autowired
+    private UserService userService;
+    @Autowired
+    private UserPositionService userPositionService;
+    @Autowired
+    private MenuService menuService;
+    //
+    @Autowired
+    private RoleUserService roleUserService;
+    @Autowired
+    private RolePermissionService rolePermissionService;
+    @Autowired
+    private RoleButtonService roleButtonService;
+    @Autowired
+    private RedisSetService redisSetService;
+    @Autowired
+    private ExternalContactService externalContactService;
+
+    private boolean isRunning = false;
+
+    public RedisSyncInit() {
+        System.out.println("RedisSyncInit");
+    }
+
+    /**
+     * 同步数据库中初始化的数据到redis
+     */
+    public void afterPropertiesSet() throws Exception {
+        Thread.sleep(1000 * 3);
+    }
+
+    /**
+     * 该方法调用时间比较长
+     *
+     * @throws Exception
+     */
+    public void syncAllData(boolean isForce) throws Exception {
+        if (isRunning && isForce == false) {
+            return;
+        }
+        isRunning = true;
+        DataSourceContextHolder.setDataSourceType(BaseConstants.DATASOURCE_DEFAULT, this);
+        List<TendDataSource> tendList = dataSourceBeanMapper.getTendDataSourceVoList();
+        for (TendDataSource tend : tendList) {
+            try {
+                // 时间太长--
+                syncTendData(tend.getTendCode());
+            } catch (Exception e) {
+                e.printStackTrace();
+                logger.info("tendCode == {}", tend.getTendCode());
+            }
+        }
+        isRunning = false;
+    }
+
+    /**
+     * 通过tendCode同步所有数据
+     *
+     * @param tendCode
+     */
+    public void syncTendData(String tendCode) {
+        logger.info("-----------开始{}", tendCode);
+        redisService.delAll(tendCode + "*");
+        logger.info("----------- {}开始同步--------------- ", tendCode);
+
+        List<OaSysOrganization> orgList = organizationService.queryListByTendId(tendCode, null);
+        redisService.addRow(tendCode, orgList);
+        logger.info("OaSysOrganization同步完成");
+
+        List<OaSysUser> userList = userService.queryListByTendId(tendCode, null);
+        redisService.addRow(tendCode, userList);
+        logger.info("OaSysUser同步完成");
+
+        List<OaSysUserPosition> userPositionList = userPositionService.queryListByTendId(tendCode, null);
+        redisService.addRow(tendCode, userPositionList);
+        logger.info("OaSysUserPosition同步完成");
+
+        List<OaSysExternalContact> externalContactList = externalContactService.queryListByTendId(tendCode, null);
+        redisService.addRow(tendCode, externalContactList);
+        logger.info("OaSysExternalContact同步完成");
+
+        List<OaSysRoleUser> roleUserList = roleUserService.queryListByTendId(tendCode, false);
+        List<OaSysRolePermission> permList = rolePermissionService.queryListByTendId(tendCode, false);
+        List<OaSysButton> buttonList = roleButtonService.queryListByTendId(tendCode, false);
+        List<OaSysMenu> menuList = menuService.queryListByTendId(tendCode, false);
+
+        // 同步role相关的redis UserRds ButtonUrl
+        redisSetService.syncRole(tendCode, roleUserList, permList, menuList, buttonList);
+        redisSetService.syncOrg(tendCode, userPositionList);
+        
+        syncImUserIdAndUserId(tendCode);
+    }
+
+    /**
+     * 同步redis imUserId和oaUserId对应
+     *
+     * @param tendId
+     */
+    public void syncImUserIdAndUserId(String tendId) {
+        List<TendDataSource> tendDataSources = new ArrayList<>();
+        if (isEmpty(tendId)) {
+            DataSourceContextHolder.setDataSourceType(BaseConstants.DATASOURCE_DEFAULT, this);
+            List<TendDataSource> tendDataSourceVoList = dataSourceBeanMapper.getTendDataSourceVoList();
+            tendDataSources.addAll(tendDataSourceVoList);
+        } else {
+            TendDataSource e = new TendDataSource();
+            e.setTendId(tendId);
+            tendDataSources.add(e);
+        }
+
+        for (int i = 0; i < tendDataSources.size(); i++) {
+            String currentTend = tendDataSources.get(i).getTendId();
+            List<OaSysUser> userList = userService.queryListByTendId(currentTend, null);
+            if (isNotEmpty(userList)) {
+                redisSetService.syncUserAndImUserId(currentTend, userList);
+            }
+        }
+    }
+
+    public void syncExternalUserToOaSysUser(String tendId) {
+        List<TendDataSource> tendDataSources = new ArrayList<>();
+        if (isEmpty(tendId)) {
+            DataSourceContextHolder.setDataSourceType(BaseConstants.DATASOURCE_DEFAULT, this);
+            List<TendDataSource> tendDataSourceVoList = dataSourceBeanMapper.getTendDataSourceVoList();
+            tendDataSources.addAll(tendDataSourceVoList);
+        } else {
+            TendDataSource e = new TendDataSource();
+            e.setTendId(tendId);
+            tendDataSources.add(e);
+        }
+
+        for (int i = 0; i < tendDataSources.size(); i++) {
+            String currentTend = tendDataSources.get(i).getTendId();
+            List<OaSysExternalContact> oaSysExternalContacts = externalContactService.queryListByTendId(currentTend, null);
+            List<OaSysUser> oaSysUsers = userService.queryListByTendId(currentTend, null);
+            if (isNotEmpty(oaSysExternalContacts)) {
+                saveOaSysUser(currentTend,oaSysExternalContacts, oaSysUsers);
+            }
+        }
+    }
+
+    private void saveOaSysUser(String tendId,List<OaSysExternalContact> oaSysExternalContacts, List<OaSysUser> oaSysUsers) {
+        for (int i = 0; i < oaSysExternalContacts.size(); i++) {
+            OaSysExternalContact oaSysExternalContact = oaSysExternalContacts.get(i);
+            boolean isHaveUser = false;
+            if (isNotEmpty(oaSysUsers)) {
+                for (int j = 0; j < oaSysUsers.size(); j++) {
+                    OaSysUser oaSysUser = oaSysUsers.get(j);
+                    if (oaSysUser.getId().equals(oaSysExternalContact.getId())) {
+                        isHaveUser = true;
+                        continue;
+                    }
+                }
+
+            }
+            if (!isHaveUser) {
+                userService.newOaSysUser(tendId,oaSysExternalContact);
+            }
+        }
+    }
+
+
+}

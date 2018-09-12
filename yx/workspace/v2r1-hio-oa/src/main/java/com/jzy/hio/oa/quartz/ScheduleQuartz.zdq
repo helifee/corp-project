@@ -1,0 +1,111 @@
+package com.jzy.hio.oa.quartz;
+
+import java.util.Date;
+import java.util.List;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.cloud.core.CoreHeaderInterceptor;
+import com.jzy.hio.feign.PlatformFeignService;
+import com.jzy.hio.oa.quartz.service.ScheduleQuartzService;
+import com.jzy.hio.platform.dto.tenantcompanyinfo.TenantCompanyInfoDto;
+import com.jzy.hio.redis.RedisService;
+
+/**
+ * 定时任务——日程定时发送任务cc消息
+ * @author wdy
+ * @date 2018年4月14日
+ */
+@Component
+public class ScheduleQuartz {
+
+	private static final Logger logger = LoggerFactory.getLogger(ScheduleQuartz.class);
+	
+	@Autowired
+    private RedisService redisService;
+	@Autowired
+	private ScheduleQuartzService scheduleQuartzService;
+	
+	@Value("${redis_key.scheduleMessage}")
+    private String redis_key_scheduleMessage;
+	
+	@Autowired
+	private PlatformFeignService platformFeignService;
+	
+	/**
+     * 定时发送任务cc消息
+     * 按fixedRate的规则每1分钟执行一次
+     */
+    @Scheduled(initialDelay = 1000 * 60,fixedRate = 1000 * 60 * 1)
+	public void scheduleMessage() {
+		
+    	try {
+            logger.info("redis_key: "+ redis_key_scheduleMessage);
+            //在分布式环境下，防止重发查询发消息
+            
+//            logger.info("redis锁是否生效:{}",redisService.addRedisSetnx(redis_key_scheduleMessage,redis_key_scheduleMessage));
+            
+            if(redisService.addRedisSetnx(redis_key_scheduleMessage,redis_key_scheduleMessage)) {
+            	logger.info("执行日程定时发送任务cc消息开始！");
+            	
+            	//查询主库租户信息，获取租户id，多线程进行切库,执行各租户定时任务
+//            	SysTendUser sysTendUser= new SysTendUser();
+//            	sysTendUser.setState(OaConstant.TENG_STATE1);
+            	
+            	CoreHeaderInterceptor.initHystrixRequestContext(CoreHeaderInterceptor.HEADER_LABEL);// 不设置框架会报错
+            	ApiFeignResponse<List<TenantCompanyInfoDto>> apiFeignResponse = platformFeignService.getTenantCompanyList();
+            	logger.info("获取租户列表是否成功>>>>>>>>>{}",apiFeignResponse.getStatus());
+            	if(200 == apiFeignResponse.getStatus()){
+            		List<TenantCompanyInfoDto> tenantCompanyInfoList = apiFeignResponse.getResult();
+            		Date today = new Date();//当前时间
+            		
+            		for (TenantCompanyInfoDto tenantCompanyInfoDto : tenantCompanyInfoList) {
+//            			String tendId = "hio_tend045";
+            			scheduleQuartzService.updateSendMessage(tenantCompanyInfoDto.getTendId(),tenantCompanyInfoDto,today);
+					}
+            	}
+            	
+//            	Map<String,String> map = JedisUtil.fetchRelationRow("tenant_company_info");
+//            	
+//            	logger.info("执行日程定时发送任务cc消息租户列表size:{}",map.size());
+//            	
+//            	if(map != null && map.size() > 0) {
+//            		for(String key : map.keySet()) {
+//            			if(!key.equals("table_name")) {
+//            				String json = map.get(key);
+//            				if(StringUtils.isNotBlank(json)){
+//            					JSONObject jsonObject = JSONObject.parseObject(json);
+//                				String tendId = (String)jsonObject.get("tendId");
+//                				scheduleQuartzService.updateSendMessage(tendId);
+//            				}
+//            				
+//            			}
+//            		}
+//            	}
+            	
+            	//暂时不使用多线程处理，租户多时在切换多线程
+//            	if(list != null){
+//            		ExecutorService executorService = Executors.newFixedThreadPool(TaskConstant.EXECUTORS_NUM);  
+//                	executorService.submit(new TaskOverdueProducer(list));
+//                	executorService.submit(new TaskOverdueConsumer());
+//            	}
+            	
+            	logger.info("执行日程定时发送任务cc消息结束！");
+            }else{
+               logger.info("未执行日程定时发送任务cc消息！");
+           }
+        }catch (Exception e){
+            logger.error("日程定时发送任务cc消息失败{}>>>",e.getMessage());
+            e.printStackTrace();
+        }finally {
+        	logger.info(redis_key_scheduleMessage+"释放！");
+            redisService.releaseRedisSetnx(redis_key_scheduleMessage);
+        }
+    }
+}

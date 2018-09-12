@@ -1,0 +1,108 @@
+package com.jzy.hio.flow.service.impl;
+
+import java.util.Date;
+import java.util.List;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.flow.entity.FlowFollowInstance;
+import com.jzy.hio.flow.entity.FlowInstance;
+import com.jzy.hio.flow.entity.dto.ApprovalDto;
+import com.jzy.hio.flow.entity.param.ApprovalParam;
+import com.jzy.hio.flow.mapper.FlowFollowInstanceDao;
+import com.jzy.hio.flow.mapper.FlowInstanceDao;
+import com.jzy.hio.flow.service.FlowFollowInstanceService;
+import com.jzy.hio.flow.utils.FlowConstants;
+import com.jzy.hio.flow.utils.TransitionUserNameUtils;
+import com.jzy.hio.utils.Page;
+
+@Service
+public class FlowFollowInstanceServiceImpl extends BaseServiceImpl<FlowFollowInstance>
+		implements FlowFollowInstanceService {
+
+	@Autowired
+	private FlowFollowInstanceDao flowFollowInstanceDao;
+	@Autowired
+	private TransitionUserNameUtils transitionUserNameUtils;
+
+	@Autowired
+	private FlowInstanceDao flowInstanceDao;
+	
+	@Override
+	public Page getFollowList(ApprovalParam approvalParam) {
+		String userIdOA = getUserIdOA();
+		approvalParam.setCreatePerson(userIdOA);
+		Integer totalCount = flowFollowInstanceDao.getCountFollowList(approvalParam);
+		Page<ApprovalDto> page = new Page<>();
+		page.setPageCount(approvalParam.getPageCount());
+		page.setPageNum(approvalParam.getPageNum());
+		Integer pageNum = approvalParam.getPageNum();
+		pageNum = pageNum.intValue() == 0 ? 1 : pageNum.intValue();
+		pageNum = (pageNum - 1) * approvalParam.getPageCount();
+		approvalParam.setPageNum(pageNum);
+		List<ApprovalDto> followList = null;
+		if (totalCount.intValue() != 0) {
+			List<String> orderby = approvalParam.getOrderby();
+			if (CollectionUtils.isNotEmpty(orderby)) {
+				StringBuilder sql = new StringBuilder();
+				for (String key : orderby) {
+					if (sql.length() == 0) {
+						sql.append(" order by " + key.split(",")[0] + " " + key.split(",")[1]);
+					} else {
+						sql.append(" , " + key.split(",")[0] + " " + key.split(",")[1]);
+					}
+				}
+				approvalParam.setDynamicSql(sql.toString());
+			}
+			followList = flowFollowInstanceDao.getFollowList(approvalParam);
+		}
+		
+		if (CollectionUtils.isNotEmpty(followList)) {
+
+			transitionUserNameUtils.extractApprover(followList);
+			followList = transitionUserNameUtils.getList(followList, getLoginUser().getTendId());
+		}
+		page.setList(followList);
+		page.setTotal(totalCount);
+		page.setPageTotal(totalCount % approvalParam.getPageCount() == 0 ? totalCount / approvalParam.getPageCount()
+				: totalCount / approvalParam.getPageCount() + 1);
+		return page;
+	}
+
+	@Override
+	public int saveFollow(FlowFollowInstance flowFollowInstance) {
+
+		flowFollowInstance.setCreatePersonId(getUserIdOA());
+		flowFollowInstance.setCreateDate(new Date());
+		flowFollowInstance.setUpdateDate(new Date());
+
+		// 重新关注
+		FlowFollowInstance selectOne = flowFollowInstanceDao.findById(flowFollowInstance.getCreatePersonId(),
+				flowFollowInstance.getFlowInstanceId());
+		 
+		if (selectOne != null && selectOne.getIsFollow() == 1 && flowFollowInstance.getIsFollow() == 2) {
+			return flowFollowInstanceDao.updateByInstanceId(flowFollowInstance);
+		}else if (selectOne != null && selectOne.getIsFollow() == 2 && flowFollowInstance.getIsFollow() == 1) {
+			return flowFollowInstanceDao.updateByInstanceId(flowFollowInstance);
+		} else {
+			
+			FlowInstance flowInstance = new FlowInstance();
+			flowInstance.setId(flowFollowInstance.getFlowInstanceId());
+			flowInstance.setDelflag(0);
+			FlowInstance instance = flowInstanceDao.selectOne(flowInstance);
+			if(instance == null) {
+				throw new HioException(FlowConstants.FLOW_NOT_EXIST.getMessage(),FlowConstants.FLOW_NOT_EXIST.getStatus());
+			}
+			
+			flowFollowInstance.setIsFollow(1);
+			flowFollowInstance.setDelflag(0);
+			return super.save(flowFollowInstance);
+		}
+
+	}
+
+}

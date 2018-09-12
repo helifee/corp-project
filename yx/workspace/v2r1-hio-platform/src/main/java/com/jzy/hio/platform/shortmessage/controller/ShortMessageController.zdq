@@ -1,0 +1,106 @@
+package com.jzy.hio.platform.shortmessage.controller;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.converter.json.GsonBuilderUtils;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.google.gson.GsonBuilder;
+import com.jzy.hio.base.RedisKeyConstant;
+import com.jzy.hio.base.controller.BasePlatformController;
+import com.jzy.hio.config.QueueConfig;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.platform.message.param.IMToUserParam;
+import com.jzy.hio.platform.message.param.ImNoticeMsgsParam;
+import com.jzy.hio.platform.message.service.ImNoticeMsgService;
+import com.jzy.hio.platform.message.service.MessageService;
+import com.jzy.hio.platform.tenduser.service.TendUserInfoService;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.utils.JacksonUtils;
+
+/**
+ * 为新注册用户发送站内信，如果有
+ * 
+ * @author chc<br/>
+ *         2018年3月12日
+ */
+
+@RestController
+@RequestMapping("/notice")
+public class ShortMessageController  extends BasePlatformController<TendUserInfoService> {
+	@Autowired
+    ImNoticeMsgService imNoticeMsgService;
+	@Autowired
+	QueueConfig queueConfig;
+	@Autowired
+	MessageService messageService;
+	
+	/**
+	 * 用户注册之后如果之前有过短信邀请，则为该用户发站内信
+	 * 
+	 * @param id
+	 * @return
+	 * @throws HioException
+	 */
+	@RequestMapping("sendNotice")
+	public void sendNotice(@RequestBody String json) throws HioException {
+		try {
+			Map<String,Object> jsonMap = json2map(json);
+			String redisNoticeJson = JedisUtil.fetchRow(RedisKeyConstant.imnoticephonemsg, jsonMap.get("mobile").toString());
+			List<Map<String,Object>> dataList = new ArrayList<Map<String,Object>>();
+			if(StringUtils.isNotBlank(redisNoticeJson)) {
+				dataList = JacksonUtils.fromJson(json2map(redisNoticeJson).get("data").toString(), List.class, Map.class);
+			}
+			if(null != dataList && dataList.size() > 0) {
+				for(Map<String,Object> map : dataList) {
+					ImNoticeMsgsParam imNoticeMsg = new ImNoticeMsgsParam();
+					imNoticeMsg.setMsg((String)map.get("znmsg"));//站内信
+			        
+					IMToUserParam userParam = new IMToUserParam();
+					userParam.setToUserId(jsonMap.get("uid").toString());
+					userParam.setToUserPhone(jsonMap.get("mobile").toString());
+					List<IMToUserParam> toUsers = new ArrayList<IMToUserParam>();
+					toUsers.add(userParam);
+					imNoticeMsg.setToUsers(toUsers);
+					imNoticeMsg.setFromUserId(map.get("sendId").toString());	
+					imNoticeMsg.setFromUserName(map.get("sendName").toString());
+					imNoticeMsg.setTendId(map.get("tendId")!=null?map.get("tendId").toString():"");
+					imNoticeMsg.setTendName(map.get("tendName")!=null?map.get("tendName").toString():"");
+					imNoticeMsg.setMsgType(map.get("msgType").toString());
+					imNoticeMsg.setSendMsgType(map.get("sendMsgType").toString());
+					imNoticeMsg.setModuleType(map.get("moduleType").toString());
+					imNoticeMsg.setModuleName(map.get("moduleName").toString());
+					
+					Map<String,Object> ext = new HashMap<String,Object>();
+					ext.put("msg", map.get("znmsg"));
+					ext.put("sendId", map.get("sendId"));
+					ext.put("sendName", map.get("sendName"));
+					ext.put("tendId", map.get("tendId"));
+					ext.put("sentendNamedId", map.get("tendName"));
+					ext.put("sex", map.get("sex"));
+					ext.put("headImg", map.get("headImg"));
+					imNoticeMsg.setExt(ext);
+					
+					messageService.sendMessage(imNoticeMsg);
+			        dataList.remove(map);
+				}
+				Map<String,String> noticeMap = new HashMap<String,String>();
+				GsonBuilder gson = GsonBuilderUtils.gsonBuilderWithBase64EncodedByteArrays();
+				noticeMap.put("data", gson.create().toJson(dataList));
+				noticeMap.put("id", jsonMap.get("mobile").toString());
+				JedisUtil.addListRow(RedisKeyConstant.imnoticephonemsg ,noticeMap);
+			}
+			
+		}catch(Exception e) {
+			e.printStackTrace();
+			logger.error("新用户发送站内信失败！");
+		}
+	}
+}

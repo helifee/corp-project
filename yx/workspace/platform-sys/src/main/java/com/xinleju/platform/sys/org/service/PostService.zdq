@@ -1,0 +1,90 @@
+package com.xinleju.platform.sys.org.service;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.sys.org.dto.OrgnazationNodeDto;
+import com.xinleju.platform.sys.org.dto.PostDto;
+import com.xinleju.platform.sys.org.dto.PostQueryDto;
+import com.xinleju.platform.sys.org.entity.Post;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface PostService extends  BaseService <String,Post>{
+
+	/**
+	 * 根据用户查询用户所有岗位
+	 * @param userId
+	 * @return
+	 */
+	public List<PostQueryDto> queryPostListByUserId(Map<String, Object> paramater)  throws Exception;
+	
+	/**
+	 * 根据用户查询用户所有岗位（认证信息）
+	 * @param userId
+	 * @return
+	 */
+	public List<PostDto> queryAuthPostListByUserId(Map<String, Object> paramater)  throws Exception;
+	/**
+	 * 根据用户ID查询岗位和虚拟角色
+	 * @param paramater
+	 * @return
+	 * @throws Exception
+	 */
+	public List<Map<String,Object>> queryPostRoleListByUserId(Map<String, Object> paramater)  throws Exception;
+	
+	/**
+	 * 根据组织结构查询岗位列表
+	 * 
+	 * @param map
+	 * @return
+	 */
+	public List<PostQueryDto> queryPostListByOrgId(Map<String, Object> paramater) throws Exception;
+	
+	/**
+	 * 根据角色查询岗位列表
+	 * 
+	 * @param map
+	 * @return
+	 */
+	public List<PostQueryDto> queryPostListByRoleId(Map<String, Object> paramater) throws Exception;	
+	
+	/**
+	 * 查询所有岗位
+	 * @return
+	 */
+	public List<OrgnazationNodeDto> queryAllPostList(Map<String, Object> map)  throws Exception;
+	/**
+	 * 根据IDs获取结果集
+	 * @param paramater
+	 * @return
+	 */
+	public List<Map<String,String>> queryPostsByIds(Map map)throws Exception;
+	/**
+	 * 查询用户主岗组织
+	 * @param paramater
+	 * @return
+	 */
+	public String getDefaultPostOrg(Map map)throws Exception;
+	/**
+	 * 获取组织下岗位
+	 * @param param
+	 * @return
+	 */
+	public Map<String,List<PostDto>> getPostListByOrgId(Map map)throws Exception;
+	/**
+	 * 获取用户下岗位
+	 * @param param
+	 * @return
+	 */
+	public Map<String,Object> getPostListByUserId(Map map)throws Exception;
+	/**
+	 * 批量设置领导岗位
+	 */
+	public Integer updateBatchLeaderId(Map map)throws Exception;
+}

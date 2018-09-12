@@ -1,0 +1,43 @@
+package com.xinleju.platform.finance.dao.impl;
+
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.platform.base.dao.impl.BaseDaoImpl;
+import com.xinleju.platform.finance.dao.VoucherBillRelationDao;
+import com.xinleju.platform.finance.entity.VoucherBillRelation;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Repository
+public class VoucherBillRelationDaoImpl extends BaseDaoImpl<String,VoucherBillRelation> implements VoucherBillRelationDao{
+
+	public VoucherBillRelationDaoImpl() {
+		super();
+	}
+
+	/**
+	 * @param map
+	 * @return
+	 */
+	@Override
+	public List<VoucherBillRelation> getpageList(Map map){
+		return getSqlSession().selectList("com.xinleju.platform.finance.entity.VoucherBillRelation.getpageList", map);
+	}
+
+	/**
+	 * @param map
+	 * @return
+	 */
+	@Override
+	public  Integer getpageListCount(Map map){
+		return getSqlSession().selectOne("com.xinleju.platform.finance.entity.VoucherBillRelation.getpageListCount", map);
+	}
+	
+}

@@ -1,0 +1,263 @@
+package com.jzy.hio.platform.tenduser.controller;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.RedisKeyConstant;
+import com.jzy.hio.base.controller.BasePlatformController;
+import com.jzy.hio.entity.TendUserInfo;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.platform.constant.UserOrFriendConstant;
+import com.jzy.hio.platform.dto.tenantcompanyinfo.TendUserInfoDto;
+import com.jzy.hio.platform.message.param.MessageEnum;
+import com.jzy.hio.platform.shortmessage.param.ImNoticeOrPhoneMsgsParam;
+import com.jzy.hio.platform.shortmessage.service.NoticePhoneMsgService;
+import com.jzy.hio.platform.tenantcompanyinfo.service.TenantCompanyInfoService;
+import com.jzy.hio.platform.tenduser.param.RemoveTenantCompanyParam;
+import com.jzy.hio.platform.tenduser.param.TendUserInfoAppParam;
+import com.jzy.hio.platform.tenduser.service.TendUserInfoService;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.redis.RedisService;
+import com.jzy.hio.springmvc.ApiResponse;
+import com.jzy.hio.sys.organization.param.IMOrgCreateParam;
+
+/**
+ * 租户信息
+ * 
+ * @author chc<br/>
+ *         2018年3月12日
+ */
+
+@RestController
+@RequestMapping("/tendUser")
+public class TendUserController  extends BasePlatformController<TendUserInfoService> {
+
+	@Autowired
+	private TenantCompanyInfoService tenantCompanyInfoService;
+
+	@Autowired
+	private TendUserInfoService tendUserInfoService;
+	
+	@Autowired
+	private NoticePhoneMsgService noticePhoneMsgService;
+
+	private static final int TIME = 5;
+
+
+	@Autowired
+	RedisService redisService;
+	/**
+	 * 删除用户与租户关系
+	 * oa端在用户没有接受邀请之前把用户删掉，如果用户还没有注册，把redis中的短信删除，不在发送站内信，如果已经注册，站内信已发？？？？？
+	 * @param dto
+	 * @return
+	 * @throws HioException
+	 */
+	@RequestMapping("deleteUserTend")
+	public ApiResponse<String> deleteUserTend(@RequestBody TendUserInfoDto dto) throws HioException {
+		ApiResponse<String> ares = new ApiResponse<String>();
+		try {
+			tendUserInfoService.deleteUserTend(dto);
+			//为用户发送系统消息
+			ImNoticeOrPhoneMsgsParam param = new ImNoticeOrPhoneMsgsParam();
+			param.setFromUserId(getUserIdIM());
+			param.setReceiverId(dto.getUid());
+			param.setMsgType(UserOrFriendConstant.NOTICE_MSG_TYPE);
+			param.setModuleType(String.valueOf(MessageEnum.DELWORK_MSG.getValue()));
+			param.setModuleName(MessageEnum.DELWORK_MSG.getDes());
+			param.setSendMsgType(UserOrFriendConstant.CMD_MSG_TYPE);
+			param.setTendId(dto.getTendId());
+			param.setTendName(dto.getTendName());
+			noticePhoneMsgService.sendMail(param);
+			
+			ares.setStatus(HioException.SUCCESS);
+			ares.setMessage(HioException.DELUSERTENDSUCCESS);
+		}catch(Exception e) {
+			ares.setStatus(HioException.DELUSERTENDEXCEPTION.getStatus());
+			ares.setMessage(HioException.DELUSERTENDEXCEPTION.getMessage());
+			e.printStackTrace();
+			logger.error("删除用户租户关系失败！{}",e.getMessage());
+		}
+		return ares;
+	}
+	
+	/**
+	 * 修改 用户与租户 状态
+	 * @param dto
+	 * @return
+	 * @throws HioException
+	 */
+	@RequestMapping("updateUserTendDelflag")
+	public ApiResponse<String> updateUserTendDelflag(@RequestBody TendUserInfoDto dto) throws HioException {
+		ApiResponse<String> ares = new ApiResponse<String>();
+		try {
+			tendUserInfoService.updateUserTendDelflag(dto);
+			//为用户发送系统消息
+			ImNoticeOrPhoneMsgsParam param = new ImNoticeOrPhoneMsgsParam();
+			param.setFromUserId(getUserIdIM());
+			param.setReceiverId(dto.getUid());
+			param.setMsgType(UserOrFriendConstant.NOTICE_MSG_TYPE);
+			if(isEquals(dto.getDelflag(), BaseConstants.MYSQL_DELFLAG_NORMAL)) {
+				param.setModuleType(String.valueOf(MessageEnum.REWORK_MSG.getValue()));
+				param.setModuleName(MessageEnum.REWORK_MSG.getDes());
+			}else {
+				param.setModuleType(String.valueOf(MessageEnum.OUTWORK_MSG.getValue()));
+				param.setModuleName(MessageEnum.OUTWORK_MSG.getDes());
+			}
+			param.setTendId(dto.getTendId());
+			param.setTendName(dto.getTendName());
+			param.setSendMsgType(UserOrFriendConstant.CMD_MSG_TYPE);
+			noticePhoneMsgService.sendMail(param);
+			ares.setStatus(HioException.SUCCESS);
+			ares.setMessage(HioException.UPDATEUSERTENDSUCCESS);
+		}catch(Exception e) {
+			ares.setStatus(HioException.UPDATEUSERTENDEXCEPTION.getStatus());
+			ares.setMessage(HioException.UPDATEUSERTENDEXCEPTION.getMessage());
+			e.printStackTrace();
+			logger.error("删除用户租户关系失败！{}",e.getMessage());
+		}
+		return ares;
+	}
+	
+	/**
+	 * 设置主企业
+	 * @param dto
+	 * @return
+	 * @throws HioException
+	 */
+	@RequestMapping("setMainTend")
+	public ApiResponse<String> setMainTend(@RequestBody TendUserInfoAppParam dto) throws HioException {
+		ApiResponse<String> ares = new ApiResponse<String>();
+		try {
+			Map<String,String> tendUserMap = JedisUtil.fetchRelationRow(RedisKeyConstant.userTendList + dto.getUserId());
+			logger.info("从redis获取租户集合");
+			if(tendUserMap != null && tendUserMap.size() > 0) {
+				for(String key : tendUserMap.keySet()) {
+					if(!"table_name".equals(key)) {
+						String json = tendUserMap.get(key);
+						Map<String,Object> map = new HashMap<String,Object>();
+							if(!key.equals(dto.getTendId())) {
+								if(StringUtils.isNotBlank(json)) {
+									map = json2map(json);
+									if(map.get("defaultFlag").toString().equals("1")) {
+										map.put("defaultFlag", 0);
+										logger.info("循环租户集合，如果租户id与要设置的租户id不等，设置为否");
+									}else {
+										map = new HashMap<String,Object>();
+									}
+								}
+							}else {
+								if(StringUtils.isNotBlank(json)) {
+									map = json2map(json);
+									if(isEquals(BaseConstants.UserWorkStatus.JOB.getWorkStatus(), map.get("reserve1")+"")) {
+										map.put("defaultFlag", 1);
+										logger.info("循环租户集合，如果租户id与要设置的租户id不等，设置为是");
+									}else {
+										ares.setStatus(HioException.SERVER_INTERNAL);
+										ares.setMessage("您在所要设置为主企业的公司还未激活，请激活之后再操作！");
+										logger.info("您在所要设置为主企业的公司还未激活，请激活之后再操作");
+										return ares;
+									}
+								}
+							}
+							if(map !=null && map.size() > 0) {
+								JedisUtil.addRow(RedisKeyConstant.userTendList + dto.getUserId(), map);
+								map.put("id", map.get("sid"));
+								map.put("delflag", Integer.valueOf(map.get("delflag") == null ? "0" : map.get("delflag").toString()));
+								TendUserInfo tendUserInfo = map2obj(map,TendUserInfo.class);
+								tendUserInfoService.update(tendUserInfo);
+								logger.info("更新租户");
+							}
+					}
+				}
+			}
+			
+			ares.setStatus(HioException.SUCCESS);
+			ares.setMessage(HioException.EDITMAINTENDSUCCESS);
+		}catch(Exception e) {
+			ares.setStatus(HioException.EDITMAINTENDEXCEPTION.getStatus());
+			ares.setMessage(HioException.EDITMAINTENDEXCEPTION.getMessage());
+			e.printStackTrace();
+			logger.error("修改主租户失败！{}" , e.getMessage());
+		}
+		return ares;
+	}
+
+	/**
+	 * 创建团队
+	 * @param createTendParam
+	 * @return
+	 */
+	@PostMapping
+	public ApiResponse<String>  save(@RequestBody @Validated IMOrgCreateParam createTendParam){
+		ApiResponse<String> result = new ApiResponse<String>();
+		try {
+			//如果包含敏感词，则提示
+ 			if(SensitiveWordUtil.containsMe(createTendParam.getTeamName())){
+				result.setStatus(500);
+				result.setMessage("该公司名称不可用，请更换名称!");
+				return result;
+			}
+			createTendParam.setTeamName(createTendParam.getTeamName().replace("\n","").replace("\r","").replace("\n\r","").replace("\r\n",""));
+			//防止分布式并发情况下多团队使用同一个库
+			if(JedisUtil.tryLock("platFrom_save_tend","platFrom_save_tend",TIME)){
+				tendUserInfoService.saveiMOrg(createTendParam);
+				result.setStatus(200);
+				result.setMessage("创建企业成功！");
+			}else{
+				result.setStatus(201);
+				result.setMessage("当前创建企业操作尚未完成，请勿重复操作！");
+			}
+		} catch (Exception e) {
+			result.setStatus(500);
+			result.setMessage("创建企业失败！"+e.getMessage());
+			logger.info("创建企业失败！{}",e.getMessage());
+		}finally {
+			JedisUtil.unlock("platFrom_save_tend","platFrom_save_tend");
+		}
+		return  result;
+	}
+
+	/**
+	 * 解散团队
+	 * @param removeTenantCompanyParam
+	 */
+	@PostMapping(value = "removeTenantCompany")
+	public ApiResponse<String> removeTenantCompany(@RequestBody @Validated RemoveTenantCompanyParam removeTenantCompanyParam)throws HioException{
+
+		ApiResponse<String> result = new ApiResponse<String>();
+		tendUserInfoService.removeTenantCompany(removeTenantCompanyParam);
+		result.setStatus(200);
+		result.setMessage("解散企业成功！");
+		return result;
+
+	}
+	
+	/**
+	 * 同步mysql到redis
+	 */
+	@PostMapping("/syncTendUserToRedis")
+	public void syncTendUserToRedis() {
+		TendUserInfo param = new TendUserInfo();
+		param.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+		List<TendUserInfo> list = tendUserInfoService.queryList(param);
+		JedisUtil.batchDel(RedisKeyConstant.userTendList);
+		JedisUtil.delAll("im_tend_user");
+		for(TendUserInfo dto : list) {
+			JedisUtil.addRow(dto);
+			Map<String, Object> userTendmap = json2map(obj2json(dto));
+			userTendmap.put("id", dto.getTendId());
+			JedisUtil.addRow(RedisKeyConstant.userTendList + dto.getUid(), userTendmap);
+		}
+	}
+}

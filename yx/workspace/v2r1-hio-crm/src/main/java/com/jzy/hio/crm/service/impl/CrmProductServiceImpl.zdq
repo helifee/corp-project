@@ -1,0 +1,207 @@
+package com.jzy.hio.crm.service.impl;
+
+import java.math.BigDecimal;
+import java.util.Date;
+import java.util.List;
+
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.constant.CrmConstant;
+import com.jzy.hio.constant.CrmProductStatusEnum;
+import com.jzy.hio.crm.dto.CrmProductCurrentInfoDto;
+import com.jzy.hio.crm.dto.CrmProductImportDto;
+import com.jzy.hio.crm.dto.CrmProductPageDto;
+import com.jzy.hio.crm.mapper.CrmProductCategoryMapper;
+import com.jzy.hio.crm.mapper.CrmProductMapper;
+import com.jzy.hio.crm.param.CrmProductSearchParam;
+import com.jzy.hio.crm.service.CrmProductService;
+import com.jzy.hio.crm.utils.PageResult;
+import com.jzy.hio.entity.CrmProduct;
+import com.jzy.hio.entity.CrmProductCategory;
+import com.jzy.hio.utils.LoginUser;
+
+/**
+ * 产品
+ * @author 
+ *
+ */
+@Service
+public class CrmProductServiceImpl extends BaseServiceImpl<CrmProduct> implements CrmProductService {
+
+	@Autowired
+	private CrmProductMapper crmProductMapper;
+	@Autowired
+	private CrmProductCategoryMapper crmProductCategoryMapper;
+	
+	/**
+	 * 根据条件查询条数
+	 */
+	@Override
+	public int selectCountNum(CrmProduct product) {
+		return crmProductMapper.selectCount(product);
+	}
+
+	/**
+	 * 产品名称是否可以使用
+	 */
+	@Override
+	public boolean queryProNameCanUse(String id, String name) {
+		return crmProductMapper.selectProNameCount(id, name) == 0;
+	}
+
+	/**
+	 * 选择产品分页
+	 */
+	@Override
+	public PageResult getPageToSelect(CrmProductSearchParam productSearchParam) {
+		// 分页查询产品列表
+		List<CrmProductPageDto> list = crmProductMapper.getPageToSelect(productSearchParam);
+		// 查询产品总条数
+		int count = crmProductMapper.getPageToSelectCount(productSearchParam);
+		return PageResult.pageResult(productSearchParam, count, list);
+	}
+	
+	/**
+	 * 选择产品分页
+	 */
+	@Override
+	public PageResult getPageProducts(CrmProductSearchParam productSearchParam) {
+		// 分页查询产品列表
+		List<CrmProductPageDto> list = crmProductMapper.getPage(productSearchParam);
+		// 查询产品总条数
+		int count = crmProductMapper.getPageCount(productSearchParam);
+		return PageResult.pageResult(productSearchParam, count, list);
+	}
+
+	/**
+	 * 保存导入的产品
+	 */
+	@Override
+	public boolean saveImportProduct(CrmProductImportDto importDto) {
+		LoginUser loginUser = getLoginUser();
+        String uid = loginUser.getUserId();
+        CrmProduct product = new CrmProduct();
+		Date date = new Date();
+		
+		String cateleveOneName = importDto.getCateleveOneName();
+		if (StringUtils.isBlank(cateleveOneName)) {
+			importDto.setErrMsg("一级类别不能为空");
+			return false;
+		}
+		
+		cateleveOneName = cateleveOneName.trim();
+		CrmProductCategory cateSelect = new CrmProductCategory();
+		cateSelect.setDelflag(CrmConstant.DEL_FALSE);
+		cateSelect.setLevel(CrmConstant.LEVEL_FIRST);
+		cateSelect.setName(cateleveOneName);
+		List<CrmProductCategory> cateList = crmProductCategoryMapper.select(cateSelect);
+		
+		String categoryBaseId = null;
+		if (cateList.size() > 0) {
+			if (cateList.get(0).getCategoryStatus().equals(CrmConstant.CATEGORY_STATUS_CLOSE)) {
+				importDto.setErrMsg("一级类别已禁用");
+				return false;
+			}
+			categoryBaseId = cateList.get(0).getId();
+		} else {
+			importDto.setErrMsg("一级类别不存在");
+			return false;
+		}
+		
+		String cateLeveTwoName = importDto.getCateLeveTwoName();
+		String categoryId = "";
+		if (StringUtils.isNotBlank(cateLeveTwoName)) {
+			cateLeveTwoName = cateLeveTwoName.trim();
+			cateSelect = new CrmProductCategory();
+			cateSelect.setParentId(categoryBaseId);
+			cateSelect.setName(cateLeveTwoName);
+			cateSelect.setDelflag(CrmConstant.DEL_FALSE);
+			cateList = crmProductCategoryMapper.select(cateSelect);
+			if (cateList.size() > 0) {
+				if (cateList.get(0).getCategoryStatus().equals(CrmConstant.CATEGORY_STATUS_CLOSE)) {
+					importDto.setErrMsg("二级类别已禁用");
+					return false;
+				}
+				categoryId = cateList.get(0).getId();
+			} else {
+				importDto.setErrMsg("二级类别不存在");
+				return false;
+			}
+		}
+		String name = importDto.getName();
+		if (StringUtils.isBlank(name)) {
+			importDto.setErrMsg("产品名称不能为空");
+			return false;
+		}
+		name = name.trim();
+		if (name.length() > 100) {
+			importDto.setErrMsg("产品名称不能超过100个字符");
+			return false;
+		}
+		
+		boolean flag = this.queryProNameCanUse(null, name);
+		if (!flag) {
+			importDto.setErrMsg("产品名称已存在");
+			return false;
+		}
+		
+		String unit = importDto.getUnit();
+		if (StringUtils.isBlank(unit)) {
+			importDto.setErrMsg("产品单位不能为空");
+			return false;
+		}
+		unit = unit.trim();
+		if (unit.length() > 100) {
+			importDto.setErrMsg("产品单位不能超过100个字符");
+			return false;
+		}
+		
+		String price = importDto.getPrice();
+		if (StringUtils.isBlank(price)) {
+			importDto.setErrMsg("产品单价不能为空");
+			return false;
+		}
+		price = price.trim();
+		if (!price.matches("^[\\+]?\\d{1,13}\\.?\\d{0,2}$")) {
+			importDto.setErrMsg("产品单价为13位以内正数，最多两位小数");
+			return false;
+		}
+		
+		int productStatus = CrmProductStatusEnum.getStatusByName(importDto.getProductStatusName());
+		if (productStatus == -1) {
+			importDto.setErrMsg("销售状态不存在");
+			return false;
+		}
+		
+		product.setCategoryBaseId(categoryBaseId);
+		product.setCategoryId(categoryId);
+		product.setName(name);
+		product.setUnit(unit);
+		product.setPrice(new BigDecimal(price));
+		product.setProductStatus(productStatus);
+		product.setComment("");
+		product.setDelflag(CrmConstant.DEL_FALSE);
+		product.setCreateDate(date);
+		product.setUpdateDate(date);
+		product.setCreatePersonId(uid);
+		product.setUpdatePersonId(uid);
+		
+		product.setId(Base.generatePk(product.getClass()));
+		crmProductMapper.insert(product);
+		return true;
+	}
+
+	/**
+	 * 根据产品id集合查询产品信息
+	 */
+	@Override
+	public List<CrmProductCurrentInfoDto> queryCurrentInfo(List<String> productIdList) {
+		return crmProductMapper.selectCurrentInfo(productIdList);
+	}
+	
+	
+}

@@ -1,0 +1,236 @@
+package com.jzy.hio.flow.runtime;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Date;
+import java.util.List;
+import java.util.stream.Collectors;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang3.StringUtils;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.exception.ApiException;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.flow.entity.FlowInstanceAc;
+import com.jzy.hio.flow.entity.FlowInstanceApprovalRecord;
+import com.jzy.hio.flow.entity.FlowVariables;
+import com.jzy.hio.flow.entity.dto.FlowInstanceInfo;
+import com.jzy.hio.flow.entity.enums.FlowNodeType;
+import com.jzy.hio.flow.entity.enums.FlowStateEnum;
+import com.jzy.hio.flow.entity.enums.InstanceAcSource;
+import com.jzy.hio.flow.entity.enums.InstanceApproverState;
+import com.jzy.hio.flow.entity.enums.InstanceNodeState;
+import com.jzy.hio.flow.entity.param.AddLabelParam;
+import com.jzy.hio.flow.utils.FlowConstants;
+import com.jzy.hio.platform.message.param.MessageEnum;
+import com.jzy.hio.utils.LoginUser;
+
+/**
+ * 流程加签（前后加签）
+ * 
+ * @author daoqi
+ *
+ */
+public class FrontAddNodeOperation extends AbstractBaseOperation {
+
+	@Override
+	public OperateType getType() {
+
+		return OperateType.FRONT_ADD_NODE;
+	}
+
+	@Override
+	public String addLabelAction(AddLabelParam addLabelParam) {
+
+		/**
+		 * 1. 查询当前审批环节审批列表是否已经有人审批过 2. 如果是模板上的审批人可以删除，如果是加签来的环节 改成加签 未 到达审批状态 3. 生成并修改环节
+		 */
+		try {
+			// 需要加锁的代码
+			if (this.getService().getRedisLock().lock(addLabelParam.getInstanceId())) {
+				LoginUser loginUser = this.service.getLoginUser();
+				addLabelParam.setCurrentUserId(loginUser.getUserId());
+
+				if (!this.service.isSuper()
+						&& !this.service.isRolePermission(BaseConstants.MYSQL_MENU_CODE_FLOW_MANAGE)) {
+					List<FlowInstanceApprovalRecord> queryApprovalRecord = this.getService()
+							.getFlowInstanceApprovalRecordDao()
+							.queryApprovalRecord(addLabelParam.getInstanceId(), loginUser.getUserId());
+					if (CollectionUtils.isEmpty(queryApprovalRecord)) {
+						logger.error("没有审批权限");
+						throw new HioException(FlowConstants.FLOW_APPROVAL_NOT_EXIST.getMessage(),
+								FlowConstants.FLOW_APPROVAL_NOT_EXIST.getStatus());
+					}
+
+				}
+
+				FlowInstanceInfo instanceInfo = this.getService().getFlowInstanceDao()
+						.getInstanceInfoById(addLabelParam.getInstanceId());
+				if (instanceInfo == null) {
+					logger.error("传入实例Id不正确");
+					throw new HioException(FlowConstants.FLOW_NOT_EXIST.getMessage(),
+							FlowConstants.FLOW_NOT_EXIST.getStatus());
+				}
+				Integer currentState = instanceInfo.getInstanceState();
+				if (currentState != FlowStateEnum.RUN.getState()) {
+					logger.error("当前流程状态已经不是运行时");
+
+					throw new HioException(FlowConstants.FLOW_STATE_CHANGE.getMessage(),
+							FlowConstants.FLOW_STATE_CHANGE.getStatus());
+				}
+
+				String flowInstanceAcId = addLabelParam.getInstanceAcId();
+				List<FlowInstanceAc> instanceAcList = instanceInfo.getInstanceAcList();
+
+				FlowInstanceAc currentInstanceAc = null;
+				for (FlowInstanceAc instanceAc : instanceAcList) {
+					if (instanceAc.getId().equals(flowInstanceAcId)) {
+						currentInstanceAc = instanceAc;
+						break;
+					}
+				}
+
+				logger.info("开始执行处理流程加签,当前实例:{}" + addLabelParam.getInstanceId() );
+				if (currentInstanceAc.getState() != InstanceNodeState.HAVE_ARRIV.getState()) {
+					logger.error(FlowConstants.FLOWAC_CANNOT_ADD_LABEL.getMessage());
+
+					throw new ApiException(FlowConstants.FLOWAC_CANNOT_ADD_LABEL.getMessage(),
+							FlowConstants.FLOWAC_CANNOT_ADD_LABEL.getStatus());
+				}
+				// 要处理的加签环节
+				Integer source = currentInstanceAc.getSource();
+
+				// 查询当前审批环节审批列表是否已经有人审批过
+				FlowInstanceApprovalRecord approvalRecord = new FlowInstanceApprovalRecord();
+				approvalRecord.setFlowInstanceId(addLabelParam.getInstanceId());
+				approvalRecord.setFlowInstanceAcId(flowInstanceAcId);
+				approvalRecord.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+			
+				 List<FlowInstanceApprovalRecord> approvalAll = this.getService().getFlowInstanceApprovalRecordDao()
+						.queryCurrentApprovedByInstanceAcId(approvalRecord);
+				approvalAll.stream().forEach(approvalInfo -> {
+					// 当前环节是否已经有人审批
+					if(approvalInfo.getState() != InstanceApproverState.NO_APPROVAL.getState()) {
+						logger.error(FlowConstants.FLOW_ALREADY_PROCESSED.getMessage());
+						throw new HioException(FlowConstants.FLOW_ALREADY_PROCESSED.getMessage(),
+								FlowConstants.FLOW_ALREADY_PROCESSED.getStatus());
+					}
+					
+				});
+				 
+				// * 3. 如果是模板上的审批人可以删除，如果是加签来的环节 改成加签 未 到达审批状态
+				if (source.intValue() == InstanceAcSource.ADD_LABEL_SOURCE.getType()
+						|| source.intValue() == InstanceAcSource.FREE_SOURCE.getType()) {
+					// 修改为未到达
+					approvalRecord.setState(InstanceApproverState.WAIT_APPROVAL.getState());
+					approvalRecord.setUpdateDate(new Date());
+					approvalRecord.setUpdatePersonId(loginUser.getUserId());
+					this.getService().getFlowInstanceApprovalRecordDao().updateApprovalState(approvalRecord);
+				} else {
+					// 删除当前环节的审批记录
+					approvalRecord.setState(InstanceApproverState.NO_APPROVAL.getState());
+					this.getService().getFlowInstanceApprovalRecordDao().delete(approvalRecord);
+				}
+
+				List<Integer> sortList = instanceAcList.stream()
+						.filter(instanceAc -> instanceAc.getState() == InstanceNodeState.HAVE_ARRIV.getState())
+						.map(FlowInstanceAc::getSort).collect(Collectors.toList());
+				int maxSort = 0;
+				if (sortList.size() == 1) {
+					maxSort = sortList.get(0);
+				} else {
+					Collections.sort(sortList);
+					maxSort = sortList.get(sortList.size() - 1);
+				}
+
+				String newInstanceAcId = getFrontAddLabelInstanceAc(currentInstanceAc, addLabelParam, maxSort);
+				String preNodeIds = currentInstanceAc.getPreNodeIds();
+				String[] preInstanceAcIds = preNodeIds.split(DELIMITER);
+				List<FlowInstanceAc> updateInstanceAcPreList = new ArrayList<>();
+				for (String instanceAcId : preInstanceAcIds) {
+					for (FlowInstanceAc instanceAc : instanceAcList) {
+						if (instanceAc.getId().equals(instanceAcId)) {
+							String[] nextNodeIds = instanceAc.getNextNodeIds().split(DELIMITER);
+							for (int i = 0; i < nextNodeIds.length; i++) {
+								if (nextNodeIds[i].equals(currentInstanceAc.getId())) {
+									nextNodeIds[i] = newInstanceAcId;
+									break;
+								}
+							}
+							instanceAc.setNextNodeIds(StringUtils.join(nextNodeIds, DELIMITER));
+							updateInstanceAcPreList.add(instanceAc);
+							break;
+						}
+					}
+				}
+
+				// 修改节点 指向新的InstanceAcId;
+				this.getService().getFlowInstanceAcDao().updateInstanceAcNextIdsList(updateInstanceAcPreList);
+
+				// 修改加签环节的pre 指向 新加签的id
+				currentInstanceAc.setPreNodeIds(newInstanceAcId);
+				currentInstanceAc.setUpdateDate(new Date());
+				currentInstanceAc.setState(InstanceNodeState.NOT_THROUGH.getState());
+				this.getService().getFlowInstanceAcDao().updateByPrimaryKeySelective(currentInstanceAc);
+
+				// 发送推送消息
+				FlowVariables flowVariables = getFlowVariables(loginUser, addLabelParam.getInstanceId(), instanceInfo,
+						false);
+				
+				//删除 当前环节的审批消息
+				flowVariables.setMsgType(MessageEnum.DEL_MSG.getValue());
+				flowVariables.setSendType(true);
+				List<String> userIds  = approvalAll.stream().map(FlowInstanceApprovalRecord :: getApprovalUser).collect(Collectors.toList());
+				this.newMessage(userIds, flowVariables);
+				flowVariables.setSendType(false);
+				//发送审批消息
+				flowVariables.setMsgType(MessageEnum.PENDING.getValue());
+				this.newMessage(addLabelParam.getUserIds(), flowVariables);
+				insertApprovalInfo(flowVariables);
+				this.getService().getFlowInstanceDao().updateInstanceUpdateDate(new Date(),
+						flowVariables.getInstanceId());
+			}
+
+		} catch (InterruptedException e) {
+			logger.error("流程前加签异常: {}", e.getMessage());
+		} finally {
+			this.getService().getRedisLock().unlock(addLabelParam.getInstanceId());
+		}
+		return SUCCESS;
+	}
+
+	/**
+	 * 前加签实例环节
+	 *
+	 * @param instanceAc
+	 * @param addLabelParam
+	 * @param maxSort
+	 * @return
+	 */
+	private String getFrontAddLabelInstanceAc(FlowInstanceAc instanceAc, AddLabelParam addLabelParam, Integer maxSort) {
+
+		FlowInstanceAc flowInstanceAc = new FlowInstanceAc();
+		flowInstanceAc.setId(Base.generatePk(FlowInstanceAc.class));
+		flowInstanceAc.setPreNodeIds(instanceAc.getPreNodeIds());
+		flowInstanceAc.setNextNodeIds(instanceAc.getId());
+		flowInstanceAc.setCreateDate(new Date());
+		flowInstanceAc.setUpdateDate(new Date());
+		flowInstanceAc.setCreatePersonId(addLabelParam.getCurrentUserId());
+		flowInstanceAc.setFlowIntanceId(instanceAc.getFlowIntanceId());
+		flowInstanceAc.setName(addLabelParam.getName());
+		flowInstanceAc.setState(InstanceNodeState.HAVE_ARRIV.getState());
+		flowInstanceAc.setSource(InstanceAcSource.ADD_LABEL_SOURCE.getType());
+		flowInstanceAc.setSort(maxSort);
+		flowInstanceAc.setNodeType(FlowNodeType.PROCESS.getType());
+		flowInstanceAc.setType(addLabelParam.getApprovalType());
+		flowInstanceAc.setLeftNodeCount(FlowConstants.DEFAULT_ARRIVE_NUMBER);
+		flowInstanceAc.setNoSkip(instanceAc.getNoSkip());
+		flowInstanceAc.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+		this.getService().getFlowInstanceAcDao().insert(flowInstanceAc);
+		insertInstanceAcApprover(addLabelParam.getUserIds(), flowInstanceAc, addLabelParam.getCurrentUserId(), true);
+		return flowInstanceAc.getId();
+	}
+
+}

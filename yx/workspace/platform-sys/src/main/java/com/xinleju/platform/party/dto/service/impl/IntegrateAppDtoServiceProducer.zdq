@@ -1,0 +1,416 @@
+package com.xinleju.platform.party.dto.service.impl;
+
+import java.text.SimpleDateFormat;
+import java.util.*;
+
+import com.xinleju.platform.base.utils.*;
+import com.xinleju.platform.party.dto.UserConfigDto;
+import com.xinleju.platform.party.entity.UserConfig;
+import com.xinleju.platform.party.service.UserConfigService;
+import com.xinleju.platform.sys.org.dto.UserDto;
+import com.xinleju.platform.sys.org.entity.User;
+import com.xinleju.platform.sys.org.service.UserService;
+import org.apache.commons.lang.StringUtils;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.xinleju.cloud.oa.content.dto.ContentChildTreeData;
+import com.xinleju.platform.party.dto.service.IntegrateAppDtoServiceCustomer;
+import com.xinleju.platform.party.entity.IntegrateApp;
+import com.xinleju.platform.party.service.IntegrateAppService;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+/**
+ * @author admin
+ * 
+ *
+ */
+ 
+public class IntegrateAppDtoServiceProducer implements IntegrateAppDtoServiceCustomer{
+	private static Logger log = Logger.getLogger(IntegrateAppDtoServiceProducer.class);
+	@Autowired
+	private IntegrateAppService integrateAppService;
+	@Autowired
+	private UserService userService;
+	@Autowired
+	private UserConfigService userConfigService;
+
+	public String save(String userInfo, String saveJson){
+		// TODO Auto-generated method stub
+	   DubboServiceResultInfo info=new DubboServiceResultInfo();
+	   try {
+		   IntegrateApp integrateApp=JacksonUtils.fromJson(saveJson, IntegrateApp.class);
+		   integrateAppService.save(integrateApp);
+		   info.setResult(JacksonUtils.toJson(integrateApp));
+		   info.setSucess(true);
+		   info.setMsg("保存对象成功!");
+		} catch (Exception e) {
+		 log.error("保存对象失败!"+e.getMessage());
+		 info.setSucess(false);
+		 info.setMsg("保存对象失败!");
+		 info.setExceptionMsg(e.getMessage());
+		}
+	   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String saveBatch(String userInfo, String saveJsonList)
+			 {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public String updateBatch(String userInfo, String updateJsonList)
+			 {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public String update(String userInfo, String updateJson)  {
+		// TODO Auto-generated method stub
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   IntegrateApp integrateApp=JacksonUtils.fromJson(updateJson, IntegrateApp.class);
+			   int i=   integrateAppService.updateIntegrateApp(integrateApp);
+			   if(i==5){
+				   info.setSucess(false);
+				   info.setMsg("应用名称已存在，保存失败!");
+			   }else{
+				   info.setResult(JacksonUtils.toJson(i));
+				   info.setSucess(true);
+				   info.setMsg("保存对象成功!");
+			   }
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deleteObjectById(String userInfo, String deleteJson)
+	{
+		// TODO Auto-generated method stub
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   IntegrateApp integrateApp=JacksonUtils.fromJson(deleteJson, IntegrateApp.class);
+			   int result= integrateAppService.deleteObjectById(integrateApp.getId());
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("删除对象成功!");
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deleteAllObjectByIds(String userInfo, String deleteJsonList)
+   {
+		// TODO Auto-generated method stub
+		 DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   if (StringUtils.isNotBlank(deleteJsonList)) {
+				   Map map=JacksonUtils.fromJson(deleteJsonList, HashMap.class);
+				   List<String> list=Arrays.asList(map.get("id").toString().split(","));
+				   int result= integrateAppService.deleteAllObjectByIds(list);
+				   info.setResult(JacksonUtils.toJson(result));
+				   info.setSucess(true);
+				   info.setMsg("删除对象成功!");
+				}
+			} catch (Exception e) {
+			 log.error("删除对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getObjectById(String userInfo, String getJson)
+	 {
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			IntegrateApp integrateApp=JacksonUtils.fromJson(getJson, IntegrateApp.class);
+			IntegrateApp	result = integrateAppService.getObjectById(integrateApp.getId());
+			info.setResult(JacksonUtils.toJson(result));
+		    info.setSucess(true);
+		    info.setMsg("获取对象成功!");
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getPage(String userInfo, String paramater) {
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map map=JacksonUtils.fromJson(paramater, HashMap.class);
+				Page page=integrateAppService.getIntegratePage(map);
+				info.setResult(JacksonUtils.toJson(page));
+			    info.setSucess(true);
+			    info.setMsg("获取分页对象成功!");
+			}else{
+				Page page=integrateAppService.getIntegratePage(new HashMap());
+				info.setResult(JacksonUtils.toJson(page));
+			    info.setSucess(true);
+			    info.setMsg("获取分页对象成功!");
+			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取分页对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取分页对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String queryList(String userInfo, String paramater){
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map map=JacksonUtils.fromJson(paramater, HashMap.class);
+				List list=integrateAppService.queryList(map);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}else{
+				List list=integrateAppService.queryList(null);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取列表对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取列表对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getCount(String userInfo, String paramater)  {
+		// TODO Auto-generated method stub
+		return null;
+	}
+	
+	@Override
+	public String deletePseudoObjectById(String userInfo, String deleteJson)
+	{
+		// TODO Auto-generated method stub
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   IntegrateApp integrateApp=JacksonUtils.fromJson(deleteJson, IntegrateApp.class);
+			   int result= integrateAppService.deletePseudoObjectById(integrateApp.getId());
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("删除对象成功!");
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deletePseudoAllObjectByIds(String userInfo, String deleteJsonList)
+   {
+		// TODO Auto-generated method stub
+		 DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   if (StringUtils.isNotBlank(deleteJsonList)) {
+				   Map map=JacksonUtils.fromJson(deleteJsonList, HashMap.class);
+				   List<String> list=Arrays.asList(map.get("id").toString().split(","));
+				   int result= integrateAppService.deletePseudoAllObjectByIds(list);
+				   info.setResult(JacksonUtils.toJson(result));
+				   info.setSucess(true);
+				   info.setMsg("删除对象成功!");
+				}
+			} catch (Exception e) {
+			 log.error("删除对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.party.dto.service.IntegrateAppDtoServiceCustomer#getAppTree(java.lang.String, java.lang.String)
+	 */
+	@Override
+	public String getAppTree(String userJson, String paramater) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		List<ContentChildTreeData> resultList = new ArrayList<ContentChildTreeData>();
+		try {
+			if (StringUtils.isNotBlank(paramater)) {
+				Map map = JacksonUtils.fromJson(paramater, HashMap.class);
+				List<IntegrateApp> list = integrateAppService.queryList(map);
+				if (list.size() > 0) {
+					for (IntegrateApp treeNode : list) {
+							ContentChildTreeData contentChildTreeData = new ContentChildTreeData();
+							contentChildTreeData.setpId("1");
+							contentChildTreeData.setName(String.valueOf(treeNode.getName()));
+							contentChildTreeData.setId(String.valueOf(treeNode.getId()));
+							contentChildTreeData.setParentId("1");
+							resultList.add(contentChildTreeData);
+						}
+					}
+				}
+				info.setResult(JacksonUtils.toJson(resultList));
+				info.setSucess(true);
+				info.setMsg("获取列表对象成功!");
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			log.error("获取列表对象失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取列表对象失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);	
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.party.dto.service.IntegrateAppDtoServiceCustomer#saveIntegrateApp(java.lang.String, java.lang.String)
+	 */
+	@Override
+	public String saveIntegrateApp(String userJson, String saveJson) {
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   IntegrateApp integrateApp=JacksonUtils.fromJson(saveJson, IntegrateApp.class);
+			   int i = integrateAppService.saveIntegrateApp(integrateApp);
+			   if(i==5){
+				   info.setSucess(false);
+				   info.setMsg("应用名称已存在，保存失败!");
+			   }else{
+				   info.setResult(JacksonUtils.toJson(integrateApp));
+				   info.setSucess(true);
+				   info.setMsg("保存对象成功!");
+			   }
+			} catch (Exception e) {
+			 log.error("保存对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("保存对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	/**
+	 *
+	 * @param userInfo
+	 * @param param
+	 * @return
+	 * @throws Exception
+     */
+	@Override
+	public String thirdPartyCheck(String userInfo, String param) throws Exception {
+		SecurityUserBeanInfo securityUserBeanInfo = JacksonUtils.fromJson (userInfo, SecurityUserBeanInfo.class);
+		DubboServiceResultInfo resultInfo = new DubboServiceResultInfo ();
+		Map parmMap = JacksonUtils.fromJson (param,Map.class);
+		String domain = String.valueOf (parmMap.get ("domain"));
+		String loginName  = String.valueOf (parmMap.get ("loginName"));
+		String appSecret = String.valueOf (parmMap.get ("appSecret"));
+		String code = String.valueOf (parmMap.get ("code"));
+		parmMap.remove ("loginName");
+		parmMap.put ("delflag",false);
+		List appList = integrateAppService.queryList (parmMap);
+		if(appList==null||appList.isEmpty ()){
+			resultInfo.setSucess (false);
+			resultInfo.setCode (ErrorInfoCode.NULL_ERROR.getValue ());
+			resultInfo.setMsg ("未查到应用信息！");
+			return JacksonUtils.toJson (resultInfo);
+		}
+		parmMap.clear ();
+		parmMap.put ("loginName",loginName);
+		parmMap.put ("delflag",false);
+		parmMap.put ("status","1");
+		List<User> userList = userService.queryList (parmMap);
+		if(userList!=null&&!userList.isEmpty ()){
+			User user = userList.get(0);
+			parmMap.clear ();
+			parmMap.put ("userId",user.getId ());
+			parmMap.put ("delflag",false);
+			List<UserConfig> userConfigList = userConfigService.queryList (parmMap);
+			Map resultMap = new HashMap ();
+			if(userConfigList!=null&&!userConfigList.isEmpty ()){
+				UserConfig userConfig = userConfigList.get (0);
+				resultMap.put("token", userConfig.getToken());
+				resultMap.put("token_end_date", userConfig.getEndTime());
+
+			}else{
+				Calendar cal = Calendar.getInstance();
+				SimpleDateFormat sf = new SimpleDateFormat ("yyyy-MM-dd HH:mm:ss");
+				UserConfig ucd = new UserConfig();
+				ucd.setAppId(code);
+				ucd.setDelflag(false);
+                ucd.setStartTime(sf.format (cal.getTime()));
+                ucd.setId(IDGenerator.getUUID());
+                cal.add(Calendar.YEAR, 1);
+                ucd.setEndTime(sf.format (cal.getTime()));
+                ucd.setStatus("1");
+				ucd.setTendId(securityUserBeanInfo.getTendId());
+				ucd.setToken(IDGenerator.getUUID());
+				ucd.setUserId(user.getId());
+				ucd.setCreatePersonName("程序产生");
+				userConfigService.saveUserConfig (ucd);
+				resultMap.put("token", ucd.getToken());
+				resultMap.put("token_end_date", ucd.getEndTime());
+			}
+			parmMap.clear ();
+			parmMap.put("loginName", loginName);
+			parmMap.put("delflag", false);
+			parmMap.put("status", "1");
+			List<User> userList1 = userService.queryList (parmMap);
+			if(null==userList1 || userList1.size() ==0){
+				resultInfo.setSucess(false);
+				resultInfo.setCode(ErrorInfoCode.LOGIN_LOGINNAMEERROR.getValue());
+				resultInfo.setMsg(ErrorInfoCode.LOGIN_LOGINNAMEERROR.getName());
+				return JacksonUtils.toJson (resultInfo);
+			}else if(userList1.size()>1){
+				resultInfo.setSucess(false);
+				resultInfo.setCode(ErrorInfoCode.LOGIN_MORE.getValue());
+				resultInfo.setMsg(ErrorInfoCode.LOGIN_MORE.getName());
+				return JacksonUtils.toJson (resultInfo);
+			}else{
+				User userNew = userList1.get(0);
+				resultMap.put ("user",userNew);
+				resultInfo.setResult(JacksonUtils.toJson(resultMap));
+				resultInfo.setSucess(true);
+				resultInfo.setCode(ErrorInfoCode.LOGIN_SUCCESS.getValue());
+				resultInfo.setMsg(ErrorInfoCode.LOGIN_SUCCESS.getName());
+				return JacksonUtils.toJson (resultInfo);
+			}
+		}else{
+			resultInfo.setSucess (false);
+			resultInfo.setCode (ErrorInfoCode.NULL_ERROR.getValue ());
+			resultInfo.setMsg ("未查到用户信息！");
+			return JacksonUtils.toJson (resultInfo);
+		}
+	}
+
+
+}

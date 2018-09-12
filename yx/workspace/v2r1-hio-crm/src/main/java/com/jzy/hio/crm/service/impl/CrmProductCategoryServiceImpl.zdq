@@ -1,0 +1,219 @@
+package com.jzy.hio.crm.service.impl;
+
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.constant.CrmConstant;
+import com.jzy.hio.crm.dto.CrmProductCategoryDto;
+import com.jzy.hio.crm.mapper.CrmProductCategoryMapper;
+import com.jzy.hio.crm.mapper.CrmProductMapper;
+import com.jzy.hio.crm.service.CrmProductCategoryService;
+import com.jzy.hio.entity.CrmProduct;
+import com.jzy.hio.entity.CrmProductCategory;
+import com.jzy.hio.springmvc.ApiResponse;
+
+/**
+ * 产品类别
+ * @author 
+ *
+ */
+@Service
+public class CrmProductCategoryServiceImpl extends BaseServiceImpl<CrmProductCategory> implements CrmProductCategoryService {
+
+	@Autowired
+	private CrmProductCategoryMapper crmProductCategoryMapper;
+	@Autowired
+	private CrmProductMapper crmProductMapper;
+	@Autowired
+	private CrmProductCategoryService crmProductCategoryService;
+	
+	/**
+	 * 根据条件查询count
+	 */
+	@Override
+	public int selectCountProductCategory(CrmProductCategory productCategory) {
+		return crmProductCategoryMapper.selectCount(productCategory);
+	}
+
+	/**
+	 * 查询名字同一级类别名字是否重复
+	 */
+	@Override
+	public boolean selectCateNameCanUse(String pid, String name, String id) {
+		Map<String, Object> map = new HashMap<>();
+		map.put("pid", pid);
+		map.put("name", name);
+		map.put("id", id);
+		return crmProductCategoryMapper.selectCateNameCanUse(map) == 0;
+	}
+
+	/**
+	 * 根据状态查询类别,父级包子级
+	 */ 
+	@Override
+	public List<CrmProductCategoryDto> selectCateTree(Integer categoryStatus) {
+		
+		// 查询所有类别
+		List<CrmProductCategoryDto> cateList = 
+				crmProductCategoryMapper.selectCateByLevelAndStatus(null, categoryStatus);
+		// 按类别父级id分组
+		Map<String, List<CrmProductCategoryDto>> cateGroup =
+				cateList.stream().collect(Collectors.groupingBy(CrmProductCategoryDto::getParentId));
+		// 获取一级类别，并遍历一级类别设置二级类别
+		List<CrmProductCategoryDto> cateLevelFirstList = cateGroup.get(CrmConstant.CATEGORY_BASEID);
+		if (cateLevelFirstList != null) {
+			cateLevelFirstList.forEach(cate -> cate.setCateList(cateGroup.get(cate.getSid())));
+		}
+		
+		return cateLevelFirstList;
+	}
+
+	/**
+	 * 保存和修改类别信息
+	 */
+	@Override
+	public ApiResponse<Void> doProductCateGorySave(CrmProductCategory productCategory) {
+		ApiResponse<Void> res = new ApiResponse<>(200, "保存成功");
+		String uid = getUserIdOA();
+		String id = productCategory.getId();
+		String pid = productCategory.getParentId();
+		int level = CrmConstant.LEVEL_FIRST;
+		// 不传parentId就认为是一级类别
+		if (StringUtils.isBlank(pid) || CrmConstant.CATEGORY_BASEID.equals(pid)) {
+			pid = CrmConstant.CATEGORY_BASEID;
+		} else {
+			level = CrmConstant.LEVEL_SECOND;
+		}
+		
+		
+		// 同一级类别，类别名称不允许重复
+		String name = productCategory.getName().trim();
+		boolean canUse = this.selectCateNameCanUse(pid, name, id);
+		if (!canUse) {
+			res.setMessage("产品类别名称重复，请修改");
+			res.setStatus(101);
+			return res;
+		}
+		
+		productCategory.setParentId(pid);
+		productCategory.setLevel(level);
+		productCategory.setName(name);
+		Date date = new Date();
+		
+		if(StringUtils.isNotBlank(id)) {
+			CrmProductCategory productCategoryFind = this.getObjectById(id);
+			if (productCategoryFind == null || productCategoryFind.getDelflag().equals(CrmConstant.DEL_TRUE)) {
+				res.setMessage("产品类别不存在或已删除");
+				res.setStatus(101);
+				return res;
+			}
+			
+			if (!productCategoryFind.getLevel().equals(level)) {
+				res.setMessage("产品类别级别不可变更");
+				res.setStatus(101);
+				return res;
+			}
+			
+			// 换一级类别，不可换到禁用的一级类别
+			if (!productCategoryFind.getParentId().equals(pid)) {
+				CrmProductCategory productCategoryParentFind = this.getObjectById(pid);
+				if (productCategoryParentFind == null || productCategoryParentFind.getDelflag().equals(CrmConstant.DEL_TRUE)) {
+					res.setMessage("所选一级类别不存在或已删除，请刷新一级类别");
+					res.setStatus(101);
+					return res;
+				} else if(productCategoryParentFind.getCategoryStatus().equals(CrmConstant.CATEGORY_STATUS_CLOSE)) {
+					res.setMessage("所选一级类别已禁用，不可选，请刷新一级类别");
+					res.setStatus(101);
+					return res;
+				}
+			}
+			
+			Integer newStatus = productCategory.getCategoryStatus();
+			if (newStatus.equals(CrmConstant.CATEGORY_STATUS_CLOSE)) {
+				CrmProduct product = new CrmProduct();
+				if (CrmConstant.CATEGORY_BASEID.equals(productCategoryFind.getParentId())) {
+					product.setCategoryBaseId(id);
+				} else {
+					product.setCategoryId(id);
+				}
+				product.setDelflag(CrmConstant.DEL_FALSE);
+				int count = crmProductMapper.selectCount(product);
+				int flag = 0;
+				if (count > flag) {
+					res.setMessage("该类别下有产品,不能禁用");
+					res.setStatus(102);
+					return res;
+				}
+				
+			}
+			
+			productCategory.setUpdatePersonId(uid);
+			productCategory.setUpdateDate(date);
+			// 修改类别
+			crmProductCategoryService.updateCategory(productCategory, productCategoryFind);
+		} else {
+			id = Base.generatePk(productCategory.getClass());
+			productCategory.setId(id);
+			productCategory.setDelflag(CrmConstant.DEL_FALSE);
+			productCategory.setUpdateDate(date);
+			productCategory.setCreateDate(date);
+			productCategory.setCreatePersonId(uid);
+			productCategory.setUpdatePersonId(uid);
+			// 保存产品
+			this.save(productCategory);
+		}
+		
+		return res;
+	}
+
+	/**
+	 * 修改类别
+	 * @param productCategory
+	 * @param productCategoryOld
+	 */
+	@Override
+	public void updateCategory(CrmProductCategory productCategory, CrmProductCategory productCategoryOld) {
+		
+		Integer close = CrmConstant.CATEGORY_STATUS_CLOSE;
+		Integer open = CrmConstant.CATEGORY_STATUS_OPEN;
+		
+		if (productCategory.getLevel().equals(CrmConstant.LEVEL_FIRST)) {
+			//当改了类别状态， 禁用1级时，把二级也禁用，启用时修改当前类别状态即可
+			if (productCategory.getCategoryStatus().equals(close)
+					&& productCategoryOld.getCategoryStatus().equals(open)) {
+				// 禁用下属二级
+				crmProductCategoryMapper.closeCategoryByParent(productCategory.getId());
+			}
+		} else {
+			// 当改了类别状态，启用二级，把所属一级类别也启用，禁用时修改当前类别状态即可
+			// 换一级类别只能换启用的，不会出现启用一级的情况
+			if (productCategory.getCategoryStatus().equals(open)
+					&& productCategoryOld.getCategoryStatus().equals(close)) {
+				// 启用对应的一级类别
+				CrmProductCategory cateOpen = new CrmProductCategory();
+				cateOpen.setId(productCategory.getParentId());
+				cateOpen.setCategoryStatus(open);
+				crmProductCategoryMapper.updateByPrimaryKeySelective(cateOpen);
+			}
+			
+			String newPid = productCategory.getParentId();
+			String oldPid = productCategoryOld.getParentId();
+			// 如果二级换一级类别时，需要更新对应产品,产品跟着二级类别走
+			if (!newPid.equals(oldPid)) {
+				crmProductMapper.updateCateBaseIdByCateId(newPid, productCategory.getId());
+			}
+		}
+		crmProductCategoryMapper.updateByPrimaryKeySelective(productCategory);
+	}
+	
+	
+}

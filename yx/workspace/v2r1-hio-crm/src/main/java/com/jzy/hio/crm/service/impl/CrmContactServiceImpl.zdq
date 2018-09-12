@@ -1,0 +1,345 @@
+package com.jzy.hio.crm.service.impl;
+
+import java.text.MessageFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.crm.utils.CrmCommonInvokeUtil;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.constant.CrmConstant;
+import com.jzy.hio.constant.CrmContactDecisionRoleEnum;
+import com.jzy.hio.constant.CrmCustomerEnum;
+import com.jzy.hio.crm.dto.CrmContactImportDto;
+import com.jzy.hio.crm.dto.CrmContactPageDto;
+import com.jzy.hio.crm.dto.CrmStatisticalCountDto;
+import com.jzy.hio.crm.mapper.CrmContactMapper;
+import com.jzy.hio.crm.mapper.CrmCustomerFollowHisMapper;
+import com.jzy.hio.crm.mapper.CrmCustomerFollowPlanMapper;
+import com.jzy.hio.crm.mapper.CrmCustomerMapper;
+import com.jzy.hio.crm.param.CrmContactSearchMobileParam;
+import com.jzy.hio.crm.param.CrmContactSearchParam;
+import com.jzy.hio.crm.service.CrmContactService;
+import com.jzy.hio.crm.service.CrmCustomerChangeService;
+import com.jzy.hio.crm.utils.PageResult;
+import com.jzy.hio.entity.CrmContact;
+import com.jzy.hio.entity.CrmCustomer;
+import com.jzy.hio.entity.CrmCustomerFollowHis;
+import com.jzy.hio.entity.CrmCustomerFollowPlan;
+import com.jzy.hio.exception.HioException;
+
+/**
+ * 联系人
+ * @author 18200
+ *
+ */
+@Service
+public class CrmContactServiceImpl extends BaseServiceImpl<CrmContact> implements CrmContactService {
+
+	@Autowired
+	private CrmContactMapper crmContactMapper;
+    @Autowired
+    private CrmCustomerMapper crmCustomerMapper;
+    @Autowired
+    private CrmCustomerChangeService crmCustomerChangeService;
+	@Autowired
+	private CrmCustomerFollowHisMapper crmCustomerFollowHisMapper;
+    @Autowired
+    private CrmCustomerFollowPlanMapper crmCustomerFollowPlanMapper;
+    @Autowired
+	private CrmCommonInvokeUtil crmCommonInvokeUtil;
+	
+    /**
+	 * 保存联系人
+	 * @return
+	 */
+    @Override
+	public boolean saveContact(CrmContact contact) {
+    	String uid = getUserIdOA();
+    	String uName = getUserNameOA();
+		String id = contact.getId();
+		Date date = new Date();
+		if(StringUtils.isNotBlank(id)) {
+			CrmContact contactFind = crmContactMapper.selectByPrimaryKey(id);
+			if (contactFind != null && contactFind.getDelflag().equals(CrmConstant.DEL_FALSE)) {
+				contact.setUpdatePersonId(uid);
+				contact.setUpdateDate(date);
+				// 客户没变 跟进时间赋值，如果变了，则会在sql清空最后跟进时间
+				if (contactFind.getCustomerId().equals(contact.getCustomerId())) {
+					contact.setLastContactTime(contactFind.getLastContactTime());
+				}
+
+				crmContactMapper.updateById(contact);
+			} else {
+				throw new HioException("联系人不存在或已删除");
+			}
+		} else {
+			contact.setMasterContact(CrmConstant.ISMASTERCONTACT_FALSE);
+			if (StringUtils.isNotBlank(contact.getCustomerId())) {
+				CrmContact contactSelect = new CrmContact();
+				contactSelect.setCustomerId(contact.getCustomerId());
+				contactSelect.setDelflag(CrmConstant.DEL_FALSE);
+				int count = this.selectCountContact(contact);
+				if (count == 0) {
+					contact.setMasterContact(CrmConstant.ISMASTERCONTACT_TRUE);
+				}
+			}
+			
+			id = Base.generatePk(contact.getClass());
+			contact.setId(id);
+			contact.setDelflag(CrmConstant.DEL_FALSE);
+			contact.setUpdateDate(date);
+			contact.setCreateDate(date);
+			contact.setCreatePersonId(uid);
+			contact.setUpdatePersonId(uid);
+			crmContactMapper.insert(contact);
+			String content = MessageFormat.format(CrmCustomerEnum.CREATE_CONTACT.getCode(), uName, contact.getName());
+        	crmCustomerChangeService.saveCustChange(contact.getCustomerId(), content, uid);
+		}
+		return true;
+	}
+    
+    /**
+     * 删除联系人
+     */
+    public boolean deleteContact(String id) {
+    	String uid = getUserIdOA();
+    	String uName = getUserNameOA();
+    	
+    	CrmContact contactFind = crmContactMapper.selectByPrimaryKey(id);
+    	if (contactFind != null && contactFind.getDelflag().equals(CrmConstant.DEL_FALSE)) {
+    		CrmCustomerFollowHis followHisSelect = new CrmCustomerFollowHis();
+    		followHisSelect.setCustomerId(contactFind.getCustomerId());
+    		followHisSelect.setContactId(id);
+    		followHisSelect.setDelflag(CrmConstant.DEL_FALSE);
+    		int followHisCount = crmCustomerFollowHisMapper.selectCount(followHisSelect);
+    		
+    		if (followHisCount > 0) {
+    			throw new HioException("该联系人下有跟进记录不能删除");
+			} else {
+				CrmCustomerFollowPlan followPlanSelect = new CrmCustomerFollowPlan();
+	    		followPlanSelect.setCustomerId(contactFind.getCustomerId());
+	    		followPlanSelect.setContactId(id);
+	    		followPlanSelect.setDelflag(CrmConstant.DEL_FALSE);
+	    		int followPlanCount = crmCustomerFollowPlanMapper.selectCount(followPlanSelect);
+	    		if (followPlanCount > 0) {
+	    			throw new HioException("该联系人下有跟进计划不能删除");
+				}
+			}
+
+			CrmContact contactfind = crmContactMapper.selectByPrimaryKey(id);
+    		if (contactfind == null  || contactfind.getDelflag().equals(CrmConstant.DEL_TRUE)) {
+				throw new HioException("联系人不存在或已删除");
+			}
+
+			CrmCustomer customerFind = crmCustomerMapper.selectByPrimaryKey(contactfind.getCustomerId());
+
+			if (customerFind == null) {
+				throw new HioException("未找到客户");
+			}
+
+			if (!isRolePermission(BaseConstants.MYSQL_MENU_CODE_CRM_MANAGE)) {
+				if (!customerFind.getOwnerPersonId().equals(uid)) {
+					throw new HioException("您没有该客户权限");
+				}
+			}
+
+    		CrmContact contact = new CrmContact();
+    		contact.setId(id);
+    		contact.setDelflag(CrmConstant.DEL_TRUE);
+    		contact.setUpdateDate(new Date());
+    		contact.setUpdatePersonId(uid);
+    		// 删除联系人
+    		crmContactMapper.updateByPrimaryKeySelective(contact);
+    		
+    		String content = MessageFormat.format(CrmCustomerEnum.DELETE_CONTACT.getCode(), uName, contactFind.getName());
+        	crmCustomerChangeService.saveCustChange(contactFind.getCustomerId(), content, uid);
+		} else {
+			throw new HioException("联系人不存在或已删除");
+		}
+    	
+		return true;
+    }
+    
+	/**
+	 * 根据条件查询数量
+	 */
+	@Override
+	public int selectCountContact(CrmContact contact) {
+		return crmContactMapper.selectCount(contact);
+	}
+
+	/**
+	 * 联系人分页
+	 */
+	@Override
+	public PageResult getPageContact(CrmContactSearchParam contactSearchParam) {
+		
+		// 排序
+		String lastContactTimeSort = contactSearchParam.getLastContactTimeSort();
+		if (CrmConstant.ASC.equalsIgnoreCase(lastContactTimeSort) || CrmConstant.DESC.equalsIgnoreCase(lastContactTimeSort)) {
+			lastContactTimeSort = "cont.last_contact_time " + lastContactTimeSort + ",";
+			contactSearchParam.setLastContactTimeSort(lastContactTimeSort);
+		} else {
+			contactSearchParam.setLastContactTimeSort("");
+		}
+		// 分页查询联系人列表
+		List<CrmContactPageDto> list = crmContactMapper.getPageContact(contactSearchParam);
+		// 查询联系人总条数
+		int count = crmContactMapper.getPageContactCount(contactSearchParam);
+		return PageResult.pageResult(contactSearchParam, count, list);
+	}
+
+	/**
+	 * 移动端分页
+	 */
+	@Override
+	public List<CrmContactPageDto> queryPageContactForMobile(CrmContactSearchMobileParam searchMobileParam) {
+		if (StringUtils.isNotBlank(searchMobileParam.getCustomerId())) {
+			return crmContactMapper.getPageCustomerContactForMobile(searchMobileParam);
+		}
+		return crmContactMapper.getPageContactForMobile(searchMobileParam);
+	}
+	
+	/**
+	 * 查询联系人列表(客户下点击展开的联系人列表)
+	 */
+	@Override
+	public List<CrmContact> queryContactList(String custId, String uid) {
+		List<CrmContact> crmContacts = crmContactMapper.selectContactList(custId, uid);
+		List<String> users=new ArrayList<>();
+		crmContacts.forEach(crmContact -> users.add(crmContact.getCreatePersonId()));
+		Map<String, String> userName = crmCommonInvokeUtil.getUserName(getTendId(), users);
+		crmContacts.forEach(crmContact -> crmContact.setCreatePersonName(userName.get(crmContact.getCreatePersonId())));
+		return crmContacts;
+	}
+
+    /**
+     * 查询联系人列表
+     */
+    @Override
+    public List<CrmContact> queryContact(String custId, String uid) {
+       return crmContactMapper.selectContactList(custId, uid);
+    }
+	
+	/**
+	 * 保存导入数据
+	 */
+	@Override
+	public boolean saveImportContact(CrmContactImportDto importDto, String uid, String uName) {
+		CrmCustomer selectCust = new CrmCustomer();
+		selectCust.setDelflag(CrmConstant.DEL_FALSE);
+		selectCust.setName(importDto.getCustName());
+		List<CrmCustomer> myList = crmCustomerMapper.select(selectCust);
+		String custId;
+		if (myList.size() > 0) {
+			custId = myList.get(0).getId();
+			if (!isRolePermission(BaseConstants.MYSQL_MENU_CODE_CRM_MANAGE)) {
+				if (!myList.get(0).getOwnerPersonId().equals(uid)) {
+					importDto.setErrMsg("您没有该客户权限");
+					return false;
+				}
+			}
+		} else {
+			importDto.setErrMsg("客户不存在");
+			return false;
+		}
+		
+		String contactName = importDto.getContactName();
+		if (StringUtils.isBlank(contactName)) {
+			importDto.setErrMsg("联系人名称不能为空");
+			return false;
+		}
+		contactName = contactName.trim();
+		if (contactName.length() > 100) {
+			importDto.setErrMsg("联系人名称不能超过100个字符");
+			return false;
+		}
+		
+		String phoneNumer = importDto.getContactPhone();
+		if (StringUtils.isBlank(phoneNumer)) {
+			importDto.setErrMsg("联系人手机不能为空");
+			return false;
+		} else if(!phoneNumer.matches("1[3-9][0-9]\\d{8}")) {
+			importDto.setErrMsg("联系人手机号码必须为11位有效手机号码");
+			return false;
+		}
+		
+		String title = importDto.getTitle();
+		if(StringUtils.isNotBlank(title)) {
+			title = title.trim();
+			if (title.length() > 100) {
+				importDto.setErrMsg("联系人职务不能超过100个字符");
+				return false;
+			}
+		}
+		
+		
+		int decisionRole = CrmContactDecisionRoleEnum.getCodeByValue(importDto.getDecisionRoleName());
+		if (decisionRole == -1) {
+			importDto.setErrMsg("联系人决策关系不正确");
+			return false;
+		}
+		String contactEmail = importDto.getContactEmail();
+		if(StringUtils.isNotBlank(contactEmail)) {
+			contactEmail = contactEmail.trim();
+        	if (!contactEmail.matches("^[a-zA-Z0-9_-]+@[a-zA-Z0-9_-]+(\\.[a-zA-Z0-9_-]+)+$") || contactEmail.length() > 100) {
+        		importDto.setErrMsg("联系人邮箱必须为有效邮件格式且不能超过100个字符");
+    			return false;
+			}
+        	
+		}
+		
+		
+		
+		CrmContact saveContact = new CrmContact();
+		Date date = new Date();
+		saveContact.setId(Base.generatePk(saveContact.getClass()));
+		saveContact.setCustomerId(custId);
+		saveContact.setName(contactName);
+		saveContact.setPhoneNumber(phoneNumer);
+		saveContact.setTitle(title);
+		saveContact.setDecisionRole(decisionRole);
+		saveContact.setEmail(contactEmail);
+		saveContact.setMasterContact(CrmConstant.ISMASTERCONTACT_FALSE);
+		
+		saveContact.setDelflag(CrmConstant.DEL_FALSE);
+		saveContact.setCreateDate(date);
+		saveContact.setUpdateDate(date);
+		saveContact.setCreatePersonId(uid);
+		saveContact.setUpdatePersonId(uid);
+		String content = MessageFormat.format(CrmCustomerEnum.CREATE_CONTACT.getCode(), uName, contactName);
+    	crmCustomerChangeService.saveCustChange(custId, content, uid);
+		this.save(saveContact);
+		return true;
+	}
+
+	/**
+	 * 联系人详情统计数量
+	 */
+	@Override
+	public CrmStatisticalCountDto queryStatistical(String customerId, String contactId) {
+		CrmCustomerFollowHis followHisSelect = new CrmCustomerFollowHis();
+		followHisSelect.setCustomerId(customerId);
+		followHisSelect.setContactId(contactId);
+		followHisSelect.setDelflag(CrmConstant.DEL_FALSE);
+		int followHisCount = crmCustomerFollowHisMapper.selectCount(followHisSelect);
+		
+		CrmCustomerFollowPlan followPlanSelect = new CrmCustomerFollowPlan();
+		followPlanSelect.setCustomerId(customerId);
+		followPlanSelect.setContactId(contactId);
+		followPlanSelect.setDelflag(CrmConstant.DEL_FALSE);
+		int followPlanCount = crmCustomerFollowPlanMapper.selectCount(followPlanSelect);
+		
+		return new CrmStatisticalCountDto(followHisCount, followPlanCount);
+	}
+	
+	
+}

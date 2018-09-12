@@ -1,0 +1,738 @@
+package com.jzy.hio.oa.project.service.impl;
+
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.entity.ProjectTeamPerson;
+import com.jzy.hio.exception.*;
+import com.jzy.hio.feign.SysExtrenalFeignService;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.oa.OaConstant;
+import com.jzy.hio.oa.project.dto.*;
+import com.jzy.hio.oa.project.mapper.ProjectTeamPersonMapper;
+import com.jzy.hio.oa.project.service.ProjectTeamPersonService;
+import com.jzy.hio.oa.project.service.ProjectTrendsService;
+import com.jzy.hio.sys.external.dto.ExternalContactDto;
+import com.jzy.hio.sys.organization.dto.OrganizationDto;
+import com.jzy.hio.sys.organization.dto.SkyDriveDto;
+import com.jzy.hio.sys.organization.param.SkyDriveParam;
+import com.jzy.hio.sys.user.dto.OAUserDto;
+import com.jzy.hio.sys.user.dto.OrganizationUsersDto;
+import com.jzy.hio.sys.user.param.OAUserParam;
+import com.jzy.hio.sys.user.param.UserAndExternalParam;
+import com.jzy.hio.utils.LoginUser;
+import com.jzy.hio.utils.OaUserUtil;
+import com.jzy.hio.utils.Page;
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.annotation.DataSource;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+
+import java.util.*;
+import java.util.stream.Collectors;
+
+/**
+ * 项目团队
+ * 
+ * @author yangning
+ */
+@Service("projectTeamPersonService")
+public class ProjectTeamPersonServiceImpl extends BaseServiceImpl<ProjectTeamPerson> implements ProjectTeamPersonService {
+
+	@Autowired
+	ProjectTeamPersonMapper projectTeamPersonMapper;
+	@Autowired
+	ProjectTrendsService projectTrendsService;
+	@Autowired
+	private SysFeignService sysFeignService;
+	@Autowired
+	private SysExtrenalFeignService sysExtrenalFeignService;
+	@Autowired
+	private OaUserUtil userUtil;
+
+	/**
+	 * 根据项目id 项目type 查询项目团队信息
+	 * 
+	 * @param projectTeamQueryParamDto
+	 * @return
+	 * @throws HioMybatisQueryException
+	 */
+	@Override
+	public List<ProjectTeamPerson> queryProjectTeamPersonByTeamQueryParam(ProjectTeamQueryParamDto projectTeamQueryParamDto) throws HioMybatisQueryException {
+		return projectTeamPersonMapper.queryProjectTeamPersonByTeamQueryParam(projectTeamQueryParamDto);
+	}
+
+	/**
+	 * 根据项目id 项目type 查询项目团队信息
+	 * 
+	 * @param tendId
+	 * @param projectTeamQueryParamDto
+	 * @return
+	 * @throws HioMybatisQueryException
+	 */
+	@Override
+	public List<ProjectTeamPerson> queryMobileProjectTeamPersonByTeamQueryParam(@DataSource String tendId, ProjectTeamQueryParamDto projectTeamQueryParamDto)
+			throws HioMybatisQueryException {
+		return projectTeamPersonMapper.queryProjectTeamPersonByTeamQueryParam(projectTeamQueryParamDto);
+	}
+
+	/**
+	 * 根据项目id 查询项目团队人员数
+	 * 
+	 * @param id
+	 * @return
+	 * @throws HioMybatisQueryException
+	 */
+	@Override
+	public int queryProjectTeamPersonCountByProjectId(String id) throws HioMybatisQueryException {
+		return projectTeamPersonMapper.queryProjectTeamPersonCountByProjectId(id);
+	}
+
+	/**
+	 * 更新项目非共享人信息
+	 * 
+	 * @param projectTeamPersonDto
+	 * @param projectTeamQueryParamDto
+	 * @param loginUser
+	 * @param sendMessageList
+	 *            发送非外部联系人消息用
+	 * @param sendOutMessageList
+	 *            发送外部联系人消息用
+	 * @return
+	 * @throws HioMybatisUpdateException
+	 */
+	@Override
+	public int updateProjectTeamPerson(List<ProjectTeamPerson> projectTeamPersonDto, ProjectTeamQueryParamDto projectTeamQueryParamDto, LoginUser loginUser,
+			Set<String> sendMessageList, Set<String> sendOutMessageList) throws HioMybatisUpdateException {
+		/**
+		 * /** 原团队人员
+		 */
+		List<ProjectTeamPerson> oldTeamPersonList = projectTeamPersonMapper.queryProjectTeamPersonByTeamQueryParam(projectTeamQueryParamDto);
+
+		/**
+		 * 新团队人员
+		 */
+		List<ProjectTeamPerson> newTeamPersonList = projectTeamPersonDto;
+		/**
+		 * 非共享人
+		 */
+		Map<String, List<ProjectTeamPerson>> map = this.compareList(oldTeamPersonList, newTeamPersonList, OaConstant.PROJECTNOTSHARE);
+		List<ProjectTeamPerson> deleteList = (List<ProjectTeamPerson>) map.get("deleteList");
+		List<ProjectTeamPerson> addList = (List<ProjectTeamPerson>) map.get("addList");
+		String userName = userUtil.selectUserName(loginUser.getUserId());
+		String info = "";
+		if (OaConstant.PROJECTRESPONSIBLEPERSON.equals(projectTeamQueryParamDto.getTeamType())) {
+			info = "项目负责人";
+		} else if (OaConstant.PROJECTPARTICIPANTPERSON.equals(projectTeamQueryParamDto.getTeamType())) {
+			info = "项目参与人";
+		}
+		if (addList.size() > 0) {
+			saveBatch(addList);
+			ProjectTrendsDto addTrendsDto = new ProjectTrendsDto();
+			addTrendsDto.setProjectId(projectTeamQueryParamDto.getProjectId());
+			/**
+			 * 获取当前登录用户id name
+			 */
+			addTrendsDto.setTrendPersonId(loginUser.getUserId());
+			addTrendsDto.setTrendPersonName(userName);
+			StringBuilder addContent = new StringBuilder();
+			for (ProjectTeamPerson projectTeamPerson : addList) {
+				addContent.append(projectTeamPerson.getTeamPersonName() + ",");
+				if (isEquals(OaConstant.PROJECTINPERSON, projectTeamPerson.getOutType())) {
+
+					sendMessageList.add(projectTeamPerson.getTeamPersonImId());
+
+				} else if (isEquals(OaConstant.PROJECTOUTPERSON, projectTeamPerson.getOutType())) {
+					sendOutMessageList.add(projectTeamPerson.getTeamPersonImId());
+				}
+			}
+			if (addContent.length() > 0) {
+				addTrendsDto.setTrendContent(info + "新增:" + addContent.substring(0, addContent.length() - 1));
+			}
+			projectTrendsService.saveProjectTrends(addTrendsDto);
+		}
+		if (deleteList.size() > 0) {
+			for (ProjectTeamPerson projectTeamPerson : deleteList) {
+				projectTeamPersonMapper.deleteProjectTeamPerson(projectTeamPerson);
+			}
+			/**
+			 * 保存项目动态
+			 */
+			ProjectTrendsDto deleteTrendsDto = new ProjectTrendsDto();
+			deleteTrendsDto.setProjectId(projectTeamQueryParamDto.getProjectId());
+			StringBuilder deleteContent = new StringBuilder();
+			for (ProjectTeamPerson projectTeamPerson : deleteList) {
+				deleteContent.append(projectTeamPerson.getTeamPersonName() + ",");
+			}
+			if (deleteContent.length() > 0) {
+				deleteTrendsDto.setTrendContent(info + "移除:" + deleteContent.substring(0, deleteContent.length() - 1));
+			}
+			deleteTrendsDto.setTrendPersonId(loginUser.getUserId());
+			deleteTrendsDto.setTrendPersonName(userName);
+			projectTrendsService.saveProjectTrends(deleteTrendsDto);
+		}
+		return 0;
+	}
+
+	/**
+	 * 更新项目共享人信息
+	 * 
+	 * @param projectTeamPersonDto
+	 * @param projectTeamQueryParamDto
+	 * @param loginUser
+	 * @param sendMessageList
+	 *            发送非外部联系人消息用
+	 * @param sendOutMessageList
+	 *            发送外部联系人消息用
+	 * @return
+	 * @throws HioMybatisUpdateException
+	 */
+	@Override
+	public int updateProjectTeamSharePerson(List<ProjectTeamPerson> projectTeamPersonDto, ProjectTeamQueryParamDto projectTeamQueryParamDto, LoginUser loginUser,
+			Set<String> sendMessageList, Set<String> sendOutMessageList) throws HioMybatisUpdateException {
+		/**
+		 * /** 原团队人员
+		 */
+		List<ProjectTeamPerson> oldTeamPersonList = projectTeamPersonMapper.queryProjectTeamPersonByTeamQueryParam(projectTeamQueryParamDto);
+
+		/**
+		 * 新团队人员
+		 */
+		List<ProjectTeamPerson> newTeamPersonList = projectTeamPersonDto;
+		/**
+		 * 共享人
+		 */
+		Map<String, List<ProjectTeamPerson>> map = this.compareList(oldTeamPersonList, newTeamPersonList, OaConstant.PROJECTSHARE);
+		List<ProjectTeamPerson> userDeleteList = (List<ProjectTeamPerson>) map.get("userDeleteList");
+		List<ProjectTeamPerson> userAddList = (List<ProjectTeamPerson>) map.get("userAddList");
+		String userName = userUtil.selectUserName(loginUser.getUserId());
+		if (userAddList.size() > 0) {
+			saveBatch(userAddList);
+			/**
+			 * 保存项目动态
+			 */
+			String info = "项目共享人";
+			ProjectTrendsDto addTrendsDto = new ProjectTrendsDto();
+			addTrendsDto.setProjectId(projectTeamQueryParamDto.getProjectId());
+			/**
+			 * 获取当前登录用户id name
+			 */
+			addTrendsDto.setTrendPersonId(loginUser.getUserId());
+
+			addTrendsDto.setTrendPersonName(userName);
+			StringBuilder addContent = new StringBuilder();
+			for (ProjectTeamPerson projectTeamPerson : userAddList) {
+				addContent.append(projectTeamPerson.getTeamPersonName() + ",");
+				if (isEquals(OaConstant.PROJECTINPERSON, projectTeamPerson.getOutType())) {
+
+					sendMessageList.add(projectTeamPerson.getTeamPersonImId());
+
+				} else if (isEquals(OaConstant.PROJECTOUTPERSON, projectTeamPerson.getOutType())) {
+					sendOutMessageList.add(projectTeamPerson.getTeamPersonImId());
+				}
+			}
+			if (addContent.length() > 0) {
+				addTrendsDto.setTrendContent(info + "新增:" + addContent.substring(0, addContent.length() - 1));
+			}
+			projectTrendsService.saveProjectTrends(addTrendsDto);
+		}
+		if (userDeleteList.size() > 0) {
+			for (ProjectTeamPerson projectTeamPerson : userDeleteList) {
+				projectTeamPersonMapper.deleteProjectTeamPerson(projectTeamPerson);
+			}
+			/**
+			 * 保存项目动态
+			 */
+			String info = "项目共享人";
+			ProjectTrendsDto deleteTrendsDto = new ProjectTrendsDto();
+			deleteTrendsDto.setProjectId(projectTeamQueryParamDto.getProjectId());
+			StringBuilder deleteContent = new StringBuilder();
+			for (ProjectTeamPerson projectTeamPerson : userDeleteList) {
+				deleteContent.append(projectTeamPerson.getTeamPersonName() + ",");
+			}
+			if (deleteContent.length() > 0) {
+				deleteTrendsDto.setTrendContent(info + "移除:" + deleteContent.substring(0, deleteContent.length() - 1));
+			}
+			deleteTrendsDto.setTrendPersonId(loginUser.getUserId());
+			deleteTrendsDto.setTrendPersonName(userName);
+			projectTrendsService.saveProjectTrends(deleteTrendsDto);
+		}
+		List<ProjectTeamPerson> roleDeleteList = (List<ProjectTeamPerson>) map.get("roleDeleteList");
+		List<ProjectTeamPerson> roleAddList = (List<ProjectTeamPerson>) map.get("roleAddList");
+		if (roleAddList.size() > 0) {
+			saveBatch(roleAddList);
+			/**
+			 * 保存项目动态
+			 */
+			String info = "项目共享角色";
+			ProjectTrendsDto addTrendsDto = new ProjectTrendsDto();
+			addTrendsDto.setProjectId(projectTeamQueryParamDto.getProjectId());
+			/**
+			 * 获取当前登录用户id name
+			 */
+			addTrendsDto.setTrendPersonId(loginUser.getUserId());
+			addTrendsDto.setTrendPersonName(userName);
+			StringBuilder addContent = new StringBuilder();
+			List<String> roleIds = new ArrayList<>();
+			/**
+			 * 新增动态内容,存CC消息list
+			 */
+			for (ProjectTeamPerson projectTeamPerson : roleAddList) {
+				addContent.append(projectTeamPerson.getTeamPersonName() + ",");
+				roleIds.add(projectTeamPerson.getTeamPersonId());
+			}
+
+			logger.info("***********************************获取角色下所有人员存CC消息列表开始***************************************************");
+			OAUserParam roleParam = new OAUserParam();
+			roleParam.setRoleIds(roleIds);
+			roleParam.setTendId(getTendId());
+			ApiFeignResponse<List<OAUserDto>> roleUserList = sysFeignService.queryUserByOrgAndRoleAndUser(roleParam);
+			if (roleUserList.getStatus() == OaConstant.SUCCESSSTATUS) {
+				List<OAUserDto> resultList = roleUserList.getResult();
+				if (isNotEmpty(resultList)) {
+					for (OAUserDto oaUserDto : resultList) {
+						sendMessageList.add(oaUserDto.getImUserId());
+					}
+				}
+			} else {
+				logger.error("***** 查询角色下所有用户失败!  *****  OAUserParam:RoleIds     ==={}", roleParam.getRoleIds());
+				logger.error("***** 查询角色下所有用户失败!  *****  OAUserParam:TendId     ==={}", roleParam.getTendId());
+				throw new HioMybatisInsertException("查询角色下所有用户失败!");
+			}
+			logger.info("***********************************获取角色下所有人员存CC消息列表结束***************************************************");
+
+			if (addContent.length() > 0) {
+				addTrendsDto.setTrendContent(info + "新增:" + addContent.substring(0, addContent.length() - 1));
+			}
+			projectTrendsService.saveProjectTrends(addTrendsDto);
+		}
+		if (roleDeleteList.size() > 0) {
+			for (ProjectTeamPerson projectTeamPerson : roleDeleteList) {
+				projectTeamPersonMapper.deleteProjectTeamPerson(projectTeamPerson);
+			}
+			/**
+			 * 保存项目动态
+			 */
+			String info = "项目共享角色";
+			ProjectTrendsDto deleteTrendsDto = new ProjectTrendsDto();
+			deleteTrendsDto.setProjectId(projectTeamQueryParamDto.getProjectId());
+			StringBuilder deleteContent = new StringBuilder();
+			for (ProjectTeamPerson projectTeamPerson : roleDeleteList) {
+				deleteContent.append(projectTeamPerson.getTeamPersonName() + ",");
+			}
+			if (deleteContent.length() > 0) {
+				deleteTrendsDto.setTrendContent(info + "移除:" + deleteContent.substring(0, deleteContent.length() - 1));
+			}
+			deleteTrendsDto.setTrendPersonId(loginUser.getUserId());
+			deleteTrendsDto.setTrendPersonName(userName);
+			projectTrendsService.saveProjectTrends(deleteTrendsDto);
+		}
+		List<ProjectTeamPerson> orgDeleteList = (List<ProjectTeamPerson>) map.get("orgDeleteList");
+		List<ProjectTeamPerson> orgAddList = (List<ProjectTeamPerson>) map.get("orgAddList");
+		if (orgAddList.size() > 0) {
+			saveBatch(orgAddList);
+			/**
+			 * 保存项目动态
+			 */
+			String info = "项目共享部门";
+			ProjectTrendsDto addTrendsDto = new ProjectTrendsDto();
+			addTrendsDto.setProjectId(projectTeamQueryParamDto.getProjectId());
+			/**
+			 * 获取当前登录用户id name
+			 */
+			addTrendsDto.setTrendPersonId(loginUser.getUserId());
+			addTrendsDto.setTrendPersonName(userName);
+			StringBuilder addContent = new StringBuilder();
+			List<String> orgIds = new ArrayList<>();
+			for (ProjectTeamPerson projectTeamPerson : orgAddList) {
+				addContent.append(projectTeamPerson.getTeamPersonName() + ",");
+				orgIds.add(projectTeamPerson.getTeamPersonId());
+
+			}
+			logger.info("***********************************获取部门下所有人员存CC消息列表开始***************************************************");
+			OAUserParam orgParam = new OAUserParam();
+			orgParam.setOrganizationIds(orgIds);
+			orgParam.setTendId(getTendId());
+            orgParam.setContainsChildOrgUser(true);
+			ApiFeignResponse<List<OAUserDto>> orgUserList = sysFeignService.queryUserByOrgAndRoleAndUser(orgParam);
+			if (orgUserList.getStatus() == OaConstant.SUCCESSSTATUS) {
+				List<OAUserDto> resultList = orgUserList.getResult();
+				if (isNotEmpty(resultList)) {
+
+					for (OAUserDto oaUserDto : resultList) {
+						sendMessageList.add(oaUserDto.getImUserId());
+					}
+
+				}
+			} else {
+				logger.error("***** 查询部门下所有用户失败!  *****  OAUserParam:OrganizationIds     ==={}", orgParam.getOrganizationIds());
+				logger.error("***** 查询部门下所有用户失败!  *****  OAUserParam:TendId     ==={}", orgParam.getTendId());
+				throw new HioMybatisInsertException("查询部门下所有用户失败!");
+			}
+			logger.info("***********************************获取部门下所有人员存CC消息列表结束***************************************************");
+
+			if (addContent.length() > 0) {
+				addTrendsDto.setTrendContent(info + "新增:" + addContent.substring(0, addContent.length() - 1));
+			}
+			projectTrendsService.saveProjectTrends(addTrendsDto);
+		}
+		if (orgDeleteList.size() > 0) {
+			for (ProjectTeamPerson projectTeamPerson : orgDeleteList) {
+				projectTeamPersonMapper.deleteProjectTeamPerson(projectTeamPerson);
+			}
+			/**
+			 * 保存项目动态
+			 */
+			String info = "项目共享部门";
+			ProjectTrendsDto deleteTrendsDto = new ProjectTrendsDto();
+			deleteTrendsDto.setProjectId(projectTeamQueryParamDto.getProjectId());
+			StringBuilder deleteContent = new StringBuilder();
+			for (ProjectTeamPerson projectTeamPerson : orgDeleteList) {
+				deleteContent.append(projectTeamPerson.getTeamPersonName() + ",");
+			}
+			if (deleteContent.length() > 0) {
+				deleteTrendsDto.setTrendContent(info + "移除:" + deleteContent.substring(0, deleteContent.length() - 1));
+			}
+			deleteTrendsDto.setTrendPersonId(loginUser.getUserId());
+			deleteTrendsDto.setTrendPersonName(userName);
+			projectTrendsService.saveProjectTrends(deleteTrendsDto);
+		}
+		return 0;
+	}
+
+	/**
+	 * 对比
+	 * 
+	 * @param oldList
+	 * @param newList
+	 * @param type
+	 *            0非共享人 1 共享人
+	 * @return
+	 * @throws Exception
+	 */
+	private Map<String, List<ProjectTeamPerson>> compareList(List<ProjectTeamPerson> oldList, List<ProjectTeamPerson> newList, int type) {
+		Map<String, List<ProjectTeamPerson>> returnMap = new HashMap<String, List<ProjectTeamPerson>>();
+		/**
+		 * 非共享人 type == 0
+		 */
+		if (OaConstant.PROJECTNOTSHARE == type) {
+			/**
+			 * 差集 (oldList - newList) 移除人员列表
+			 */
+			List<ProjectTeamPerson> deleteList = oldList.stream().filter(u -> {
+				return newList.stream().filter(e -> u.getTeamPersonId().equals(e.getTeamPersonId())).count() <= 0;
+			}).collect(Collectors.toList());
+			/**
+			 * 差集 (newList - oldList) 新增人员列表
+			 */
+			List<ProjectTeamPerson> addList = newList.stream().filter(u -> {
+				return oldList.stream().filter(e -> u.getTeamPersonId().equals(e.getTeamPersonId())).count() <= 0;
+			}).collect(Collectors.toList());
+			returnMap.put("deleteList", deleteList);
+			returnMap.put("addList", addList);
+		}
+		/**
+		 * 共享人 type == 1
+		 */
+		else if (OaConstant.PROJECTSHARE == type) {
+			List<ProjectTeamPerson> oldUserList = new ArrayList<ProjectTeamPerson>();
+			List<ProjectTeamPerson> oldRoleList = new ArrayList<ProjectTeamPerson>();
+			List<ProjectTeamPerson> oldOrgList = new ArrayList<ProjectTeamPerson>();
+			for (ProjectTeamPerson oldTeamPerson : oldList) {
+				if (OaConstant.PROJECTSHAREUSER.equals(oldTeamPerson.getShareType())) {
+					oldUserList.add(oldTeamPerson);
+				} else if (OaConstant.PROJECTSHAREROLE.equals(oldTeamPerson.getShareType())) {
+					oldRoleList.add(oldTeamPerson);
+				} else if (OaConstant.PROJECTSHAREDEPT.equals(oldTeamPerson.getShareType())) {
+					oldOrgList.add(oldTeamPerson);
+				}
+			}
+			List<ProjectTeamPerson> newUserList = new ArrayList<ProjectTeamPerson>();
+			List<ProjectTeamPerson> newRoleList = new ArrayList<ProjectTeamPerson>();
+			List<ProjectTeamPerson> newOrgList = new ArrayList<ProjectTeamPerson>();
+			for (ProjectTeamPerson newTeamPerson : newList) {
+				if (OaConstant.PROJECTSHAREUSER.equals(newTeamPerson.getShareType())) {
+					newUserList.add(newTeamPerson);
+				} else if (OaConstant.PROJECTSHAREROLE.equals(newTeamPerson.getShareType())) {
+					newRoleList.add(newTeamPerson);
+				} else if (OaConstant.PROJECTSHAREDEPT.equals(newTeamPerson.getShareType())) {
+					newOrgList.add(newTeamPerson);
+				}
+			}
+			List<ProjectTeamPerson> userDeleteList = oldUserList.stream().filter(u -> {
+				return newUserList.stream().filter(e -> isEquals(u.getTeamPersonId(), e.getTeamPersonId())).count() <= 0;
+			}).collect(Collectors.toList());
+
+			List<ProjectTeamPerson> userAddList = newUserList.stream().filter(u -> {
+				return oldUserList.stream().filter(e -> isEquals(u.getTeamPersonId(), e.getTeamPersonId())).count() <= 0;
+			}).collect(Collectors.toList());
+
+			List<ProjectTeamPerson> roleDeleteList = oldRoleList.stream().filter(u -> {
+				return newRoleList.stream().filter(e -> isEquals(u.getTeamPersonId(), e.getTeamPersonId())).count() <= 0;
+			}).collect(Collectors.toList());
+
+			List<ProjectTeamPerson> roleAddList = newRoleList.stream().filter(u -> {
+				return oldRoleList.stream().filter(e -> isEquals(u.getTeamPersonId(), e.getTeamPersonId())).count() <= 0;
+			}).collect(Collectors.toList());
+
+			List<ProjectTeamPerson> orgDeleteList = oldOrgList.stream().filter(u -> {
+				return newOrgList.stream().filter(e -> isEquals(u.getTeamPersonId(), e.getTeamPersonId())).count() <= 0;
+			}).collect(Collectors.toList());
+
+			List<ProjectTeamPerson> orgAddList = newOrgList.stream().filter(u -> {
+				return oldOrgList.stream().filter(e -> isEquals(u.getTeamPersonId(), e.getTeamPersonId())).count() <= 0;
+			}).collect(Collectors.toList());
+			returnMap.put("userDeleteList", userDeleteList);
+			returnMap.put("userAddList", userAddList);
+			returnMap.put("roleDeleteList", roleDeleteList);
+			returnMap.put("roleAddList", roleAddList);
+			returnMap.put("orgDeleteList", orgDeleteList);
+			returnMap.put("orgAddList", orgAddList);
+		}
+		return returnMap;
+	}
+
+	/**
+	 * 查询团队信息，分页
+	 * 
+	 * @param param
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public Page queryTeamPersonPage(ProjectTeamPersonPageParam param, LoginUser loginUser) throws HioMybatisQueryException {
+		String projectId = param.getProjectId();
+		// 每页条数
+		Integer pageCount = param.getPageCount();
+		pageCount = pageCount == null ? 10 : pageCount;
+		// 页码
+		Integer pageNum = param.getPageNum();
+		pageNum = pageNum == null ? 1 : pageNum;
+		int start = (pageNum - 1) * pageCount;
+		param.setStart(start);
+		String orderBy = param.getOrderBy() == null ? "" : param.getOrderBy();
+		if (isNotEmpty(orderBy)) {
+			// id asc,sort desc
+			StringBuilder sql = new StringBuilder();
+			String[] orders = orderBy.split(",");
+			for (String key : orders) {
+				if (sql.length() == 0) {
+					sql.append(" order by " + key);
+				} else {
+					sql.append(" , " + key);
+				}
+			}
+			param.setDynamicSql(sql.toString());
+		}
+		Integer count = projectTeamPersonMapper.queryProjectTeamPersonCount(param);
+		count = count == null ? 0 : count;
+		List<ProjectTeamPerson> projectTeamPersonTempList = projectTeamPersonMapper.queryProjectTeamPerson(param);
+
+		List<ProjectTeamPersonDto> projectTeamPersonList = projectTeamPersonTempList.stream().map(projectTeamPerson -> {
+			return setProjectTeamPersonInfo(projectTeamPerson, loginUser);
+		}).collect(Collectors.toList());
+
+		Page page = new Page();
+		Integer pageTotal = count % pageCount > 0 ? count / pageCount + 1 : count / pageCount;
+		page.setList(projectTeamPersonList);
+		page.setPageTotal(pageTotal);
+		page.setTotal(count);
+		page.setPageCount(pageCount);
+		page.setPageNum(pageNum);
+		return page;
+
+	}
+
+	/**
+	 * 根据项目 登录人 查询权限
+	 * 
+	 * @param param
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public String queryProjectPermission(ProjectPermissionParam param) throws HioMybatisQueryException {
+		String returnValue = "";
+
+
+
+		List<String> projectPermission = projectTeamPersonMapper.queryProjectPermission(param);
+		/**
+		 * 团队成员权限
+		 */
+		if (isNotEmpty(projectPermission)) {
+			returnValue = projectPermission.get(0);
+		}
+		/**
+		 * 共享人权限
+		 */
+		else {
+			List<String> projectSharePermission = projectTeamPersonMapper.queryProjectSharePermission(param);
+			if(isNotEmpty(projectSharePermission)){
+				returnValue = projectSharePermission.get(0);
+			}
+		}
+		return returnValue;
+	}
+
+	/**
+	 * 获取项目团队人员树
+	 *
+	 * @param loginUser
+	 * @param projectId
+	 * @return
+	 * @throws HioMybatisQueryException
+	 */
+	@Override
+	public OrganizationUsersDto queryProjectTeamPersonTree(String projectId, LoginUser loginUser) throws HioMybatisQueryException {
+
+		OrganizationUsersDto organizationDto = null;
+		try {
+			String tendId = loginUser.getTendId();
+			ProjectTeamQueryParamDto projectTeamQueryParamDto = new ProjectTeamQueryParamDto();
+			projectTeamQueryParamDto.setProjectId(projectId);
+			projectTeamQueryParamDto.setOutType(OaConstant.PROJECTINPERSON);
+			List<String> projectTeamPersonIds = projectTeamPersonMapper.queryProjectTeamPersonIds(projectTeamQueryParamDto);
+			projectTeamQueryParamDto.setOutType(OaConstant.PROJECTOUTPERSON);
+			List<String> projectTeamPersonIdsOut = projectTeamPersonMapper.queryProjectTeamPersonIds(projectTeamQueryParamDto);
+			UserAndExternalParam param = new UserAndExternalParam();
+			param.setTendId(tendId);
+			param.setWorkStatus(1);
+			projectTeamPersonIds.addAll(projectTeamPersonIdsOut);
+			param.setUserIds(projectTeamPersonIds);
+			logger.info("*******************************调用feign接口生成人员树***************开始**********************");
+			ApiFeignResponse<OrganizationUsersDto> response = sysFeignService.queryOrganizationUsersDto(param);
+			if (response.getStatus() == OaConstant.SUCCESSSTATUS) {
+				organizationDto = response.getResult();
+			} else {
+				logger.info("接口返回状态" + response.getStatus() + "***********接口返回message." + response.getMessage());
+			}
+			logger.info("*******************************调用feign接口生成人员树***************结束**********************");
+			return organizationDto;
+		} catch (HioException e) {
+			logger.error("根据项目团队人员列表失败!" + e.getMessage());
+			throw new HioMybatisQueryException(e);
+		}
+	}
+
+	/**
+	 * 获取项目团队人员树
+	 *
+	 * @param loginUser
+	 * @param projectId
+	 * @return
+	 * @throws HioMybatisQueryException
+	 */
+	@Override
+	public OrganizationDto queryProjectTeamPersonTreeBak20180628(String projectId, LoginUser loginUser) throws HioMybatisQueryException {
+
+		OrganizationDto organizationDto = null;
+		try {
+			String tendId = loginUser.getTendId();
+			ProjectTeamQueryParamDto projectTeamQueryParamDto = new ProjectTeamQueryParamDto();
+			projectTeamQueryParamDto.setProjectId(projectId);
+			projectTeamQueryParamDto.setOutType(OaConstant.PROJECTINPERSON);
+			List<String> projectTeamPersonIds = projectTeamPersonMapper.queryProjectTeamPersonIds(projectTeamQueryParamDto);
+			String userIds = projectTeamPersonIds.stream().collect(Collectors.joining(","));
+			projectTeamQueryParamDto.setOutType(OaConstant.PROJECTOUTPERSON);
+			List<String> projectTeamPersonIdsOut = projectTeamPersonMapper.queryProjectTeamPersonIds(projectTeamQueryParamDto);
+			String userIdsOut = projectTeamPersonIdsOut.stream().collect(Collectors.joining(","));
+
+			logger.info("*******************************调用feign接口生成人员树***************开始**********************");
+			ApiFeignResponse<OrganizationDto> response = sysFeignService.queryOrganizationTreeByUserIds(tendId, userIds, userIdsOut);
+			if (response.getStatus() == OaConstant.SUCCESSSTATUS) {
+				organizationDto = response.getResult();
+			} else {
+				logger.info("接口返回状态" + response.getStatus() + "***********接口返回message." + response.getMessage());
+			}
+			logger.info("*******************************调用feign接口生成人员树***************结束**********************");
+			return organizationDto;
+		} catch (HioException e) {
+			logger.error("根据项目团队人员列表失败!" + e.getMessage());
+			throw new HioMybatisQueryException(e);
+		}
+	}
+
+	/**
+	 * 查询组织标签
+	 *
+	 * @param projectTeamPerson
+	 * @return
+	 */
+	private ProjectTeamPersonDto setProjectTeamPersonInfo(ProjectTeamPerson projectTeamPerson, LoginUser loginUser) throws HioMybatisQueryException {
+
+		ProjectTeamPersonDto projectTeamPersonDto = new ProjectTeamPersonDto();
+		if (isNotEmpty(projectTeamPerson)) {
+			BeanUtils.copyProperties(projectTeamPerson, projectTeamPersonDto);
+		}
+		/**
+		 * 外部联系人
+		 */
+		if (isEquals(OaConstant.PROJECTOUTPERSON, projectTeamPerson.getOutType())) {
+			/**
+			 * 调用接口查询外部联系人信息
+			 */
+			logger.info("********************************调用查询外部联系人信息接口开始*****************************");
+			logger.info("********************************queryDetailByStatus({})*****************************", projectTeamPersonDto.getTeamPersonId());
+			ApiFeignResponse<ExternalContactDto> response = sysExtrenalFeignService.queryDetailByStatus(getTendId(), projectTeamPersonDto.getTeamPersonId(), 1);
+			if (response.getStatus() == OaConstant.SUCCESSSTATUS) {
+				ExternalContactDto externalContactDto = response.getResult();
+
+				logger.info("********************************externalContactDto.getId():{}*****************************", externalContactDto.getId());
+				logger.info("********************************externalContactDto.getName():{}*****************************", externalContactDto.getName());
+				logger.info("********************************externalContactDto.getCompany():{}*****************************", externalContactDto.getCompany());
+				logger.info("********************************externalContactDto.getLabel():{}*****************************", externalContactDto.getLabel());
+				logger.info("********************************调用查询外部联系人信息接口结束*****************************");
+				projectTeamPersonDto.setTeamPersonName(externalContactDto.getName());
+				projectTeamPersonDto.setTeamPersonCompany(externalContactDto.getCompany());
+				projectTeamPersonDto.setTeamPersonTag(externalContactDto.getLabel());
+			} else {
+				logger.info("接口返回状态" + response.getStatus() + "***********接口返回message." + response.getMessage());
+			}
+		}
+		/**
+		 * 非外部联系人
+		 */
+		else {
+			String orgName = userUtil.queryOrgNameById(projectTeamPersonDto.getTeamPersonDeptId(), loginUser.getTendId());
+			projectTeamPersonDto.setTeamPersonCompany(orgName);
+			String userId = projectTeamPersonDto.getTeamPersonId();
+			logger.info(">>>>>>>>>>>>>>>>>>>>调用queryNameByOrgAndRoleAndUser feign接口开始>>>>userId:>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>>>", userId);
+			String userName = null;
+			if (!StringUtils.isEmpty(userId)) {
+				List<String> userIdList = new ArrayList<String>();
+				userIdList.add(userId);
+				SkyDriveParam skyDriveParam = new SkyDriveParam();
+				skyDriveParam.setUserIds(userIdList);
+				skyDriveParam.setStatus(3);
+				ApiFeignResponse<List<SkyDriveDto>> apiFeignResponse = sysFeignService.queryNameByOrgAndRoleAndUser(skyDriveParam);
+				if (apiFeignResponse != null) {
+					if (OaConstant.SUCCESSSTATUS == apiFeignResponse.getStatus()) {
+						List<SkyDriveDto> skyDriveDtoList = apiFeignResponse.getResult();
+						if (skyDriveDtoList != null && skyDriveDtoList.size() > 0) {
+							userName = skyDriveDtoList.get(0).getName();
+						}
+					} else {
+						throw new HioException("调用queryNameByOrgAndRoleAndUser feign接口失败" + apiFeignResponse.getMessage());
+					}
+
+				}
+			}
+
+			logger.info(">>>>>>>>>>>>>>>>>>>>调用queryNameByOrgAndRoleAndUser feign接口结束>>>>>userName:>>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>", userName);
+
+
+			projectTeamPersonDto.setTeamPersonName(userName);
+		}
+		logger.info("********************************获取用户头像接口开始*****************************");
+		String imUserId = projectTeamPersonDto.getTeamPersonImId();
+		logger.info("********************************projectTeamPersonDto.getTeamPersonImId():{}*****************************", imUserId);
+		String imgUrl = userUtil.queryImgUrlByImId(imUserId);
+		logger.info("********************************userUtil.queryImgUrlByImId(imUserId):{}*****************************", imgUrl);
+		projectTeamPersonDto.setTeamPersonImgUrl(imgUrl);
+		logger.info("********************************获取用户头像接口结束*****************************");
+		return projectTeamPersonDto;
+	}
+
+}

@@ -1,0 +1,96 @@
+package com.jzy.hio.oa.project.quartz;
+
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+import com.alibaba.fastjson.JSONObject;
+import com.jzy.hio.entity.SysTendUser;
+import com.jzy.hio.oa.OaConstant;
+import com.jzy.hio.oa.project.service.ProjectInfoService;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.redis.RedisService;
+
+/**
+ * 定时任务——项目超期状态变更
+ * 
+ * @author yangning
+ * @date 2018年4月14日
+ */
+@Component
+public class ProjectQuartz {
+
+	private static final Logger logger = LoggerFactory.getLogger(ProjectQuartz.class);
+
+	// 阻塞队列，FIFO
+	// private static LinkedBlockingQueue<String> concurrentLinkedQueue = new LinkedBlockingQueue<String>();
+
+	@Autowired
+	private RedisService redisService;
+
+	@Value("${redis_key.ProjectOverdue}")
+	private String redisKeyProjectOverdue;
+
+
+
+	@Autowired
+	private ProjectInfoService projectInfoService;
+
+
+
+
+
+//@Scheduled(cron="${jobs_schedule.ProjectOverdue}")
+    /**
+     * 定时任务
+     */
+//	@Scheduled(cron="0 */10 * * *  ?")
+	public void projectOverdue() {
+		try {
+			logger.info("redis_key: " + redisKeyProjectOverdue);
+			// 在分布式环境下，防止重发查询发消息
+			if (redisService.addRedisSetnx(redisKeyProjectOverdue, redisKeyProjectOverdue)) {
+				logger.info("执行项目超期状态变更开始！");
+				// 查询主库租户信息，获取租户id，多线程进行切库,执行各租户定时任务
+				SysTendUser sysTendUser = new SysTendUser();
+				sysTendUser.setState(OaConstant.TENG_STATE1);
+				Map<String, String> map = JedisUtil.fetchRelationRow("tenant_company_info");
+				logger.info("map != null && map.size() > 0: " + (map != null && map.size() > 0));
+				if (map != null && map.size() > 0) {
+					for (String key : map.keySet()) {
+						if (!"table_name".equals(key)) {
+							String json = map.get(key);
+							logger.info("table_name: " + json);
+
+							if(StringUtils.isNotBlank(json)) {
+                                JSONObject jsonObject = JSONObject.parseObject(json);
+                                String tendId = (String) jsonObject.get("tendId");
+
+								logger.info("tendId: " + tendId);
+
+                                projectInfoService.updateProjectOverdue(tendId);
+                            }
+						}
+					}
+				}
+
+
+				logger.info("执行项目超期状态变更结束！");
+			} else {
+				logger.info("未执行项目超期状态变更！");
+			}
+		} catch (Exception e) {
+			logger.error("项目超期状态变更失败！" + e.getMessage());
+		} finally {
+			redisService.releaseRedisSetnx(redisKeyProjectOverdue);
+		}
+
+	}
+
+
+}

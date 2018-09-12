@@ -1,0 +1,1423 @@
+package com.jzy.hio.oa.contract.service.impl;
+
+import java.math.BigDecimal;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.github.pagehelper.PageHelper;
+import com.github.pagehelper.PageInfo;
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.entity.ContractChange;
+import com.jzy.hio.exception.HioMybatisDeleteException;
+import com.jzy.hio.exception.HioMybatisGetException;
+import com.jzy.hio.exception.HioMybatisInsertException;
+import com.jzy.hio.exception.HioMybatisQueryException;
+import com.jzy.hio.exception.HioMybatisUpdateException;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.oa.contract.dto.ContractChangeDto;
+import com.jzy.hio.oa.contract.dto.ContractIdDto;
+import com.jzy.hio.oa.OaConstant;
+import com.jzy.hio.oa.contract.dto.ContractAuthDto;
+import com.jzy.hio.oa.contract.dto.ContractInfoDto;
+import com.jzy.hio.oa.contract.dto.ContractLogDto;
+import com.jzy.hio.oa.contract.dto.ContractPaymentDto;
+import com.jzy.hio.oa.contract.dto.ResultMsg;
+import com.jzy.hio.oa.contract.mapper.ContractChangeMapper;
+import com.jzy.hio.oa.contract.mapper.ContractInfoMapper;
+import com.jzy.hio.oa.contract.mapper.ContractPaymentMapper;
+import com.jzy.hio.oa.contract.service.ContractChangeService;
+import com.jzy.hio.oa.contract.service.ContractInfoService;
+import com.jzy.hio.oa.contract.service.ContractLogService;
+import com.jzy.hio.sys.organization.dto.GeneralDto;
+import com.jzy.hio.sys.user.dto.OAUserDto;
+import com.jzy.hio.sys.user.param.OAUserParam;
+import com.jzy.hio.utils.DateUtil;
+import com.jzy.hio.utils.JacksonUtils;
+import com.jzy.hio.utils.LoginUser;
+import com.jzy.hio.utils.Page;
+
+
+/**
+ * 
+ * <p>合同变更接口实现<br>
+ * @author wliang
+ * @date 2018年4月25日 下午8:26:00
+ */
+@Service("contractChangeService")
+public class ContractChangeServiceImpl extends BaseServiceImpl<ContractChange> implements ContractChangeService {
+	
+	private static Logger logger = LoggerFactory.getLogger(ContractChangeServiceImpl.class);
+	
+	@Autowired
+	private ContractChangeMapper contractChangeMapper;
+	
+	@Autowired
+	private ContractLogService contractLogService;
+	
+	@Autowired
+	private ContractInfoMapper contractInfoMapper;
+	
+	@Autowired
+	private ContractInfoService contractInfoService;
+	
+	@Autowired
+	private ContractPaymentMapper contractPaymentMapper;
+	
+	@Autowired
+	private SysFeignService sysFeignService;
+	
+
+	@Override
+	public ContractChangeDto getContractChangeById(String id,LoginUser loginUser) throws HioMybatisGetException {
+		logger.debug(">>>>>>>>>>>>getContractChangeById>>>>>>>>>id={}>>>>>>>>>>>>>>>>>>>>>",id);
+		
+		ContractChangeDto contractChangeDto = null;
+		try {
+			contractChangeDto = contractChangeMapper.getContractChangeById(id);
+			if(Base.isNotEmpty(contractChangeDto)){
+				//操作菜单
+				ContractAuthDto authDto = this.getChangeAuthForSingle(contractChangeDto, loginUser,OaConstant.CONTRACT_AUTH_TYPE_SINGLE);
+				contractChangeDto.setContractAuth(authDto);
+				//草稿状态不展示变更信息
+				if(Base.isEmpty(contractChangeDto.getApproveStatus())
+						|| Base.isEquals(contractChangeDto.getApproveStatus(), OaConstant.CONTRACT_APPROVE_STATUS_4)){
+					contractChangeDto.setChangeText(null);
+				}
+				//附件关联信息
+				ContractIdDto idDto = null;
+				if(Base.isNotEmpty(contractChangeDto.getTitle()) &&
+						contractChangeDto.getTitle().contains(OaConstant.CONTRACT_CHANGE_TITLE_SOURCE)){
+					//原始合同的附件信息取原合同信息
+					ContractInfoDto infoDto = new ContractInfoDto();
+					infoDto.setId(contractChangeDto.getContractId());
+					idDto = contractInfoService.getContractGeneratePk(infoDto, loginUser);
+				}else{
+					idDto = this.getContractChangeGeneratePk(contractChangeDto, loginUser);
+				}
+				
+				contractChangeDto.setFileIdDto(idDto);
+			}
+			
+		} catch (Exception e) {
+			//
+			logger.error(">>>>>>>>>>>>>>>>>>>>>查询合同变更信息出错!id={}>>>>>>>>>>>>>>>>>>>>>",id);
+			throw new HioMybatisGetException(e);
+		}
+		if(Base.isEmpty(contractChangeDto)){
+			throw new HioMybatisGetException("没有查询到数据!");
+		}
+		
+		return contractChangeDto;
+	}
+	
+	@Override
+	public ContractChangeDto getContractChangeForReEdit(ContractChangeDto contractChangeDto,LoginUser loginUser) throws HioMybatisQueryException {
+		logger.debug(">>>>>>>>>>>>getContractChange>>>>>>>>>id={}>>>>>>>>>>>>>>>>>>>>>",contractChangeDto.getId());
+		
+		ContractChangeDto changeDto = null;
+		try {
+			changeDto = contractChangeMapper.getContractChangeById(contractChangeDto.getId());
+			if(Base.isNotEmpty(changeDto)){
+				//重新发起不展示变更信息
+				changeDto.setChangeText(null);
+				
+				/*重新发起不展示操作菜单和附件
+				//操作菜单
+				ContractAuthDto authDto = this.getChangeAuthForSingle(changeDto, loginUser,OaConstant.CONTRACT_AUTH_TYPE_SINGLE);
+				changeDto.setContractAuth(authDto);
+				
+				//附件关联信息
+				ContractIdDto idDto = this.getContractChangeGeneratePk(changeDto, loginUser);
+				contractChangeDto.setFileIdDto(idDto);*/
+				
+				ContractInfoDto infoDto = contractInfoMapper.getContractInfoById(changeDto.getContractId());
+				if(Base.isNotEmpty(infoDto)){
+					changeDto.setMoney(infoDto.getMoney());
+					//合同金额取最新值、变更金额取原值，变更后金额=合同金额取最新值 + 变更金额取原值；其他业务信息取原值
+					changeDto.setNewMoney(infoDto.getMoney().add(changeDto.getChangeMoney()));
+				}
+			}
+			
+		} catch (Exception e) {
+			//
+			logger.error(">>>>>>>>>>>>>>>>>>>>>重新发起查询合同变更信息出错!id={}>>>>>>>>>>>>>>>>>>>>>",contractChangeDto.getId());
+			throw new HioMybatisQueryException(e);
+		}
+		if(Base.isEmpty(contractChangeDto)){
+			throw new HioMybatisQueryException("没有查询到数据!");
+		}
+		
+		return changeDto;
+	}
+	
+	/**
+	 * 获取主键
+	 */
+	@Override
+	public ContractIdDto getContractChangeGeneratePk(ContractChangeDto contractChangeDto,
+    		LoginUser loginUser) throws HioMybatisGetException{
+		ContractIdDto idDto = new ContractIdDto();
+		idDto.setAppId(BaseConstants.App.OA.getId());
+		idDto.setCategoryId(BaseConstants.AttachmentCategory.OA_CONTRACT_CHANGE.getId());
+		if(Base.isNotEmpty(contractChangeDto) && Base.isNotEmpty(contractChangeDto.getId())){
+			
+			idDto.setBusinessId(contractChangeDto.getId());
+		}else{
+			
+			idDto.setBusinessId(generatePk());
+		}
+		return idDto;
+	}
+	
+	@Override
+    public List<ContractChangeDto> getChangeListByContractId(ContractChangeDto contractChangeDto,
+    		LoginUser loginUser) throws HioMybatisGetException{
+    	
+		logger.debug(">>>>>>>>>>>>getChangeListByContractId>>>>>>>>>contractId={}>>>>>>>>>>>>>>",contractChangeDto.getContractId());
+		
+    	List<ContractChangeDto> changeDtoList;
+		try {
+			changeDtoList = contractChangeMapper.getChangeListByContract(contractChangeDto);
+		} catch (Exception e) {
+			//
+			logger.error(">>>>>>>>>>>>>根据合同id查询合同变更信息出错!contractId={}>>>>>>>>>>>>>",contractChangeDto.getContractId());
+			throw new HioMybatisGetException(e);
+		}
+    	
+		return changeDtoList;
+    }
+    
+    @Override
+    public Page getChangePageByContractId(ContractChangeDto contractChangeDto,LoginUser loginUser) throws HioMybatisGetException{
+    	
+    	logger.debug(">>>>>>>>>>>>getChangePageByContractId>>>>>>>>>contractId={}>>>>>>>>>>>",contractChangeDto.getContractId());
+    	
+		try {
+			//分页页码、每页数据量初始化
+			pageStart(contractChangeDto);
+			//查询
+			List<ContractChangeDto> list = contractChangeMapper.getChangeListByContract(contractChangeDto);
+			//操作菜单
+			this.getContractAuthForList(list,loginUser);
+			//分页
+			return pageReturn(list);
+			
+		} catch (Exception e) {
+			//
+			logger.error(">>>>>>>>>>>>>根据合同id查询合同变更信息page出错!contractId={}>>>>>>>>>>>>>",contractChangeDto.getContractId());
+			throw new HioMybatisGetException(e);
+		}
+		
+    }
+    
+	@Override
+	public int saveContractChange(ContractChangeDto contractChangeDto,LoginUser loginUser) throws HioMybatisInsertException {
+			
+		ResultMsg resMsg = null;
+		try {
+			//保存前校验 
+			resMsg = this.checkBeforeSaveOrUpdate(contractChangeDto,OaConstant.CONTRACT_UPDATE_OR_SAVE_1);
+						
+		} catch (Exception e) {
+			//
+			logger.error(">>>>>>>>>>>>>保存合同变更校验出错!contractId={}>>>>>>>>>>>",contractChangeDto.getContractId());
+			throw new HioMybatisInsertException(e,"保存合同变更校验出错!");			
+		}
+		
+		int count = 0;
+		
+		if(Base.isEmpty(resMsg) || resMsg.isSuccess()){
+			try {
+				
+				//插入日志
+				ContractLogDto logDto = this.getContractLogDto(contractChangeDto, OaConstant.CONTRACT_LOG_TYPE_17);
+				contractLogService.saveContractLog(logDto,loginUser);
+				//组织变更对象
+				ContractChange contractChange = new ContractChange();
+				//操作类型：修改或者保存
+				contractChangeDto.setOperateType(OaConstant.CONTRACT_UPDATE_OR_SAVE_1);
+				this.initChangeForSaveOrSubmit(contractChangeDto,contractChange,loginUser);
+				
+				//保存变更
+				count = save(contractChange);
+				
+				//合同变更版本中,初始合同的变更主题为：原始合同名称+(原始合同)
+				ContractChangeDto changeDtoSource = this.getChangeDtoSource(contractChangeDto);
+				if(Base.isNotEmpty(changeDtoSource)){
+					ContractChange contractChangeSource = new ContractChange();
+					//对象复制方法
+					BeanUtils.copyProperties(changeDtoSource,contractChangeSource);
+					//保存原始合同
+					save(contractChangeSource);
+				}
+				
+				//业务直接提交或审批直接通过,新版变更需覆盖合同信息
+				if(Base.isEquals(contractChange.getStatus(), OaConstant.CONTRACT_STATUS_2)){
+					ContractInfoDto newInfoDto = this.getContractInfoDtoFromChange(contractChangeDto);
+					contractInfoService.updateContractInfoFromChange(newInfoDto, loginUser);
+				}
+				
+			}catch (Exception e) {
+				//
+				logger.error(">>>>>>>>>>>>>合同变更出错!contractId={}>>>>>>>>>>>",contractChangeDto.getContractId());
+				throw new HioMybatisInsertException(e,"合同变更出错!");			
+			}
+		}else{
+			throw new HioMybatisInsertException(resMsg.getMsg());
+		}
+		
+		return count;
+	}
+	
+	/**
+	 * 
+	 * <p>组织变更对象<br>
+	 * @author wliang
+	 * @date 2018年4月25日 下午10:18:30 
+	 * @param contractChangeDto
+	 * @param contractChange
+	 * @param loginUser
+	 * @throws Exception
+	 */
+	public void initChangeForSaveOrSubmit(ContractChangeDto contractChangeDto,ContractChange contractChange,LoginUser loginUser) throws Exception{
+		
+		//组织变更内容
+		this.initContractChangeDto(contractChangeDto,loginUser);	
+		//对象复制方法
+		BeanUtils.copyProperties(contractChangeDto,contractChange);
+		contractChange.setCreateDate(DateUtil.getDate(DateUtil.getCurDateTime()));
+		
+		//直接审批完成或业务提交
+		if(Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_2, contractChange.getApproveStatus())
+				|| Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_5, contractChange.getApproveStatus())){
+					
+			contractChange.setStatus(OaConstant.CONTRACT_STATUS_2);
+		}else{
+			contractChange.setStatus(OaConstant.CONTRACT_STATUS_0);
+		}
+		
+	}
+
+	@Override
+	public int deleteContractChangeById(ContractChangeDto contractChangeDto,LoginUser loginUser) throws HioMybatisDeleteException {
+		//
+		int count = 0;
+		ResultMsg resMsg = null;
+		try {
+			
+			//审批发起的删除
+			if(Base.isEmpty(contractChangeDto.getId()) && Base.isNotEmpty(contractChangeDto.getBusinessId())){
+				contractChangeDto.setId(contractChangeDto.getBusinessId());
+				logger.info(">>>>>>>>>>>>>>>>>>>>>删除变更!id={}>>>>>>>>>>>>>>>>>>>>>",contractChangeDto.getBusinessId());
+			}
+			//校验
+			resMsg = this.checkBeforeDeleteChange(contractChangeDto);
+			
+		} catch (Exception e) {
+			//
+			logger.error(">>>>>>>>>>>>>删除合同变更校验出错!id={}>>>>>>>>>>>",contractChangeDto.getId());
+			throw new HioMybatisDeleteException("删除合同变更校验出错!");			
+		}
+		
+		if(Base.isEmpty(resMsg) || resMsg.isSuccess()){
+			
+			try {
+				
+				contractChangeDto.setUpdateDate(DateUtil.getDate(DateUtil.getCurDateTime()));
+				
+				//执行删除
+				count = contractChangeMapper.deleteContractChangeById(contractChangeDto);
+				
+			} catch (Exception e) {
+				//
+				logger.error(">>>>>>>>>>>>>删除合同变更出错!id={}>>>>>>>>>>>",contractChangeDto.getId());
+				throw new HioMybatisDeleteException("删除合同变更出错!");			
+			}			
+		}else{
+			throw new HioMybatisDeleteException(resMsg.getMsg());
+		}
+		return count;
+	}
+
+	@Override 
+	public int updateContractChange(ContractChangeDto contractChangeDto,LoginUser loginUser) throws HioMybatisUpdateException {
+		
+		int count = 0;
+		//更新变更信息前校验
+		ResultMsg resMsg = null;
+		try {
+			//保存前校验
+			resMsg = this.checkBeforeSaveOrUpdate(contractChangeDto,OaConstant.CONTRACT_UPDATE_OR_SAVE_2);
+			
+		} catch (Exception e) {
+			//
+			logger.error(">>>>>>>>>>>>>更新合同变更校验出错!id={}>>>>>>>>>>>",contractChangeDto.getId());
+			throw new HioMybatisUpdateException(e,"更新合同变更校验出错!");			
+		}
+		//暂存或校验通过
+		if(Base.isEmpty(resMsg) || resMsg.isSuccess()){		
+			
+			try {
+				ContractChange contractChange = new ContractChange();
+				//操作类型：修改或者保存
+				contractChangeDto.setOperateType(OaConstant.CONTRACT_UPDATE_OR_SAVE_2);
+				//组织变更对象
+				this.initChangeForSaveOrSubmit(contractChangeDto,contractChange,loginUser);
+				
+				//执行更新
+				count = update(contractChange);
+				
+				//业务直接提交或审批直接通过,新版变更需覆盖合同信息
+				if(Base.isEquals(contractChange.getStatus(), OaConstant.CONTRACT_STATUS_2)){
+					ContractInfoDto newInfoDto = this.getContractInfoDtoFromChange(contractChangeDto);
+					
+					contractInfoService.updateContractInfoFromChange(newInfoDto, loginUser);
+					
+					//审批发起的变更审批通过记录日志
+					if(Base.isNotEmpty(contractChange.getFiId())){
+						//插入日志
+						ContractLogDto logDto = this.getContractLogDto(contractChangeDto, OaConstant.CONTRACT_LOG_TYPE_18);
+						contractLogService.saveContractLog(logDto,loginUser);
+					}		
+				}
+				
+			} catch (Exception e) {
+				//
+				logger.error(">>>>>>>>>>>>>更新合同变更出错!id={}>>>>>>>>>>>",contractChangeDto.getId());
+				throw new HioMybatisUpdateException(e,"更新合同变更出错!");			
+			}
+		}else{
+			throw new HioMybatisUpdateException(resMsg.getMsg());
+		}
+		
+		return count;
+	}
+	
+	@Override
+	public int updateApproveStatus(ContractChangeDto contractChangeDto,LoginUser loginUser) throws HioMybatisUpdateException {
+		
+		int count = 0;		
+		if(Base.isEmpty(contractChangeDto) 
+				|| (Base.isEmpty(contractChangeDto.getId()) && Base.isEmpty(contractChangeDto.getBusinessId()))){
+			
+			throw new HioMybatisUpdateException("所传数据为空,请确认!");
+		}else{
+			
+			ResultMsg resMsg = null;
+			//主键
+			if(Base.isNotEmpty(contractChangeDto.getBusinessId())){
+				contractChangeDto.setId(contractChangeDto.getBusinessId());
+			}
+			//审批和业务字段名不一致
+			if(Base.isNotEmpty(contractChangeDto.getApprovalStatus())){
+				contractChangeDto.setApproveStatus(contractChangeDto.getApprovalStatus());
+			}
+			ContractChangeDto dto = contractChangeMapper.getContractChangeById(contractChangeDto.getId());
+			//没查询到数据
+			if(Base.isEmpty(dto)){
+				resMsg = new ResultMsg();
+				resMsg.setSuccess(false);
+				resMsg.setMsg("该变更信息不存在,请确认数据是否正确!");
+			}
+			
+			try {
+				//审批状态 
+				dto.setApproveStatus(contractChangeDto.getApproveStatus());
+				//校验
+				resMsg = this.checkBeforeUpdateApproveStatus(dto);
+			} catch (Exception e) {
+				//
+				logger.error(">>>>>>>>>>>>>更新变更审批状态校验出错!id={}>>>>>>>>>>>",contractChangeDto.getId());
+				throw new HioMybatisUpdateException(e,"更新变更审批状态校验出错!");			
+			}
+			if(Base.isEmpty(resMsg) || resMsg.isSuccess()){
+				try {
+					
+					//日志
+					ContractLogDto logDto = null;
+					//合同
+					ContractInfoDto newInfoDto = null;
+					if(Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_2, contractChangeDto.getApproveStatus()) 
+							|| Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_5, contractChangeDto.getApproveStatus())){
+						//审批完成或跳过
+						dto.setStatus(OaConstant.CONTRACT_STATUS_2);
+						//获取日志对象
+						logDto = this.getContractLogDto(dto, OaConstant.CONTRACT_LOG_TYPE_18);
+						
+						//审批完成,回写合同信息
+						newInfoDto = this.getContractInfoDtoFromChange(dto);
+						
+					}else if(Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_3, contractChangeDto.getApproveStatus())
+							|| Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_6, contractChangeDto.getApproveStatus())
+							|| Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_4, contractChangeDto.getApproveStatus())){
+						
+						//审批退回或驳回
+						dto.setStatus(OaConstant.CONTRACT_STATUS_0);
+					}
+					
+					if(Base.isNotEmpty(logDto)){
+						//日志保存
+						contractLogService.saveContractLog(logDto,loginUser);
+					}
+					
+					//合同信息需要更新
+					if(Base.isNotEmpty(newInfoDto)){
+						contractInfoService.updateContractInfoFromChange(newInfoDto, loginUser);
+					}
+					
+					ContractChange contractChange = new ContractChange();
+					//对象复制方法
+					BeanUtils.copyProperties(dto,contractChange);
+					//执行更新
+					count = update(contractChange);
+				}catch (Exception e) {
+					//
+					logger.error(">>>>>>>>>>>>>更新变更审批状态出错!id={}>>>>>>>>>>>",contractChangeDto.getId());
+					throw new HioMybatisUpdateException(e,"更新变更审批状态出错!");	
+				}
+				
+			}else{
+				throw new HioMybatisUpdateException(resMsg.getMsg());
+			}
+		}
+		
+		return count;
+	}
+	
+	
+	@Override
+	public int updateStatusToCancel(ContractChangeDto contractChangeDto,LoginUser loginUser) throws HioMybatisUpdateException{
+		
+		int count = 0;
+		//作废前校验
+		ResultMsg resMsg = null;
+		try {
+			resMsg = this.checkBeforeUpdateStatusToCancel(contractChangeDto);
+		} catch (Exception e) {
+			//
+			logger.error(">>>>>>>>>>>>>作废变更审批状态校验出错!id={}>>>>>>>>>>>",contractChangeDto.getId());
+			throw new HioMybatisUpdateException(e,"作废变更审批状态校验出错!");			
+		}
+		//作废变更、要同步更新合同信息为上一版本信息
+		if(Base.isEmpty(resMsg) || resMsg.isSuccess()){			
+			try {
+				//插入日志
+				ContractLogDto logDto = this.getContractLogDto(contractChangeDto, OaConstant.CONTRACT_LOG_TYPE_22);
+				contractLogService.saveContractLog(logDto,loginUser);			
+				
+				//作废变更,要同步更新合同信息为上一版本信息
+				//该查询只需要合同id,title造成干扰
+				ContractChangeDto contractChangeDto2 = new ContractChangeDto();
+				contractChangeDto2.setContractId(contractChangeDto.getContractId());
+				List<ContractChangeDto> changeDtos = contractChangeMapper.getChangeListByContract(contractChangeDto2);
+				ContractInfoDto newInfoDto = null;
+				if(Base.isNotEmpty(changeDtos)){
+					for(ContractChangeDto dto : changeDtos){
+						if(Base.isNotEmpty(dto) && Base.isNotEquals(contractChangeDto.getId(), dto.getId())
+								&& Base.isEquals(dto.getStatus(), OaConstant.CONTRACT_STATUS_2)){
+							newInfoDto = this.getContractInfoDtoFromChange(contractChangeMapper.getContractChangeById(dto.getId()));
+							break;
+						}
+					}
+				}
+				if(Base.isNotEmpty(newInfoDto)){
+					contractInfoService.updateContractInfoFromChange(newInfoDto, loginUser);
+				}				
+				
+				//作废变更
+				ContractChangeDto dto = contractChangeMapper.getContractChangeById(contractChangeDto.getId());
+				dto.setUpdateDate(DateUtil.getDate(DateUtil.getCurDateTime()));
+				dto.setStatus(OaConstant.CONTRACT_STATUS_9);
+				count = update(dto);
+				
+			}catch (Exception e) {
+				//
+				logger.error(">>>>>>>>>>>>>作废变更出错!id={}>>>>>>>>>>>",contractChangeDto.getId());
+				throw new HioMybatisUpdateException(e,"作废变更出错!");			
+			}			
+		}else{
+			throw new HioMybatisUpdateException(resMsg.getMsg());
+		}
+		
+		return count;
+	}
+	
+	/**
+	 * 审批调用保存或修改变更
+	 */
+	@Override
+	public int saveContractChangeForApprove(ContractChangeDto contractChangeDto,LoginUser loginUser) throws HioMybatisInsertException{
+		
+		int count = 0;
+		if(Base.isEmpty(contractChangeDto) || (
+			 Base.isEmpty(contractChangeDto.getId()) && Base.isEmpty(contractChangeDto.getBusinessId()))){
+			 
+			throw new HioMybatisInsertException("合同变更信息主键不能为空!");
+		}else{
+			//主键
+			if(Base.isNotEmpty(contractChangeDto.getBusinessId())){
+				contractChangeDto.setId(contractChangeDto.getBusinessId());
+			}
+			//审批和业务字段名不一致
+			if(Base.isNotEmpty(contractChangeDto.getApprovalStatus())){
+				contractChangeDto.setApproveStatus(contractChangeDto.getApprovalStatus());
+			}
+			//审批流程实例
+			if(Base.isNotEmpty(contractChangeDto.getInstanceId())){
+				contractChangeDto.setFiId(contractChangeDto.getInstanceId());
+			}
+			logger.info(">>>>>>>>>>>>>>>审批变更!title={}>>>>>>>>>id={}>>>>>>>>>>>>",contractChangeDto.getTitle(),contractChangeDto.getId());
+			 
+			ResultMsg resMsg = null;
+			try {
+				//保存前校验
+				resMsg = this.checkBeforeSaveOrUpdate(contractChangeDto,contractChangeDto.getOperateType());
+				
+			} catch (Exception e) {
+				//
+				logger.error(">>>>>>>>>>>>>>>保存审批变更信息校验出错!contractChangeDto={}>>>>>>>>>>>>>>>>>>",JacksonUtils.toJson(contractChangeDto));
+				throw new HioMybatisInsertException(e,"保存审批变更信息校验出错!");
+			}
+			
+			if(Base.isEmpty(resMsg) || resMsg.isSuccess()){
+				try {
+					
+					logger.info(">>>>>>>>>>>>>>>审批变更校验通过!title={}>>>>>>>>>id={}>>>>>>>>>>>>",contractChangeDto.getTitle(),contractChangeDto.getId());
+										
+					//插入日志
+					ContractLogDto logDto = this.getContractLogDto(contractChangeDto, OaConstant.CONTRACT_LOG_TYPE_17);
+					contractLogService.saveContractLog(logDto,loginUser);
+					//组织变更对象
+					ContractChange contractChange = new ContractChange();
+					this.initChangeForSaveOrSubmit(contractChangeDto,contractChange,loginUser);
+					
+					logger.info(">>>>>>>>>>>>>>>审批变更执行保存或修改!title={}>>>>>>>>>OperateType={}>>>>>>>>>>>>",contractChangeDto.getTitle(),contractChangeDto.getOperateType());
+					//保存变更
+					if(Base.isEquals(OaConstant.CONTRACT_UPDATE_OR_SAVE_1, contractChangeDto.getOperateType())){											
+						
+						count = save(contractChange);
+						
+						//合同变更版本中,初始合同的变更主题为：原始合同名称+(原始合同)
+						ContractChangeDto changeDtoSource = this.getChangeDtoSource(contractChangeDto);
+						if(Base.isNotEmpty(changeDtoSource)){
+							ContractChange contractChangeSource = new ContractChange();
+							//对象复制方法
+							BeanUtils.copyProperties(changeDtoSource,contractChangeSource);
+							//保存原始合同 到变更信息中,作为变更的原始版本
+							save(contractChangeSource);
+						}
+					//修改
+					}else if(Base.isEquals(OaConstant.CONTRACT_UPDATE_OR_SAVE_2, contractChangeDto.getOperateType())){
+						
+						count = update(contractChange);
+					}
+					
+					//审批直接通过,新版变更需覆盖合同信息
+					if(Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_2, contractChangeDto.getApproveStatus())
+							|| Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_5, contractChangeDto.getApproveStatus())){
+						
+						ContractInfoDto newInfoDto = this.getContractInfoDtoFromChange(contractChangeDto);
+						contractInfoService.updateContractInfoFromChange(newInfoDto, loginUser);
+					}	
+				} catch (Exception e) {
+					//
+					logger.error(">>>>>>>>>>>>>>>保存审批变更信息出错!contractChangeDto={}>>>>>>>>>>>>>>>>>>",JacksonUtils.toJson(contractChangeDto));
+					throw new HioMybatisInsertException(e,"保存审批变更信息出错!");
+				}
+			}else{
+				//抛出校验不通过信息
+				throw new HioMybatisInsertException(resMsg.getMsg());
+			}			
+			 
+		}
+		return count;
+	}
+	
+	/**
+	 * 
+	 * <p>作废变更校验,生效的最大的变更版本才允许作废
+	 * @author wliang
+	 * @date 2018年4月21日 下午3:20:46 
+	 * @param contractChangeDto
+	 * @return
+	 */
+	private ResultMsg checkBeforeUpdateStatusToCancel(ContractChangeDto contractChangeDto) throws Exception{
+		ResultMsg resMsg = new ResultMsg();
+		resMsg.setSuccess(false);
+		//校验作废信息
+		if(Base.isEmpty(contractChangeDto) || Base.isEmpty(contractChangeDto.getId()) 
+				|| Base.isNotEquals(contractChangeDto.getStatus(),OaConstant.CONTRACT_STATUS_9)){
+
+			resMsg.setMsg("作废的变更信息为空,请确认数据!");
+		}else{
+			
+			ContractChangeDto changeDto = contractChangeMapper.getContractChangeById(contractChangeDto.getId());
+			//没查询到数据
+			if(Base.isEmpty(changeDto)){
+				resMsg = new ResultMsg();
+				resMsg.setSuccess(false);
+				resMsg.setMsg("该变更信息不存在,请确认数据是否正确!");
+				return resMsg;
+			}
+			
+			if(Base.isEmpty(contractChangeDto.getContractId())){
+				contractChangeDto.setContractId(changeDto.getContractId());
+			}
+			//变更是否为审批中
+			if(Base.isEquals(changeDto.getApproveStatus(),OaConstant.CONTRACT_APPROVE_STATUS_1)){
+				
+				resMsg.setMsg("该变更正在审批,不能作废!");			
+			}else if(Base.isEquals(changeDto.getApproveStatus(),OaConstant.CONTRACT_APPROVE_STATUS_4)){
+				
+				//判断是否为草稿
+				resMsg.setMsg("该变更为草稿状态,不能作废!");		
+			}else if(changeDto.getTitle().contains(OaConstant.CONTRACT_CHANGE_TITLE_SOURCE)){
+				//该变更为原始合同信息,不能作废
+				resMsg.setMsg("该变更为原始合同信息,不能作废!");
+				
+			}else if(Base.isNotEquals(changeDto.getStatus(),OaConstant.CONTRACT_STATUS_2)){
+				resMsg.setMsg("该变更未生效,不能作废!");
+				
+			}else{
+				
+				ContractInfoDto infoDto = contractInfoMapper.getContractInfoById(changeDto.getContractId());
+				
+				//作废变更后金额不能小于付款金额(已审批 + 审批中)
+				ContractPaymentDto queryPaymentDto = new ContractPaymentDto();
+				queryPaymentDto.setContractId(changeDto.getContractId());
+				//查询包含审批和审批发起的草稿
+				queryPaymentDto.setApproveStatusOneAndFour(OaConstant.CONTRACT_ONE_FOUR_QUERY_1);
+				List<ContractPaymentDto> paymentDtos = contractPaymentMapper.getContractPaymentList(queryPaymentDto);
+				//作废该变更后的合同金额不能小于付款金额(已审批 + 审批中)
+				if(Base.isNotEmpty(paymentDtos) && changeDto.getMoney().compareTo(paymentDtos.get(0).getSumPaymentMoney()) < 0){
+					
+					resMsg.setMsg("作废该变更后的合同金额"+changeDto.getMoney()+"不能小于付款金额" + paymentDtos.get(0).getSumPaymentMoney());
+				}
+				
+				if(Base.isNotEmpty(infoDto)){
+					//对应的合同已作废
+					if(Base.isEquals(infoDto.getStatus(), OaConstant.CONTRACT_STATUS_9)){
+
+						resMsg.setMsg("该变更对应的合同已作废,不能执行变更作废!");	
+					}else if(Base.isEquals(infoDto.getBalanceStatus(), OaConstant.CONTRACT_BALANCE_STATUS_2)){
+						
+						//对应的合同已结算
+						resMsg.setMsg("该变更对应的合同已结算,不能执行变更作废!");	
+					}else{
+						//校验要作废的变更,是否为最新的变更,非最新变更不能作废
+						ContractChangeDto contractChangeDto2 = new ContractChangeDto();
+						contractChangeDto2.setContractId(contractChangeDto.getContractId());
+						//查询包含审批和审批发起的草稿
+						contractChangeDto2.setApproveStatusOneAndFour(OaConstant.CONTRACT_ONE_FOUR_QUERY_1);
+						List<ContractChangeDto> changeDtoList = contractChangeMapper.getChangeListByContract(contractChangeDto2);
+						if(Base.isNotEmpty(changeDtoList)){
+							for(ContractChangeDto dto:changeDtoList){
+								if(Base.isNotEmpty(changeDto.getContractVersion()) 
+										&& Base.isNotEmpty(dto.getContractVersion())
+										&& Base.isNotEquals(dto.getStatus(), OaConstant.CONTRACT_STATUS_9)
+										&& dto.getContractVersion().compareTo(changeDto.getContractVersion()) >= 1){
+									
+									resMsg.setMsg("该变更不是最新版本,不能执行变更作废!");
+									break;
+								}
+							}
+						}						
+					}
+				}
+			}	
+		}
+		//校验通过
+		if(Base.isEmpty(resMsg.getMsg())){
+			resMsg.setSuccess(true);
+		}
+		return resMsg;
+	}
+	 
+	 /**
+	  * 
+	  * <p>删除前校验
+	  * @author wliang
+	  * @date 2018年4月16日 上午11:17:19 
+	  * @param contractChangeDto
+	  * @return
+	  */
+	 public ResultMsg checkBeforeDeleteChange(ContractChangeDto contractChangeDto) throws Exception {
+	 	ResultMsg resMsg = new ResultMsg();
+	 	resMsg.setSuccess(true);
+	 	
+	 	ContractChangeDto ccDto = contractChangeMapper.getContractChangeById(contractChangeDto.getId());
+	 	
+	 	if(Base.isEmpty(ccDto)){
+	 		
+	 		resMsg.setSuccess(false);
+	 		resMsg.setMsg("所需删除的合同变更不存在,请确认数据是否正确!");
+	 	}else if(Base.isNotEquals(OaConstant.CONTRACT_APPROVE_STATUS_4,ccDto.getApproveStatus())
+	 			&& Base.isNotEquals(OaConstant.CONTRACT_APPROVE_STATUS_3,ccDto.getApproveStatus())
+	 			&& Base.isNotEquals(OaConstant.CONTRACT_APPROVE_STATUS_6,ccDto.getApproveStatus())){
+	 		
+	 		//校验规则：只有草稿状态的变更允许删除
+	 		resMsg.setSuccess(false);
+	 		resMsg.setMsg("只有草稿状态的变更才允许删除,请确认变更状态!");
+	 	}else if(Base.isNotEmpty(ccDto.getFiId()) && Base.isEmpty(contractChangeDto.getBusinessId())){
+	 		
+	 		//流程审批发起合同变更,需要流程审批处发起删除
+	 		resMsg.setSuccess(false);
+	 		resMsg.setMsg("该合同变更来自审批应用，请到审批应用中进行操作!");
+	 	}else if(Base.isEmpty(ccDto.getFiId()) && Base.isNotEmpty(contractChangeDto.getBusinessId())){
+	 		
+	 		//流程审批发起的删除操作,不能删除业务发起的合同变更
+	 		resMsg.setSuccess(false);
+	 		resMsg.setMsg("该合同变更来自合同应用,请到合同应用进行操作!");
+	 	}else if(Base.isNotEmpty(contractChangeDto.getFiId()) 
+	 			&& !Base.isEquals(ccDto.getFiId(),contractChangeDto.getFiId())){
+	 		
+	 		//流程审批发起变更,流程实例Id与变更Id是否匹配
+	 		resMsg.setSuccess(false);
+	 		resMsg.setMsg("该合同变更id与流程实例id不匹配,请确认数据是否正确!");	
+	 	}
+	 	
+	 	return resMsg;
+	 	
+	 }
+		
+		/**
+		 * 
+		 * <p>更新审批状态前校验
+		 * @author wliang
+		 * @date 2018年4月16日 下午3:55:11 
+		 * @param contractChangeDto
+		 * @return
+		 */
+		public ResultMsg checkBeforeUpdateApproveStatus(ContractChangeDto contractChangeDto) throws Exception {
+			ResultMsg resMsg = new ResultMsg();
+			resMsg.setSuccess(false);
+			//校验规则：
+			if(Base.isEmpty(contractChangeDto)){
+				
+				resMsg.setMsg("该合同变更不存在,请确认数据是否正确!");
+			}else if(Base.isEmpty(contractChangeDto.getFiId())){
+				
+				resMsg.setMsg("变更来自合同应用,请确认数据是否正确!");
+			}else{
+				//变更后金额不能小于付款金额(已审批 + 审批中)
+				ContractPaymentDto queryPaymentDto = new ContractPaymentDto();
+				queryPaymentDto.setContractId(contractChangeDto.getContractId());
+				List<ContractPaymentDto> paymentDtos = contractPaymentMapper.getContractPaymentList(queryPaymentDto);
+				if(Base.isNotEmpty(paymentDtos) && contractChangeDto.getNewMoney().compareTo(paymentDtos.get(0).getSumPaymentMoney()) < 0){
+					
+					resMsg.setMsg("变更后金额"+contractChangeDto.getNewMoney()+"不能小于付款金额" + paymentDtos.get(0).getSumPaymentMoney());
+				}
+			}
+
+			//校验通过
+			if(Base.isEmpty(resMsg.getMsg())){
+				resMsg.setSuccess(true);
+			}
+			
+			return resMsg;
+			
+		}
+		
+		
+		/**
+		 * 
+		 * <p>保存前校验
+		 * @author wliang
+		 * @date 2018年4月16日 下午3:55:11 
+		 * @param contractChangeDto
+		 * @return
+		 */
+		public ResultMsg checkBeforeSaveOrUpdate(ContractChangeDto contractChangeDto,Integer type) throws Exception {
+			ResultMsg resMsg = new ResultMsg();
+			resMsg.setSuccess(false);
+			
+			
+			//校验规则：草稿状态才能修改
+			if(Base.isEquals(OaConstant.CONTRACT_UPDATE_OR_SAVE_2, type)){
+				
+				ContractChangeDto oldDto = contractChangeMapper.getContractChangeById(contractChangeDto.getId());
+				if(Base.isNotEquals(OaConstant.CONTRACT_APPROVE_STATUS_4,oldDto.getApproveStatus())){
+					resMsg.setMsg("只有草稿状态才允许修改,请确认状态!");
+					return resMsg;
+				}
+			}
+			
+			//非空校验
+			ResultMsg resMsg2 = this.checkNullBeforeUpdateOrSave(contractChangeDto);
+			//校验未通过
+			if(Base.isNotEmpty(resMsg2) && !resMsg2.isSuccess()){
+				return resMsg2;
+			}
+			
+			//合同信息
+			ContractInfoDto oldInfoDto = contractInfoMapper.getContractInfoById(contractChangeDto.getContractId());
+			if(Base.isEmpty(oldInfoDto)){
+				
+				resMsg.setMsg("没有查询到对应合同信息!");
+				return resMsg;
+			//合同未生效不能创建变更
+			}else if(Base.isEquals(oldInfoDto.getStatus(), OaConstant.CONTRACT_STATUS_0)){
+				resMsg.setMsg("对应合同未生效,不能进行此次操作!");
+				return resMsg;
+			}else if(Base.isEquals(oldInfoDto.getStatus(), OaConstant.CONTRACT_STATUS_9)){
+				resMsg.setMsg("对应合同已作废,不能进行此次操作!");
+				return resMsg;
+			}else if(Base.isEquals(oldInfoDto.getBalanceStatus(), OaConstant.CONTRACT_BALANCE_STATUS_2)){
+				resMsg.setMsg("对应合同已结算,不能进行此次操作!");
+				return resMsg;
+			}
+			
+			//校验是否存在其他非生效状态的变更
+			ContractChangeDto contractChangeDto2 = new ContractChangeDto();
+			contractChangeDto2.setContractId(contractChangeDto.getContractId());
+			//查询包含所有非删除
+			contractChangeDto2.setApproveStatusOneAndFour(OaConstant.CONTRACT_ONE_FOUR_QUERY_2);
+			List<ContractChangeDto> changeDtoList = contractChangeMapper.getChangeListByContract(contractChangeDto2);
+			if(Base.isNotEmpty(changeDtoList)){
+				
+				//查询第一条是不是驳回或者退回的
+				if(Base.isEmpty(contractChangeDto.getFiId())
+						&& Base.isEquals(changeDtoList.get(0).getApproveStatus(), OaConstant.CONTRACT_APPROVE_STATUS_3)){
+					
+					resMsg.setSuccess(false);
+					resMsg.setMsg("审批应用中该合同存在被驳回的变更,请到审批应用处理!");
+					return resMsg;
+				}else if(Base.isEmpty(contractChangeDto.getFiId())
+						&& Base.isEquals(changeDtoList.get(0).getApproveStatus(), OaConstant.CONTRACT_APPROVE_STATUS_6)){
+					
+					resMsg.setSuccess(false);
+					resMsg.setMsg("审批应用中该合同存在被退回的变更,请到审批应用处理!");
+					return resMsg;
+				}
+				
+				for(ContractChangeDto dto:changeDtoList){
+					if(Base.isNotEmpty(dto) && Base.isNotEquals(dto.getId(), contractChangeDto.getId())){
+						
+						if(Base.isEquals(dto.getApproveStatus(), OaConstant.CONTRACT_APPROVE_STATUS_4)){
+							
+							resMsg.setSuccess(false);
+							//审批
+							if (Base.isNotEmpty(dto.getFiId())){
+								resMsg.setMsg("审批应用中该合同存在草稿状态的变更,不能进行此次操作!");
+							}else{
+								resMsg.setMsg("合同应用中该合同存在草稿状态的变更,不能进行此次操作!");
+							}
+							
+							return resMsg;
+						}else if(Base.isEquals(dto.getApproveStatus(), OaConstant.CONTRACT_APPROVE_STATUS_1)){
+							
+							resMsg.setSuccess(false);
+							resMsg.setMsg("审批应用中该合同存在审批中的变更,不能进行此次操作!");
+							return resMsg;
+						}
+					}
+				}
+			}
+			
+			//提交 或 审批发起的变更进行非空校验
+			if(Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_2, contractChangeDto.getApproveStatus())
+					|| Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_5, contractChangeDto.getApproveStatus())
+					|| Base.isNotEmpty(contractChangeDto.getFiId())
+					){
+				//变更后金额不能小于付款金额(已审批 + 审批中)
+				ContractPaymentDto queryPaymentDto = new ContractPaymentDto();
+				queryPaymentDto.setContractId(contractChangeDto.getContractId());
+				List<ContractPaymentDto> paymentDtos = contractPaymentMapper.getContractPaymentList(queryPaymentDto);
+				if(Base.isNotEmpty(paymentDtos) && contractChangeDto.getNewMoney().compareTo(paymentDtos.get(0).getSumPaymentMoney()) < 0){
+					resMsg.setMsg("变更后金额"+contractChangeDto.getNewMoney()+"不能小于付款金额" + paymentDtos.get(0).getSumPaymentMoney());
+					return resMsg;
+				}
+				//校验  合同金额+变更金额 == 变更后金额
+				if((oldInfoDto.getMoney().add(contractChangeDto.getChangeMoney())).compareTo(contractChangeDto.getNewMoney()) != 0){
+					resMsg.setMsg("变更后金额: " + contractChangeDto.getNewMoney() + " 不等于 (合同金额: " 
+							+ oldInfoDto.getMoney() + " + 变更金额: " + contractChangeDto.getNewMoney() + ")");
+					return resMsg;
+				}
+			}
+			
+			//校验通过
+			if(Base.isEmpty(resMsg.getMsg())){
+				resMsg.setSuccess(true);
+			}
+			
+			return resMsg;
+			
+		}
+		
+		/**
+		 * 
+		 * <p>保存前非空校验<br>
+		 * @author wliang
+		 * @date 2018年5月2日 下午8:34:03 
+		 * @param contractChangeDto
+		 * @return
+		 * @throws Exception
+		 */
+		public ResultMsg checkNullBeforeUpdateOrSave(ContractChangeDto contractChangeDto) throws Exception {
+			ResultMsg resMsg = new ResultMsg();
+			resMsg.setSuccess(false);
+			
+			//对应的合同主键
+			if(Base.isEmpty(contractChangeDto.getContractId())){
+				resMsg.setMsg("变更对应的合同主键不能为空!");
+				
+			}else if(Base.isEmpty(contractChangeDto.getTitle())){
+				resMsg.setMsg("变更主题不能为空!");		
+				
+			}else if(Base.isEmpty(contractChangeDto.getApproveStatus())){
+				resMsg.setMsg("变更审批状态不能为空!");
+				
+			//审批发起
+			}else if(Base.isNotEmpty(contractChangeDto.getOperateType())){
+					
+				if(Base.isEmpty(contractChangeDto.getFiId())){
+					resMsg.setMsg("变更流程实例Id不能为空!");
+				}else if(Base.isEmpty(contractChangeDto.getBusinessId())){
+					resMsg.setMsg("变更业务Id不能为空!");
+				}
+			}
+			
+			//校验不通过时先返回信息
+			if(Base.isNotEmpty(resMsg.getMsg())){
+				return resMsg;
+			}
+			
+			//提交 或 审批发起的变更进行非空校验
+			if(Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_2, contractChangeDto.getApproveStatus())
+					|| Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_5, contractChangeDto.getApproveStatus())
+					|| Base.isNotEmpty(contractChangeDto.getFiId())
+					){
+				
+				if(Base.isEmpty(contractChangeDto)){
+					resMsg.setMsg("该合同变更数据为空,不能保存!");
+					
+				}else if(Base.isEmpty(contractChangeDto.getCode())){
+					resMsg.setMsg("合同编号不能为空!");
+					
+				}else if(Base.isEmpty(contractChangeDto.getFirstParty())){
+					resMsg.setMsg("甲方单位不能为空!");
+					
+				}else if(Base.isEmpty(contractChangeDto.getSecondParty())){
+					resMsg.setMsg("乙方单位不能为空!");
+					
+				}else if(Base.isEmpty(contractChangeDto.getPayee())){
+					resMsg.setMsg("收款单位不能为空!");
+					
+				}else if(Base.isEmpty(contractChangeDto.getChangeTypeId())){
+					resMsg.setMsg("变更类型不能为空!");
+					
+				}else if(Base.isEmpty(contractChangeDto.getStartDate())){
+					resMsg.setMsg("合同开始时间不能为空!");
+					
+				}else if(Base.isEmpty(contractChangeDto.getEndDate())){
+					resMsg.setMsg("合同结束时间不能为空!");
+					
+				}else if(Base.isEmpty(contractChangeDto.getChangeMoney())){
+					resMsg.setMsg("本次变更金额不能为空!");
+					
+				}else if(Base.isEmpty(contractChangeDto.getNewMoney())){
+					resMsg.setMsg("变更后合同金额不能为空!");
+					
+				}else if(Base.isEmpty(contractChangeDto.getOperatorId())){
+					resMsg.setMsg("经办人不能为空!");
+					
+				}else if(Base.isEmpty(contractChangeDto.getOperatorDeptId())){
+					resMsg.setMsg("经办部门不能为空!");
+					
+				}else if(Base.isEmpty(contractChangeDto.getSummary())){
+					resMsg.setMsg("合同摘要不能为空!");
+					
+				}/*else if(Base.isEmpty(contractChangeDto.getPaymentAgreement())){
+					resMsg.setMsg("付款约定不能为空!");
+					
+				}	*/		
+			}		
+			
+			//校验通过
+			if(Base.isEmpty(resMsg.getMsg())){
+				resMsg.setSuccess(true);
+			}
+			
+			return resMsg;
+		}
+		
+		
+		
+		/**
+		 * 
+		 * <p>保存前,组织变更的内容<br>
+		 * @author wliang
+		 * @date 2018年4月23日 下午10:58:17 
+		 * @param contractChangeDto
+		 * @param loginUser
+		 */
+		public void initContractChangeDto(ContractChangeDto contractChangeDto,LoginUser loginUser) throws Exception{
+			if(Base.isNotEmpty(contractChangeDto)){
+				
+				//合同信息
+				ContractInfoDto oldDto = contractInfoMapper.getContractInfoById(contractChangeDto.getContractId());
+				
+				StringBuffer changeText = new StringBuffer();
+				/** 不可变更 合同类型、合同金额 */
+				contractChangeDto.setContractTypeId(oldDto.getContractTypeId());
+				contractChangeDto.setMoney(oldDto.getMoney());
+				//主键
+				if(Base.isEmpty(contractChangeDto.getId())){
+					contractChangeDto.setId(generatePk());
+				}
+				if(Base.isEmpty(contractChangeDto.getDelflag())){
+					contractChangeDto.setDelflag(OaConstant.CONTRACT_DEL_FLAG_0);
+				}
+				if(Base.isEmpty(contractChangeDto.getConcurrencyVersion())){
+					contractChangeDto.setConcurrencyVersion(OaConstant.CONTRACT_DEL_FLAG_0);
+				}
+				//变更版本
+				if(Base.isEmpty(contractChangeDto.getContractVersion()) 
+						|| Base.isEquals(contractChangeDto.getOperateType(),OaConstant.CONTRACT_UPDATE_OR_SAVE_1)){
+					contractChangeDto.setContractVersion(Long.valueOf(
+							new SimpleDateFormat(OaConstant.CONTRACT_CHANGE_DATE_FORMAT).format(new Date())));
+				}
+				if(Base.isEmpty(contractChangeDto.getConcurrencyVersion())){
+					contractChangeDto.setConcurrencyVersion(OaConstant.CONTRACT_DEL_FLAG_0);
+				}
+				//变更主题
+				if(Base.isNotEmpty(contractChangeDto.getTitle())){
+					contractChangeDto.setTitle(contractChangeDto.getTitle().trim());
+				}
+				
+				
+				/** 比较本次变更内容	start*/		
+				//甲方单位
+				if(Base.isNotEquals(oldDto.getFirstParty(), contractChangeDto.getFirstParty())){
+					changeText.append("甲方单位变更:").append(oldDto.getFirstParty()).append(OaConstant.CONTRACT_CHANGE_CONNECTOR)
+					.append(contractChangeDto.getFirstParty()).append(OaConstant.CONTRACT_CHANGE_LINE_BR);
+				}
+				//乙方单位
+				if(Base.isNotEquals(oldDto.getSecondParty(), contractChangeDto.getSecondParty())){
+					changeText.append("乙方单位变更:").append(oldDto.getSecondParty()).append(OaConstant.CONTRACT_CHANGE_CONNECTOR)
+					.append(contractChangeDto.getSecondParty()).append(OaConstant.CONTRACT_CHANGE_LINE_BR);
+				}
+				//收款单位
+				if(Base.isNotEquals(oldDto.getPayee(), contractChangeDto.getPayee())){
+					changeText.append("收款单位变更:").append(oldDto.getPayee()).append(OaConstant.CONTRACT_CHANGE_CONNECTOR)
+					.append(contractChangeDto.getPayee()).append(OaConstant.CONTRACT_CHANGE_LINE_BR);
+				}
+				//开始时间
+				if(Base.isNotEquals(oldDto.getStartDate(), contractChangeDto.getStartDate())){
+					changeText.append("开始时间变更:").append(oldDto.getStartDate()).append(OaConstant.CONTRACT_CHANGE_CONNECTOR)
+					.append(contractChangeDto.getStartDate()).append(OaConstant.CONTRACT_CHANGE_LINE_BR);
+				}
+				//结束时间
+				if(Base.isNotEquals(oldDto.getEndDate(), contractChangeDto.getEndDate())){
+					changeText.append("结束时间变更:").append(oldDto.getEndDate()).append(OaConstant.CONTRACT_CHANGE_CONNECTOR)
+					.append(contractChangeDto.getEndDate()).append(OaConstant.CONTRACT_CHANGE_LINE_BR);
+				}
+				//合同金额
+				if(Base.isNotEmpty(oldDto.getMoney())
+						&& Base.isNotEmpty(contractChangeDto.getNewMoney())
+						&& oldDto.getMoney().compareTo(contractChangeDto.getNewMoney()) != 0){
+					changeText.append("合同金额变更:").append(oldDto.getMoney()).append(OaConstant.CONTRACT_CHANGE_CONNECTOR)
+					.append(contractChangeDto.getNewMoney()).append(OaConstant.CONTRACT_CHANGE_LINE_BR);
+				}
+				//经办人
+				if(Base.isNotEquals(oldDto.getOperatorId(), contractChangeDto.getOperatorId())){
+					String operatorName = contractChangeDto.getOperatorName();
+					if(Base.isEmpty(operatorName)){
+						OAUserParam apiParam = new OAUserParam ();
+						List<String> userIds = new ArrayList<String> ();
+						userIds.add(contractChangeDto.getOperatorId());
+						apiParam.setUserIds(userIds);
+						apiParam.setTendId(loginUser.getTendId());
+						//从接口获取经办人信息
+						ApiFeignResponse<List<OAUserDto>> apiFeignRes = 
+								sysFeignService.queryUserByOrgAndRoleAndUser(apiParam);
+						if(Base.isNotEmpty(apiFeignRes) 
+								&& Base.isNotEmpty(apiFeignRes.getResult()) 
+								&& Base.isNotEmpty(apiFeignRes.getResult().get(0))){
+							operatorName = apiFeignRes.getResult().get(0).getName();
+						}
+					}
+					changeText.append("经办人变更:").append(oldDto.getOperatorName())
+					.append(OaConstant.CONTRACT_CHANGE_CONNECTOR)
+					.append(operatorName).append(OaConstant.CONTRACT_CHANGE_LINE_BR);
+				}
+				//经办部门
+				if(Base.isNotEquals(oldDto.getOperatorDeptId(),contractChangeDto.getOperatorDeptId())){
+					String operatorDeptName = contractChangeDto.getOperatorDeptName();
+					if(Base.isEmpty(operatorDeptName)){
+						//从接口获取经办部门信息
+						ApiFeignResponse<GeneralDto> apiFeignRes = 
+								sysFeignService.queryOrganizationNameById(loginUser.getTendId(),contractChangeDto.getOperatorDeptId());
+						if(Base.isNotEmpty(apiFeignRes) && Base.isNotEmpty(apiFeignRes.getResult())){
+							operatorDeptName = apiFeignRes.getResult().getName();
+						}
+					}
+					changeText.append("经办部门变更:").append(oldDto.getOperatorDeptName())
+					.append(OaConstant.CONTRACT_CHANGE_CONNECTOR)
+					.append(operatorDeptName).append(OaConstant.CONTRACT_CHANGE_LINE_BR);
+				}
+				//变更日期
+				/*if(Base.isNotEquals(oldDto.getSigningDate(), contractChangeDto.getSigningDate())){
+					
+					changeText.append("签订日期变更:").append(oldDto.getSigningDate()).append(OaConstant.CONTRACT_CHANGE_CONNECTOR)
+					.append(contractChangeDto.getSigningDate()).append(OaConstant.CONTRACT_CHANGE_LINE_BR);
+				}*/
+				//合同编号
+				if(Base.isNotEquals(oldDto.getCode(), contractChangeDto.getCode())){
+					
+					changeText.append("合同编号变更:").append(oldDto.getCode()).append(OaConstant.CONTRACT_CHANGE_CONNECTOR)
+					.append(contractChangeDto.getCode()).append(OaConstant.CONTRACT_CHANGE_LINE_BR);
+				}
+				//合同摘要
+				if(Base.isNotEquals(oldDto.getSummary(), contractChangeDto.getSummary())){
+					
+					changeText.append("'合同摘要'发生变更").append(OaConstant.CONTRACT_CHANGE_LINE_BR);
+				}
+				//付款约定
+				if(Base.isNotEquals(oldDto.getPaymentAgreement(), contractChangeDto.getPaymentAgreement())){
+					
+					changeText.append("'付款约定'发生变更").append(OaConstant.CONTRACT_CHANGE_LINE_BR);
+				}
+				//其他
+				if(Base.isNotEquals(oldDto.getRemark(), contractChangeDto.getRemark())){
+					
+					changeText.append("'其他'发生变更").append(OaConstant.CONTRACT_CHANGE_LINE_BR);
+				}
+				
+				
+				if(Base.isNotEmpty(changeText)){
+					contractChangeDto.setChangeText(changeText.toString());
+				}else{
+					contractChangeDto.setChangeText(null);
+				}
+			}
+		}
+		
+		/**
+		 * 
+		 * <p>初始合同插入合同变更中作为初始版本<br>
+		 * @author wliang
+		 * @date 2018年4月23日 下午6:09:45 
+		 * @param contractChangeDto
+		 * @return
+		 * @throws Exception
+		 */
+		public ContractChangeDto getChangeDtoSource(ContractChangeDto contractChangeDto) throws Exception{
+			ContractChangeDto changeDtoSource = null;
+			if(Base.isNotEmpty(contractChangeDto) && Base.isNotEmpty(contractChangeDto.getContractId())){
+				
+				//该查询只需要合同id,title造成干扰
+				ContractChangeDto contractChangeDto2 = new ContractChangeDto();
+				contractChangeDto2.setContractId(contractChangeDto.getContractId());
+				//查询包含审批和审批发起的草稿
+				contractChangeDto2.setApproveStatusOneAndFour(OaConstant.CONTRACT_ONE_FOUR_QUERY_1);
+				List<ContractChangeDto> changeDtos= contractChangeMapper.getChangeListByContract(contractChangeDto2);
+				 //第一次变更
+				 if(Base.isEmpty(changeDtos) || (changeDtos.size() == 1 
+						 && Base.isEquals(contractChangeDto.getId(), changeDtos.get(0).getId()))){
+					 
+					 ContractInfoDto infoDto = contractInfoMapper.getContractInfoById(contractChangeDto.getContractId());
+					 changeDtoSource = new ContractChangeDto();
+					 //复制到变更记录中
+					 BeanUtils.copyProperties(infoDto, changeDtoSource);
+					 changeDtoSource.setId(generatePk());
+					 changeDtoSource.setTitle(changeDtoSource.getTitle() + OaConstant.CONTRACT_CHANGE_TITLE_SOURCE);
+					 changeDtoSource.setChangeMoney(new BigDecimal("0.00"));
+					 changeDtoSource.setNewMoney(changeDtoSource.getMoney());
+					 //用原合同创建时间生成版本号,确保原始合同版本号最小
+					 changeDtoSource.setContractVersion(Long.valueOf(
+								new SimpleDateFormat(OaConstant.CONTRACT_CHANGE_DATE_FORMAT).format(infoDto.getCreateDate())));
+					 changeDtoSource.setContractId(infoDto.getId());
+					 
+				 }				
+			}
+			return changeDtoSource;
+		}
+		
+		/**
+		 * 
+		 * <p>变更生效后回写合同信息<br>
+		 * @author wliang
+		 * @date 2018年4月23日 下午6:09:45 
+		 * @param contractChangeDto
+		 * @return
+		 * @throws Exception
+		 */
+		public ContractInfoDto getContractInfoDtoFromChange(ContractChangeDto contractChangeDto) throws Exception{
+			ContractInfoDto newInfoDto = null;
+			if(Base.isNotEmpty(contractChangeDto) && Base.isNotEmpty(contractChangeDto.getContractId())){
+				//获取当前原合同信息
+				ContractInfoDto oldInfoDto = contractInfoMapper.getContractInfoById(contractChangeDto.getContractId());
+				newInfoDto = new ContractInfoDto();
+				//复制信息
+				BeanUtils.copyProperties(contractChangeDto, newInfoDto);
+				newInfoDto.setId(oldInfoDto.getId());
+				newInfoDto.setTitle(oldInfoDto.getTitle());
+				newInfoDto.setMoney(contractChangeDto.getNewMoney());
+				newInfoDto.setUpdateDate(DateUtil.getDate(DateUtil.getCurDateTime()));
+				newInfoDto.setStatus(oldInfoDto.getStatus());
+				newInfoDto.setFiId(oldInfoDto.getFiId());
+				newInfoDto.setSigningDate(oldInfoDto.getSigningDate());
+			}
+			return newInfoDto;
+		}
+		
+		
+		private Page pageReturn(List<? extends Object> list) throws Exception{
+		     PageInfo<?> pageInfo = new PageInfo<>(list);
+		     Page resultPage = super.getResultPage(pageInfo);
+		     return resultPage;
+		 }
+		 
+		 /**
+		  * 
+		  * <p>本次翻页起始下标和每页数据量
+		  * @author wliang
+		  * @date 2018年4月18日 下午4:18:56 
+		  * @param contractChangeDto
+		  */
+		 private void pageStart(ContractChangeDto contractChangeDto) throws Exception{
+		     int pageNum = contractChangeDto.getPageNum();
+		     int pageCount = contractChangeDto.getPageCount();
+		     /*int pageStart = (pageNum - 1) * pageCount;
+		     if (pageStart < 0) {
+		         pageStart = 0;
+		     }*/
+		     PageHelper.startPage(pageNum, pageCount, true, false, null);
+		 }
+		
+		/**
+		  * 
+		  * <p>组织日志信息
+		  * @author wliang
+		  * @date 2018年4月21日 下午1:42:59 
+		  * @param contractChangeDto
+		  * @param logType
+		  * @return
+		  */
+		 private ContractLogDto getContractLogDto(ContractChangeDto contractChangeDto,int logType){
+			 ContractLogDto logDto = new ContractLogDto();
+			 logDto.setContractId(contractChangeDto.getContractId());
+			 logDto.setChangeId(contractChangeDto.getId());
+			 logDto.setDelflag(OaConstant.CONTRACT_DEL_FLAG_0);
+			 logDto.setConcurrencyVersion(OaConstant.CONTRACT_DEL_FLAG_0);
+			 logDto.setLogType(logType);
+			 
+			 String title = null;
+			 ContractChangeDto changeDto = contractChangeMapper.getContractChangeById(contractChangeDto.getId());
+			 if(Base.isNotEmpty(contractChangeDto.getTitle())){
+				 title = contractChangeDto.getTitle();
+			 }else if(Base.isNotEmpty(changeDto) && Base.isNotEmpty(changeDto.getTitle())){
+				 title = changeDto.getTitle();
+			 }
+			 //类型名称
+			 logDto.setLogTypeName(OaConstant.LOG_TYPE_TEXT_MAP.get(logType));
+			 //日志内容
+			 StringBuffer logText = new StringBuffer();
+			 //合同变更创建
+			 if(Base.isEquals(OaConstant.CONTRACT_LOG_TYPE_17, logType)){
+				 logText.append("创建合同变更").append("\"").append(title).append("\",变更金额");
+				 if(Base.isEmpty(contractChangeDto.getChangeMoney())){
+					 logText.append("0");
+				 }else{
+					 logText.append(contractChangeDto.getChangeMoney());
+				 }
+				 
+			 //合同变更审批通过
+			 }else if(Base.isEquals(OaConstant.CONTRACT_LOG_TYPE_18, logType)){
+				 logText.append("合同变更").append("\"").append(title).append("\"审批通过");
+				 
+			 //合同变更作废
+			 }else if(Base.isEquals(OaConstant.CONTRACT_LOG_TYPE_22, logType)){	 
+				 logText.append("对合同变更").append("\"").append(title).append("\"进行作废操作");
+				 if(Base.isNotEmpty(contractChangeDto.getLogText())){
+					 logText.append("  作废说明:").append(contractChangeDto.getLogText());
+				 }
+			 }
+			 //日志内容
+			 logDto.setLogText(logText.toString());
+			 logDto.setCreateDate(DateUtil.getDate(DateUtil.getCurDateTime()));		 
+			 return logDto;
+		 }
+		 
+		 /**
+		  * 
+		  * <p>合变更的操作菜单<br>
+		  * @author wliang
+		  * @date 2018年4月27日 上午10:15:44 
+		  * @param changeDtoList
+		  * @param loginUser
+		  */
+		 public void getContractAuthForList(List<ContractChangeDto> changeDtoList,LoginUser loginUser) throws Exception{
+			 if(Base.isNotEmpty(changeDtoList)){
+				for(ContractChangeDto dto:changeDtoList){
+					
+					//type参数暂时没有用到
+					dto.setContractAuth(this.getChangeAuthForSingle(dto, loginUser, OaConstant.CONTRACT_AUTH_TYPE_LIST));
+				}
+			 }
+		 }
+		 
+		 /**
+		  * 具体合变更的操作菜单
+		  */
+		 public ContractAuthDto getChangeAuthForSingle(ContractChangeDto contractChangeDto,
+				 LoginUser loginUser,String type) throws HioMybatisGetException{
+			 
+			 
+			 ContractAuthDto authDto = new ContractAuthDto();
+			 if(Base.isNotEmpty(contractChangeDto)){
+				 
+				 //查看日志都有权限 日志只在合同信息中查看
+				 authDto.setContractSeeLog(false);
+				 
+				 //查看流程审批 流程发起的
+				 if(Base.isNotEmpty(contractChangeDto.getFiId())){
+					 authDto.setContractSeeFlow(true);
+				 }
+				 ContractInfoDto infoDto = contractInfoMapper.getContractInfoById(contractChangeDto.getContractId());
+				 //对应的合同信息没有结算且也没有作废,才能有其他操作
+				 if(Base.isNotEmpty(infoDto) 
+						 && Base.isNotEquals(infoDto.getStatus(), OaConstant.CONTRACT_STATUS_9)
+						 && Base.isNotEquals(infoDto.getBalanceStatus(), OaConstant.CONTRACT_BALANCE_STATUS_2)){
+					
+					 //业务发起的、草稿状态的才能进行修改和删除操作
+					 if(Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_4,contractChangeDto.getApproveStatus())
+							&& Base.isEmpty(contractChangeDto.getFiId())){
+						
+						authDto.setContractUpdate(true);
+						authDto.setContractDelete(true);
+					 }else{
+						 
+						 ContractChangeDto dto = new ContractChangeDto();
+						 dto.setContractId(contractChangeDto.getContractId());
+						 List<ContractChangeDto> dtos = contractChangeMapper.getChangeListByContract(dto);
+						 ContractChangeDto firstChangeDto = null;
+						 if(Base.isNotEmpty(dtos)){
+							 firstChangeDto = dtos.get(0);
+							//最新版本已生效才能作废 且不是原始合同
+							if(Base.isEquals(firstChangeDto.getId(),contractChangeDto.getId()) 
+									&& Base.isEquals(OaConstant.CONTRACT_STATUS_2,contractChangeDto.getStatus()) 
+									&& !contractChangeDto.getTitle().contains(OaConstant.CONTRACT_CHANGE_TITLE_SOURCE)){
+								authDto.setContractCancel(true);
+							}
+						 }
+					}
+				 }
+			 }
+			 return authDto;
+		 }
+
+}

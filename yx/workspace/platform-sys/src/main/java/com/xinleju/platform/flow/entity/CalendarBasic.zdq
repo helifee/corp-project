@@ -1,0 +1,80 @@
+package com.xinleju.platform.flow.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Table(value="PT_FLOW_CALENDAR_BASIC",desc="工作日历基础表")
+public class CalendarBasic extends BaseEntity{
+	
+		
+	@Column(value="year",desc="年份")
+	private Integer year;
+    
+  		
+	@Column(value="work_day",desc="工作日")
+	private String workDay;//1-周日、2-周一、3-周二、4-周三、5-周四、6-周五、7-周六'
+    
+  		
+	@Column(value="start_time",desc="上班时间")
+	private String startTime;
+    
+  		
+	@Column(value="end_time",desc="下班时间")
+	private String endTime;
+    
+  		
+	@Column(value="remark",desc="备注说明")
+	private String remark;
+    
+  		
+		
+	public Integer getYear() {
+		return year;
+	}
+	public void setYear(Integer year) {
+		this.year = year;
+	}
+    
+  		
+	public String getWorkDay() {
+		return workDay;
+	}
+	public void setWorkDay(String workDay) {
+		this.workDay = workDay;
+	}
+    
+  		
+	public String getStartTime() {
+		return startTime;
+	}
+	public void setStartTime(String startTime) {
+		this.startTime = startTime;
+	}
+    
+  		
+	public String getEndTime() {
+		return endTime;
+	}
+	public void setEndTime(String endTime) {
+		this.endTime = endTime;
+	}
+    
+  		
+	public String getRemark() {
+		return remark;
+	}
+	public void setRemark(String remark) {
+		this.remark = remark;
+	}
+    
+  		
+	
+}

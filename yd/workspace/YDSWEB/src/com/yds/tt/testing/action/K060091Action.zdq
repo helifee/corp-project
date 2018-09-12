@@ -1,0 +1,879 @@
+/*
+ * @(#) K060091Action.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 教育考试培训系统
+ *    SubSystem: 考试子系统
+ */
+
+package com.yds.tt.testing.action;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.InputStream;
+import java.util.List;
+
+import net.sf.json.JSONException;
+import net.sf.json.JSONObject;
+
+import org.springframework.beans.factory.config.BeanDefinition;
+import org.springframework.context.annotation.Scope;
+import org.springframework.stereotype.Controller;
+
+import com.opensymphony.xwork2.interceptor.annotations.InputConfig;
+import com.yds.base.action.AbstractBaseAction;
+import com.yds.common.service.SessionConstants;
+import com.yds.tt.manager.bean.TtCheckResult;
+import com.yds.tt.manager.service.TtCommonService;
+import com.yds.tt.manager.service.TtCommonUtil;
+import com.yds.tt.manager.service.TtConstants;
+//import com.yds.tt.manager.service.TtExclusiveException;
+import com.yds.tt.manager.service.TtExclusiveExtException;
+import com.yds.tt.testing.bean.K060031ExamPaperInfo;
+import com.yds.tt.testing.bean.K060031ExamQuestionInfo;
+import com.yds.tt.testing.bean.K060031SingleQuesInfo;
+import com.yds.tt.testing.bean.K060091BasicInfo;
+import com.yds.tt.testing.bean.TestEmployeeAnswerInfo;
+import com.yds.tt.testing.service.K060091Service;
+import com.yds.util.service.Session;
+
+/**
+ * 考生答卷&试卷预览处理
+ * 
+ * @author sundefu
+ * @version 1.00 2010/04/23
+ */
+@Scope(BeanDefinition.SCOPE_PROTOTYPE)
+@Controller("k060091Action")
+public class K060091Action extends AbstractBaseAction {
+
+	private static final long serialVersionUID = -3555338747881330928L;
+	/** 画面模式. */
+	private Integer mode;
+	/** 考试Id. */
+	private String examineId;
+	/** 评分任务分配方式. */
+	private String markTaskAsignStyle;
+	/** 选中评分任务列表. */
+	private List<String> markTaskList;
+	/** 考试员工Id. */
+	private String employeeId;
+	/** 参加次数. */
+	private Integer examineJoinTimes;
+	/** 错误消息. */
+	private String errorMessage;
+	/** 考试评分基本信息. */
+	private K060091BasicInfo k060091BasicInfo;
+	/** 考试评分试卷信息. */
+	private K060031ExamPaperInfo k060031ExamPaperInfo;
+	/** 考试评分试卷信息json串. */
+	private String examPaperInfo;
+	/** 考试员工答卷及得分信息. */
+	private TestEmployeeAnswerInfo testEmployeeAnswerInfo;
+	/** 待评分试卷数. */
+	private Integer paperAllNum;
+	/** 当前评分试卷序号. */
+	private Integer markingPaperNo;
+	/** 是否跳过已评分试卷. */
+	private Boolean ifSkipMarked;
+	/** ajax返回用空字串. */
+	private String nullStr;	
+	private K060091Service k060091Service;
+	private TtCommonService ttCommonService;
+
+	
+	/**
+	 * 构造方法
+	 * 
+	 */
+	protected K060091Action() {
+		k060091BasicInfo = new K060091BasicInfo();
+		setK060031ExamPaperInfo(new K060031ExamPaperInfo());
+	}
+	
+	/**
+	 * 画面的初期显示（考试评分模式） 考试阅卷&答案查看
+	 * 
+	 * @return SUCCESS
+	 */
+	@InputConfig(resultName = "error")
+	public String initTestMarkMode() throws Exception {
+		// 考试评分模式
+		mode = K060091Service.TEST_MARK_MODE;
+		k060091BasicInfo.setMarkTaskAsignStyle(markTaskAsignStyle);
+		
+		// 按整卷分配
+		if (markTaskAsignStyle.equals(TtConstants.C15.C15_1.toString())) {
+			k060091BasicInfo.setPaperList(markTaskList);
+			k060091BasicInfo.setEmployeeId(markTaskList.get(0));
+		// 按大题分配
+		} else if (markTaskAsignStyle.equals(TtConstants.C15.C15_2.toString())) {
+			k060091BasicInfo.setBigquestionList(markTaskList);
+		}
+		k060091BasicInfo.setExamineId(examineId);
+		
+		// 设置画面session情报
+		Session.set(SessionConstants.TT_K060091_MODE, mode);
+		Session.set(SessionConstants.TT_K060091_BASICINFO, k060091BasicInfo);
+		
+		return SUCCESS;
+	}
+
+	/**
+	 * 画面的初期显示（考试答案对照模式） 考试阅卷&答案查看
+	 * 
+	 * @return SUCCESS
+	 */
+	@InputConfig(resultName = "error")
+	public String initTestAnswerViewMode() throws Exception {
+		
+		// 考试答案对照模式
+		mode = K060091Service.TEST_ANSWERVIEW_MODE;
+		k060091BasicInfo.setExamineId(examineId);
+		k060091BasicInfo.setEmployeeId(employeeId);
+		k060091BasicInfo.setExamineJoinTimes(examineJoinTimes);
+		
+		
+		
+		// 设置画面Session情报
+		Session.set(SessionConstants.TT_K060091_MODE, mode);
+		Session.set(SessionConstants.TT_K060091_BASICINFO, k060091BasicInfo);
+		
+		// qian 追加：本人可以查看答案。
+		if (employeeId.equals(TtCommonUtil.getLoginUserId())) {
+			return SUCCESS;
+		}
+		// 画面初期检查
+		TtCheckResult ttCheckResult = k060091Service.initCheckProcess(mode);
+		if (!ttCheckResult.getRetFlag()) {
+			errorMessage = ttCheckResult.getRetMessage();
+			return ERROR;
+		}
+		
+		return SUCCESS;
+	}
+	
+	/**
+	 * 画面的初期显示（练习答案对照模式） 考试阅卷&答案查看
+	 * 
+	 * @return SUCCESS
+	 */
+	public String initPracticeAnswerViewMode() throws Exception {
+		
+		// 练习答案对照模式
+		mode = K060091Service.PRACTICE_ANSWERVIEW_MODE;
+		// 画面模式
+		Session.set(SessionConstants.TT_K060091_MODE, mode);
+		
+		return SUCCESS;
+	}
+	
+	/**
+	 * 评分模式初期处理
+	 * 
+	 * @return SUCCESS
+	 */
+	public String markModeInitProcess () throws Exception {
+		// 画面初期检查
+		mode = (Integer) Session.get(SessionConstants.TT_K060091_MODE);
+		TtCheckResult ttCheckResult = k060091Service.initCheckProcess(mode);
+		if (!ttCheckResult.getRetFlag()) {
+			errorMessage = ttCheckResult.getRetMessage();
+			return ERROR;
+		}
+		// 检查评分任务状态
+		k060091BasicInfo = (K060091BasicInfo)Session.get(SessionConstants.TT_K060091_BASICINFO);
+		// 考试Id
+		examineId = k060091BasicInfo.getExamineId();
+		// 任务列表
+		if (TtConstants.C15.C15_1.toString().equals(
+				k060091BasicInfo.getMarkTaskAsignStyle())) {
+			markTaskList = k060091BasicInfo.getPaperList();
+		} else if (TtConstants.C15.C15_2.toString().equals(
+				k060091BasicInfo.getMarkTaskAsignStyle())) {
+			markTaskList = k060091BasicInfo.getBigquestionList();
+		}
+		
+		try {
+			// 锁定当前评分对象
+			ttCommonService.addLockByList(examineId, markTaskList);
+//		} catch (TtExclusiveException e) {
+//			// 出现单键锁冲突意味着有人在进行评分任务分配
+//			String userName = e.getMessage();
+//			errorMessage = propMgr.getMessage("yds.tt.error.KSE67", userName);
+//			putOpTip(errorMessage);
+//			return INPUT;
+		} catch (TtExclusiveExtException e) {
+			
+			// 出现双键锁冲突说明有人对该评分任务进行评分
+			String userName = e.getMessage();
+			errorMessage = propMgr.getMessage("yds.tt.error.KSE68", userName);
+			putOpTip(errorMessage);
+			return INPUT;
+		}
+
+		// 初始化试卷序号
+		k060031ExamPaperInfo.setMarkingPaperNo(1);
+		
+		return SUCCESS;
+	}
+	
+	/**
+	 * 取得评分试卷详细信息
+	 * 
+	 * @return SUCCESS
+	 */
+	public String createMarkingPaperDetail() throws Exception {
+		// 画面模式
+		mode = (Integer)Session.get(SessionConstants.TT_K060091_MODE);
+		k060091BasicInfo = (K060091BasicInfo)Session.get(SessionConstants.TT_K060091_BASICINFO);
+		if (mode.equals(K060091Service.TEST_MARK_MODE)) {
+			k060091BasicInfo.setIfInit(true);
+			Session.set(SessionConstants.TT_K060091_BASICINFO, k060091BasicInfo);
+		}
+
+		// 取得评分试卷详细信息
+		k060031ExamPaperInfo = k060091Service.getMarkingPaperDetail(mode);
+		//System.out.println("**************************k060031ExamPaperInfo get success");
+		if (mode.equals(K060091Service.TEST_MARK_MODE)) {
+			k060031ExamPaperInfo.setMarkingPaperNo(1);
+			k060031ExamPaperInfo.setPaperAllNum(k060091BasicInfo.getPaperList().size());
+		}
+		
+		// 将试卷信息转化为JSon格式
+		// TODO 验证试卷内数据是否整合捕捉异常
+		try {
+			JSONObject json = JSONObject.fromObject(k060031ExamPaperInfo);
+			setExamPaperInfo(json.toString());
+			//System.out.println("******************ExamPaperInfo:" + examPaperInfo);
+		} catch (JSONException e) {
+			e.printStackTrace();
+		}
+		
+		return SUCCESS;
+	}
+	
+	/**
+	 * 评分
+	 * 
+	 * @return SUCCESS
+	 */
+	public String markWholePaper() throws Exception {
+		// 画面启动限制检查
+		mode = (Integer) Session.get(SessionConstants.TT_K060091_MODE);
+		TtCheckResult ttCheckResult = k060091Service.initCheckProcess(mode);
+		if (!ttCheckResult.getRetFlag()) {
+			errorMessage = ttCheckResult.getRetMessage();
+			return ERROR;
+		}		
+		// 设置评分区分(已评分)
+		testEmployeeAnswerInfo.setMarkFlg(TtConstants.C18.C18_1.value());
+		// 考试评分
+		k060091Service.updateMarkWholePaper(testEmployeeAnswerInfo);
+		setNullStr("");
+		return SUCCESS;
+	}
+
+	/**
+	 * 重新评分
+	 * 
+	 * @return SUCCESS
+	 */
+	public String reMarkWholePaper() throws Exception {
+		// 画面启动限制检查
+		mode = (Integer) Session.get(SessionConstants.TT_K060091_MODE);
+		TtCheckResult ttCheckResult = k060091Service.initCheckProcess(mode);
+		if (!ttCheckResult.getRetFlag()) {
+			errorMessage = ttCheckResult.getRetMessage();
+			return ERROR;
+		}		
+		// 设置评分区分(未评分)
+		testEmployeeAnswerInfo.setMarkFlg(TtConstants.C18.C18_2.value());
+		// 重新评分
+		k060091Service.updateMarkWholePaper(testEmployeeAnswerInfo);
+		setNullStr("");
+		return SUCCESS;
+	}
+
+	/**
+	 * 上一张
+	 * 
+	 * @return SUCCESS
+	 */
+	public String jumpToPreviousPaper() throws Exception {
+
+		// 画面启动限制检查
+		mode = (Integer) Session.get(SessionConstants.TT_K060091_MODE);
+		TtCheckResult ttCheckResult = k060091Service.initCheckProcess(mode);
+		if (!ttCheckResult.getRetFlag()) {
+			errorMessage = ttCheckResult.getRetMessage();
+			return ERROR;
+		}
+		markingPaperNo--;
+		// 画面模式
+		mode = (Integer)Session.get(SessionConstants.TT_K060091_MODE);
+		k060091BasicInfo = (K060091BasicInfo)Session.get(SessionConstants.TT_K060091_BASICINFO);
+		k060091BasicInfo.setEmployeeId(k060091BasicInfo.getPaperList().get(markingPaperNo - 1));
+		k060091BasicInfo.setIfInit(false);
+		Session.set(SessionConstants.TT_K060091_BASICINFO, k060091BasicInfo);
+		
+		// 取得评分试卷详细信息
+		k060031ExamPaperInfo = k060091Service.getMarkingPaperDetail(mode);
+		
+		// 跳过已经评完分的试卷
+		if (ifSkipMarked) {
+			skipMarkedPaper(-1);
+
+		}
+		
+		k060031ExamPaperInfo.setMarkingPaperNo(markingPaperNo);
+		k060031ExamPaperInfo.setPaperAllNum(k060091BasicInfo.getPaperList().size());
+		
+		// 将试卷信息转化为JSon格式
+		// TODO 验证试卷内数据是否整合捕捉异常
+		try {
+			JSONObject json = JSONObject.fromObject(k060031ExamPaperInfo);
+			setExamPaperInfo(json.toString());
+		} catch (JSONException e) {
+			e.printStackTrace();
+		}
+		return SUCCESS;
+	}
+	
+	/**
+	 * 下一张
+	 * 
+	 * @return SUCCESS
+	 */
+	public String jumpToNextPaper() throws Exception {
+		// 画面启动限制检查
+		mode = (Integer) Session.get(SessionConstants.TT_K060091_MODE);
+		TtCheckResult ttCheckResult = k060091Service.initCheckProcess(mode);
+		if (!ttCheckResult.getRetFlag()) {
+			errorMessage = ttCheckResult.getRetMessage();
+			return ERROR;
+		}
+		markingPaperNo = markingPaperNo + 1;
+		// 画面模式
+		mode = (Integer)Session.get(SessionConstants.TT_K060091_MODE);
+		k060091BasicInfo = (K060091BasicInfo)Session.get(SessionConstants.TT_K060091_BASICINFO);
+		k060091BasicInfo.setIfInit(false);
+		k060091BasicInfo.setEmployeeId(k060091BasicInfo.getPaperList().get(markingPaperNo - 1));
+		Session.set(SessionConstants.TT_K060091_BASICINFO, k060091BasicInfo);
+		
+		// 取得评分试卷详细信息
+		k060031ExamPaperInfo = k060091Service.getMarkingPaperDetail(mode);
+		
+		// 跳过已经评完分的试卷
+		if (ifSkipMarked) {
+			skipMarkedPaper(1);
+
+		}
+		
+		k060031ExamPaperInfo.setMarkingPaperNo(markingPaperNo);
+		k060031ExamPaperInfo.setPaperAllNum(k060091BasicInfo.getPaperList().size());
+		
+		// 将试卷信息转化为JSon格式
+		// TODO 验证试卷内数据是否整合捕捉异常
+		try {
+			JSONObject json = JSONObject.fromObject(k060031ExamPaperInfo);
+			setExamPaperInfo(json.toString());
+		} catch (JSONException e) {
+			e.printStackTrace();
+		}
+		return SUCCESS;
+	}
+	
+	/**
+	 * 跳至指定试卷
+	 * 
+	 * @return SUCCESS
+	 */
+	public String jumpToSelPaper() throws Exception {
+		// 画面启动限制检查
+		mode = (Integer) Session.get(SessionConstants.TT_K060091_MODE);
+		TtCheckResult ttCheckResult = k060091Service.initCheckProcess(mode);
+		if (!ttCheckResult.getRetFlag()) {
+			errorMessage = ttCheckResult.getRetMessage();
+			return ERROR;
+		}
+		// 画面模式
+		mode = (Integer)Session.get(SessionConstants.TT_K060091_MODE);
+		k060091BasicInfo = (K060091BasicInfo)Session.get(SessionConstants.TT_K060091_BASICINFO);
+		k060091BasicInfo.setIfInit(false);
+		k060091BasicInfo.setEmployeeId(k060091BasicInfo.getPaperList().get(markingPaperNo - 1));
+		Session.set(SessionConstants.TT_K060091_BASICINFO, k060091BasicInfo);
+		
+		// 取得评分试卷详细信息
+		k060031ExamPaperInfo = k060091Service.getMarkingPaperDetail(mode);
+		
+		k060031ExamPaperInfo.setMarkingPaperNo(markingPaperNo);
+		k060031ExamPaperInfo.setPaperAllNum(k060091BasicInfo.getPaperList().size());
+		
+		// 将试卷信息转化为JSon格式
+		// TODO 验证试卷内数据是否整合捕捉异常
+		try {
+			JSONObject json = JSONObject.fromObject(k060031ExamPaperInfo);
+			setExamPaperInfo(json.toString());
+		} catch (JSONException e) {
+			e.printStackTrace();
+		}
+		return SUCCESS;
+	}
+
+	/**
+	 * 退出评分
+	 * 
+	 * @return SUCCESS
+	 */
+	public String quitMark(){
+		
+		// 取得评分任务列表
+		k060091BasicInfo = (K060091BasicInfo) Session
+				.get(SessionConstants.TT_K060091_BASICINFO);
+		List<String> taskList;
+
+		// 按试卷分配时
+		if (k060091BasicInfo.getMarkTaskAsignStyle().equals(
+				TtConstants.C15.C15_1.toString())) {
+			taskList = k060091BasicInfo.getPaperList();
+		} else {
+			taskList = k060091BasicInfo.getBigquestionList();
+		}
+		// 解除时间锁
+		for (String task : taskList) {
+			ttCommonService.removeLock(k060091BasicInfo.getExamineId(), task);
+		}
+		examineId = k060091BasicInfo.getExamineId();
+		return SUCCESS;
+	}
+	
+	/**
+	 * 更新排他锁
+	 * 
+	 * @return SUCCESS
+	 */
+	public String updateLock(){
+		
+		// 取得评分任务列表
+		k060091BasicInfo = (K060091BasicInfo) Session
+				.get(SessionConstants.TT_K060091_BASICINFO);
+		List<String> taskList;
+
+		// 按试卷分配时
+		if (k060091BasicInfo.getMarkTaskAsignStyle().equals(
+				TtConstants.C15.C15_1.toString())) {
+			taskList = k060091BasicInfo.getPaperList();
+		} else {
+			taskList = k060091BasicInfo.getBigquestionList();
+		}
+
+		// 更新锁时间
+		for (String task : taskList) {
+			ttCommonService.updateLock(k060091BasicInfo.getExamineId(), task);
+		}
+
+		return SUCCESS;
+	}
+	
+	/**
+	 * 跳过评完分的试卷
+	 * 
+	 * @return k060031ExamPaperInfo
+	 * 			待评分试卷信息
+	 */
+	private void skipMarkedPaper(Integer skipTo) {
+		
+		// 画面模式
+		mode = (Integer)Session.get(SessionConstants.TT_K060091_MODE);
+		k060091BasicInfo = (K060091BasicInfo)Session.get(SessionConstants.TT_K060091_BASICINFO);
+		
+		// 向前翻页时
+		if (skipTo < 0) {
+			// 跳过已评分的试卷
+			for (; markingPaperNo > 1; markingPaperNo--) {
+				// 是否全部评分检查
+				Boolean ifALLMarked = checkIfAllMarked();
+				// 试题没有全部被评分
+				if (!ifALLMarked) {
+					break;
+				} else {
+					k060091BasicInfo.setEmployeeId(k060091BasicInfo.getPaperList().get(markingPaperNo - 2));
+					Session.set(SessionConstants.TT_K060091_BASICINFO, k060091BasicInfo);
+					k060031ExamPaperInfo = k060091Service.getMarkingPaperDetail(mode);
+				}
+			}
+		// 向后翻页
+		} else if (skipTo > 0) {
+			// 跳过已评分的试卷
+			for (; markingPaperNo < k060091BasicInfo.getPaperList().size(); markingPaperNo++) {
+				// 是否全部评分检查
+				Boolean ifALLMarked = checkIfAllMarked();
+				// 试题没有全部被评分
+				if (!ifALLMarked) {
+					break;
+				} else {
+					k060091BasicInfo.setEmployeeId(k060091BasicInfo.getPaperList().get(markingPaperNo));
+					Session.set(SessionConstants.TT_K060091_BASICINFO, k060091BasicInfo);
+					k060031ExamPaperInfo = k060091Service.getMarkingPaperDetail(mode);
+				}
+			}			
+		}
+	}
+	
+	/**
+	 * 检查是否所有试题都被评分
+	 * 
+	 * @return Boolean
+	 * 			true:都被评分；false：没有都被评分。
+	 */
+	private Boolean checkIfAllMarked () {
+		// 试题全部评分标记
+		Boolean ifALLMarked = true;
+		for (K060031ExamQuestionInfo question : k060031ExamPaperInfo.getExamQuestions()) {
+			for (K060031SingleQuesInfo singleQuestion : question.getSingleQuestions()) {
+				// 评分区分为空，或者为未评分
+				if (singleQuestion.getMarkFlg() == null
+						|| singleQuestion.getMarkFlg() == 0
+						|| TtConstants.C18.C18_2.value() == singleQuestion.getMarkFlg()) {
+					ifALLMarked = false;
+					break;
+				}
+			}
+			if (!ifALLMarked) {
+				break;
+			}
+		}
+		return ifALLMarked;
+	}
+	
+	/**
+	 * 初期化（评分模式）校验
+	 * 
+	 */
+	public void validateInitTestMarkModeCheck() throws Exception {
+		// 考试ID未传递
+		if (examineId == null || examineId.isEmpty()) {
+			errorMessage = "考试ID未传递！";
+			this.addFieldError("examineId", errorMessage);
+		}
+		// 评分任务分配方式未传递
+		if (markTaskAsignStyle == null || markTaskAsignStyle.isEmpty()) {
+			errorMessage = "评分任务分配方式未传递！";
+			this.addFieldError("markTaskAsignStyle", errorMessage);
+		}
+		// 选中评分任务列表未传递
+		if (markTaskList == null || markTaskList.size() == 0) {
+			errorMessage = "选中评分任务列表未传递！";
+			this.addFieldError("markTaskList", errorMessage);
+		}
+	}
+	/**
+	 * 初期化（评分模式）校验
+	 * 
+	 */
+	public void validateInitTestAnswerViewMode() throws Exception {
+		// 考试ID未传递
+		if (examineId == null || examineId.isEmpty()) {
+			errorMessage = "考试ID未传递！";
+			this.addFieldError("examineId", errorMessage);
+		}
+		// 考试员工ID未传递
+		if (employeeId == null || employeeId.isEmpty()) {
+			//errorMessage = "考试员工ID未传递！";
+			//this.addFieldError("employeeId", errorMessage);
+			employeeId = TtCommonUtil.getLoginUserId();
+		}
+		// 参加次数未传递
+		if (examineJoinTimes == null || examineJoinTimes.toString().isEmpty()) {
+			errorMessage = "参加次数未传递！";
+			this.addFieldError("examineJoinTimes", errorMessage);
+		}
+	}
+	
+	/**
+	 * 下载答案文件
+	 * 
+	 * @return
+	 */
+	public String downloadAnswerFile() {
+
+		// 对象个别权限检查
+		mode = (Integer) Session.get(SessionConstants.TT_K060091_MODE);
+		TtCheckResult ttCheckResult = k060091Service.initCheckProcess(mode);
+		if (!ttCheckResult.getRetFlag()) {
+			errorMessage = ttCheckResult.getRetMessage();
+			return ERROR;
+		}
+		return SUCCESS;
+	}	
+	/**
+	 * 获取文件流
+	 * 
+	 * @return 文件流
+	 * @throws Exception
+	 */
+	public InputStream getTargetFile() throws Exception {
+
+		// 文件名
+		String fileName = testEmployeeAnswerInfo.getAnswerContent();
+
+		// 文件所在路径
+		String path = propMgr
+				.getParameter(TtConstants.FILE_PATH.QUESTION_USERANSWER.value());
+		File downloadFile = new File(path, fileName);
+
+		return new FileInputStream(downloadFile);
+	}
+	/**
+	 * 获取标准答案文件流
+	 * 
+	 * @return 文件流
+	 * @throws Exception
+	 */
+	public InputStream getTargetFileStandard() throws Exception {
+
+		// 文件名
+		String fileName = testEmployeeAnswerInfo.getAnswerContent();
+
+		// 文件所在路径
+		String path = propMgr
+				.getParameter(TtConstants.FILE_PATH.QUESTION_ANSWER.value());
+		File downloadFile = new File(path, fileName);
+
+		return new FileInputStream(downloadFile);
+	}
+	
+	/**
+	 * @return the mode
+	 */
+	public Integer getMode() {
+		return mode;
+	}
+
+	/**
+	 * @param mode the mode to set
+	 */
+	public void setMode(Integer mode) {
+		this.mode = mode;
+	}
+
+	/**
+	 * @return the examineId
+	 */
+	public String getExamineId() {
+		return examineId;
+	}
+
+	/**
+	 * @param examineId the examineId to set
+	 */
+	public void setExamineId(String examineId) {
+		this.examineId = examineId;
+	}
+
+	/**
+	 * @return the markTaskAsignStyle
+	 */
+	public String getMarkTaskAsignStyle() {
+		return markTaskAsignStyle;
+	}
+
+	/**
+	 * @param markTaskAsignStyle the markTaskAsignStyle to set
+	 */
+	public void setMarkTaskAsignStyle(String markTaskAsignStyle) {
+		this.markTaskAsignStyle = markTaskAsignStyle;
+	}
+
+	/**
+	 * @return the markTaskList
+	 */
+	public List<String> getMarkTaskList() {
+		return markTaskList;
+	}
+
+	/**
+	 * @param markTaskList the markTaskList to set
+	 */
+	public void setMarkTaskList(List<String> markTaskList) {
+		this.markTaskList = markTaskList;
+	}
+
+	/**
+	 * @return the employeeId
+	 */
+	public String getEmployeeId() {
+		return employeeId;
+	}
+
+	/**
+	 * @param employeeId the employeeId to set
+	 */
+	public void setEmployeeId(String employeeId) {
+		this.employeeId = employeeId;
+	}
+
+	/**
+	 * @return the examineJoinTimes
+	 */
+	public Integer getExamineJoinTimes() {
+		return examineJoinTimes;
+	}
+
+	/**
+	 * @param examineJoinTimes the examineJoinTimes to set
+	 */
+	public void setExamineJoinTimes(Integer examineJoinTimes) {
+		this.examineJoinTimes = examineJoinTimes;
+	}
+
+	/**
+	 * @return the errorMessage
+	 */
+	public String getErrorMessage() {
+		return errorMessage;
+	}
+
+	/**
+	 * @param errorMessage the errorMessage to set
+	 */
+	public void setErrorMessage(String errorMessage) {
+		this.errorMessage = errorMessage;
+	}
+
+	/**
+	 * @param k060091BasicInfo the k060091BasicInfo to set
+	 */
+	public void setK060091BasicInfo(K060091BasicInfo k060091BasicInfo) {
+		this.k060091BasicInfo = k060091BasicInfo;
+	}
+
+	/**
+	 * @return the k060091BasicInfo
+	 */
+	public K060091BasicInfo getK060091BasicInfo() {
+		return k060091BasicInfo;
+	}
+
+	/**
+	 * @return the k060091Service
+	 */
+	public K060091Service getK060091Service() {
+		return k060091Service;
+	}
+
+	/**
+	 * @param service the k060091Service to set
+	 */
+	public void setK060091Service(K060091Service service) {
+		k060091Service = service;
+	}
+
+	/**
+	 * @param k060031ExamPaperInfo the k060031ExamPaperInfo to set
+	 */
+	public void setK060031ExamPaperInfo(K060031ExamPaperInfo k060031ExamPaperInfo) {
+		this.k060031ExamPaperInfo = k060031ExamPaperInfo;
+	}
+
+	/**
+	 * @return the k060031ExamPaperInfo
+	 */
+	public K060031ExamPaperInfo getK060031ExamPaperInfo() {
+		return k060031ExamPaperInfo;
+	}
+
+	/**
+	 * @param examPaperInfo the examPaperInfo to set
+	 */
+	public void setExamPaperInfo(String examPaperInfo) {
+		this.examPaperInfo = examPaperInfo;
+	}
+
+	/**
+	 * @return the examPaperInfo
+	 */
+	public String getExamPaperInfo() {
+		return examPaperInfo;
+	}
+
+	/**
+	 * @param testEmployeeAnswerInfo the testEmployeeAnswerInfo to set
+	 */
+	public void setTestEmployeeAnswerInfo(TestEmployeeAnswerInfo testEmployeeAnswerInfo) {
+		this.testEmployeeAnswerInfo = testEmployeeAnswerInfo;
+	}
+
+	/**
+	 * @return the testEmployeeAnswerInfo
+	 */
+	public TestEmployeeAnswerInfo getTestEmployeeAnswerInfo() {
+		return testEmployeeAnswerInfo;
+	}
+
+	/**
+	 * @param paperAllNum the paperAllNum to set
+	 */
+	public void setPaperAllNum(Integer paperAllNum) {
+		this.paperAllNum = paperAllNum;
+	}
+
+	/**
+	 * @return the paperAllNum
+	 */
+	public Integer getPaperAllNum() {
+		return paperAllNum;
+	}
+
+	/**
+	 * @param markingPaperNo the markingPaperNo to set
+	 */
+	public void setMarkingPaperNo(Integer markingPaperNo) {
+		this.markingPaperNo = markingPaperNo;
+	}
+
+	/**
+	 * @return the markingPaperNo
+	 */
+	public Integer getMarkingPaperNo() {
+		return markingPaperNo;
+	}
+
+	/**
+	 * @param ifSkipMarked the ifSkipMarked to set
+	 */
+	public void setIfSkipMarked(Boolean ifSkipMarked) {
+		this.ifSkipMarked = ifSkipMarked;
+	}
+
+	/**
+	 * @return the ifSkipMarked
+	 */
+	public Boolean getIfSkipMarked() {
+		return ifSkipMarked;
+	}
+
+	/**
+	 * @return the ttCommonService
+	 */
+	public TtCommonService getTtCommonService() {
+		return ttCommonService;
+	}
+
+	/**
+	 * @param ttCommonService the ttCommonService to set
+	 */
+	public void setTtCommonService(TtCommonService ttCommonService) {
+		this.ttCommonService = ttCommonService;
+	}
+
+	public void setNullStr(String nullStr) {
+		this.nullStr = nullStr;
+	}
+
+	public String getNullStr() {
+		return nullStr;
+	}
+	
+}

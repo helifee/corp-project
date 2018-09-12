@@ -1,0 +1,664 @@
+package com.jzy.hio.platform.tenduser.service.impl;
+
+import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+import com.jzy.hio.config.HuanXinConfig;
+import com.jzy.hio.config.QueueConfig;
+import com.jzy.hio.exception.HioPermissionException;
+import com.jzy.hio.feign.SysRoleFeignService;
+import com.jzy.hio.platform.friendinfo.service.ImRegisterUserApi;
+import com.jzy.hio.platform.shortmessage.param.ImNoticeOrPhoneMsgsParam;
+import com.jzy.hio.utils.MD5Util;
+import com.netflix.hystrix.strategy.concurrency.HystrixRequestContext;
+import io.swagger.client.model.RegisterUsers;
+import io.swagger.client.model.User;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.amqp.core.AmqpTemplate;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.RestTemplate;
+
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.RedisKeyConstant;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.disk.directory.param.CreateCommonDirectoryParam;
+import com.jzy.hio.disk.directory.param.InitSpaceParam;
+import com.jzy.hio.entity.TenantCompanyInfo;
+import com.jzy.hio.entity.TendUserInfo;
+import com.jzy.hio.entity.UserInfo;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.feign.DiskFeignService;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.platform.constant.UserOrFriendConstant;
+import com.jzy.hio.platform.dto.tenantcompanyinfo.TendUserInfoDto;
+import com.jzy.hio.platform.friendinfo.service.FriendInfoService;
+import com.jzy.hio.platform.message.comm.MessageConstant;
+import com.jzy.hio.platform.message.param.IMToUserParam;
+import com.jzy.hio.platform.message.param.ImNoticeMsgsParam;
+import com.jzy.hio.platform.message.param.MessageEnum;
+import com.jzy.hio.platform.message.service.MessageService;
+import com.jzy.hio.platform.param.FriendInfoParam;
+import com.jzy.hio.platform.tenantcompanyinfo.mapper.TenantCompanyInfoMapper;
+import com.jzy.hio.platform.tenantcompanyinfo.service.TenantCompanyInfoService;
+import com.jzy.hio.platform.tenduser.mapper.TendUserInfoMapper;
+import com.jzy.hio.platform.tenduser.mode.TendUserInfoAppDto;
+import com.jzy.hio.platform.tenduser.param.RemoveTenantCompanyParam;
+import com.jzy.hio.platform.tenduser.service.TendUserInfoService;
+import com.jzy.hio.platform.userinfo.service.UserInfoService;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.springmvc.ApiResponse;
+import com.jzy.hio.sys.organization.param.IMOrgCreateParam;
+import com.jzy.hio.sys.user.dto.UserInfoDto;
+import com.jzy.hio.utils.JacksonUtils;
+import com.jzy.hio.utils.StringUtil;
+
+/**
+ * 
+ * @author wt.coffee<br/>
+ *         2018年3月5日下午8:14:00
+ */
+@Service
+public class TendUserInfoServiceImpl extends BaseServiceImpl<TendUserInfo> implements TendUserInfoService {
+
+	@Autowired
+	private TendUserInfoMapper mapper;
+	@Autowired
+	private TenantCompanyInfoMapper tenantCompanyInfoMapper;
+	@Autowired
+	private TenantCompanyInfoService tenantCompanyInfoService;
+	@Autowired
+	private SysFeignService sysFeignService;
+	@Autowired
+	RestTemplate restTemplate;
+	@Autowired
+	FriendInfoService friendInfoService;
+	@Autowired
+	private TendUserInfoService tendUserInfoService;
+	@Autowired
+	DiskFeignService diskFeignService;
+	@Autowired
+	private UserInfoService userInfoService;
+
+	@Autowired
+	MessageService messageService;
+
+	@Autowired
+	SysRoleFeignService sysRoleFeignService;
+
+	@Value("${tendUser.adminPhone}")
+	private String adminPhone;
+
+
+	@Autowired
+	private AmqpTemplate rabbitTemplate;
+
+	@Autowired
+	QueueConfig queueConfig;
+
+	@Autowired
+	private HuanXinConfig huanXinConfig;
+
+	@Autowired
+	private ImRegisterUserApi imRegisterUserApi;
+
+	public void deleteByUserIdAndTendId(TendUserInfoDto dto) throws HioException {
+		mapper.deleteByUserIdAndTendId(dto);
+	}
+
+	public List<TendUserInfo> queryTendUserInfosByTendId(String TendId) {
+		TendUserInfo tendUserInfo = new TendUserInfo();
+		tendUserInfo.setTendId(TendId);
+		tendUserInfo.setDelflag(0);
+		return mapper.select(tendUserInfo);
+	}
+
+	public void updateByTendIdAndUid(TendUserInfo tendUserInfo) {
+		mapper.updateByTendIdAndUid(tendUserInfo);
+	}
+	
+	@Override
+	public void deleteUserTend(TendUserInfoDto dto)throws Exception{
+		deleteByUserIdAndTendId(dto);
+//		JedisUtil.delRow(RedisKeyConstant.userTendList + dto.getUserId(),dto.getTendId());
+		updateRedisTendUser(dto.getUid(), dto.getTendId());
+		updateSessionTendUser(dto.getUid(), dto.getTendId());
+	}
+	
+	@Override
+	public void updateUserTendDelflag(TendUserInfoDto dto)throws Exception{
+		logger.info("离职、入职传参{}",obj2json(dto));
+		TendUserInfo param = new TendUserInfo();
+		param.setUid(dto.getUid());
+		param.setTendId(dto.getTendId());
+		//如果web做离职操作，查询未删除
+		if(isEquals(dto.getDelflag(), BaseConstants.MYSQL_DELFLAG_DELETED)) {
+			param.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+		}
+		//如果web做在入职操作，查询删除
+		else if(isEquals(dto.getDelflag(), BaseConstants.MYSQL_DELFLAG_NORMAL)) {
+			param.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+		}
+		List<TendUserInfo> list = tendUserInfoService.queryList(param);
+		if(null != list && list.size() > 0) {
+			TendUserInfo tendUser = list.get(0);
+			tendUser.setDelflag(dto.getDelflag());
+			int defaultFlag = UserOrFriendConstant.DEFAULT_COMP_YES;
+			
+			Map<String, String> userTendJson = JedisUtil.fetchRelationRow(RedisKeyConstant.userTendList + dto.getUid());
+			logger.info("离职、入职人员租户列表{}",null == userTendJson?"":userTendJson.toString());
+			if(isEquals(dto.getDelflag(), BaseConstants.MYSQL_DELFLAG_NORMAL)) {
+				if((null == userTendJson || userTendJson.size() < 1)) {
+					defaultFlag = UserOrFriendConstant.DEFAULT_COMP_YES;
+				}else {
+					for(String key : userTendJson.keySet()) {
+						TendUserInfoAppDto tendUserInfo = json2obj(userTendJson.get(key), TendUserInfoAppDto.class);
+						if (isNotEmpty(tendUserInfo) && isEquals(UserOrFriendConstant.outerLinkman, tendUserInfo.getOuterLinkman()) 
+								&& isEquals(UserOrFriendConstant.DEFAULT_COMP_YES, tendUserInfo.getDefaultFlag())) {
+							defaultFlag = UserOrFriendConstant.DEFAULT_COMP_NO;
+							break;
+						}
+					}
+				}
+			}
+			tendUser.setDefaultFlag(defaultFlag);
+			tendUserInfoService.update(tendUser);
+			if(dto.getDelflag() == BaseConstants.MYSQL_DELFLAG_NORMAL) {
+				Map<String, Object> userTendmap = json2map(obj2json(tendUser));
+				userTendmap.put("id", tendUser.getTendId());
+				JedisUtil.addRow(RedisKeyConstant.userTendList + dto.getUid(), userTendmap);
+			}else {
+				updateRedisTendUser(dto.getUid(), dto.getTendId());
+				updateSessionTendUser(dto.getUid(), dto.getTendId());
+			}
+		}
+	}
+	
+	/**
+	 * 删除redis中解散或者删除的tendId，如果删除的tendId是默认租户，选一个创建日期最新的作为默认租户
+	 * @param imUserId
+	 * @param tendId
+	 */
+	public void updateRedisTendUser(String imUserId,String tendId) {
+		Map<String, String> userTendJson = JedisUtil.fetchRelationRow(RedisKeyConstant.userTendList + imUserId);
+		List<TendUserInfoAppDto> tendInfoList = new ArrayList<TendUserInfoAppDto>();
+		if (null != userTendJson && userTendJson.size() > 0) {
+			logger.info("准备删除用户的租户列表：{}",userTendJson.toString());
+			for (String key : userTendJson.keySet()) {
+				if (!"table_name".equals(key)) {
+					TendUserInfoAppDto tendUserInfo = json2obj(userTendJson.get(key), TendUserInfoAppDto.class);
+					if (isNotEmpty(tendUserInfo))
+						tendInfoList.add(tendUserInfo);
+				}
+			}
+		}
+		int defaultFlag = UserOrFriendConstant.DEFAULT_COMP_NO;
+		for(TendUserInfoAppDto dto : tendInfoList) {
+			//如果要删除的tendid与用户的租户相同则删除
+			if(isEquals(dto.getTendId(), tendId)) {
+				//如果要删除的租户为主租户defaultFlag设为1
+				if(isEquals(dto.getDefaultFlag(), UserOrFriendConstant.DEFAULT_COMP_YES)) {
+					defaultFlag = UserOrFriendConstant.DEFAULT_COMP_YES;
+				}
+				tendInfoList.remove(dto);
+				JedisUtil.delRow(RedisKeyConstant.userTendList + imUserId, tendId);
+				break;
+			}
+		}
+		for(TendUserInfoAppDto dto : tendInfoList) {
+			//如果删除租户之后还有默认企业，则defaultFlag设为0
+			if(isEquals(dto.getDefaultFlag(), UserOrFriendConstant.DEFAULT_COMP_YES)) {
+				defaultFlag = UserOrFriendConstant.DEFAULT_COMP_NO;
+				break;
+			}
+		}
+		logger.info("删除用户的租户列表中的租户：{}，成功与否：{}",tendId,defaultFlag);
+		if(isNotEmpty(tendInfoList)) {
+			if(isEquals(defaultFlag, UserOrFriendConstant.DEFAULT_COMP_YES)){
+				logger.info("删除用户的租户是默认租户，重新为用户设置一个默认租户");
+				TendUserInfoAppDto tempDto = new TendUserInfoAppDto();
+				for(TendUserInfoAppDto dto : tendInfoList) {
+					if(isEquals("1", dto.getReserve1())) {
+						if(isEquals(dto.getOuterLinkman(), UserOrFriendConstant.outerLinkman)) {
+							if(isEmpty(tempDto) || isEmpty(tempDto.getTendId())) {
+								Base.copyProperties(dto, tempDto);
+							}else {
+								logger.info("删除后设置用户的默认租户，比较创建时间{}：{}，{}：{}",tempDto.getTendId(),tempDto.getCreateDate(),dto.getTendId(),dto.getCreateDate());
+								if(tempDto.getCreateDate().getTime() > dto.getCreateDate().getTime()) {
+									Base.copyProperties(dto, tempDto);
+								}
+							}
+						}
+					}
+				}
+				if(isNotEmpty(tempDto) && isNotEmpty(tempDto.getTendId())) {
+					tempDto.setDefaultFlag(UserOrFriendConstant.DEFAULT_COMP_YES);
+					Map<String, Object> userTendmap = json2map(obj2json(tempDto));
+					userTendmap.put("id", tempDto.getTendId());
+					JedisUtil.addRow(RedisKeyConstant.userTendList + imUserId, userTendmap);
+					TendUserInfo tendUser = new TendUserInfo();
+					copyProperties(tempDto, tendUser);
+					tendUserInfoService.update(tendUser);
+				}
+			}
+		}
+	}
+	
+	public void updateSessionTendUser(String imUserId,String tendId) {
+		String userJson = JedisUtil.fetchRow(UserOrFriendConstant.IM_USER_INFO, imUserId);
+		String mobile = "";
+		UserInfo userInfoBean = null;
+		if (StringUtils.isBlank(userJson)) {
+			userInfoBean = userInfoService.getObjectById(imUserId);
+			if (userInfoBean != null) {
+				UserInfo userInfo = new UserInfo();
+				BeanUtils.copyProperties(userInfoBean, userInfo);
+				logger.info("通过id，mysql查询用户信息");
+				JedisUtil.addRow(userInfo);
+				logger.info("mysql查到的用户保存的redis");
+				mobile = userInfoBean.getMobile();
+			}
+		} else {
+			userInfoBean = json2obj(userJson, UserInfo.class);
+			mobile = userInfoBean.getMobile();
+			logger.info("通过用户id，从redis获取用户信息");
+		}
+		if(isNotEmpty(mobile)) {
+//			updateSession(mobile,tendId);
+//			updateSession(mobile+"_app",tendId);
+//			updateSession(mobile+"_pc",tendId);
+		}
+	}
+	
+	private void updateSession(String mobile,String tendId) {
+		Map sessionMap = JedisUtil.fetchSession(mobile);
+		
+		if(isNotEmpty(sessionMap) && isNotEmpty(getSession().get(BaseConstants.SESSION_TENDID))) {
+			String currentTendid = (String)sessionMap.get(BaseConstants.SESSION_TENDID);
+			if(isEquals(currentTendid,tendId)){
+				JedisUtil.delRow("session:" + mobile, BaseConstants.SESSION_TENDID);
+			}
+			/*List<TendUserInfo> tendInfoList = null;
+			int defaultFlag = UserOrFriendConstant.DEFAULT_COMP_NO;
+			tendInfoList =  json2list(sessionMap.get("tendInfo").toString(),TendUserInfo.class);
+			Iterator<TendUserInfo> iter = tendInfoList.iterator();
+			logger.info("tendInfoList before：：{}",tendInfoList.toString());
+	        while (iter.hasNext()) {
+	        	TendUserInfo retendUser = iter.next();
+				if(isEquals(tendId,retendUser.getTendId())) {
+					if(isEquals(retendUser.getDefaultFlag(), UserOrFriendConstant.DEFAULT_COMP_YES)) {
+						defaultFlag = UserOrFriendConstant.DEFAULT_COMP_YES;
+					}
+					tendInfoList.remove(retendUser);
+					break;
+				}
+			}
+	        if(isNotEmpty(tendInfoList)) {
+		        if(isEquals(defaultFlag, UserOrFriendConstant.DEFAULT_COMP_YES)){
+					logger.info("删除用户的租户是默认租户，重新为用户设置一个默认租户");
+					TendUserInfo tempDto = new TendUserInfo();
+					for(TendUserInfo dto : tendInfoList) {
+						if(isEquals(dto.getOuterLinkman(), UserOrFriendConstant.outerLinkman)) {
+							if(isEmpty(tempDto)  || isEmpty(tempDto.getTendId())) {
+								Base.copyProperties(dto, tempDto);
+							}else {
+								logger.info("删除后设置用户的默认租户，比较创建时间{}：{}，{}：{}",tempDto.getTendId(),tempDto.getCreateDate(),dto.getTendId(),dto.getCreateDate());
+								if(tempDto.getCreateDate().getTime() < dto.getCreateDate().getTime()) {
+									Base.copyProperties(dto, tempDto);
+								}
+							}
+						}
+					}
+					if(isNotEmpty(tempDto) && isNotEmpty(tempDto.getTendId())) {
+						for(TendUserInfo dto : tendInfoList) {
+							if(isEquals(dto.getId(), tempDto.getId())) {
+								dto.setDefaultFlag(UserOrFriendConstant.DEFAULT_COMP_YES);
+								break;
+							}
+						}
+					}
+				}
+	        }
+	        logger.info("tendInfoList after：：{}",obj2json(tendInfoList));
+			sessionMap.put("tendInfo", obj2json(tendInfoList));
+			JedisUtil.createSession(sessionMap, mobile);*/
+		}
+	}
+
+	/**
+	 * 验证是否有可用的租户，如果有则返回，否则返回没有可用的租户库，请联系管理员
+	 * @return
+	 */
+	public String getCompanyTendId() throws Exception{
+	   int count = 	mapper.getCompanyCount();
+	   if(count < 20){
+		   ImNoticeOrPhoneMsgsParam param = new ImNoticeOrPhoneMsgsParam();
+		   logger.info("adminPhone: "+adminPhone);
+		   param.setMobile(adminPhone);
+		   param.setMsg("可用库【"+count+"】个，已不足20个，请创建库！");
+		   //发送短信
+		   this.rabbitTemplate.convertAndSend(queueConfig.getShortNoticeMsgQueue(), param);
+	   }
+		String tendId = mapper.getCompanyTendId();
+		if(null ==tendId  ||  "".equals(tendId)){
+			throw new Exception("没有可用的租户库，请联系管理员!");
+		}
+		mapper.updateUnusedDataBaseStatus(tendId);
+		return  tendId;
+	}
+
+	/**
+	 * 验证企业名称是否重复
+	 * @return
+	 *
+	 */
+	public void getCompanyName(String name) throws Exception{
+		int count = tenantCompanyInfoMapper.getTenantCompanyInfoByName(name);
+ 		if(count>=1){
+			throw new Exception("企业名称已存在!");
+		}
+
+	}
+	@Override
+	public void removeTenantCompany(RemoveTenantCompanyParam removeTenantCompanyParam) throws HioException {
+
+		ApiFeignResponse<Boolean> apiFeignResponse =  sysRoleFeignService.queryIsSuper(removeTenantCompanyParam.getTendId(),getUserIdIM());
+		if(!apiFeignResponse.getResult()){
+			throw new HioPermissionException("权限不足!");
+		}else {
+			// 获取企业下的所有用户
+			List<TendUserInfo> listTendUsers = queryTendUserInfosByTendId(removeTenantCompanyParam.getTendId());
+			TendUserInfo tendUserInfo = null;
+			List<IMToUserParam>  toUserParams = new ArrayList<IMToUserParam>();
+			List<IMToUserParam>  toUserParamsOut = new ArrayList<IMToUserParam>();
+			IMToUserParam imToUserParam = null;
+			IMToUserParam imToUserParamOut = null;
+
+			String tendName = "";//公司名称
+			for (int i = 0; i < listTendUsers.size(); i++) {
+				tendName = listTendUsers.get(i).getTendName();
+				// redis删除某一行数据
+	//			JedisUtil.delRow(RedisKeyConstant.userTendList + listTendUsers.get(i).getUid(), removeTenantCompanyParam.getTendId());
+				updateRedisTendUser(listTendUsers.get(i).getUid(), removeTenantCompanyParam.getTendId());
+				//更新session信息
+				//从我的租户列表中删除
+				logger.info("userSession.get(tendInfo) {}",getSession().get("tendInfo"));
+	//			updateSessionTendUser(listTendUsers.get(i).getUid(), removeTenantCompanyParam.getTendId());
+				TendUserInfoDto tendUserDto = new TendUserInfoDto();
+				tendUserDto.setTendId(removeTenantCompanyParam.getTendId());
+				tendUserDto.setUid(listTendUsers.get(i).getUid());
+				mapper.deleteByUserIdAndTendId(tendUserDto);
+				//imId
+				if(listTendUsers.get(i).getOuterLinkman() == 0){
+					imToUserParam = new IMToUserParam();
+					imToUserParam.setToUserId(listTendUsers.get(i).getUid());
+					toUserParams.add(imToUserParam);
+				}else{
+					imToUserParamOut = new  IMToUserParam();
+					imToUserParamOut.setToUserId(listTendUsers.get(i).getUid());
+					toUserParamsOut.add(imToUserParamOut);
+				}
+
+			}
+			// 通过tendid删除tendcompany表的数据
+			tenantCompanyInfoMapper.updateDelflag(removeTenantCompanyParam.getTendId());
+			//删除redis
+			String tenantId = JedisUtil.fetchIndexMobile(RedisKeyConstant.tenantToInfo, removeTenantCompanyParam.getTendId());
+			JedisUtil.delRow(RedisKeyConstant.tenantToInfo , tenantId);
+			JedisUtil.delIndexMobile(RedisKeyConstant.tenantToInfo , removeTenantCompanyParam.getTendId(),"");
+			if(toUserParams.size() > 0){
+                //发送系统消息
+				ImNoticeMsgsParam  imNoticeMsgsParam = new ImNoticeMsgsParam();
+				imNoticeMsgsParam.setToUsers(toUserParams);
+				StringBuffer sb = new StringBuffer(1000);
+				sb.append("您所在的公司");
+				sb.append("“"+tendName+"”");
+				sb.append("已经解散");
+				imNoticeMsgsParam.setMsg(sb.toString());
+				imNoticeMsgsParam.setMsgType("sys");
+				imNoticeMsgsParam.setSendMsgType("text");
+				imNoticeMsgsParam.setModuleType(MessageEnum.REMOVETEND.getValue()+"");
+				imNoticeMsgsParam.setModuleName(MessageEnum.REMOVETEND.getDes());
+				imNoticeMsgsParam.setOpenStatus(0);
+				Map<String,Object> extSys = new HashMap<>();
+				extSys.put("tendId",removeTenantCompanyParam.getTendId());
+				imNoticeMsgsParam.setExt(extSys);
+				messageService.sendMessage(imNoticeMsgsParam);
+
+				//为用户发送系统消息cmd
+				ImNoticeMsgsParam param = new ImNoticeMsgsParam();
+				param.setFromUserId(getUserIdIM());
+				param.setToUsers(toUserParams);
+				param.setMsgType(UserOrFriendConstant.NOTICE_MSG_TYPE);
+				param.setModuleType(String.valueOf(MessageEnum.REMOVETENDCMD.getValue()));
+				param.setModuleName(MessageEnum.REMOVETENDCMD.getDes());
+				param.setSendMsgType(UserOrFriendConstant.CMD_MSG_TYPE);
+				param.setTendId(removeTenantCompanyParam.getTendId());
+				param.setTendName(tendName);
+				Map<String,Object> ext = new HashMap<>();
+				ext.put("tendId",removeTenantCompanyParam.getTendId());
+				param.setExt(ext);
+				messageService.sendMessage(param);
+			}
+
+			//发送out消息
+			if(toUserParamsOut.size()> 0){
+				ImNoticeMsgsParam  imNoticeMsgsParamOut = new ImNoticeMsgsParam();
+				imNoticeMsgsParamOut.setToUsers(toUserParamsOut);
+				StringBuffer sboOut = new StringBuffer(1000);
+				sboOut.append("您所在的合作企业");
+				sboOut.append("“"+tendName+"”");
+				sboOut.append("已经解散");
+				imNoticeMsgsParamOut.setMsg(sboOut.toString());
+				imNoticeMsgsParamOut.setMsgType("sys");
+				imNoticeMsgsParamOut.setSendMsgType("text");
+				imNoticeMsgsParamOut.setModuleType(MessageEnum.REMOVETEND.getValue()+"");
+				imNoticeMsgsParamOut.setModuleName(MessageEnum.REMOVETEND.getDes());
+				imNoticeMsgsParamOut.setOpenStatus(0);
+				Map<String,Object> extOut = new HashMap<>();
+				extOut.put("tendId",removeTenantCompanyParam.getTendId());
+				imNoticeMsgsParamOut.setExt(extOut);
+				messageService.sendMessage(imNoticeMsgsParamOut);
+
+				//为用户发送系统消息cmd
+				ImNoticeMsgsParam param = new ImNoticeMsgsParam();
+				param.setFromUserId(getUserIdIM());
+				param.setToUsers(toUserParamsOut);
+				param.setMsgType(UserOrFriendConstant.NOTICE_MSG_TYPE);
+				param.setModuleType(String.valueOf(MessageEnum.REMOVETENDCMD.getValue()));
+				param.setModuleName(MessageEnum.REMOVETENDCMD.getDes());
+				param.setSendMsgType(UserOrFriendConstant.CMD_MSG_TYPE);
+				param.setTendId(removeTenantCompanyParam.getTendId());
+				param.setTendName(tendName);
+				Map<String,Object> ext = new HashMap<>();
+				ext.put("tendId",removeTenantCompanyParam.getTendId());
+				param.setExt(ext);
+				messageService.sendMessage(param);
+			}
+		}
+	}
+
+	@Override
+	@Transactional(rollbackFor = Exception.class)//该属性用于设置需要进行回滚的异常类数组，当方法中抛出指定异常数组中的异常时，则进行事务回滚
+	public void saveiMOrg(IMOrgCreateParam createTendParam) throws Exception {
+		//getCompanyName(createTendParam.getTeamName());
+		//获取手机号
+		Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+		String authenticationPhone = authentication.getName();
+		Map userSession = JedisUtil.fetchSession(authenticationPhone);
+		String phone = userSession.get("mobile").toString();
+		if(StringUtil.isBlank(phone)||StringUtil.isBlank(getUserIdIM())){
+			logger.debug("phone 或者userId 为空！");
+			throw new Exception("phone 或者userId 为空！");
+		}
+		// 判断创建人是否已创建5个企业，如果是则不让创建
+		int count = tenantCompanyInfoService.getTenantCompanyInfoByCeatePersonId(getUserIdIM());
+		logger.info("创建企业个数：{}",count);
+		if (count >= MessageConstant.CREATE_COMPANY_COUNT ) {
+			throw new Exception("创建企业不能超过5个！");
+		}
+	    String tendId = getCompanyTendId();
+		// 保存企业信息
+		TenantCompanyInfo tenantCompanyInfo = new TenantCompanyInfo();
+		tenantCompanyInfo.setId(tenantCompanyInfoService.generatePk());
+		tenantCompanyInfo.setAddress(createTendParam.getAddress());
+		tenantCompanyInfo.setName(createTendParam.getTeamName());
+		tenantCompanyInfo.setIndustry(createTendParam.getIndustry());
+		tenantCompanyInfo.setPersonnelScale(createTendParam.getPersonnelScale());
+		tenantCompanyInfo.setProvince(createTendParam.getProvince());
+		tenantCompanyInfo.setTendId(tendId);
+		tenantCompanyInfo.setCreateDate(new Date());
+		tenantCompanyInfo.setCreatePersonId(getUserIdIM());
+		tenantCompanyInfo.setType(createTendParam.getType());
+		tenantCompanyInfo.setInvoiceTitle(createTendParam.getInvoiceTitle());
+		tenantCompanyInfo.setTaxpayerNumber(createTendParam.getTaxpayerNumber());
+
+		tenantCompanyInfoService.save(tenantCompanyInfo);
+		logger.info("保存企业信息成功！");
+		TendUserInfo tendUserInfoP = new TendUserInfo();
+		tendUserInfoP.setUid(getUserIdIM());
+		tendUserInfoP.setDefaultFlag(1);
+		tendUserInfoP.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+		List<TendUserInfo> list = tendUserInfoService.queryList(tendUserInfoP);
+		TendUserInfo tendUserInfo = new TendUserInfo();
+		if (list != null && list.size() > 0) {
+			tendUserInfo.setDefaultFlag(0);
+		} else {
+			tendUserInfo.setDefaultFlag(1);
+		}
+		// 4保存企业关系
+		tendUserInfo.setId(tendUserInfoService.generatePk());
+		tendUserInfo.setTendId(tendId);
+		tendUserInfo.setUid(getUserIdIM());
+		tendUserInfo.setOuterLinkman(0);
+		tendUserInfo.setMobile(phone);
+		tendUserInfo.setTendName(createTendParam.getTeamName());
+		tendUserInfo.setCreateDate(new Date());
+		tendUserInfo.setReserve1(BaseConstants.UserWorkStatus.JOB.getWorkStatus());
+		tendUserInfoService.save(tendUserInfo);
+		logger.info("保存企业成员关系成功！");
+
+		//创建企业空间
+		CreateCommonDirectoryParam directoryParam = new CreateCommonDirectoryParam();
+		directoryParam.setTendId(tendId);
+		directoryParam.setCreatePersonId(getUserIdIM());
+		directoryParam.setCreatePersonName(getUserNameIM());
+		ApiFeignResponse diskDireApiResponse =	diskFeignService.createCommonDirectory(directoryParam);
+		logger.info("diskFeignService.createCommonDirectory result:{} ",obj2json(diskDireApiResponse));
+		if (200 != diskDireApiResponse.getStatus()) {
+			logger.info("创建企业失败！调用diskFeignService.createCommonDirectory接口 {}", diskDireApiResponse.getMessage());
+			throw new Exception("创建企业公共文件夹失败！");
+		}
+
+		InitSpaceParam initSpaceParam = new InitSpaceParam();
+		initSpaceParam.setTendId(tendId);
+		ApiFeignResponse diskSpaceApiResponse = diskFeignService.initializeSpace(initSpaceParam);
+		logger.info("diskFeignService.initializeSpace result:{} ",obj2json(diskSpaceApiResponse));
+		if (200 != diskSpaceApiResponse.getStatus()) {
+			logger.info("创建企业失败！调用diskFeignService.initializeSpace {}", diskSpaceApiResponse.getMessage());
+			throw new Exception("创建企业网盘空间失败！ ");
+		}
+
+		createTendParam.setTendId(tendId);
+		createTendParam.setAdminMobile(phone);
+		createTendParam.setAdminName(getUserNameIM());
+		if(StringUtil.isBlank(getUserNameIM()) ){
+			createTendParam.setAdminName(phone);
+		}
+		createTendParam.setAdminUserId(getUserIdIM());
+
+		ApiFeignResponse apiFeignResponse = sysFeignService.createTeam(createTendParam);
+		if (200 != apiFeignResponse.getStatus()) {
+			logger.info("创建企业失败！调用sysFeignService.createTeam接口 {}", apiFeignResponse.getMessage());
+			throw new Exception("创建企业IM团队失败！");
+		}
+		logger.info("创建企业成功！调用sysFeignService.createTeam接口");
+
+		// 5.发送通知消息
+		// 如果有群成员则发送好友消息
+		if (createTendParam.getTeams() != null && createTendParam.getTeams().size() > 0) {
+			List<UserInfoDto> users = new ArrayList<UserInfoDto>();
+			for (int i = 0; i < createTendParam.getTeams().size(); i++) {
+				UserInfoDto dto = new UserInfoDto();
+				dto.setUserMobile(createTendParam.getTeams().get(i).getMobile());
+				users.add(dto);
+			}
+			FriendInfoParam param = new FriendInfoParam();
+			param.setSendId(getUserIdIM());
+			param.setUsers(users);
+			param.setType(UserOrFriendConstant.WORKER_INVITE);
+			param.setTendId(tendId);
+			param.setTendName(createTendParam.getTeamName());
+			ApiResponse<Boolean> str = friendInfoService.sendWorkApply(param);
+			if (200 != str.getStatus()) {
+				logger.info("创建企业失败！调用friendInfoService.sendWorkApply接口 {}", str.getResult());
+				throw new Exception("创建企业邀请同事或者外部联系人失败！");
+			}
+			logger.info("创建企业 发送通知消息成功！调用friendInfoService.sendWorkApply接口 {}", obj2json(param));
+
+		}
+		// 先保存数据库，最后持久化Redis
+		JedisUtil.addRow(tenantCompanyInfo);
+		JedisUtil.addIndexMobile(RedisKeyConstant.tenantToInfo,tenantCompanyInfo.getTendId(),tenantCompanyInfo.getId());
+		Map<String, Object> userTendmap = json2map(obj2json(tendUserInfo));
+		userTendmap.put("id", tendUserInfo.getTendId());
+		JedisUtil.addRow(RedisKeyConstant.userTendList + getUserIdIM(), userTendmap);
+		logger.info("持久化Redis成功!");
+
+
+		if(huanXinConfig.getIsSendMsg()) {
+			ExecutorService hxPool = Executors.newSingleThreadExecutor();
+			hxPool.submit(new Runnable() {
+				@Override
+				public void run() {
+					HystrixRequestContext.initializeContext();
+					logger.info("创建环信账号开始");
+					RegisterUsers users = new RegisterUsers();
+					User hxUser = new User().username("cchiowork"+tendId).password(MD5Util.MD5("123456")).nickname("待办通知-"+createTendParam.getTeamName());
+					User hxUserMsg = new User().username("cchiomsg"+tendId).password(MD5Util.MD5("123456")).nickname("消息提醒-"+createTendParam.getTeamName());
+					users.add(hxUser);
+					users.add(hxUserMsg);
+					io.swagger.client.ApiResponse<String> obj = (io.swagger.client.ApiResponse<String>)imRegisterUserApi.createNewIMUserSingle(users);
+					if(obj.getStatusCode() != 200) {
+						logger.info("创建团队时创建环信账号失败");
+					}
+					logger.info("创建团队时创建环信账号结束:{}",obj);
+				}
+			});
+			hxPool.shutdown();
+		}
+	}
+	
+	/**
+	 * 包含所有激活/未激活的租户
+	 */
+	public Map<String, String> getTendListByUserId(String userId) throws Exception{
+		Map<String, String> userTendJson = JedisUtil.fetchRelationRow(RedisKeyConstant.userTendList + userId);
+		if (null == userTendJson || userTendJson.size() < 1) {
+			TendUserInfo tendUser = new TendUserInfo();
+			tendUser.setUid(userId);
+			tendUser.setDelflag(0);
+			List<TendUserInfo> tendUserList = tendUserInfoService.queryList(tendUser);
+			for (TendUserInfo dto : tendUserList) {
+				Map<String, Object> userTendmap = json2map(obj2json(dto));
+				userTendmap.put("id", dto.getTendId());
+				JedisUtil.addRow(RedisKeyConstant.userTendList + userId, userTendmap);
+			}
+			userTendJson = JedisUtil.fetchRelationRow(RedisKeyConstant.userTendList + userId);
+			logger.debug("mysql获取用户所有租户信息，并存到redis");
+		} 
+		return userTendJson;
+	}
+}

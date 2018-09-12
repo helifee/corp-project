@@ -1,0 +1,158 @@
+package com.jzy.hio.platform.shortmessage.service;
+
+import java.text.SimpleDateFormat;
+import java.util.Date;
+
+import javax.xml.rpc.holders.LongHolder;
+import javax.xml.rpc.holders.StringHolder;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.amqp.core.AmqpTemplate;
+import org.springframework.amqp.core.Message;
+import org.springframework.amqp.rabbit.annotation.RabbitHandler;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cloud.context.config.annotation.RefreshScope;
+import org.springframework.stereotype.Component;
+import org.tempuri.MobileListGroup;
+import org.tempuri.MobsetApi;
+import org.tempuri.MobsetApiLocator;
+import org.tempuri.MobsetApiSoapStub;
+import org.tempuri.holders.ArrayOfSmsIDListHolder;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.noticephoneserver.NoticePhoneServer;
+import com.jzy.hio.config.HuanXinConfig;
+import com.jzy.hio.entity.ImShortMessage;
+import com.jzy.hio.platform.message.service.ImNoticeMsgService;
+import com.jzy.hio.platform.shortmessage.param.ImNoticeOrPhoneMsgsParam;
+import com.rabbitmq.client.Channel;
+import com.util.MD5;
+
+/**
+ * 创建短信、站内信消费者
+ * 
+ * @author chc 2018年3月26日
+ */
+@Component
+//@RefreshScope
+public class NoticePhoneMsgReceiver extends Base {
+	private static final Logger logger = LoggerFactory.getLogger(NoticePhoneMsgReceiver.class);
+
+	@Autowired
+	private AmqpTemplate rabbitTemplate;
+
+	@Autowired
+	NoticePhoneMsgService messageService;
+
+	@Autowired
+	ImShortMessageService imShortMessageService;
+
+	@Autowired
+	ImNoticeMsgService imNoticeMsgService;
+
+	public static String idnumber; // 企业ID
+	public static String username; // 登录用户
+	public static String password; // 密码
+
+	@Autowired
+	private HuanXinConfig huanXinConfig;
+	/**
+	 * 消费操作发送消息
+	 * 
+	 * @param message
+	 */
+	@RabbitListener(queues = "${queue.shortNoticeMsgQueue}", containerFactory = "rabbitListenerContainerFactory")
+	@RabbitHandler
+	public void process(Message message, Channel channel) throws Exception {
+		logger.info("发送短信开始{}", message.getBody());
+		String msg = "";
+		try {
+			// 保存短信，发送短信
+			ImNoticeOrPhoneMsgsParam msgParam = json2obj(new String(message.getBody(), "utf-8"), ImNoticeOrPhoneMsgsParam.class);
+			if (Base.isNotEmpty(msgParam.getMobile())) {
+				SimpleDateFormat dateFormater = new SimpleDateFormat("MMddHHmmss");
+				Date date = new Date();
+				String timeStamp = dateFormater.format(date);
+
+				ImShortMessage bean = new ImShortMessage();
+				bean.setId(Base.generatePk(ImShortMessage.class));
+				bean.setSendId(msgParam.getFromUserId());
+				bean.setMobile(msgParam.getMobile());
+				bean.setReceiverId(msgParam.getReceiverId());
+				bean.setContent(msgParam.getMsg());
+				bean.setSendTime(date);
+				bean.setTendId(msgParam.getTendId());
+				bean.setNoticeType(0);
+				bean.setIdNumber(NoticePhoneServer.idnumber);
+				bean.setCreateDate(new Date());
+				bean.setCreatePersonId(msgParam.getMobile());
+				bean.setUpdatePersonId(msgParam.getMobile());
+				bean.setCreatePersonName("");
+				bean.setUpdatePersonName("");
+				imShortMessageService.save(bean);
+
+				if(huanXinConfig.getIsSendShortMsg()) {
+					// 发送短信
+					MobsetApi mobsetApi = new MobsetApiLocator();
+					MobsetApiSoapStub mobset = (MobsetApiSoapStub) mobsetApi.getMobsetApiSoap();
+	
+					MD5 md5 = new MD5();
+					String password = md5.getMD5ofStr(NoticePhoneServer.idnumber + NoticePhoneServer.password + timeStamp);
+					String addNum = "";
+					long longSms = 1;
+					String timer = dateFormater.format(date);
+					String[] phones = msgParam.getMobile().split(",");
+					MobileListGroup[] mobileList = new MobileListGroup[phones.length];
+					for (int i = 0; i < phones.length; i++) {
+						MobileListGroup mobileListGroup = new MobileListGroup();
+						mobileListGroup.setMobile(phones[i]);
+						mobileList[i] = mobileListGroup;
+					}
+	
+					LongHolder count = new LongHolder();
+					StringHolder errMsg = new StringHolder();
+					ArrayOfSmsIDListHolder smsIDList = new ArrayOfSmsIDListHolder();
+					mobset.sms_Send(new Long(NoticePhoneServer.idnumber), NoticePhoneServer.username, password, timeStamp, addNum, timer, longSms, mobileList, msgParam.getMsg(), count,
+							errMsg, smsIDList);
+					// 修改短信状态 //TODO
+					if (errMsg.value == null || errMsg.value.contains("成功")) {
+						msg = "给用户" + msgParam.getMobile() + "发送短信成功！";
+						bean.setSendFlag(1);
+						imShortMessageService.update(bean);
+						logger.info("发送短信成功信息！{}" , errMsg.value);
+					} else {
+						msg = "给用户" + msgParam.getMobile() + "发送短信失败！";
+						bean.setSendFlag(0);
+						imShortMessageService.update(bean);
+						logger.info("发送短信失败信息！{}" , errMsg.value);
+					}
+				}
+			} else {
+				msg = "参数【接收手机号为空】!";// phones 为空
+			}
+			logger.info("发送短信成功！{}" , obj2json(msg));
+			channel.basicAck(message.getMessageProperties().getDeliveryTag(), true);
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("发送短信失败：{}", e.getMessage());
+		}
+	}
+
+	@Value("${noticephoneserver.idnumber}")
+	public void setIdnumber(String idnumber) {
+		NoticePhoneServer.idnumber = idnumber;
+	}
+
+	@Value("${noticephoneserver.username}")
+	public void setUsername(String username) {
+		NoticePhoneServer.username = username;
+	}
+
+	@Value("${noticephoneserver.password}")
+	public void setPassword(String password) {
+		NoticePhoneServer.password = password;
+	}
+}

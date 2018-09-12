@@ -1,0 +1,1039 @@
+package com.jzy.hio.platform.friendinfo.controller;
+
+import java.security.Principal;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import com.jzy.hio.sys.organization.dto.SysCurrencyDto;
+import com.jzy.hio.sys.user.dto.FlowUserAndExternalDto;
+import org.apache.commons.lang.StringUtils;
+import org.springframework.amqp.core.AmqpTemplate;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.converter.json.GsonBuilderUtils;
+import org.springframework.web.bind.annotation.*;
+
+import com.google.gson.GsonBuilder;
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.annotation.ResponseBodyExt;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.RedisKeyConstant;
+import com.jzy.hio.base.controller.BasePlatformController;
+import com.jzy.hio.config.QueueConfig;
+import com.jzy.hio.entity.FriendInfo;
+import com.jzy.hio.entity.TendUserInfo;
+import com.jzy.hio.entity.UserInfo;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.exception.HioMybatisInsertException;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.platform.constant.UserOrFriendConstant;
+import com.jzy.hio.platform.dto.tenantcompanyinfo.TenantCompanyInfoDto;
+import com.jzy.hio.platform.dto.userinfo.ImUserInfoDto;
+import com.jzy.hio.platform.friendinfo.dto.AppAcceptDto;
+import com.jzy.hio.platform.friendinfo.dto.FriendInfoDto;
+import com.jzy.hio.platform.friendinfo.param.FriendInfoSaveParam;
+import com.jzy.hio.platform.friendinfo.service.FriendInfoService;
+import com.jzy.hio.platform.message.param.MessageEnum;
+import com.jzy.hio.platform.message.param.MsgTypeEnum;
+import com.jzy.hio.platform.param.FriendInfoParam;
+import com.jzy.hio.platform.shortmessage.param.ImNoticeOrPhoneMsgsParam;
+import com.jzy.hio.platform.shortmessage.service.NoticePhoneMsgService;
+import com.jzy.hio.platform.tenantcompanyinfo.service.TenantCompanyInfoService;
+import com.jzy.hio.platform.tenduser.service.TendUserInfoService;
+import com.jzy.hio.platform.userinfo.service.UserInfoService;
+import com.jzy.hio.redis.Constants;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.springmvc.ApiResponse;
+import com.jzy.hio.sys.user.param.IMUserQueryParam;
+import com.jzy.hio.sys.user.param.IMUserSyncParam;
+import com.jzy.hio.utils.JacksonUtils;
+
+/**
+ * im好友
+ * 
+ * @author chc<br/>
+ *         2018年3月12日
+ */
+@RestController
+@RequestMapping("/friendInfo")
+public class FriendInfoController extends BasePlatformController<FriendInfoService> {
+	@Autowired
+	private FriendInfoService friendInfoService;
+
+	@Autowired
+	private UserInfoService userInfoService;
+
+	@Autowired
+	private TendUserInfoService tendUserInfoService;
+
+	@Autowired
+	private SysFeignService sysFeignService;
+
+	@Autowired
+	private NoticePhoneMsgService noticePhoneMsgService;
+	
+	@Autowired
+	private TenantCompanyInfoService tenantCompanyInfoService;
+
+	@Autowired
+	private AmqpTemplate rabbitTemplate;
+
+	@Autowired
+	private QueueConfig queueConfig;
+
+	/**
+	 * 发送好友申请 param
+	 */
+	@ResponseBodyExt
+	@RequestMapping("/sendFriendApply")
+	public ApiResponse<Object> sendFriendApply(@RequestBody FriendInfoParam param, Principal user) throws HioMybatisInsertException {
+
+		// Map userSession=JedisUtil.fetchSession(user.getName());
+
+		ApiResponse<Object> ares = new ApiResponse<Object>();
+
+		try {
+			//非好友邀请才验证名称的长度
+			if(isNotEquals(UserOrFriendConstant.FRIEND_INVITE, param.getType())) {
+				if(isNotEmpty(param.getUsers())) {
+					for(com.jzy.hio.sys.user.dto.UserInfoDto dto : param.getUsers()) {
+						if(isNotEmpty(dto.getUserName())) {
+							if(dto.getUserName().length() > 20) {
+								ares.setStatus(HioException.nameLengthOut.getStatus());
+								ares.setMessage(HioException.nameLengthOut.getMessage());
+								return ares;
+							}
+						}
+						if(isNotEmpty(dto.getUserMobile())) {
+							if(dto.getUserMobile().length() > 11) {
+								ares.setStatus(HioException.mobileLengthOut.getStatus());
+								ares.setMessage(HioException.mobileLengthOut.getMessage());
+								return ares;
+							}
+						}
+					}
+				}
+			}
+			if(isEquals(UserOrFriendConstant.FRIEND_INVITE, param.getType()) && isNotEmpty(param.getContent())) {
+				if(param.getContent().length() > 50) {
+					ares.setStatus(HioException.contentLengthOut.getStatus());
+					ares.setMessage(HioException.contentLengthOut.getMessage());
+					return ares;
+				}
+			}
+			if(isNotEmpty(param.getEmail()) && param.getEmail().length() > 64) {
+				ares.setStatus(HioException.emailLengthOut.getStatus());
+				ares.setMessage(HioException.emailLengthOut.getMessage());
+				return ares;
+			}
+			if(isNotEmpty(param.getPositionName()) && param.getPositionName().length() > 64) {
+				ares.setStatus(HioException.positionLengthOut.getStatus());
+				ares.setMessage(HioException.positionLengthOut.getMessage());
+				return ares;
+			}
+			ares = friendInfoService.sendFriendApply(param);
+		} catch (Exception e) {
+			ares.setStatus(HioException.sendFriendApply.getStatus());
+			ares.setMessage(HioException.sendFriendApply.getMessage());
+			e.printStackTrace();
+			logger.error("好友邀请发送失败！status：2001,{}{}", obj2json(param), e.getMessage());
+		}
+		return ares;
+	}
+
+	/**
+	 * 发送同事、外部联系人邀请 json FriendInfo 字段
+	 */
+	@ResponseBodyExt
+	@RequestMapping("/sendWorkApply")
+	public Object sendWorkApply(@RequestBody FriendInfoParam param, Principal user) throws HioMybatisInsertException {
+		// Map userSession=JedisUtil.fetchSession(user.getName());
+		ApiResponse<Boolean> ares = new ApiResponse<Boolean>();
+		try {
+			ares = friendInfoService.sendWorkApply(param);
+			ares.setStatus(HioException.SUCCESS);
+			ares.setResult(true);
+		} catch (Exception e) {
+			ares.setStatus(HioException.sendWorkApply.getStatus());
+			ares.setMessage(HioException.sendWorkApply.getMessage());
+			e.printStackTrace();
+			logger.error("发送同事、外部联系人邀请发送失败！status：2002,{}{}", obj2json(param), e.getMessage());
+		}
+		return ares;
+	}
+
+	/**
+	 * 保存好友关系 好友邀请、同事和外部联系的邀请 接受保存
+	 */
+	@RequestMapping(value = "/save", method = RequestMethod.POST, consumes = "application/json")
+	public ApiResponse<Object> save(@RequestBody FriendInfoSaveParam friendInfoParam) throws HioMybatisInsertException {
+		logger.info("保存好友关系或者同事、外部联系人开始" + obj2json(friendInfoParam));
+		ApiResponse<Object> ares = new ApiResponse<Object>();
+		String uid = getUserIdIM();
+		try {
+			// type=1 好友邀请，type=2 同事邀请，type=3邀请外部联系人
+			if (isEquals(friendInfoParam.getType(), UserOrFriendConstant.FRIEND_INVITE)) {
+				String myFriendJson = JedisUtil.fetchRow(RedisKeyConstant.myfriendPrefix + friendInfoParam.getUid(), friendInfoParam.getFid());
+				Map<String,String> myFriendMap = json2mapString(myFriendJson);
+				if(isNotEmpty(myFriendMap) && myFriendMap.size() > 0 && isEquals(UserOrFriendConstant.IS_DEL_NO,myFriendMap.get("isDel").toString())) {
+					ares.setStatus(HioException.alreadyFriend.getStatus());
+					ares.setMessage(HioException.alreadyFriend.getMessage());
+					AppAcceptDto simpleDto = new AppAcceptDto();
+					simpleDto.setId(friendInfoParam.getFid());
+					ares.setResult(simpleDto);
+					return ares;
+				}
+				String recordWork = JedisUtil.getKey(Constants.key_request_record_friend + friendInfoParam.getMobile() + friendInfoParam.getFid());
+				logger.info("好友邀请信息key：{}，mobile：{}，发送人id：{}",recordWork,friendInfoParam.getMobile(),friendInfoParam.getFid());
+				if(isEmpty(recordWork)) {
+					ares.setStatus(HioException.requestRecordOut.getStatus()); 
+					ares.setMessage(HioException.requestRecordOut.getMessage()); 
+					AppAcceptDto simpleDto = new AppAcceptDto();
+					simpleDto.setId(friendInfoParam.getFid());
+					ares.setResult(simpleDto);
+					return ares;
+				}
+				FriendInfo friendQuery = new FriendInfo();
+				friendQuery.setUid(friendInfoParam.getUid());
+				friendQuery.setFid(friendInfoParam.getFid());
+				friendQuery.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+				List<FriendInfo> list = friendInfoService.queryList(friendQuery);
+				logger.debug("查询是否已经是好友{},{},{}",friendInfoParam.getUid(),friendInfoParam.getFid(),list);
+				if(null != list && list.size() > 0) { 
+					ares.setStatus(HioException.alreadyFriend.getStatus()); 
+					ares.setMessage(HioException.alreadyFriend.getMessage()); 
+					AppAcceptDto simpleDto = new AppAcceptDto();
+					simpleDto.setId(friendInfoParam.getFid());
+					ares.setResult(simpleDto);
+					return ares;
+				}
+
+				FriendInfo friendInfo = new FriendInfo();
+				BeanUtils.copyProperties(friendInfoParam, friendInfo);
+				friendInfo.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+				friendInfo.setIsDel(UserOrFriendConstant.IS_DEL_NO);
+				if(isEmpty(friendInfo.getSharePhone())){
+					friendInfo.setSharePhone(UserOrFriendConstant.SHARE_PHONE_NO);
+				}
+				friendInfo = (FriendInfo) super.save(friendInfo);
+				rabbitTemplate.convertAndSend(queueConfig.getImFriendInfoQueue(), friendInfo);
+				logger.debug("保存我的好友");
+				FriendInfo friendInfo1 = new FriendInfo();
+				BeanUtils.copyProperties(friendInfo, friendInfo1);
+				friendInfo1.setUid(friendInfo.getFid());
+				friendInfo1.setFid(friendInfo.getUid());
+				friendInfo1.setSharePhone(UserOrFriendConstant.SHARE_PHONE_NO);
+				friendInfo1.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+				friendInfo1.setIsDel(UserOrFriendConstant.IS_DEL_NO);
+				friendInfo1 = (FriendInfo) super.save(friendInfo1);
+				rabbitTemplate.convertAndSend(queueConfig.getImFriendInfoQueue(), friendInfo1);
+				logger.debug("将我为对方的好友");
+				FriendInfoDto dto = new FriendInfoDto();
+				addOrUpdateFriRedis(friendInfo, dto, "add");
+				logger.info("我的好友保存到redis：：{}",obj2json(dto));
+				JedisUtil.addListRow(RedisKeyConstant.myfriendPrefix + friendInfo.getUid(), obj2map(dto));
+				// 如果我在我的好友里则更新redis中状态为未删除（0）
+				String fFriendJson = JedisUtil.fetchRow(RedisKeyConstant.myfriendPrefix + friendInfoParam.getFid(), friendInfoParam.getUid());
+				Map<String, String> fFriendMap = json2mapString(fFriendJson);
+				if (isNotEmpty(fFriendMap) && fFriendMap.size() > 0) {
+					fFriendMap.put("isDel", UserOrFriendConstant.IS_DEL_NO + "");
+					fFriendMap.put("id", fFriendMap.get("fid"));
+					JedisUtil.addListRow(RedisKeyConstant.myfriendPrefix + friendInfoParam.getFid(), fFriendMap);
+				} else {
+					FriendInfoDto dto1 = new FriendInfoDto();
+					addOrUpdateFriRedis(friendInfo1, dto1, "add");
+					JedisUtil.addListRow(RedisKeyConstant.myfriendPrefix + friendInfo1.getUid(), obj2map(dto1));
+				}
+				ares.setStatus(HioException.SUCCESS);
+				ares.setMessage("已加对方为好友！");
+				AppAcceptDto simpleDto = new AppAcceptDto();
+				simpleDto.setId(friendInfoParam.getFid());
+				simpleDto.setName(dto.getFname());
+				ares.setResult(simpleDto);
+				logger.debug("好友关系保存成功！");
+				// 为对方发站内信，告知已为好友
+				/*ImNoticeOrPhoneMsgsParam param = new ImNoticeOrPhoneMsgsParam();
+				param.setFromUserId(friendInfoParam.getUid());
+				param.setReceiverId(friendInfoParam.getFid());
+				param.setMobile(friendInfoParam.getMobile());
+				param.setMsgType(UserOrFriendConstant.NOTICE_MSG_TYPE);
+				param.setModuleType(String.valueOf(MessageEnum.ADDFRIEND.getValue()));
+				param.setModuleName(MessageEnum.ADDFRIEND.getDes());
+				param.setSendMsgType(UserOrFriendConstant.CMD_MSG_TYPE);
+				noticePhoneMsgService.sendMail(param);*/
+				friendInfoService.receiptInformation(friendInfoParam,"我们已经是好友，让我们一起聊天吧！",UserOrFriendConstant.NOTICE_MSG_TYPE
+						,String.valueOf(MessageEnum.ADDFRIEND.getValue()),MessageEnum.ADDFRIEND.getDes(),UserOrFriendConstant.CMD_MSG_TYPE);
+				friendInfoService.receiptInformation(friendInfoParam,"我们已经是好友，让我们一起聊天吧！",UserOrFriendConstant.SESSION_MSG_TYPE
+						,String.valueOf(MessageEnum.ADDFRIEND.getValue()),MessageEnum.ADDFRIEND.getDes(),UserOrFriendConstant.TEXT_MSG_TYPE);
+				FriendInfoSaveParam ownParam = new FriendInfoSaveParam();
+				Base.copyProperties(friendInfoParam, ownParam);
+				ownParam.setUid(friendInfoParam.getFid());
+				ownParam.setFid(friendInfoParam.getUid());
+				friendInfoService.receiptInformation(ownParam,"我们已经是好友，让我们一起聊天吧！",UserOrFriendConstant.SESSION_MSG_TYPE
+						,String.valueOf(MessageEnum.ADDFRIEND.getValue()),MessageEnum.ADDFRIEND.getDes(),UserOrFriendConstant.TEXT_MSG_TYPE);
+				// }
+				JedisUtil.del(Constants.key_request_record_friend + friendInfoParam.getMobile() + friendInfoParam.getFid());
+				JedisUtil.del(Constants.key_send_friend + friendInfoParam.getMobile() + friendInfoParam.getFid());
+			}
+			// 接受公司邀请（同事、外部联系人）
+			else if (isEquals(friendInfoParam.getType(), UserOrFriendConstant.WORKER_INVITE) || isEquals(friendInfoParam.getType(), UserOrFriendConstant.OUT_WORKER_INVITE)) {
+				String recordWork = JedisUtil.getKey(Constants.key_request_record_work + uid + friendInfoParam.getTendId());
+				logger.info("同事/外部联系人邀请信息key：{}",recordWork);
+				logger.info("同事/外部联系人邀请信息key：{}，接收人mobile：{}，邀请企业id：{}",recordWork,friendInfoParam.getMobile(),friendInfoParam.getTendId());
+				if(isEmpty(recordWork)) {
+					ares.setStatus(HioException.requestRecordOut.getStatus()); 
+					ares.setMessage(HioException.requestRecordOut.getMessage()); 
+					return ares;
+				}
+				if(isEmpty(friendInfoParam.getTendName())) {
+					TenantCompanyInfoDto tenantDto = new TenantCompanyInfoDto();
+					tenantDto.setTendId(friendInfoParam.getTendId());
+					TenantCompanyInfoDto tenant = tenantCompanyInfoService.getTenantCompanyInfoByTendId(tenantDto);
+					if(isNotEmpty(tenant)) {
+						friendInfoParam.setTendName(tenant.getName());
+					}
+				}
+				int outerLinkman = 0;
+				TendUserInfo entity = json2obj(obj2json(friendInfoParam), TendUserInfo.class);
+				entity.setReserve1(BaseConstants.UserWorkStatus.JOB.getWorkStatus());
+				if (isEquals(friendInfoParam.getType(), UserOrFriendConstant.OUT_WORKER_INVITE)) {
+					outerLinkman = 1;
+					entity.setOuterLinkman(outerLinkman);
+				}
+				if (isEquals(friendInfoParam.getType(), UserOrFriendConstant.WORKER_INVITE)) {
+					outerLinkman = 0;
+					entity.setOuterLinkman(outerLinkman);
+				}
+
+				TendUserInfo tendUserParam = new TendUserInfo();
+				tendUserParam.setUid(friendInfoParam.getUid());
+				tendUserParam.setTendId(friendInfoParam.getTendId());
+				tendUserParam.setOuterLinkman(outerLinkman);
+				tendUserParam.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+				tendUserParam.setReserve1(BaseConstants.UserWorkStatus.JOB.getWorkStatus());
+				List<TendUserInfo> tendUserList = tendUserInfoService.queryList(tendUserParam);
+				logger.debug("查询是否已经在该团队{}{}",friendInfoParam.getTendId(),tendUserList);
+				if(isNotEmpty(tendUserList)) {
+					ares.setStatus(HioException.alreadyCompany.getStatus());
+					ares.setMessage(HioException.alreadyCompany.getMessage());
+					AppAcceptDto simpleDto = new AppAcceptDto();
+					simpleDto.setTendId(friendInfoParam.getTendId());
+					simpleDto.setTendName(friendInfoParam.getTendName());
+					ares.setResult(simpleDto);
+					return ares;
+				}
+
+				String msg = "";
+
+				int outerWork = 0;
+				if (isEquals(friendInfoParam.getType(), UserOrFriendConstant.WORKER_INVITE)) {
+					outerWork = BaseConstants.USER_ORGANIZATION;
+				} else if (isEquals(friendInfoParam.getType(), UserOrFriendConstant.OUT_WORKER_INVITE)) {
+					outerWork = BaseConstants.USER_EXTERNAL;
+				}
+				IMUserQueryParam apiCheckParam = new IMUserQueryParam();
+				apiCheckParam.setTendId(entity.getTendId());
+				apiCheckParam.setMobile(friendInfoParam.getMobile());
+				apiCheckParam.setType(outerWork);
+				/*ApiFeignResponse<Boolean> result = sysFeignService.queryOaUserIsDelete(apiCheckParam);
+				if (result.getStatus() == HioException.SUCCESS) {
+					if(result.getResult()) {
+						ares.setStatus(HioException.SUCCESS);
+						ares.setMessage("邀请信息已失效！");
+						return ares;
+					}*/
+					entity.setOuterLinkman(outerLinkman);
+
+					// 调用 OA 接口，将同事保存到企业用户里
+					IMUserSyncParam apiParam = new IMUserSyncParam();
+					apiParam.setTendId(entity.getTendId());
+					apiParam.setMobile(entity.getMobile());
+					apiParam.setImUserId(entity.getUid());
+					if (isEquals(friendInfoParam.getType(), UserOrFriendConstant.WORKER_INVITE)) {
+						msg = "您同意成为该企业的员工！";
+						apiParam.setType(outerWork);
+					} else if (isEquals(friendInfoParam.getType(), UserOrFriendConstant.OUT_WORKER_INVITE)) {
+						msg = "您同意成为该企业的外部联系人！";
+						apiParam.setType(outerWork);
+					}
+					// 同步到oa
+					ApiFeignResponse<Integer> apiResponse = sysFeignService.syncImUserId(apiParam);
+					if (apiResponse.getStatus() == HioException.SUCCESS) {
+						/*entity.setId(tendUserInfoService.generatePk());
+						entity.setCreateDate(new Date());
+						entity.setDelflag(0);
+						entity.setCreatePersonId(getUserIdIM());
+						entity.setUpdatePersonId(getUserIdIM());
+						entity.setUid(entity.getUid());*/
+						boolean defaultFlag = true;
+						if (isEquals(friendInfoParam.getType(), UserOrFriendConstant.WORKER_INVITE)) {
+							Map<String, String> userTendJson = JedisUtil.fetchRelationRow(RedisKeyConstant.userTendList + getUserIdIM());
+							if (isEmpty(userTendJson) || userTendJson.size() < 1) {
+								List<TendUserInfo> tendInfoList = new ArrayList<TendUserInfo>();
+								TendUserInfo tendUser = new TendUserInfo();
+								tendUser.setUid(getUserIdIM());
+								tendUser.setDelflag(0);
+								tendUser.setOuterLinkman(UserOrFriendConstant.outerLinkman);
+								tendInfoList = tendUserInfoService.queryList(tendUser);
+								for (TendUserInfo dto : tendInfoList) {
+									if (isEquals(dto.getDefaultFlag(), UserOrFriendConstant.DEFAULT_COMP_YES)) {
+										defaultFlag = false;
+										break;
+									}
+								}
+							}else {
+								for(String key : userTendJson.keySet()) {
+			    					if(!"table_name".equals(key)) {
+			    						String json = userTendJson.get(key);
+			    						TendUserInfo tendUserInfo = json2obj(json,TendUserInfo.class);
+			    						if (isEquals(tendUserInfo.getDefaultFlag(), UserOrFriendConstant.DEFAULT_COMP_YES)) {
+											defaultFlag = false;
+											break;
+										}
+			    					}
+			    				}
+							}
+							if (defaultFlag) {
+								entity.setDefaultFlag(UserOrFriendConstant.DEFAULT_COMP_YES);
+							} else {
+								entity.setDefaultFlag(UserOrFriendConstant.DEFAULT_COMP_NO);
+							}
+						}else {
+							entity.setDefaultFlag(UserOrFriendConstant.DEFAULT_COMP_NO);
+							defaultFlag = false;
+						}
+						TendUserInfo tendParam = new TendUserInfo();
+						tendParam.setTendId(friendInfoParam.getTendId());
+//						tendParam.setMobile(friendInfoParam.getMobile());
+						tendParam.setUid(uid);
+						tendParam.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+						List<TendUserInfo> tendUserInfoList = tendUserInfoService.queryList(tendParam);
+						if(isNotEmpty(tendUserInfoList)) {
+							Base.copyProperties(tendUserInfoList.get(0),entity);
+							entity.setReserve1(BaseConstants.UserWorkStatus.JOB.getWorkStatus());
+							entity.setUpdateDate(new Date());
+							entity.setCreateDate(new Date());
+							if (defaultFlag) {
+								entity.setDefaultFlag(UserOrFriendConstant.DEFAULT_COMP_YES);
+							} else {
+								entity.setDefaultFlag(UserOrFriendConstant.DEFAULT_COMP_NO);
+							}
+							tendUserInfoService.update(entity);
+						}else {
+							ares.setStatus(HioException.SUCCESS);
+							ares.setMessage("邀请信息已失效！");
+							return ares;
+						}
+						
+						JedisUtil.addRow(entity);
+						Map<String, Object> userTendmap = json2map(obj2json(entity));
+						userTendmap.put("id", entity.getTendId());
+						JedisUtil.addRow(RedisKeyConstant.userTendList + entity.getUid(), userTendmap);
+						JedisUtil.delRelationRow(RedisKeyConstant.inviterecord + friendInfoParam.getTendId() + "_" + friendInfoParam.getMobile());
+						
+						ares.setStatus(HioException.SUCCESS);
+						ares.setMessage(msg);
+						AppAcceptDto simpleDto = new AppAcceptDto();
+						simpleDto.setTendId(friendInfoParam.getTendId());
+						simpleDto.setTendName(friendInfoParam.getTendName());
+						ares.setResult(simpleDto);
+						
+						// 为对方发站内信，告知已接受同事/外部联系人邀请
+						String userJson = JedisUtil.fetchRow(UserOrFriendConstant.IM_USER_INFO, friendInfoParam.getUid());
+						ImUserInfoDto userInfoBean = null;
+						if (StringUtils.isBlank(userJson)) {
+							userInfoBean = userInfoService.getUserInfoById(friendInfoParam.getUid());
+							UserInfo userInfo = new UserInfo();
+							BeanUtils.copyProperties(userInfoBean, userInfo);
+							JedisUtil.addRow(UserOrFriendConstant.IM_USER_INFO, obj2map(userInfo));
+							// 租户、隐私等 redis 同步
+						} else {
+							userInfoBean = (ImUserInfoDto) json2obj(userJson, ImUserInfoDto.class);
+						}
+						String modelType = "";
+						String modelName = "";
+						String msgType = "";
+						String sendMsg = "";
+						String receiverMsg = "";
+
+						List<String> imUserIds = new ArrayList<>();
+						imUserIds.add(friendInfoParam.getUid());
+						ApiFeignResponse<Map<String,SysCurrencyDto>> oaUserAre = sysFeignService.queryUsersByIMUserIds(friendInfoParam.getTendId(),imUserIds);
+						logger.info("sys 获取员工姓名{}",oaUserAre);
+						if(oaUserAre.getStatus() == 200 && isNotEmpty(oaUserAre.getResult())){
+							userInfoBean.setName(oaUserAre.getResult().get(friendInfoParam.getUid()).getUserName());
+						}
+
+						if(isEquals(friendInfoParam.getType(), UserOrFriendConstant.WORKER_INVITE)) {
+							modelType = MessageEnum.WORKAGREE.getValue();
+							modelName = MessageEnum.WORKAGREE.getDes();
+							msgType = UserOrFriendConstant.NOTICE_MSG_TYPE;
+							sendMsg = "“"+userInfoBean.getName() + "”接受贵公司的邀请！";
+							receiverMsg = "欢迎加入“"+friendInfoParam.getTendName()+"”";
+						}else {
+							modelType = MsgTypeEnum.OUT.getValue();
+							modelName = MessageEnum.OUTWORKAGREE.getDes();
+							msgType = MsgTypeEnum.OUT.getValue();
+							sendMsg = "您邀请的外部联系人“"+userInfoBean.getName() + "”，已加入“"+friendInfoParam.getTendName()+"”";
+							receiverMsg = "欢迎您作为外部联系人，加入“"+friendInfoParam.getTendName()+"”";
+						}
+						
+						friendInfoService.receiptInformation(friendInfoParam,sendMsg,UserOrFriendConstant.NOTICE_MSG_TYPE
+								,modelType,modelName,UserOrFriendConstant.TEXT_MSG_TYPE);
+						friendInfoService.receiptInformation(friendInfoParam,"“"+userInfoBean.getName() + "”接受贵公司的邀请！",UserOrFriendConstant.NOTICE_MSG_TYPE
+								,modelType,modelName,UserOrFriendConstant.CMD_MSG_TYPE);
+						FriendInfoSaveParam ownParam = new FriendInfoSaveParam();
+						Base.copyProperties(friendInfoParam, ownParam);
+						ownParam.setUid(friendInfoParam.getFid());
+						ownParam.setFid(friendInfoParam.getUid());
+						friendInfoService.receiptInformation(ownParam,receiverMsg,msgType
+								,modelType,modelName,UserOrFriendConstant.TEXT_MSG_TYPE);
+						JedisUtil.del(Constants.key_request_record_work + uid + friendInfoParam.getTendId());
+						JedisUtil.del(Constants.key_send_work + uid + friendInfoParam.getTendId());
+						logger.debug("接受同事、外部联系人邀请保存成功！");
+					} else {
+						ares.setStatus(HioException.requestRecordOut.getStatus());
+						ares.setMessage(HioException.requestRecordOut.getMessage());
+						AppAcceptDto simpleDto = new AppAcceptDto();
+						simpleDto.setTendId(friendInfoParam.getTendId());
+						simpleDto.setTendName(friendInfoParam.getTendName());
+						ares.setResult(simpleDto);
+						logger.debug("接受同事、外部联系人邀请保存失败！");
+					}
+				/*} else {
+					ares.setStatus(result.getStatus());
+					ares.setMessage(result.getMessage());
+					AppAcceptDto simpleDto = new AppAcceptDto();
+					simpleDto.setTendId(friendInfoParam.getTendId());
+					simpleDto.setTendName(friendInfoParam.getTendName());
+					ares.setResult(simpleDto);
+					logger.debug("邀请信息已失效！");
+				}*/
+			}
+
+		} catch (Exception e) {
+			ares.setStatus(HioException.requestRecordOut.getStatus());
+			ares.setMessage(HioException.requestRecordOut.getMessage());
+			e.printStackTrace();
+			logger.error("接受好友、同事、外部联系人邀请保存失败！{}{}", obj2json(friendInfoParam), e.getMessage());
+		}
+		return ares;
+	}
+	
+
+	/**
+	 * 保存好友关系
+	 * 
+	 * @param friendInfo
+	 * @param addflag
+	 * @throws Exception
+	 */
+	private void addOrUpdateFriRedis(FriendInfo friendInfo, FriendInfoDto dto, String addflag) throws Exception {
+
+		dto.setId(friendInfo.getFid());
+		String userJson = JedisUtil.fetchRow(UserOrFriendConstant.IM_USER_INFO, friendInfo.getFid());
+		ImUserInfoDto userInfoBean = null;
+		if (StringUtils.isNotBlank(userJson)) {
+			userInfoBean = json2obj(userJson, ImUserInfoDto.class);
+			logger.debug("redis查询好友信息" + userJson);
+		} else {
+			userInfoBean = userInfoService.getUserInfoById(friendInfo.getFid());
+			if (userInfoBean != null) {
+				UserInfo userInfo = new UserInfo();
+				BeanUtils.copyProperties(userInfoBean, userInfo);
+				JedisUtil.addRow(userInfo);
+				logger.debug("mysql查询好友信息" + userInfoBean.getName());
+			}
+		}
+		dto.setFid(friendInfo.getFid());
+		dto.setUid(friendInfo.getUid());
+		dto.setFname(userInfoBean.getName() == null ? "" : userInfoBean.getName());
+		dto.setMobile(userInfoBean.getMobile() == null ? "" : userInfoBean.getMobile());
+		dto.setStatusId(userInfoBean.getStatusId() == null ? "" : userInfoBean.getStatusId());
+		dto.setIsDel(UserOrFriendConstant.IS_DEL_NO);
+		dto.setResourceImgUrl(userInfoBean.getResourceImgUrl() == null ? "" : userInfoBean.getResourceImgUrl());
+		dto.setBlankName(UserOrFriendConstant.IS_BLANK_NO);
+		dto.setStarFlag(UserOrFriendConstant.IS_START_NO);
+		dto.setSharePhone(friendInfo.getSharePhone());
+		dto.setSex(userInfoBean.getSex());
+		dto.setCompanyFlag(userInfoBean.getCompanyFlag());
+		dto.setNameFull(isEmpty(userInfoBean.getNameFull())?"":userInfoBean.getNameFull());
+		dto.setNameSimple(isEmpty(userInfoBean.getNameSimple())?"":userInfoBean.getNameSimple());
+		logger.debug("好友信息放到我的好友列表");
+	}
+
+	/**
+	 * 获取好友关系
+	 * 
+	 * @param friendParam
+	 * @param user
+	 * @return
+	 * @throws HioException
+	 */
+	@ResponseBodyExt
+	@RequestMapping("/friendList")
+	public ApiResponse<Object> friendList(@RequestBody FriendInfoSaveParam friendParam, Principal user) throws HioException {
+		ApiResponse<Object> ares = new ApiResponse<Object>();
+		Map userSession = JedisUtil.fetchSession(user.getName());
+		logger.debug("获取好友列表开始：" + obj2json(friendParam));
+		try {
+			ares.setStatus(HioException.SUCCESS);
+			ares.setMessage("查询好友关系成功！");
+			String uid = friendParam.getUid();
+			Map<String, String> friendJson = friendInfoService.getUserFriend(uid, "query");
+			// Map<String,Object> friendJson = Base.map2obj(json, Map.class);
+			Map<String, Object> myMap = new HashMap<String, Object>(16);
+			List<FriendInfoDto> list = new ArrayList<FriendInfoDto>();
+			for (String key : friendJson.keySet()) {
+				FriendInfoDto dto = json2obj(friendJson.get(key),FriendInfoDto.class);
+				if(isEmpty(dto.getSharePhone())){
+					dto.setSharePhone(UserOrFriendConstant.SHARE_PHONE_NO);
+				}
+				list.add(dto);
+			}
+			int pageNumber = friendParam.getPageNumber();
+			int pageSize = friendParam.getPageSize();
+			int fromIndex = (pageNumber - 1) * pageSize;
+			if (fromIndex >= list.size()) {
+				ares.setMessage("没有更多！");
+			}
+			if (fromIndex <= 0) {
+				pageSize = list.size();
+				myMap.put("data", list);
+			} else {
+				int toIndex = pageNumber * pageSize;
+				if (toIndex >= list.size()) {
+					toIndex = list.size();
+				}
+				myMap.put("data", list.subList(fromIndex, toIndex));
+			}
+
+			myMap.put("total", friendJson.keySet().size() + "");
+			myMap.put("pageNumber", pageNumber + "");
+			myMap.put("pageSize", pageSize + "");
+			ares.setResult(myMap);
+			logger.debug("获取好友列表成功！");
+		} catch (Exception e) {
+			ares.setStatus(HioException.friendList.getStatus());
+			ares.setMessage(HioException.friendList.getMessage());
+			e.printStackTrace();
+			logger.error("获取好友列表失败！{}{}", obj2json(friendParam), e.getMessage());
+		}
+		return ares;
+	}
+
+	/**
+	 * 获取好友总数
+	 * 
+	 * @param friendParam
+	 * @return
+	 * @throws HioException
+	 */
+	@ResponseBodyExt
+	@RequestMapping("/friendTotalCount")
+	public ApiResponse<String> friendTotalCount(@RequestBody FriendInfoSaveParam friendParam) throws HioException {
+		ApiResponse<String> ares = new ApiResponse<String>();
+		try {
+			logger.debug("获取好友总数开始！");
+			Map<String, String> friendJson = friendInfoService.getUserFriend(friendParam.getUid(), "query");
+			ares.setStatus(HioException.SUCCESS);
+			ares.setMessage("获取好友总数成功！");
+			ares.setResult(friendJson.keySet().size() + "");
+			logger.debug("获取好友总数成功！");
+		} catch (Exception e) {
+			ares.setStatus(HioException.friendTotalCount.getStatus());
+			ares.setMessage(HioException.friendTotalCount.getMessage());
+			logger.error("获取好友总数失败！{}{}", obj2json(friendParam), e.getMessage());
+		}
+		return ares;
+	}
+
+	/**
+	 * 解除好友关系
+	 */
+	@ResponseBodyExt
+	@RequestMapping("/delFriend")
+	public ApiResponse<Object> delFriend(@RequestBody FriendInfoSaveParam friendParam, @RequestHeader(value = "User-Agent") String userAgent) throws HioMybatisInsertException {
+		ApiResponse<Object> ares = new ApiResponse<Object>();
+		logger.debug("解除好友关系开始！");
+		try {
+			String uid = friendParam.getUid();
+			String fid = friendParam.getFid();
+			// 自己的好友redis关系中删除fid好友
+			JedisUtil.delRow(RedisKeyConstant.myfriendPrefix + uid, fid);
+			logger.debug("redis删除好友成功！");
+			// 我的好友fid的redis好友列表中将我是否删除了他的标识 isDel 更新为是
+			String fFriendJson = JedisUtil.fetchRow(RedisKeyConstant.myfriendPrefix + fid, uid);
+			String userJson = JedisUtil.fetchRow(UserOrFriendConstant.IM_USER_INFO, uid);
+			if(isNotEmpty(userJson)) {
+				ImUserInfoDto userInfoBean = json2obj(userJson, ImUserInfoDto.class);
+				JedisUtil.del(Constants.key_request_record_friend + userInfoBean.getMobile() + fid);
+			}
+			userAgent = userAgent.toLowerCase();
+			int  modifyOwerType = 0;
+			if(userAgent.contains("android")) {
+				modifyOwerType = UserOrFriendConstant.modify_ower_android;
+			}else if(userAgent.contains("iphone")){
+				modifyOwerType = UserOrFriendConstant.modify_ower_iphone;
+			}else {
+				modifyOwerType = UserOrFriendConstant.modify_ower_other;
+			}
+			int isSendFlag = userInfoService.checkIsSendMessage(uid,fid);
+			if(isNotEmpty(fFriendJson)) {
+				Map<String, String> fFriendMap = json2mapString(fFriendJson);
+				fFriendMap.put("isDel", UserOrFriendConstant.IS_DEL_YES + "");
+				fFriendMap.put("id", fFriendMap.get("fid"));
+				if(isEmpty(fFriendMap.get("sharePhone"))){
+					fFriendMap.put("sharePhone",UserOrFriendConstant.SHARE_PHONE_NO+"");
+				}
+				JedisUtil.addListRow(RedisKeyConstant.myfriendPrefix + fid, fFriendMap);
+				logger.debug("我的好友的redis更新我对他的删除状态成功！");
+				// 更新mysql
+				FriendInfo friendInfo = new FriendInfo();
+				friendInfo.setUid(uid);
+				friendInfo.setFid(fid);
+				friendInfo.setDelType(1);
+				friendInfo.setUpdatePersonId(getUserIdIM());
+				friendInfo.setUpdateDate(new Date());
+				FriendInfo myFriendInfo = json2obj(fFriendJson, FriendInfo.class);
+				myFriendInfo.setUid(fid);
+				myFriendInfo.setFid(uid);
+				myFriendInfo.setIsDel(UserOrFriendConstant.IS_DEL_YES);
+				myFriendInfo.setUpdateDate(new Date());
+				myFriendInfo.setUpdatePersonId(getUserIdIM());
+	
+				rabbitTemplate.convertAndSend(queueConfig.getImFriendInfoQueue(), friendInfo);
+				rabbitTemplate.convertAndSend(queueConfig.getImFriendInfoQueue(), myFriendInfo);
+				logger.debug("删除好友更新mysql成功！");
+				ares.setStatus(HioException.SUCCESS);
+				ares.setMessage("删除好友关系成功！");
+
+				Map<String,Object> map = new HashMap<String,Object>();
+				map.put("isSendFlag", isSendFlag);
+				ares.setResult(map);
+
+				// 为对方发站内信，告知删除好友关系
+				ImNoticeOrPhoneMsgsParam param = new ImNoticeOrPhoneMsgsParam();
+				param.setFromUserId(friendParam.getUid());
+				param.setReceiverId(friendParam.getFid());
+				param.setMsgType(UserOrFriendConstant.NOTICE_MSG_TYPE);
+				param.setModuleType(String.valueOf(MessageEnum.DELFRIEND.getValue()));
+				param.setModuleName(MessageEnum.DELFRIEND.getDes());
+				param.setSendMsgType(UserOrFriendConstant.CMD_MSG_TYPE);
+				param.setModifyOwerType(modifyOwerType);
+				param.setIsSendFlag(isSendFlag);
+				noticePhoneMsgService.sendMail(param);
+
+			}else {
+				FriendInfo friendInfo = new FriendInfo();
+				friendInfo.setUid(uid);
+				friendInfo.setFid(fid);
+				friendInfo.setDelType(1);
+				friendInfo.setUpdatePersonId(getUserIdIM());
+				friendInfo.setUpdateDate(new Date());
+				rabbitTemplate.convertAndSend(queueConfig.getImFriendInfoQueue(), friendInfo);
+				ares.setStatus(HioException.SUCCESS);
+				ares.setMessage("删除好友关系成功！");
+				Map<String,Object> map = new HashMap<String,Object>();
+				map.put("isSendFlag", 0);
+				ares.setResult(map);
+			}
+			//给自己发cmd消息
+			ImNoticeOrPhoneMsgsParam owerParam = new ImNoticeOrPhoneMsgsParam();
+			owerParam.setFromUserId(friendParam.getFid());
+			owerParam.setReceiverId(friendParam.getUid());
+			owerParam.setMsgType(UserOrFriendConstant.NOTICE_MSG_TYPE);
+			owerParam.setModuleType(String.valueOf(MessageEnum.DELFRIENDOWER.getValue()));
+			owerParam.setModuleName(MessageEnum.DELFRIENDOWER.getDes());
+			owerParam.setSendMsgType(UserOrFriendConstant.CMD_MSG_TYPE);
+			owerParam.setModifyOwerType(modifyOwerType);
+			owerParam.setIsSendFlag(isSendFlag);
+			noticePhoneMsgService.sendMail(owerParam);
+		} catch (Exception e) {
+			ares.setStatus(HioException.delFriend.getStatus());
+			ares.setMessage(HioException.delFriend.getMessage());
+			logger.error("删除好友关系失败！{}{}", obj2json(friendParam), e.getMessage());
+			e.printStackTrace();
+		}
+		return ares;
+	}
+
+	/**
+	 * 添加黑名单
+	 * 
+	 * @param friendParam
+	 * @param user
+	 * @return
+	 * @throws HioException
+	 */
+	@RequestMapping("/addBlack")
+	public ApiResponse<Object> addBlack(@RequestBody FriendInfoSaveParam friendParam, Principal user) throws HioException {
+		ApiResponse<Object> ares = new ApiResponse<Object>();
+		logger.debug("添加黑名单开始：" + obj2json(friendParam));
+		try {
+			String uid = friendParam.getUid();
+			String fid = friendParam.getFid();
+			String userJson = JedisUtil.fetchRow(UserOrFriendConstant.IM_USER_INFO, fid);
+			ImUserInfoDto userInfoBean = null;
+			if (StringUtils.isNotBlank(userJson)) {
+				userInfoBean = json2obj(userJson, ImUserInfoDto.class);
+				logger.debug("redis查询要拉黑的用户：" + userInfoBean.getName());
+			} else {
+				userInfoBean = userInfoService.getUserInfoById(fid);
+				if (userInfoBean != null) {
+					UserInfo userInfo = new UserInfo();
+					BeanUtils.copyProperties(userInfoBean, userInfo);
+					JedisUtil.addRow(userInfo);
+					logger.debug("mysql查询要拉黑的用户:" + userInfoBean.getName());
+				}
+			}
+			Map<String, String> blackJson = JedisUtil.fetchRelationRow("myblacklist:" + uid);
+			logger.debug("redis查询我的黑名单列表！");
+			Map<String, String> blackMap = new HashMap<String, String>(16);
+			List<Map<String, Object>> dataList = new ArrayList<Map<String, Object>>();
+			Map<String, Object> blackdatamap = new HashMap<String, Object>(16);
+			if (null != blackJson && blackJson.size() > 0) {
+				blackMap = blackJson;
+				dataList = JacksonUtils.fromJson(blackMap.get("data").toString(), List.class, Map.class);
+			} else {
+				// 我的id
+				blackMap.put("userId", uid);
+				// 黑名单列表
+				List<FriendInfo> backlist = friendInfoService.getBlackList(uid);
+				logger.debug("mysql查询我的黑名单列表！");
+				for (FriendInfo dto : backlist) {
+					// 拉黑用户的id
+					blackdatamap.put("userId", dto.getFid());
+					String userFriendJson = JedisUtil.fetchRow(UserOrFriendConstant.IM_USER_INFO, dto.getFid());
+					if (StringUtils.isNotBlank(userFriendJson)) {
+						userInfoBean = json2obj(userFriendJson, ImUserInfoDto.class);
+					} else {
+						userInfoBean = userInfoService.getUserInfoById(dto.getFid());
+						if (userInfoBean != null) {
+							UserInfo userInfo = new UserInfo();
+							BeanUtils.copyProperties(userInfoBean, userInfo);
+							JedisUtil.addRow(userInfo);
+						}
+					}
+					// 拉黑用户的名字
+					blackdatamap.put("name", userInfoBean.getName());
+					dataList.add(blackdatamap);
+				}
+			}
+			// 拉黑用户的id
+			blackdatamap.put("userId", fid);
+			// 拉黑用户的名字
+			blackdatamap.put("name", userInfoBean.getName());
+			dataList.add(blackdatamap);
+			GsonBuilder gson = GsonBuilderUtils.gsonBuilderWithBase64EncodedByteArrays();
+			blackMap.put("data", gson.create().toJson(dataList));
+			JedisUtil.addRelationRow("myblacklist:" + uid, blackMap);
+			logger.debug("redis更新我的黑名单列表！");
+			// 好友关系中删除这条被拉黑的用户
+			JedisUtil.delRow(RedisKeyConstant.myfriendPrefix + uid, fid);
+			logger.debug("redis我的好友列表中删除拉黑的用户！");
+			// 我拉黑的用户的好友列表，把与我的好友关系 BlankName 置为1，通知端上我将该用户拉黑
+			String fFriendJson = JedisUtil.fetchRow(RedisKeyConstant.myfriendPrefix + fid, uid);
+			Map<String, String> fFriendMap = json2mapString(fFriendJson);
+			fFriendMap.put("blankName", UserOrFriendConstant.IS_BLANK_YES + "");
+			fFriendMap.put("id", fFriendMap.get("fid"));
+			JedisUtil.addListRow(RedisKeyConstant.myfriendPrefix + fid, fFriendMap);
+
+			ares.setStatus(HioException.SUCCESS);
+			ares.setMessage("添加黑名单成功！");
+			// ares.setResult(userInfoBean);
+
+			FriendInfo friendInfo = new FriendInfo();
+			friendInfo.setBlankName(UserOrFriendConstant.IS_BLANK_YES);
+			friendInfo.setUid(uid);
+			friendInfo.setFid(fid);
+			friendInfo.setUpdatePersonId(getUserIdIM());
+			friendInfo.setUpdateDate(new Date());
+			rabbitTemplate.convertAndSend(queueConfig.getImFriendInfoQueue(), friendInfo);
+			logger.debug("更新mysql好友关系！");
+			// 为对方发站内信，告知拉入黑名单
+			ImNoticeOrPhoneMsgsParam param = new ImNoticeOrPhoneMsgsParam();
+			param.setFromUserId(friendParam.getUid());
+			param.setReceiverId(friendParam.getFid());
+			param.setMsgType(UserOrFriendConstant.NOTICE_MSG_TYPE);
+			param.setModuleType(String.valueOf(MessageEnum.ADDBLANK.getValue()));
+			param.setModuleName(MessageEnum.ADDBLANK.getDes());
+			param.setSendMsgType(UserOrFriendConstant.CMD_MSG_TYPE);
+			noticePhoneMsgService.sendMail(param);
+		} catch (Exception e) {
+			ares.setStatus(HioException.addBlack.getStatus());
+			ares.setMessage(HioException.addBlack.getMessage());
+			logger.error("添加黑名单失败！{}{}", obj2json(friendParam), e.getMessage());
+			e.printStackTrace();
+		}
+		return ares;
+	}
+
+	/**
+	 * 黑名单列表
+	 * 
+	 * @param friendParam
+	 * @return
+	 * @throws HioException
+	 */
+	@RequestMapping("/blackList")
+	public ApiResponse<Object> blackList(@RequestBody FriendInfoSaveParam friendParam) throws HioException {
+		logger.debug("获取黑名单列表开始！");
+		ApiResponse<Object> ares = new ApiResponse<Object>();
+		try {
+			Map<String, String> blackJson = JedisUtil.fetchRelationRow("myblacklist:" + friendParam.getUid());
+			if (null == blackJson || blackJson.size() < 1) {
+				List<FriendInfo> list = friendInfoService.getBlackList(friendParam.getUid());
+				if (null != null && list.size() > 0) {
+					logger.debug("mysql获取黑名单列表！");
+					Map<String, String> blackMap = new HashMap<String, String>(16);
+					List<Map<String, Object>> dataList = new ArrayList<Map<String, Object>>();
+					for (FriendInfo dto : list) {
+						Map<String, Object> blackdatamap = new HashMap<String, Object>(16);
+						blackdatamap.put("userId", dto.getFid());
+						String userJson = JedisUtil.fetchRow(UserOrFriendConstant.IM_USER_INFO, dto.getFid());
+						ImUserInfoDto userInfoBean = null;
+						if (StringUtils.isNotBlank(userJson)) {
+							userInfoBean = json2obj(userJson, ImUserInfoDto.class);
+							logger.debug("redis获取我拉黑的用户信息！");
+						} else {
+							userInfoBean = userInfoService.getUserInfoById(dto.getFid());
+							logger.debug("mysql获取我拉黑的用户信息！");
+						}
+						blackdatamap.put("name", userInfoBean.getName());
+						dataList.add(blackdatamap);
+					}
+					GsonBuilder gson = GsonBuilderUtils.gsonBuilderWithBase64EncodedByteArrays();
+					blackMap.put("data", gson.create().toJson(dataList));
+					blackMap.put("userId", friendParam.getUid());
+					blackJson = blackMap;
+					JedisUtil.addRelationRow("myblacklist:" + friendParam.getUid(), blackMap);
+					logger.debug("mysql获取我拉黑的用户信息存到redis！");
+				}
+			}
+			ares.setStatus(HioException.SUCCESS);
+			ares.setMessage("查询黑名单成功！");
+			ares.setResult(Base.json2list(blackJson.get("data"), Map.class));
+			logger.debug("获取我的黑名单列表成功！");
+		} catch (Exception e) {
+			ares.setStatus(HioException.blackList.getStatus());
+			ares.setMessage(HioException.blackList.getMessage());
+			e.printStackTrace();
+			logger.error("获取我的黑名单列表失败,{}{}", obj2json(friendParam), e.getMessage());
+		}
+		return ares;
+	}
+
+	/**
+	 * 删除黑名单
+	 * 
+	 * @param friendParam
+	 * @return
+	 * @throws HioException
+	 */
+	@RequestMapping("/delBlack")
+	public ApiResponse<String> delBlack(@RequestBody FriendInfoSaveParam friendParam) throws HioException {
+		logger.debug("删除黑名但单开始！");
+		ApiResponse<String> ares = new ApiResponse<String>();
+		try {
+			String uid = friendParam.getUid();
+			String fid = friendParam.getFid();
+			Map<String, String> blackJson = JedisUtil.fetchRelationRow("myblacklist:" + uid);
+			Map<String, String> blackMap = new HashMap<String, String>(16);
+			List<Map<String, Object>> dataList = new ArrayList<Map<String, Object>>();
+			if (null != blackJson && blackJson.size() > 0) {
+				blackMap = blackJson;
+				dataList = JacksonUtils.fromJson(blackMap.get("data").toString(), List.class, Map.class);
+				for (Map<String, Object> mapf : dataList) {
+					if (mapf.get("userId") != null && mapf.get("userId").equals(fid)) {
+						dataList.remove(mapf);
+						logger.debug("redis黑名单列表中删除我取消黑名单的用户！");
+						break;
+					}
+				}
+			}
+			GsonBuilder gson = GsonBuilderUtils.gsonBuilderWithBase64EncodedByteArrays();
+			blackMap.put("data", gson.create().toJson(dataList));
+			JedisUtil.addRelationRow("myblacklist:" + uid, blackMap);
+			logger.debug("更新redis黑名单列表！");
+			// 好友关系中添加被删除黑名单的用户
+			FriendInfoDto dto = new FriendInfoDto();
+			FriendInfo friendInfo = new FriendInfo();
+			friendInfo.setUid(uid);
+			friendInfo.setFid(fid);
+			addOrUpdateFriRedis(friendInfo, dto, "add");
+			JedisUtil.addListRow(RedisKeyConstant.myfriendPrefix + uid, obj2map(dto));
+
+			// 我拉黑的用户的好友列表，把与我的好友关系 BlankName 置为0，通知端上我将该用户取消拉黑
+			String fFriendJson = JedisUtil.fetchRow(RedisKeyConstant.myfriendPrefix + fid, uid);
+			Map<String, String> fFriendMap = json2mapString(fFriendJson);
+			fFriendMap.put("blankName", UserOrFriendConstant.IS_BLANK_NO + "");
+			fFriendMap.put("id", fFriendMap.get("fid"));
+			JedisUtil.addListRow(RedisKeyConstant.myfriendPrefix + fid, fFriendMap);
+
+			ares.setStatus(HioException.SUCCESS);
+			ares.setMessage("删除黑名单成功！");
+			friendInfo.setBlankName(0);
+			friendInfo.setUpdatePersonId(getUserIdIM());
+			friendInfo.setUpdateDate(new Date());
+			rabbitTemplate.convertAndSend(queueConfig.getImFriendInfoQueue(), friendInfo);
+			logger.debug("mq更新mysql好友表！");
+			// 为对方发站内信，告知删除黑名单
+			ImNoticeOrPhoneMsgsParam param = new ImNoticeOrPhoneMsgsParam();
+			param.setFromUserId(friendParam.getUid());
+			param.setReceiverId(friendParam.getFid());
+			param.setMsgType(UserOrFriendConstant.NOTICE_MSG_TYPE);
+			param.setModuleType(String.valueOf(MessageEnum.DELBLANK.getValue()));
+			param.setModuleName(MessageEnum.DELBLANK.getDes());
+			param.setSendMsgType(UserOrFriendConstant.CMD_MSG_TYPE);
+			noticePhoneMsgService.sendMail(param);
+		} catch (Exception e) {
+			ares.setStatus(HioException.delBlack.getStatus());
+			ares.setMessage(HioException.delBlack.getMessage());
+			logger.error("删除黑名单失败！{}{}", obj2json(friendParam), e.getMessage());
+		}
+		return ares;
+	}
+
+	/**
+	 * 设置是否共享手机号 <br>
+	 * wt.coffee修改参数类型json->map
+	 * @date 2018-4-28
+	 * 
+	 * @param paramMap
+	 * @return
+	 */
+	@RequestMapping("/setShare")
+	public ApiResponse<String> setShare(@RequestBody Map<String, Object> paramMap) {
+		ApiResponse<String> res = new ApiResponse<String>(200, "设置成功");
+		try {
+			String uid = getUserIdIM();
+			String fid = getStr(paramMap, "fid");
+			if (StringUtils.isBlank(fid)) {
+				res.setStatus(HioException.selectShareFriend.getStatus());
+				res.setMessage(HioException.selectShareFriend.getMessage());
+				return res;
+			}
+
+			Integer sharePhone = getInteger(paramMap, "sharePhone");
+			if (sharePhone == null) {
+				res.setStatus(HioException.setShareStatus.getStatus());
+				res.setMessage(HioException.setShareStatus.getMessage());
+				return res;
+			}
+
+			friendInfoService.updateSharePhone(uid, fid, sharePhone);
+		} catch (Exception e) {
+			res.setStatus(HioException.setShareFaile.getStatus());
+			res.setMessage(HioException.setShareFaile.getMessage());
+			logger.error("设置是否共享手机号失败,{}{}！", paramMap, e.getMessage());
+			e.printStackTrace();
+		}
+		return res;
+	}
+
+}

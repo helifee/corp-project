@@ -1,0 +1,286 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE sqlMap PUBLIC "-//ibatis.apache.org//DTDSQLMap2.0//EN" "http://ibatis.apache.org/dtd/sql-map-2.dtd">
+<sqlMap namespace="J020031Dao">
+	<typeAlias alias="manaCourseInfo" type="com.yds.tt.training.bean.CourseInfo"/>
+	<typeAlias alias="manaBookInfo" type="com.yds.tt.training.bean.BookInfo"/>
+	<typeAlias alias="ttAuthorityInfo" type="com.yds.tt.manager.bean.AuthorityInfo"/>
+	<typeAlias alias="courseBookRelation" type="com.yds.tt.training.bean.CourseBookRelation"/>
+	
+	<!-- 课程信息一览取得 -->
+	<select id="getCourseInfo" parameterClass="String" resultClass="manaCourseInfo">
+		SELECT 	t1.COURSE_ID AS courseId, 
+				t1.COURSE_NAME AS courseName, 
+				t1.ABSTRACT AS courseAbstract, 
+				t1.COURSE_CONFIRM_STATUS AS courseConfirmStatus, 
+				(SELECT
+						DIFF_NAME
+					FROM com_code_mst
+					WHERE 
+					TYPE_ID = 'R06' AND
+					DIFF_NO = t1.COURSE_CONFIRM_STATUS) AS courseConfirmStatusNm,
+				t1.COURSE_PUBLISH_STATUS AS coursePublishStatus,
+				IFNULL(t1.REFUSE_REASON,'') AS refuseReason, 
+				t1.CATEGORY1_ID AS category1Id,
+				t1.CATEGORY2_ID AS category2Id, 
+				t1.CATEGORY3_ID AS category3Id,
+				<!-- 分类名称：一级分类名-二级分类名-三级分类名 --> 
+				CONCAT
+				(CASE t1.CATEGORY1_ID 
+					WHEN 0 THEN ""
+					ELSE 
+						(SELECT CATEGORY_NAME 
+						   FROM tt_fenlei
+						  WHERE CATEGORY1_ID = t1.CATEGORY1_ID AND 
+								CATEGORY_LEVEL = 1)
+				END,
+				CASE t1.CATEGORY2_ID
+					WHEN 0 THEN ""
+					ELSE CONCAT("-",(SELECT CATEGORY_NAME 
+								FROM tt_fenlei
+							   WHERE CATEGORY1_ID = t1.CATEGORY1_ID AND 
+									 CATEGORY2_ID = t1.CATEGORY2_ID AND
+									 CATEGORY_LEVEL = 2))
+				END ,
+				CASE t1.CATEGORY3_ID
+					WHEN 0 THEN ""
+					ELSE CONCAT("-",(SELECT CATEGORY_NAME 
+								FROM tt_fenlei 
+							   WHERE CATEGORY1_ID = t1.CATEGORY1_ID AND 
+									 CATEGORY2_ID = t1.CATEGORY2_ID AND
+									 CATEGORY3_ID = t1.CATEGORY3_ID AND
+									 CATEGORY_LEVEL = 3))
+				END) AS categoryName,
+				t1.UPDATE_TIME AS updateTime
+
+			FROM 
+				tt_kecheng t1
+		WHERE   t1.COURSE_ID = #courseId#;
+	</select>
+	
+	<!-- 时间戳检索 --> 
+	<select id="getTimeStamp" parameterClass="String" resultClass="Date">
+		SELECT 	t1.UPDATE_TIME AS timeStamp
+			FROM 
+				tt_kecheng t1
+		WHERE   t1.COURSE_ID = #courseId#
+		FOR UPDATE;
+	</select>
+	
+	<!-- 权限（管理除外）判断 --> 
+	<select id="getAuthority" parameterClass="ttAuthorityInfo" resultClass="Object">
+		SELECT 	count(*)
+		  FROM 
+				tt_quanxian
+		WHERE   USER_ID = #userId# 
+		  AND   RELATEDOBJECT_ID = #relatedobjectId# 
+		  AND   AUTHORITY_ID = #authorityId# 
+		  AND   <![CDATA[ 
+					START_TIME <= now()
+				]]>
+		  AND   <![CDATA[ 
+					END_TIME >= now()
+				]]> ;
+	</select>
+
+	<!-- 所选教材一览取得 --> 
+	<select id="getBookInfoList" parameterClass="String" resultClass="manaBookInfo">
+		SELECT 	t1.BOOK_ID AS bookId,
+				t1.BOOK_NAME AS bookName,
+				t1.APPROVER_TIME AS approverTime,
+				t1.CATEGORY1_ID AS category1Id, 
+				t1.CATEGORY2_ID AS category2Id, 
+				t1.CATEGORY3_ID AS category3Id,
+				<!-- 分类名称：一级分类名-二级分类名-三级分类名 --> 
+				CONCAT
+				(CASE t1.CATEGORY1_ID 
+					WHEN 0 THEN ""
+					ELSE 
+						(SELECT CATEGORY_NAME 
+						   FROM tt_fenlei
+						  WHERE CATEGORY1_ID = t1.CATEGORY1_ID AND 
+								CATEGORY_LEVEL = 1)
+				END,
+				CASE t1.CATEGORY2_ID
+					WHEN 0 THEN ""
+					ELSE CONCAT("-",(SELECT CATEGORY_NAME 
+								FROM tt_fenlei
+							   WHERE CATEGORY1_ID = t1.CATEGORY1_ID AND 
+									 CATEGORY2_ID = t1.CATEGORY2_ID AND
+									 CATEGORY_LEVEL = 2))
+				END ,
+				CASE t1.CATEGORY3_ID
+					WHEN 0 THEN ""
+					ELSE CONCAT("-",(SELECT CATEGORY_NAME 
+								FROM tt_fenlei 
+							   WHERE CATEGORY1_ID = t1.CATEGORY1_ID AND 
+									 CATEGORY2_ID = t1.CATEGORY2_ID AND
+									 CATEGORY3_ID = t1.CATEGORY3_ID AND
+									 CATEGORY_LEVEL = 3))
+				END) AS category,
+				(SELECT USER_CNM FROM v_tt_user WHERE t1.CREATE_USER_ID=USER_ID) AS createUserName, 
+				t1.BOOK_STATUS AS bookStatus, 
+				(SELECT
+					DIFF_NAME
+					FROM com_code_mst
+					WHERE 
+					TYPE_ID = 'R01' AND
+					DIFF_NO = t1.BOOK_STATUS) AS statusName,
+				t1.SOURCE AS source, 
+				t4.bookEditCnt AS versionNum, 
+				<!--课程内建的教材参与者可能可以编辑,但初期设成不可以编辑-->
+				"0" AS editFlg,
+				<!-- 课程内建的教材移除链接不可用 --> 
+				"0" AS deleteFlg
+				
+			FROM 
+				tt_jiaocai t1,
+				(SELECT t2.BOOK_ID AS bookId,MAX(t2.EDIT_NO) AS maxEditNo,COUNT(t2.EDIT_NO) AS bookEditCnt
+				   FROM tt_jiaocai t2,tt_kecheng_jiaocai t3
+				  WHERE t3.COURSE_ID = #courseId#
+				    AND t2.BOOK_ID = t3.BOOK_ID
+					AND t2.BELONG_COURSE_ID = #courseId#
+				GROUP BY t2.BOOK_ID) t4
+		WHERE   t1.BOOK_ID = t4.bookId
+		  AND   t1.EDIT_NO = t4.maxEditNo
+		  
+	UNION
+		
+	SELECT      t1.BOOK_ID AS bookId,
+				t1.BOOK_NAME AS bookName,
+				t1.APPROVER_TIME AS approverTime,
+				t1.CATEGORY1_ID AS category1Id, 
+				t1.CATEGORY2_ID AS category2Id, 
+				t1.CATEGORY3_ID AS category3Id,
+				<!-- 分类名称：一级分类名-二级分类名-三级分类名 --> 
+				CONCAT
+				(CASE t1.CATEGORY1_ID 
+					WHEN 0 THEN ""
+					ELSE 
+						(SELECT CATEGORY_NAME 
+						   FROM tt_fenlei
+						  WHERE CATEGORY1_ID = t1.CATEGORY1_ID AND 
+								CATEGORY_LEVEL = 1)
+				END,
+				CASE t1.CATEGORY2_ID
+					WHEN 0 THEN ""
+					ELSE CONCAT("-",(SELECT CATEGORY_NAME 
+								FROM tt_fenlei
+							   WHERE CATEGORY1_ID = t1.CATEGORY1_ID AND 
+									 CATEGORY2_ID = t1.CATEGORY2_ID AND
+									 CATEGORY_LEVEL = 2))
+				END ,
+				CASE t1.CATEGORY3_ID
+					WHEN 0 THEN ""
+					ELSE CONCAT("-",(SELECT CATEGORY_NAME 
+								FROM tt_fenlei 
+							   WHERE CATEGORY1_ID = t1.CATEGORY1_ID AND 
+									 CATEGORY2_ID = t1.CATEGORY2_ID AND
+									 CATEGORY3_ID = t1.CATEGORY3_ID AND
+									 CATEGORY_LEVEL = 3))
+				END) AS category,
+				(SELECT USER_CNM FROM v_tt_user WHERE t1.CREATE_USER_ID=USER_ID) AS createUserName, 
+				t1.BOOK_STATUS AS bookStatus, 
+				(SELECT
+					DIFF_NAME
+					FROM com_code_mst
+					WHERE 
+					TYPE_ID = 'R01' AND
+					DIFF_NO = t1.BOOK_STATUS) AS statusName,
+				t1.SOURCE AS source, 
+				1 AS versionNum, 
+				<!--别的课程建的教材参与者不可以编辑-->
+				"0" AS editFlg,
+				<!-- 选择别的课程创建的课程，移除链接可用 --> 
+				"1" AS deleteFlg
+				
+		FROM 	tt_jiaocai t1,tt_kecheng_jiaocai t2
+	WHERE       t2.COURSE_ID = #courseId#
+	  AND       t1.BOOK_ID = t2.BOOK_ID
+	  AND       (t1.BELONG_COURSE_ID != #courseId# OR t1.BELONG_COURSE_ID IS NULL)
+	  AND       t1.BOOK_STATUS = 3;
+	</select>
+	
+	<!-- 更新课程基本信息 --> 
+	<update id="updateCourseInfo" parameterClass="manaCourseInfo">
+		UPDATE tt_kecheng 
+			SET
+			COURSE_NAME = #courseName#, 
+			ABSTRACT = #courseAbstract# , 
+			UPDATE_USER_ID = #updateUserId#,
+			UPDATE_TIME = now()			
+		WHERE
+			COURSE_ID = #courseId# ;
+	</update>
+	
+	<!-- 提交申请课程基本信息 --> 
+	<update id="updateApplyCourseInfo" parameterClass="manaCourseInfo">
+		UPDATE tt_kecheng 
+			SET
+			COURSE_NAME = #courseName#, 
+			ABSTRACT = #courseAbstract# , 
+			COURSE_CONFIRM_STATUS = #courseConfirmStatus#,
+			UPDATE_USER_ID = #updateUserId#,
+			APPLY_USER_ID = #applyUserId#,
+			APPLY_TIME = now(),
+			UPDATE_TIME = now()
+			
+		WHERE
+			COURSE_ID = #courseId# ;
+	</update>	
+	
+	<!-- 审批课程 --> 
+	<update id="updateConfirmCourse" parameterClass="manaCourseInfo">
+		UPDATE tt_kecheng
+			SET
+			COURSE_CONFIRM_STATUS = #courseConfirmStatus#,
+			REFUSE_REASON = #refuseReason#,
+			UPDATE_USER_ID = #updateUserId#,
+			UPDATE_TIME = now(),
+			APPROVER_USER_ID = #approverUserId#,
+			APPROVER_TIME = now()
+		WHERE
+			COURSE_ID = #courseId# ;
+	</update>
+	
+	<!-- 再编辑课程 --> 
+	<update id="updateReEditCourse" parameterClass="manaCourseInfo">
+		UPDATE tt_kecheng 
+			SET
+			COURSE_CONFIRM_STATUS = #courseConfirmStatus#,
+			UPDATE_USER_ID = #updateUserId#,
+			UPDATE_TIME = now()
+		WHERE
+			COURSE_ID = #courseId# ;
+	</update>
+	
+	<!-- 移除教材 --> 
+	<delete id="deleteBookLink" parameterClass="courseBookRelation">
+		DELETE FROM tt_kecheng_jiaocai
+		 WHERE COURSE_ID=#courseId# AND
+			   BOOK_ID = #bookId# ;
+	</delete>
+	
+	<!-- 课程审批者检索 -->
+	<select id="getCourseApprover" parameterClass="String" resultClass="String">
+		SELECT 	IFNULL(USER_ID,'')
+		  FROM 
+				tt_quanxian
+		WHERE   AUTHORITY_ID = 10
+		  AND   RELATEDOBJECT_ID = #courseId#
+		  AND   <![CDATA[ 
+					START_TIME <= now()
+				]]>
+		  AND   <![CDATA[ 
+					END_TIME >= now()
+				]]> ;
+	</select>
+	
+	<!-- 检索已发布教材的件数 -->
+	<select id="getPublishedBookCnt" parameterClass="String" resultClass="Integer">
+		SELECT 	count(BOOK_ID)
+		  FROM 
+				tt_jiaocai
+		WHERE   BOOK_ID = #bookId#
+		  AND   BOOK_STATUS = 3;
+	</select>	
+</sqlMap>

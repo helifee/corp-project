@@ -1,0 +1,712 @@
+/**
+ * 
+ */
+package com.jzy.hio.platform.running.controller;
+
+import java.io.InputStream;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.aliyun.oss.model.ObjectMetadata;
+import com.github.pagehelper.PageInfo;
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.controller.BaseController;
+import com.jzy.hio.entity.PersonalSecret;
+import com.jzy.hio.entity.Running;
+import com.jzy.hio.entity.RunningDayStatistics;
+import com.jzy.hio.entity.RunningPraise;
+import com.jzy.hio.entity.UserInfo;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.platform.constant.PersonalSwithContant;
+import com.jzy.hio.platform.constant.UserOrFriendConstant;
+import com.jzy.hio.platform.dto.tenantcompanyinfo.TenantCompanyInfoDto;
+import com.jzy.hio.platform.dto.userinfo.ImUserInfoDto;
+import com.jzy.hio.platform.message.comm.MessageConstant;
+import com.jzy.hio.platform.message.comm.OSSClientUtil;
+import com.jzy.hio.platform.message.comm.RandomUtil;
+import com.jzy.hio.platform.message.param.IMToUserParam;
+import com.jzy.hio.platform.message.param.ImGroupSetParam;
+import com.jzy.hio.platform.message.param.ImNoticeMsgsParam;
+import com.jzy.hio.platform.message.param.MessageEnum;
+import com.jzy.hio.platform.message.service.MessageService;
+import com.jzy.hio.platform.running.dto.RunningDto;
+import com.jzy.hio.platform.running.dto.RunningPraiseDto;
+import com.jzy.hio.platform.running.dto.RunningStatisticsDto;
+import com.jzy.hio.platform.running.service.RunningPraiseService;
+import com.jzy.hio.platform.running.service.RunningService;
+import com.jzy.hio.platform.running.service.RunningStatisticsService;
+import com.jzy.hio.platform.tenantcompanyinfo.service.TenantCompanyInfoService;
+import com.jzy.hio.platform.userinfo.param.PersonalSettingParam;
+import com.jzy.hio.platform.userinfo.service.PersonalSecretService;
+import com.jzy.hio.platform.userinfo.service.UserInfoService;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.springmvc.ApiResponse;
+import com.jzy.hio.sys.organization.dto.GeneralDto;
+import com.jzy.hio.sys.organization.dto.SkyDriveDto;
+import com.jzy.hio.sys.organization.param.SkyDriveParam;
+import com.jzy.hio.utils.LoginUser;
+
+/**
+ * CC动动
+ * @author machangxi
+ * @date   2018年5月7日
+ */
+@RestController
+//@RefreshScope
+@RequestMapping("/running")
+public class RunningController extends BaseController {
+
+	private Logger logger = LoggerFactory.getLogger(this.getClass());
+	
+	@Autowired
+	private TenantCompanyInfoService tenantCompanyInfoService;
+	
+	//群组头像空间
+    @Value("${oss.ossRunningCoverBucket}")
+    private String ossRunningCoverBucket;
+    
+    // 运动达标步数
+    @Value("${running.standardSteps}")
+    private int standardSteps;
+    
+    // 运动排行榜前几名
+    @Value("${running.rankingTop}")
+    private int rankingTop;
+    
+    // 运动排行榜显示总人数
+    @Value("${running.rankingAll}")
+    private int rankingAll;
+
+    //访问域名
+    @Value("${oss.runningDomain}")
+    private String runningDomain;
+	
+	@Autowired
+	private RunningService runningService;
+	
+	@Autowired
+	private RunningStatisticsService runningStatisticsService;
+	
+	@Autowired
+	private RunningPraiseService runningPraiseService;
+	
+	@Autowired
+	private PersonalSecretService personalSecretService;
+	
+	@Autowired
+	private UserInfoService userInfoService;
+	
+	@Autowired
+	private SysFeignService sysFeignService;
+	
+	@Autowired
+	private MessageService messageService;
+	
+	/**
+	 * 查询运动基本信息
+	 * @param params
+	 * @return
+	 * @throws Exception
+	 */
+	@RequestMapping(value = "/index", method = RequestMethod.POST)
+	public ApiResponse<Running> getRunningIndex(@RequestBody Map<String, String> params) throws Exception {
+		ApiResponse<Running> result = new ApiResponse<Running>();
+		String steps = params.get("steps");
+		String runDate = params.get("runDate");
+		String clientDate = params.get("clientDate");
+		int runningSteps = 0;
+		if(StringUtils.isNotBlank(steps)) {
+			runningSteps = Integer.valueOf(steps);
+		}
+		if(runningSteps > 60000) {
+			result.setResult(new Running());
+			return result;
+		}
+		LoginUser loginUser = super.getLoginUser();
+		String tendId = loginUser.getTendId();
+		String uid = getUserIdIM();
+		Date now = new Date();
+		SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+		String currentDate = sdf.format(now);
+		if(StringUtils.isBlank(runDate)){
+			runDate = currentDate;
+		}
+		/*if(StringUtils.isBlank(clientDate)) {
+		}*/
+		clientDate = currentDate;
+		Running running = runningService.getCurrentRunning(tendId, uid);
+		int reachStandard = 0;
+		if(runningSteps >= standardSteps){
+			reachStandard = 1;
+		}
+		if(currentDate.equals(clientDate)) {
+			if(running == null){
+				PersonalSecret personalSecret = personalSecretService.getByUId(uid);
+				Integer openRunning = 1;
+				if(personalSecret != null) {
+					openRunning = personalSecret.getOpenRunning();
+					if(openRunning == null) {
+						openRunning = 1;
+					}
+				}
+				running = new Running();
+				running.setUid(uid);
+				running.setEnterpriseId(tendId);
+				running.setOpenRunning(openRunning);
+				running.setPraiseCount(0);
+				running.setReachStandard(reachStandard);
+				running.setRunDate(currentDate);
+				running.setRunSteps(runningSteps);
+				ApiFeignResponse<GeneralDto> org = sysFeignService.queryOrganizationNameById(loginUser.getTendId(), loginUser.getOrgId());
+				if(org.getStatus() == 200) {
+					String orgName = org.getResult().getName();
+					running.setOrgName(orgName);
+				}
+				runningService.saveRunning(running);
+			}else{
+				if(runningSteps > running.getRunSteps()){
+					runningService.updateRunningSteps(tendId, uid, runningSteps, reachStandard);
+					running.setRunSteps(runningSteps);
+					running.setReachStandard(reachStandard);
+				}
+			}
+			result.setResult(running);
+		} else {
+			if(running == null) {
+				result.setResult(new Running());
+			}else {
+				Running run = runningService.getCurrentRunning(tendId, uid);
+				result.setResult(run);
+			}
+		}
+		return result;
+	}
+	
+	/**
+	 * 查询运动详细信息
+	 * @param params
+	 * @return
+	 * @throws Exception
+	 */
+	@RequestMapping(value = "/detail", method = RequestMethod.POST)
+	public ApiResponse<RunningDto> getRunningDetail(@RequestBody Map<String, String> params) throws Exception {
+		ApiResponse<RunningDto> result = new ApiResponse<RunningDto>();
+		String steps = params.get("steps");
+		String runDate = params.get("runDate");
+		String clientDate = params.get("clientDate");
+		String tendId = params.get("tendId");
+		if(StringUtils.isBlank(tendId)) {
+			LoginUser loginUser = getLoginUser();
+			tendId = loginUser.getTendId();
+		}
+		int runningSteps = 0;
+		if(StringUtils.isNotBlank(steps)) {
+			runningSteps = Integer.valueOf(steps);
+		}
+		String uid = getUserIdIM();
+		RunningDto runDto = new RunningDto();
+		if(runningSteps > 60000) {
+			String userName = selectUserNameByTendIdAndQuit(uid, tendId);
+			String userJson = JedisUtil.fetchRow(UserOrFriendConstant.IM_USER_INFO, uid);
+			ImUserInfoDto userDto = new ImUserInfoDto();
+			if(StringUtils.isBlank(userJson)) {
+				userDto = userInfoService.getUserInfoById(uid);
+			}else {
+				userDto = json2obj(userJson, ImUserInfoDto.class);
+			}
+			runDto.setUserName(userName);
+			runDto.setRunRanking(0);
+			runDto.setRunSteps(0);
+			runDto.setHeadPortrait(userDto.getResourceImgUrl());
+			runDto.setGender(userDto.getSex());
+			runDto.setRunningCover(userDto.getRunningCoverUrl());
+			if(runDto.getRunSteps() >= standardSteps){
+				runDto.setReachStandard(1);
+			}else{
+				runDto.setReachStandard(0);
+			}
+			result.setResult(runDto);
+			return result;
+		}
+		
+		Date now = new Date();
+		RunningDto runningDto = null;
+		
+		SimpleDateFormat sdf1 = new SimpleDateFormat("HH:mm:ss");
+		String currentTime = sdf1.format(now);
+		String dateLine = "22:00:00";
+		
+		SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+		String currentDate = sdf.format(now);
+		if(StringUtils.isBlank(clientDate)) {
+			clientDate = currentDate;
+		}
+		// 当前日期
+		if(StringUtils.isEmpty(runDate) || (StringUtils.isNotEmpty(runDate) && currentDate.equals(runDate) && currentTime.compareTo(dateLine) <= 0)){
+			if(StringUtils.isEmpty(runDate)){
+				runDate = currentDate;
+			}
+			Running run = runningService.getCurrentRunning(tendId, uid);
+			int reachStandard = 0;
+			if(runningSteps >= standardSteps){
+				reachStandard = 1;
+			}
+			if(currentDate.equals(clientDate)) {
+				if(run == null){
+					PersonalSecret personalSecret = personalSecretService.getByUId(uid);
+					Integer openRunning = 1;
+					if(personalSecret != null) {
+						openRunning = personalSecret.getOpenRunning();
+						if(openRunning == null) {
+							openRunning = 1;
+						}
+					}
+					Running running = new Running();
+					running.setUid(uid);
+					running.setEnterpriseId(tendId);
+					running.setOpenRunning(openRunning);
+					running.setPraiseCount(0);
+					running.setReachStandard(reachStandard);
+					running.setRunDate(runDate);
+					running.setRunSteps(runningSteps);
+					runningService.saveRunning(running);
+				}else{
+					if(runningSteps > run.getRunSteps()){
+						runningService.updateRunningSteps(tendId, uid, runningSteps, reachStandard);
+					}
+				}
+			}
+			runningDto= runningService.getCurrentRunningDeatails(tendId, uid, runDate);
+		}else{
+			// 历史个人运动详情
+			runningDto = runningStatisticsService.findRunningByRunDate(tendId, uid, runDate);
+		}
+		if(runningDto == null){
+			result.setResult(new RunningDto());
+		}else{
+			result.setResult(runningDto);
+		}
+		
+		return result;
+	}
+	
+	/**
+	 * 获取运动排行榜
+	 * @param params
+	 * @return
+	 * @throws Exception
+	 */
+	@RequestMapping(value = "/ranking", method = RequestMethod.POST)
+	public ApiResponse<PageInfo<RunningDto>> getRunningRanking(@RequestBody Map<String, String> params) throws Exception {
+		ApiResponse<PageInfo<RunningDto>> response = new ApiResponse<PageInfo<RunningDto>>();
+		String runDate = params.get("runDate");
+		String pageNum = params.get("pageNum");
+		String pageSize = params.get("pageSize");
+		String tendId = params.get("tendId");
+		if(StringUtils.isBlank(tendId)) {
+			LoginUser loginUser = getLoginUser();
+			tendId = loginUser.getTendId();
+		}
+		if(StringUtils.isBlank(pageNum)) {
+			pageNum = "1";
+		}
+		if(StringUtils.isBlank(pageSize) || "0".equals(pageSize)) {
+			pageSize = String.valueOf(rankingAll);
+		}
+		Date now = new Date();
+		SimpleDateFormat sdf1 = new SimpleDateFormat("HH:mm:ss");
+		String currentTime = sdf1.format(now);
+		String dateLine = "22:00:00";
+		
+		SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+		String currentDate = sdf.format(now);
+		
+		String uid = getUserIdIM();
+		PageInfo<RunningDto> rankingPage = null;
+		
+		if(StringUtils.isEmpty(runDate) || (StringUtils.isNotEmpty(runDate) && currentDate.equals(runDate) && currentTime.compareTo(dateLine) <= 0)){
+			if(StringUtils.isEmpty(runDate)){
+				runDate = currentDate;
+			}
+			// 当天运动排行榜
+			rankingPage = runningService.getRunningRanking(tendId, uid, runDate, Integer.valueOf(pageNum), Integer.valueOf(pageSize));
+		}else{
+			// 历史运动排行榜
+			rankingPage = runningStatisticsService.findHistoryRunningRanking(tendId, uid, runDate, Integer.valueOf(pageNum), Integer.valueOf(pageSize));
+		}
+		if(rankingPage == null){
+			response.setResult(new PageInfo<RunningDto>());
+		}else{
+			response.setResult(rankingPage);
+		}
+		return response;
+	}
+	
+	/**
+	 * 保存个人运动数据
+	 * @param params
+	 * @return
+	 * @throws Exception
+	 */
+	@RequestMapping(value = "/save", method = RequestMethod.POST)
+	public ApiResponse<Running> saveRunning(@RequestBody Map<String, String> params) throws Exception {
+		ApiResponse<Running> response = new ApiResponse<Running>();
+		int steps = Integer.valueOf(params.get("steps"));
+		LoginUser loginUser = getLoginUser();
+		String uid = getUserIdIM();
+		SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+		Date date = new Date();
+		String runDate = sdf.format(date);
+		SimpleDateFormat sdf1 = new SimpleDateFormat("HH:mm:ss");
+		String currentTime = sdf1.format(date);
+		String dateLine = "22:00:00";
+		Running run = runningService.getCurrentRunning(loginUser.getTendId(), uid);
+		// 22点后不再统计步数
+		if(currentTime.compareTo(dateLine) > 0){
+			if(run == null){
+				response.setResult(new Running());
+			}else{
+				response.setResult(run);
+			}
+			return response;
+		}
+		int reachStandard = 0;
+		if(steps >= standardSteps){
+			reachStandard = 1;
+		}
+		if(run == null){
+			String userJson = JedisUtil.fetchRow(UserOrFriendConstant.IM_USER_INFO, uid);
+			ImUserInfoDto userDto = null;
+			if(StringUtils.isBlank(userJson)) {
+				userDto = userInfoService.getUserInfoById(uid);
+			}else {
+				userDto = json2obj(userJson, ImUserInfoDto.class);
+			}
+			run = new Running();
+			run.setUid(uid);
+			run.setEnterpriseId(loginUser.getTendId());
+			run.setOpenRunning(userDto.getOpenRunning());
+			run.setPraiseCount(0);
+			run.setReachStandard(reachStandard);
+			run.setRunDate(runDate);
+			run.setRunSteps(steps);
+			ApiFeignResponse<GeneralDto> org = sysFeignService.queryOrganizationNameById(loginUser.getTendId(), loginUser.getOrgId());
+			if(org.getStatus() == 200) {
+				String orgName = org.getResult().getName();
+				run.setOrgName(orgName);
+			}
+			runningService.saveRunning(run);
+		}else{
+			if(steps > run.getRunSteps()){
+				runningService.updateRunningSteps(loginUser.getTendId(), uid, steps, reachStandard);
+			}
+		}
+		run.setRunSteps(steps);
+		run.setReachStandard(reachStandard);
+		response.setResult(run);
+		return response;
+	}
+	
+	/**
+	 * 设置运动是否开放
+	 * @param params
+	 * @return
+	 * @throws Exception
+	 */
+	@RequestMapping(value = "/open", method = RequestMethod.POST)
+	public ApiResponse<Running> setRunningOpen(@RequestBody Map<String, String> params) throws Exception {
+		ApiResponse<Running> response = new ApiResponse<Running>();
+		String openType = params.get("openType");
+		if(!"0".equals(openType) && !"1".equals(openType)) {
+			response.setStatus(HioException.REQUEST_PARAM_INVALID);
+			response.setMessage("参数校验不合法！");
+			return response;
+		}
+		LoginUser loginUser = getLoginUser();
+		String uid = getUserIdIM();
+		runningService.setRunningOpen(loginUser.getTendId(), uid, Integer.valueOf(openType));
+		runningStatisticsService.setRunningOpen(loginUser.getTendId(), uid, Integer.valueOf(openType));
+		PersonalSettingParam param = new PersonalSettingParam();
+		param.setUid(uid);
+		param.setSwitchStatus(Integer.valueOf(openType));
+		param.setSwitchType(PersonalSwithContant.OPENRUNNINGSWITCH);
+		// 更新隐私表及缓存
+		personalSecretService.updateOpenRunningFlag(param);
+		// 设置为公开运动时获取个人运动信息
+		if("1".equals(openType)){
+			SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+			String runDate = sdf.format(new Date());
+			Running running= runningService.getRunningIndex(loginUser.getTendId(), uid, runDate);
+			response.setResult(running);
+		}
+		return response;
+	}
+	
+	/**
+	 * 运动点赞
+	 * @param params
+	 * @return
+	 * @throws Exception
+	 */
+	@RequestMapping(value = "/praise", method = RequestMethod.POST)
+	public ApiResponse<Running> runningPraise(@RequestBody Map<String, String> params) throws Exception {
+		ApiResponse<Running> response = new ApiResponse<Running>();
+		String bePraiseUid = params.get("bePraiseUid");
+		String runDate = params.get("runDate");
+		if(StringUtils.isBlank(bePraiseUid)) {
+			response.setStatus(HioException.REQUEST_PARAM_INVALID);
+			response.setMessage("参数校验不合法！");
+			return response;
+		}
+		Date now = new Date();
+		SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+		String currentDate = sdf.format(now);
+		SimpleDateFormat sdf1 = new SimpleDateFormat("HH:mm:ss");
+		String currentTime = sdf1.format(now);
+		String dateLine = "22:00:00";
+		if(StringUtils.isEmpty(runDate)) {
+			runDate = currentDate;
+		}
+		LoginUser loginUser = getLoginUser();
+		String uid = getUserIdIM();
+		
+		RunningPraise runPraise = new RunningPraise();
+		runPraise.setBePraisedUid(bePraiseUid);
+		runPraise.setPraiseUid(uid);
+		runPraise.setEnterpriseId(loginUser.getTendId());
+		runPraise.setRunDate(runDate);
+		runPraise.setPraiseTime(now);
+		runningPraiseService.saveRunningPraise(runPraise);
+		if(currentTime.compareTo(dateLine) > 0){
+			runningStatisticsService.updateRunningPraise(loginUser.getTendId(), bePraiseUid, runDate);
+		}
+		if(runDate.equals(currentDate)) {
+			// 当天运动点赞
+			runningService.updateRunningPraise(loginUser.getTendId(), bePraiseUid);
+			
+			// 发送点赞消息
+			// 运动消息接收人集合
+			List<IMToUserParam> receiverList = new ArrayList<IMToUserParam>();
+			// 消息接受人
+			IMToUserParam imToUserParam  = new IMToUserParam();
+	        imToUserParam.setToUserId(bePraiseUid);
+	        receiverList.add(imToUserParam);
+			ImNoticeMsgsParam noticeMsg = new ImNoticeMsgsParam();
+			noticeMsg.setToUsers(receiverList);
+			noticeMsg.setFromUserId(BaseConstants.HIO_RUNNING);// 发送用户id
+			noticeMsg.setFromUserName(MessageEnum.RUNNING.getDes());// 发送用户名称
+			noticeMsg.setTendId(loginUser.getTendId());// 租户id
+			noticeMsg.setOpenStatus(2);
+			TenantCompanyInfoDto tendDto = new TenantCompanyInfoDto();
+			tendDto.setTendId(loginUser.getTendId());
+			tendDto = tenantCompanyInfoService.getTenantCompanyInfoByTendId(tendDto);
+			noticeMsg.setTendName(tendDto.getName());
+			String userJson = JedisUtil.fetchRow(UserOrFriendConstant.IM_USER_INFO, uid);
+			ImUserInfoDto userDto = new ImUserInfoDto();
+			if(StringUtils.isBlank(userJson)) {
+				userDto = userInfoService.getUserInfoById(uid);
+			}else {
+				userDto = json2obj(userJson, ImUserInfoDto.class);
+			}
+			String userName = selectUserNameByTendIdAndQuit(uid, loginUser.getTendId());
+			if(StringUtils.isNotBlank(userName)) {
+				noticeMsg.setMsg(userName+"赞了你");
+			} else {
+				noticeMsg.setMsg(userDto.getName()+"赞了你");
+			}
+			noticeMsg.setModuleType(MessageEnum.RUNNING.getValue()+"_2");
+			noticeMsg.setModuleName(MessageEnum.RUNNING.getDes());
+			noticeMsg.setSendMsgType("text");
+			noticeMsg.setMsgType("msg");
+			
+			Map<String, Object> map = new HashMap<String, Object>();
+			map.put("sendTime", runDate);
+			map.put("runningType", "2");
+			map.put("praiseUid", uid);
+			map.put("tendId", loginUser.getTendId());
+			map.put("sex", userDto.getSex());
+			map.put("fromUserHeadUrl", userDto.getResourceImgUrl());
+	        
+			noticeMsg.setExt(map);
+	        // 发送CC消息
+			messageService.sendMessage(noticeMsg);
+		}else {
+			// 历史运动点赞
+			runningStatisticsService.updateRunningPraise(loginUser.getTendId(), bePraiseUid, runDate);
+		}
+		return response;
+	}
+	
+	/**
+	 * 获取个人周/月的运动统计数据
+	 * @param params
+	 * @return
+	 * @throws Exception
+	 */
+	@RequestMapping(value = "/statistics", method = RequestMethod.POST)
+	public ApiResponse<RunningStatisticsDto> getRunningStatistics(@RequestBody Map<String, String> params) throws Exception {
+		ApiResponse<RunningStatisticsDto> response = new ApiResponse<RunningStatisticsDto>();
+		String uid = params.get("uid");
+		String tendId = params.get("tendId");
+		if(StringUtils.isBlank(tendId)) {
+			LoginUser loginUser = getLoginUser();
+			tendId = loginUser.getTendId();
+		}
+		String runningViewType = params.get("runningViewType");
+		if(StringUtils.isBlank(uid)) {
+			uid = getUserIdIM();
+		}
+		SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+		Date now = new Date();
+		String endDate = sdf.format(now);
+		Calendar calendar = Calendar.getInstance();
+        calendar.setTime(now);
+        if("month".equals(runningViewType)) {
+        	calendar.add(Calendar.DATE, -29);
+		}else {
+			calendar.add(Calendar.DATE, -6);
+		}
+        String startDate = sdf.format(calendar.getTime());
+        List<RunningDayStatistics> runningList = runningStatisticsService.findRunSteps(tendId, uid, startDate, endDate);
+        RunningDto run = runningService.getCurrentRunningDeatails(tendId, uid, endDate);
+		if(run != null){
+			RunningDayStatistics rs = new RunningDayStatistics();
+			rs.setPraiseCount(run.getPraiseCount());
+			rs.setEnterpriseId(run.getEnterpriseId());
+			rs.setRunDate(endDate);
+			rs.setRunKilometre(run.getRunKilometre());
+			rs.setRunSteps(run.getRunSteps());
+			rs.setUid(run.getUid());
+			rs.setRunRanking(run.getRunRanking());
+			runningList.add(rs);
+		}
+		RunningStatisticsDto runDto = new RunningStatisticsDto();
+		runDto.setRunningList(runningList);
+		runDto.setSysTime(new Date().getTime()+"");
+		response.setResult(runDto);
+		return response;
+	}
+	
+	/**
+	 * 查询我的运动被点赞详情
+	 * @param params
+	 * @return
+	 * @throws Exception
+	 */
+	@RequestMapping(value = "/praise/mine", method = RequestMethod.POST)
+	public ApiResponse<List<RunningPraiseDto>> findMyRunningPraise(@RequestBody Map<String, String> params) throws Exception {
+		ApiResponse<List<RunningPraiseDto>> response = new ApiResponse<List<RunningPraiseDto>>();
+		String praiseType = params.get("praiseType");
+		String runDate = params.get("runDate");
+		String tendId = params.get("tendId");
+		if(StringUtils.isBlank(tendId)) {
+			LoginUser loginUser = getLoginUser();
+			tendId = loginUser.getTendId();
+		}
+		if(StringUtils.isBlank(praiseType)) {
+			response.setStatus(HioException.REQUEST_PARAM_INVALID);
+			response.setMessage("参数校验不合法！");
+			return response;
+		}
+		if(StringUtils.isBlank(runDate)) {
+			SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+			Date now = new Date();
+			runDate = sdf.format(now);
+		}
+		
+		String uid = getUserIdIM();
+		List<RunningPraiseDto> runPraiseList = runningPraiseService.getRunningPraise(tendId, uid, Integer.valueOf(praiseType), runDate);
+		response.setResult(runPraiseList);
+		return response;
+		
+	}
+	
+	@PostMapping(value = "/cover/upload")
+    public ApiResponse<String> uploadRunningCover(@Validated ImGroupSetParam imGroupSetParam) throws Exception {
+        String fileId = null;
+        ApiResponse<String> ares = new ApiResponse<String>();
+        InputStream in = null;
+        long fileSize = imGroupSetParam.getResource().getSize();
+        if (MessageConstant.FILE_SIZE <= fileSize ) {
+            //上传文件大小控制
+            logger.error("上传图片过大，不允许超过3M！");
+            throw new Exception("上传图片过大，不允许超过3M！");
+        }
+        try{
+            fileId = System.currentTimeMillis() + RandomUtil.getRandom(MessageConstant.FILE_RANDOM_SIZE);
+            logger.info("fileId: {}",fileId);
+            in  = imGroupSetParam.getResource().getInputStream();
+            String fileName = imGroupSetParam.getResource().getOriginalFilename();
+            ObjectMetadata meta = new ObjectMetadata();
+            meta.setContentType("image/"+fileName.substring(fileName.lastIndexOf(".") + 1));
+            meta.setContentEncoding("UTF-8");
+            meta.addUserMetadata("fileName", fileName);
+            OSSClientUtil.uploadFile(ossRunningCoverBucket, fileId, in, meta);
+            // 更新人的运动封面url
+            String jsonUser = JedisUtil.fetchRow(UserOrFriendConstant.IM_USER_INFO, getUserIdIM());
+            if(StringUtils.isNotBlank(jsonUser)) {
+            	UserInfo userInfo = json2obj(jsonUser,UserInfo.class);
+            	userInfo.setRunningCoverUrl(runningDomain+"/"+fileId);
+            	userInfoService.update(userInfo);
+            	// 更新缓存
+                JedisUtil.addRow(userInfo);
+            }
+            ares.setStatus(200);
+            ares.setMessage("设置运动封面成功！");
+            ares.setResult(runningDomain+"/"+fileId);
+        }catch (Exception e){
+            throw new HioException("设置运动封面失败!"+e.getMessage());
+        }finally {
+            if(in !=null ){
+                 in.close();
+            }
+        }
+        return ares;
+    }
+	
+	private String selectUserNameByTendIdAndQuit(String imUserId, String tendId) {
+		String userName = null;
+		if (!StringUtils.isEmpty(imUserId)) {
+			ApiFeignResponse<String> response = sysFeignService.queryOaUserIdByImUserId(imUserId, tendId);
+			String oaUserId = response.getResult();
+			List<String> userIdList = new ArrayList<String>();
+			userIdList.add(oaUserId);
+			SkyDriveParam skyDriveParam = new SkyDriveParam();
+			skyDriveParam.setUserIds(userIdList);
+			skyDriveParam.setTendId(tendId);
+			skyDriveParam.setStatus(1);
+			ApiFeignResponse<List<SkyDriveDto>> apiFeignResponse = sysFeignService.queryNameByOrgAndRoleAndUser(skyDriveParam);
+			if (apiFeignResponse != null) {
+				if (200 == apiFeignResponse.getStatus()) {
+					List<SkyDriveDto> skyDriveDtoList = apiFeignResponse.getResult();
+					if (skyDriveDtoList != null && skyDriveDtoList.size() > 0) {
+						userName = skyDriveDtoList.get(0).getName();
+					}
+				} else {
+					throw new HioException("调用queryNameByOrgAndRoleAndUser feign接口失败" + apiFeignResponse.getMessage());
+				}
+
+			}
+		}
+		return userName;
+	}
+}

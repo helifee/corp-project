@@ -1,0 +1,31 @@
+package com.xinleju.platform.flow.service.impl;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.flow.dao.SysNoticeMsgTempDao;
+import com.xinleju.platform.flow.entity.SysNoticeMsgTemp;
+import com.xinleju.platform.flow.service.SysNoticeMsgTempService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Created by luoro on 2017/9/24.
+ */
+@Service
+public class SysNoticeMsgTempServiceImpl  extends BaseServiceImpl<String,SysNoticeMsgTemp> implements SysNoticeMsgTempService {
+    @Autowired
+    private SysNoticeMsgTempDao sysNoticeMsgTempDao;
+    @Override
+    public List<SysNoticeMsgTemp> queryMsgTempList(Map map) {
+        return sysNoticeMsgTempDao.queryMsgTempList(map);
+    }
+    @Transactional
+    @Override
+    public int update(SysNoticeMsgTemp object) throws Exception {
+        return super.update (object);
+    }
+}

@@ -1,0 +1,145 @@
+/*
+ * @(#)AuthInterceptor.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 共通系统
+ */
+
+package com.yds.common.interceptor;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.apache.struts2.ServletActionContext;
+import org.springframework.stereotype.Component;
+
+import com.opensymphony.xwork2.Action;
+import com.opensymphony.xwork2.ActionInvocation;
+import com.opensymphony.xwork2.interceptor.AbstractInterceptor;
+import com.yds.common.service.CommonConstants;
+import com.yds.common.service.SessionConstants;
+import com.yds.common.service.SessionService;
+import com.yds.util.service.DbContextHolder;
+import com.yds.util.service.PropertyManager;
+
+/**
+ * 登录和权限检查拦截器
+ * 
+ * @author zhaodong
+ * @version 1.00 2009/09/22
+ */
+@Component("authInterceptor")
+public class AuthInterceptor extends AbstractInterceptor {
+	private static final Log LOG = LogFactory.getLog(AuthInterceptor.class);
+	private static final long serialVersionUID = 791346288370079485L;
+	
+	private PropertyManager propMgr;
+
+	/**
+	 * 检查是否登录或有权限的拦截器 如果未登录，重定向到登录页面， 如果没有访问权限，直接返回错误页面
+	 * 
+	 * @param invocation
+	 *            invocation
+	 * @return 未登录的情况返回LOGIN/无权限的情况下返回error.jsp
+	 */
+	@SuppressWarnings("unchecked")
+	@Override
+	public String intercept(ActionInvocation invocation) throws Exception {
+		
+		// 每个Http请求对应的线程使用默认的DB连接		
+		DbContextHolder.clearDbType();
+		SessionService.delete(SessionConstants._MESSAGE_ID);
+		
+		String requestUrl = ServletActionContext.getRequest().getServletPath();
+		if (!requestUrl.endsWith("." + CommonConstants.ACTIONNAME)) {
+			requestUrl = requestUrl + "." + CommonConstants.ACTIONNAME;
+		}
+		String qstr = ServletActionContext.getRequest().getQueryString();
+		
+		//权限检查
+		if (null == SessionService.getLoginUserId()) {
+
+			if (qstr != null) {
+				requestUrl = requestUrl + "?"
+						+ qstr;
+			}
+			// 把请求地址放到session
+			SessionService.set(SessionConstants.REQUESTURL, requestUrl);
+			
+			// 重定向到登录画面
+			return Action.LOGIN;
+
+		// 用户登录时，检查用户是否有当前URL的访问权限
+		} else {
+
+			// 取得用户拥有的权限列表
+			Map<String, Map<String,Boolean>> userPermMap =
+					(Map<String, Map<String,Boolean>>) SessionService.get(SessionConstants.USERPERM);
+
+			// 用户没有权限时定向到错误画面
+			if (null == userPermMap || userPermMap.isEmpty()) {
+				SessionService.delete(SessionConstants._MESSAGE_ID);
+				SessionService.delete(SessionConstants.OPERATETIP);
+				SessionService.set(SessionConstants.ERRTYPE, propMgr.getMessage("yds.com.error.0003"));
+				return Action.NONE;
+			}
+
+			String nameSpace = invocation.getProxy().getNamespace().substring(1);
+			String actionName = invocation.getProxy().getActionName();
+			
+			// 用户权限判断
+			if (userPermMap.containsKey(nameSpace)) {
+				if (userPermMap.get(nameSpace).containsKey("*") ||
+						(userPermMap.get(nameSpace).containsKey(actionName) && userPermMap.get(nameSpace).get(actionName))) {
+					try{
+						if (qstr != null && "1".equals(ServletActionContext.getRequest().getParameter(SessionConstants.REQUESTTARGET))) {
+							
+							String[] qstrArray = qstr.split("&");
+							List<String> qstrList = new ArrayList<String>();
+							for (int i = 0; i < qstrArray.length; i++) {
+								if (!(SessionConstants.REQUESTTARGET + "=1").equals(qstrArray[i])) {
+									qstrList.add(qstrArray[i]);
+								}
+							}
+							
+							if (qstrList.size() > 0) {
+								StringBuffer qstrB = new StringBuffer();
+								for (int j = 0; j < qstrList.size(); j++) {
+									qstrB.append(qstrList.get(j));
+									if (j < qstrList.size() - 1) {
+										qstrB.append("&");
+									}
+								}
+								
+								requestUrl = requestUrl + "?" + qstrB.toString();
+							}
+							
+							// 把请求地址放到session
+							SessionService.set(SessionConstants.REQUESTURL, requestUrl.substring(1));
+							
+							return "frame";
+						}
+						return invocation.invoke();
+					}catch(Exception e){
+						LOG.error("", e);
+						e.printStackTrace();
+						throw new Exception(e);
+					}
+				}
+			}
+			SessionService.delete(SessionConstants._MESSAGE_ID);
+			SessionService.delete(SessionConstants.OPERATETIP);
+			SessionService.set(SessionConstants.ERRTYPE, propMgr.getMessage("yds.com.error.0003"));
+			return Action.NONE;
+			
+		}
+	}
+
+	public void setPropMgr(PropertyManager propMgr) {
+		this.propMgr = propMgr;
+	}
+}

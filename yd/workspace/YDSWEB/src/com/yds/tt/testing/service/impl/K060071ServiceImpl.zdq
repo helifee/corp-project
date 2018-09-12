@@ -1,0 +1,680 @@
+/*
+ * @(#)K060071ServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 教育考试培训系统
+ *    SubSystem: 考试子系统
+ */
+
+package com.yds.tt.testing.service.impl;
+
+import java.text.DateFormat;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Service;
+
+import com.yds.base.service.AbstractBaseService;
+import com.yds.common.bean.UserInfo;
+import com.yds.common.dao.UserSelectDao;
+import com.yds.tt.manager.bean.MessageReminding;
+import com.yds.tt.manager.dao.TtCommonDao;
+import com.yds.tt.manager.service.TtCommonService;
+import com.yds.tt.manager.service.TtCommonUtil;
+import com.yds.tt.manager.service.TtConstants;
+import com.yds.tt.manager.service.TtExclusiveException;
+import com.yds.tt.testing.bean.ExamEmployeeInfo;
+import com.yds.tt.testing.bean.ExamineInfo;
+import com.yds.tt.testing.bean.TestPaperInfo;
+import com.yds.tt.testing.dao.K060071Dao;
+import com.yds.tt.testing.service.K060071Service;
+import com.yds.tt.training.bean.CourseInfo;
+
+/**
+ * @see K060071Service
+ */
+@Service("k060071Service")
+public class K060071ServiceImpl extends AbstractBaseService implements
+		K060071Service {
+
+	private K060071Dao k060071Dao;
+	private UserSelectDao userSelectDao;
+	private TtCommonDao ttCommonDao;
+	private TtCommonService ttCommonService;
+
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public ExamineInfo getExamineInfo(String examineId,String mode) {
+		
+		return k060071Dao.getExamineInfo(examineId,mode);
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void deleteExamineInfo(String examineId) {
+		
+		// 最新数据库更新时间取得
+		Date compareTimeStamp =k060071Dao.getTimeStamp(examineId);
+		
+		// 时间戳判断
+		if(!ttCommonService.checkTimeStamp(TtConstants.PageId.K060071, compareTimeStamp)){
+			throw new TtExclusiveException(propMgr.getMessage("yds.tt.error.KSE56"));
+		}
+		
+		// 删除考试信息
+		k060071Dao.deleteExamineInfo(examineId);
+		
+		// 删除考试试卷关联表信息
+		k060071Dao.deleteSelectedPaper(examineId);
+		
+		// 删除需要通过考试关联表信息
+		updateSelectedExamine(examineId, "");
+		
+		// 删除需要学习课程关联表信息
+		updateSelectedCourse(examineId, "");
+		
+		// 删除考试个人关联表	
+		k060071Dao.deleteUserList(examineId);
+		
+	}	
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public int updateExamineInfo(ExamineInfo examineInfo,List<ExamineInfo> examineInfoList,
+											List<CourseInfo> courseInfoList,
+											List<TestPaperInfo> selectedPaper,
+											String strUserIdList) {
+		
+		// 给更新者赋值session用户ID
+		examineInfo.setUpdateUserId(TtCommonUtil.getLoginUserId());
+		
+		// 最新数据库更新时间取得
+		Date compareTimeStamp =k060071Dao.getTimeStamp(examineInfo.getExamineId());
+		
+		// 时间戳判断
+		if(!ttCommonService.checkTimeStamp(TtConstants.PageId.K060071, compareTimeStamp)){
+			throw new TtExclusiveException(propMgr.getMessage("yds.tt.error.KSE56"));
+		}
+
+		// 考试关注对象更新
+		this.updateExamineUser(examineInfo,strUserIdList);
+		
+		// 所选试卷更新
+		this.updateSelectedPaper(examineInfo.getExamineId(),selectedPaper);
+		
+		// 考试基本信息更新
+		return k060071Dao.updateExamineInfo(examineInfo);
+
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public int updateExamineInfo(ExamineInfo examineInfo){
+		
+		// 给更新者赋值session用户ID
+		examineInfo.setUpdateUserId(TtCommonUtil.getLoginUserId());
+		
+		ExamineInfo newExamineInfo = k060071Dao.getExamineInfo(examineInfo.getExamineId(), 
+				String.valueOf(TtConstants.C20.C20_5));
+		
+		// 最新数据库更新时间取得
+		Date compareTimeStamp =newExamineInfo.getUpdateTime();
+		
+		// 时间戳判断
+		if(!ttCommonService.checkTimeStamp(TtConstants.PageId.K060071, compareTimeStamp)){
+			throw new TtExclusiveException(propMgr.getMessage("yds.tt.error.KSE56"));
+		}
+		
+		// 如果数据库中的考试开始结束时间与画面上的开始结束时间不同。
+		if( TtConstants.C08.C08_2.value() == examineInfo.getExamineFlg()){
+			if(!((newExamineInfo.getExamineStartDate().equals(examineInfo.getExamineStartDate())) &&
+					   (newExamineInfo.getExamineEndDate().equals(examineInfo.getExamineEndDate())))){
+					
+						try {
+							examineInfo.setExamineEndTimeStr(newExamineInfo.getExamineEndTimeStr());
+							examineInfo.setExamineStartTimeStr(newExamineInfo.getExamineStartTimeStr());
+							this.repairMessageReminding(examineInfo);
+						} catch (ParseException e) {
+							throw new TtExclusiveException();
+						}
+					}
+		}else{
+			if(!(newExamineInfo.getExamineStartDate().equals(examineInfo.getExamineStartDate()) && 
+			   newExamineInfo.getExamineStartTimeStr().equals(examineInfo.getExamineStartTimeStr()) &&
+			   newExamineInfo.getExamineEndDate().equals(examineInfo.getExamineEndDate()) &&
+			   newExamineInfo.getExamineEndTimeStr().equals(examineInfo.getExamineEndTimeStr()))){
+			
+				try {
+					this.repairMessageReminding(examineInfo);
+				} catch (ParseException e) {
+					throw new TtExclusiveException();
+				}
+			}
+		}
+		
+		return k060071Dao.updateRepairExamineInfo(examineInfo);
+	}	
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public int updateApplyExamineInfo(ExamineInfo examineInfo,List<ExamineInfo> examineInfoList,
+			List<CourseInfo>  courseInfoList, List<TestPaperInfo> selectedPaper,String strUserIdList) {
+
+		// 给更新者赋值session用户ID
+		examineInfo.setUpdateUserId(TtCommonUtil.getLoginUserId());
+		
+		// 给申请者赋值session用户ID
+		examineInfo.setApplyUserId(TtCommonUtil.getLoginUserId());
+		
+		// 最新数据库更新时间取得
+		Date compareTimeStamp =k060071Dao.getTimeStamp(examineInfo.getExamineId());
+		
+		// 时间戳判断
+		if(!ttCommonService.checkTimeStamp(TtConstants.PageId.K060071, compareTimeStamp)){
+			throw new TtExclusiveException(propMgr.getMessage("yds.tt.error.KSE56"));
+		}
+
+		if(TtConstants.C08.C08_3.value() == examineInfo.getExamineFlg()){
+			// 如果该考试的考试标志是<试考试>,则设成<报名已批准>
+			examineInfo.setExamineStatus(TtConstants.R12.R12_6.value());
+			examineInfo.setExamineVisibleFlg(1);
+			
+			// 考试关注对象更新
+			this.updateExamineUser(examineInfo,strUserIdList);
+			
+			// 所选试卷更新
+			this.updateSelectedPaper(examineInfo.getExamineId(),selectedPaper);
+
+			// 检索针对对象的员工ID
+			List<UserInfo> userInfo = null;
+			
+			// TODO 针对对象员工取得，从原始考试批准动作处拷贝过来的代码，详细做法待确认
+			if (TtConstants.C12.C12_2.value()== examineInfo.getObjectType()){
+				// 根据项目组ID检索员工ID
+				userInfo = ttCommonDao.getUseridFromOrg(examineInfo.getObjectValue());
+			}else if(TtConstants.C12.C12_3.value()== examineInfo.getObjectType()){
+				// 根据工龄检索员工ID
+				userInfo = k060071Dao.getUserListByYear(examineInfo.getObjectValue());
+			}else if(TtConstants.C12.C12_4.value()== examineInfo.getObjectType()){
+				// 当针对对象为个人时,针对对象人员检索
+				userInfo = k060071Dao.getUserList(examineInfo.getExamineId());
+			}else if(TtConstants.C12.C12_1.value()== examineInfo.getObjectType()){
+				// 针对全员
+				userInfo = userSelectDao.getUser();
+			}
+			
+			// 同时将针对对象插入到考试员工信息表中
+			ExamEmployeeInfo examEmployeeInfo;
+			if(userInfo!=null){
+				for(int i = 0;i<userInfo.size();i++){
+					examEmployeeInfo = new ExamEmployeeInfo();
+					// 考试ID
+					examEmployeeInfo.setExamineId(examineInfo.getExamineId());
+					// 员工ID
+					examEmployeeInfo.setEmployeesId(userInfo.get(i).getUserId());
+					// 参加次数
+					examEmployeeInfo.setExamineJoinTimes(Integer.valueOf(1));
+					// 员工考试状态
+					examEmployeeInfo.setEmpExamStatus(TtConstants.R12.R12_6.value());
+					 
+					k060071Dao.insertExamEmployeeInfo(examEmployeeInfo);
+				}
+			}
+
+			return k060071Dao.updateApproveExamineInfo(examineInfo);
+			
+		}else{
+			// 设置考试审批状态为<待审批>
+			examineInfo.setExamineStatus(TtConstants.R12.R12_2.value());
+			// 登录提醒消息
+			this.applyMessageReminding(examineInfo);
+			
+			// 考试关注对象更新
+			this.updateExamineUser(examineInfo,strUserIdList);
+			
+			// 所选试卷更新
+			this.updateSelectedPaper(examineInfo.getExamineId(),selectedPaper);
+			
+			return k060071Dao.updateApplyExamineInfo(examineInfo);
+		}
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public int updateApproveExamineInfo(ExamineInfo examineInfo) {
+		
+		// 将审批者和审批时间更新,将不批准原因清空
+		examineInfo.setApproverUserId(TtCommonUtil.getLoginUserId());
+		examineInfo.setUpdateUserId(TtCommonUtil.getLoginUserId());
+		examineInfo.setRefuseReason("");
+		
+		// 最新数据库更新时间取得
+		Date compareTimeStamp =k060071Dao.getTimeStamp(examineInfo.getExamineId());
+		
+		// 时间戳判断
+		if(!ttCommonService.checkTimeStamp(TtConstants.PageId.K060071, compareTimeStamp)){
+			throw new TtExclusiveException(propMgr.getMessage("yds.tt.error.KSE56"));
+		}
+		
+		// 更新考试信息表将考试状态更新为<考试已批准>
+		examineInfo.setExamineStatus(TtConstants.R12.R12_3.value());
+		
+		return k060071Dao.updateApproveExamineInfo(examineInfo);
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public int updateUnApproveExamineInfo(ExamineInfo examineInfo) {
+		
+		// 将审批者和审批时间更新
+		examineInfo.setApproverUserId(TtCommonUtil.getLoginUserId());
+		examineInfo.setUpdateUserId(TtCommonUtil.getLoginUserId());
+		// 更新考试信息表将考试状态更新为<考试不批准>
+		examineInfo.setExamineStatus(TtConstants.R12.R12_4.value());
+		
+		// 最新数据库更新时间取得
+		Date compareTimeStamp =k060071Dao.getTimeStamp(examineInfo.getExamineId());
+		
+		// 时间戳判断
+		if(!ttCommonService.checkTimeStamp(TtConstants.PageId.K060071, compareTimeStamp)){
+			throw new TtExclusiveException(propMgr.getMessage("yds.tt.error.KSE56"));
+		}
+
+		return k060071Dao.updateApproveExamineInfo(examineInfo);
+	}	
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public int updateCancelExamineInfo(ExamineInfo examineInfo) {
+		
+		examineInfo.setUpdateUserId(TtCommonUtil.getLoginUserId());
+		
+		// 最新数据库更新时间取得
+		Date compareTimeStamp =k060071Dao.getTimeStamp(examineInfo.getExamineId());
+		
+		// 时间戳判断
+		if(!ttCommonService.checkTimeStamp(TtConstants.PageId.K060071, compareTimeStamp)){
+			throw new TtExclusiveException(propMgr.getMessage("yds.tt.error.KSE56"));
+		}
+		
+		// 插入提醒消息
+		this.cancelMessageReminding(examineInfo);
+		
+		// 删除相关报名信息和提醒信息
+		k060071Dao.deleteEnrollUserList(examineInfo.getExamineId());
+		k060071Dao.deleteRemindingMessage(examineInfo.getExamineId());
+
+		return k060071Dao.updateCancelExamineInfo(examineInfo);
+	}	
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public int updateReEditExamineInfo(ExamineInfo examineInfo) {
+
+		examineInfo.setUpdateUserId(TtCommonUtil.getLoginUserId());
+		examineInfo.setExamineStatus(TtConstants.R12.R12_1.value());
+		
+		// 最新数据库更新时间取得
+		Date compareTimeStamp =k060071Dao.getTimeStamp(examineInfo.getExamineId());
+		
+		// 时间戳判断
+		if(!ttCommonService.checkTimeStamp(TtConstants.PageId.K060071, compareTimeStamp)){
+			throw new TtExclusiveException(propMgr.getMessage("yds.tt.error.KSE56"));
+		}
+		
+		// 失效提醒消息
+		this.reEditMessageReminding(examineInfo.getExamineId());
+		
+		return k060071Dao.updateReEditExamineInfo(examineInfo);
+	}	
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public String[] getUserList(String examineId) {
+		
+		List<UserInfo> userInfoList =  k060071Dao.getUserList(examineId);
+		String[] resultUserInfoList = new String[2];
+		
+		StringBuffer resultUserId = new StringBuffer();
+		StringBuffer resultUserName = new StringBuffer();
+		
+		// 如果针对对象人员为空
+		resultUserId.append("");
+		resultUserName.append("");
+		for(int i=0;i<userInfoList.size();i++){
+			resultUserId.append(userInfoList.get(i).getUserId());
+			resultUserName.append(userInfoList.get(i).getUserName());
+			if(i != (userInfoList.size()-1)){
+				resultUserId.append(",");
+				resultUserName.append(",");
+			}
+		}
+		resultUserInfoList[0]=resultUserId.toString();
+		resultUserInfoList[1]=resultUserName.toString();
+		
+		return resultUserInfoList;
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public List<TestPaperInfo> getSelectedPaperList(String examineId) {
+		
+		return k060071Dao.getSelectedPaperList(examineId);
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public List<ExamineInfo> getSelectedExamine(String examineId) {
+		
+		return k060071Dao.getSelectedExamine(examineId);
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public List<CourseInfo> getSelectedCourse(String examineId) {
+		
+		return k060071Dao.getSelectedCourse(examineId);
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void updateSelectedPaper(String examineId, List<TestPaperInfo> selectedPaper){
+		
+		// 所选试卷更新
+		k060071Dao.deleteSelectedPaper(examineId);
+		
+		if(selectedPaper!=null){
+			Map<String,String> examinePaper = new HashMap<String,String>();
+			examinePaper.put("examineId", examineId);
+			for(int i=0;i<selectedPaper.size();i++){
+				examinePaper.put("paperId", selectedPaper.get(i).getPaperId());
+				k060071Dao.insertSelectedPaper(examinePaper);
+			}
+		}
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public Date getTimeForCheck(String examineId){
+		return k060071Dao.getTimeForCheck(examineId);
+	}
+	
+	/**
+	 * 考试关注对象更新
+	 * @param examineInfo 考试信息
+	 * @param strUserIdList 考试针对个人时的员工ID列表
+	 */
+	private void updateExamineUser(ExamineInfo examineInfo,String strUserIdList){
+		
+		String examineId = examineInfo.getExamineId();
+		// 删除考试个人关联表	
+		k060071Dao.deleteUserList(examineId);
+
+		// 针对个人时操作
+		if (TtConstants.C12.C12_4.value() == examineInfo.getObjectType()){
+			
+			Map<String,String> examineAttentionInfo = new HashMap<String,String>();
+			
+			examineAttentionInfo.put("examineId", examineId);
+			
+			// 关注度设成普通
+			examineAttentionInfo.put("attentionFlag", TtConstants.C32.C32_2.toString());
+			
+			String[] userIdList = strUserIdList.split(",");
+			
+			// 新规课程个人关联表
+			for(int i=0;i<userIdList.length;i++){
+				
+				examineAttentionInfo.put("employeesId", userIdList[i]);
+				k060071Dao.insertUserList(examineAttentionInfo);
+			}
+		}
+	}
+	
+	/**
+	 * 所选考试移除
+	 * @param examineId 考试ID
+	 * @param selectedExamineId 所选考试ID
+	 */
+	public void updateSelectedExamine(String examineId, String selectedExamineId){
+		
+		Map<String, String> examineRelationMap = new HashMap<String, String>();
+		
+		examineRelationMap.put("examineId", examineId);
+		examineRelationMap.put("selectedExamineId", selectedExamineId);
+		
+		// 所选考试更新
+		k060071Dao.deleteSelectedExamine(examineRelationMap);
+	}
+	
+	/**
+	 * 所选课程移除
+	 * @param examineId 考试ID
+	 * @param selectedCourseId 所选课程ID
+	 */
+	public void updateSelectedCourse(String examineId, String selectedCourseId){
+		
+		Map<String, String> examineCourseRelationMap = new HashMap<String, String>();
+		
+		examineCourseRelationMap.put("examineId", examineId);
+		examineCourseRelationMap.put("selectedCourseId", selectedCourseId);
+		
+		// 所选课程更新
+		k060071Dao.deleteSelectedCourse(examineCourseRelationMap);
+	}
+	
+	/**
+	 * 提交申请时插入提醒消息
+	 * 
+	 * @param ExamineInfo 考试信息
+	 */
+	private void applyMessageReminding(ExamineInfo examineInfo) {
+
+		MessageReminding message = new MessageReminding();
+
+		// 提醒内容
+		message.setContent(propMgr.getMessage("yds.tt.remind.KSY02", examineInfo.getExamineName()));
+
+		// 消息模式
+		message.setMode(TtConstants.REMIND_MODE.KSY02.value());
+		
+		// 消息参数
+		StringBuffer param = new StringBuffer();
+		param.append(TtConstants.C20.C20_3.value());
+		param.append(",");
+		param.append(TtConstants.PageId.G100011.value());
+		param.append(",");
+		param.append(examineInfo.getExamineId());
+		message.setParameter(param.toString());
+		
+		// 消息ID
+		message.setInformationId(ttCommonService
+				.getSequence(TtConstants.SEQID.Information));
+		
+		// 实施者
+		message.setUserId(k060071Dao.getExamineApprover(examineInfo.getParentExamineId()));
+		
+		// 消息flg
+		message.setInformationFlg(TtConstants.REMIND_FLG.LEFT.value());
+		
+		// 失效时间
+		message.setLosetime(TtCommonUtil.getMaxDate());
+		
+		ttCommonDao.insertMessageReminding(message);
+	}
+
+	/**
+	 * 调整时插入提醒消息
+	 * 
+	 * @param ExamineInfo 考试信息
+	 * @throws ParseException 
+	 */
+	private void repairMessageReminding(ExamineInfo examineInfo) throws ParseException {
+
+		MessageReminding message = new MessageReminding();
+		
+		StringBuffer startDate = new StringBuffer();
+		StringBuffer endDate = new StringBuffer();
+		DateFormat format1 = new SimpleDateFormat("yyyy-MM-dd");
+		startDate.append(format1.format(examineInfo.getExamineStartDate()));
+		startDate.append(space);
+		startDate.append(examineInfo.getExamineStartTimeStr());
+		startDate.append(minSecond);
+		endDate.append(format1.format(examineInfo.getExamineEndDate()));
+		endDate.append(space);
+		endDate.append(examineInfo.getExamineEndTimeStr());
+		endDate.append(minSecond);
+
+		// 提醒内容
+		message.setContent(propMgr.getMessage("yds.tt.remind.KSY04", 
+				examineInfo.getExamineName(),
+				startDate.toString(),
+				endDate.toString()));
+
+		// 消息flg
+		message.setInformationFlg(TtConstants.REMIND_FLG.TOP.value());
+		
+		message.setMode("");
+		
+		// 失效时间
+		DateFormat format = new SimpleDateFormat("yyyy-MM-dd hh:mm:ss");
+		Date loseTime = format.parse(endDate.toString());
+		message.setLosetime(loseTime);
+		
+		// 报名批准的员工ID
+		List<UserInfo> approvedUserList = k060071Dao.getApprovedUserList(examineInfo.getExamineId());
+		if(approvedUserList != null){
+			for(UserInfo userInfo:approvedUserList){
+				// 消息ID
+				message.setInformationId(ttCommonService
+						.getSequence(TtConstants.SEQID.Information));
+				message.setUserId(userInfo.getUserId());
+				ttCommonDao.insertMessageReminding(message);
+			}
+		}
+	}	
+
+	/**
+	 * 取消批准时插入提醒消息
+	 * 
+	 * @param ExamineInfo 考试信息
+	 * @throws ParseException 
+	 */
+	private void cancelMessageReminding(ExamineInfo examineInfo){
+
+		MessageReminding message = new MessageReminding();
+
+		// 提醒内容
+		message.setContent(propMgr.getMessage("yds.tt.remind.KSY10",
+				examineInfo.getExamineName()));
+
+		// 消息flg
+		message.setInformationFlg(TtConstants.REMIND_FLG.TOP.value());
+		
+		// 模式
+		message.setMode("");
+		
+		// 失效时间
+		message.setLosetime(TtCommonUtil.getMaxDate());
+		
+		// 已报名的员工ID
+		List<UserInfo> enrollUserList = k060071Dao.getEnrollUserList(examineInfo.getExamineId());
+		if(enrollUserList != null){
+			for(UserInfo userInfo:enrollUserList){
+				// 消息ID
+				message.setInformationId(ttCommonService
+						.getSequence(TtConstants.SEQID.Information));
+				message.setUserId(userInfo.getUserId());
+				ttCommonDao.insertMessageReminding(message);
+			}
+		}
+	}
+	
+	/**
+	 * 再编辑时提醒消息失效
+	 * 
+	 * @param examineId 考试ID
+	 */
+	private void reEditMessageReminding(String examineId) {
+
+		MessageReminding message = new MessageReminding();
+
+		// 消息模式
+		message.setMode(TtConstants.REMIND_MODE.KSY02.value());
+		
+		// 消息参数
+		StringBuffer param = new StringBuffer();
+		param.append(TtConstants.C20.C20_3.value());
+		param.append(",");
+		param.append(TtConstants.PageId.G100011.value());
+		param.append(",");
+		param.append(examineId);
+		message.setParameter(param.toString());
+
+		ttCommonDao.updateMessageReminding(message);
+	}		
+	
+	/**
+	 * @param dao the k060071Dao to set
+	 */
+	public void setK060071Dao(K060071Dao dao) {
+		k060071Dao = dao;
+	}
+
+	/**
+	 * @param userSelectDao the userSelectDao to set
+	 */
+	public void setUserSelectDao(UserSelectDao userSelectDao) {
+		this.userSelectDao = userSelectDao;
+	}
+
+	/**
+	 * @param ttCommonDao the ttCommonDao to set
+	 */
+	public void setTtCommonDao(TtCommonDao ttCommonDao) {
+		this.ttCommonDao = ttCommonDao;
+	}
+
+	/**
+	 * @param ttCommonService the ttCommonService to set
+	 */
+	public void setTtCommonService(TtCommonService ttCommonService) {
+		this.ttCommonService = ttCommonService;
+	}
+
+}

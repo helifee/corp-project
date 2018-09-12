@@ -1,0 +1,309 @@
+
+package com.jzy.hio.oa.journal.service.impl;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.service.impl.BaseOaServiceImpl;
+import com.jzy.hio.entity.Journal;
+import com.jzy.hio.entity.JournalAllowedScope;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.exception.HioMybatisInsertException;
+import com.jzy.hio.exception.HioMybatisUpdateException;
+import com.jzy.hio.oa.OaConstant;
+import com.jzy.hio.oa.contract.dto.ResultMsg;
+import com.jzy.hio.oa.journal.dto.JournalDto;
+import com.jzy.hio.oa.journal.dto.ShareDto;
+import com.jzy.hio.oa.journal.mapper.JournalMapper;
+import com.jzy.hio.oa.journal.service.JournalAllowedScopeService;
+import com.jzy.hio.oa.journal.service.JournalService;
+import com.jzy.hio.utils.LoginUser;
+import com.jzy.hio.utils.OaUserUtil;
+import com.jzy.hio.utils.Page;
+
+@Service("journalService")
+public class JournalServiceImpl extends BaseOaServiceImpl<Journal> implements JournalService {
+
+	private static Logger logger = LoggerFactory.getLogger(JournalServiceImpl.class);
+	
+	@Autowired
+	private JournalAllowedScopeService journalAllowedScopeService;
+	
+	@Autowired
+	private JournalMapper journalMapper;
+	
+	@Autowired
+	private OaUserUtil oaUserUtil;
+	
+	@Override
+	public Journal findJournalById(String id) {
+		Journal journal = super.getObjectById(id);
+		if(journal == null) {
+			return addAttachmentInfo(null);
+		}else {
+			String tendId = getTendId();
+			String imgUrl = oaUserUtil.queryImgUrl(tendId, journal.getCreatePersonId());
+			journal.setImgUrl(imgUrl);
+			JournalDto journalDto = new JournalDto();
+			BeanUtils.copyProperties(journal, journalDto);
+			return addAttachmentInfo(journalDto);
+		}
+	}
+	
+	@Override
+	public JournalDto findJournalDetail(String tendId, Journal journal) {
+		JournalDto jd = new JournalDto();
+		Journal journalDetail = journalMapper.findJournalDetail(journal);
+		if(journalDetail != null) {
+			BeanUtils.copyProperties(journalDetail, jd);
+			JournalAllowedScope journalAllowedScope = new JournalAllowedScope();
+			journalAllowedScope.setJournalId(journalDetail.getId());
+			journalAllowedScope.setDelflag(0);
+			List<JournalAllowedScope> journalAllowedScopeList = journalAllowedScopeService.queryList(journalAllowedScope);
+			if (journalAllowedScopeList != null && journalAllowedScopeList.size() > 0) {
+				List<ShareDto> userShareDtoList = new ArrayList<ShareDto>();// 用户共享
+				List<ShareDto> roleShareDtoList = new ArrayList<ShareDto>();// 角色用户共享
+				List<ShareDto> orgShareDtoList = new ArrayList<ShareDto>();// 组织用户共享
+				//TODO 需优化-查询次数较多,修改为单次查询
+				for (JournalAllowedScope journalScope : journalAllowedScopeList) {
+					String allowedId = journalScope.getAllowedId();
+					String allowedType = journalScope.getAllowedType();// 共享范围ID:0部门ID，1人员ID，2角色ID
+					if (OaConstant.ALLOWED_TYPE_ORG.equals(allowedType)) {
+						ShareDto orgShareDto = new ShareDto();
+						orgShareDto.setId(allowedId);
+						// 调用sys方法------------------------------------------------------
+						String name = oaUserUtil.queryOrgNameById(allowedId,tendId);
+						if(StringUtils.isBlank(name)) {
+							continue;
+						}
+						orgShareDto.setName(name);
+						orgShareDtoList.add(orgShareDto);
+					} else if (OaConstant.ALLOWED_TYPE_USER.equals(allowedType)) {
+						ShareDto userShareDto = new ShareDto();
+						userShareDto.setId(allowedId);
+						// 调用sys方法------------------------------------------------------
+						//包含离职、删除人员
+						String name = oaUserUtil.selectUserNameByTendIdAndStatus(allowedId,tendId,OaConstant.OA_USER_QUERY_STATUS_3);
+						
+						if(StringUtils.isBlank(name)) {
+							continue;
+						}
+						userShareDto.setName(name);
+						userShareDtoList.add(userShareDto);
+					} else {
+						ShareDto roleShareDto = new ShareDto();
+						roleShareDto.setId(allowedId);
+						// 调用sys方法------------------------------------------------------
+						String name = oaUserUtil.queryRoleNameById(allowedId,tendId);
+						if(StringUtils.isBlank(name)) {
+							continue;
+						}
+						roleShareDto.setName(name);
+						roleShareDtoList.add(roleShareDto);
+					}
+				}
+				jd.setOrgShareDtoList(orgShareDtoList);
+				jd.setUserShareDtoList(userShareDtoList);
+				jd.setRoleShareDtoList(roleShareDtoList);
+			}
+		}
+		return addAttachmentInfo(jd);
+	}
+	
+	
+	@Override
+	public void saveJournalDto(JournalDto journalDto) throws HioException {
+		
+		LoginUser loginUser = getLoginUser();
+		List<String> userIdList = journalDto.getUserIdList();
+		//校验保存信息是否包含离职/删除人员
+		ResultMsg resultMsg = oaUserUtil.checkUserEffective(userIdList, loginUser.getTendId());
+		if(Base.isNotEmpty(resultMsg) && !resultMsg.isSuccess()){
+			throw new HioMybatisInsertException(resultMsg.getMsg());
+		}
+		Journal journal = new Journal();
+		BeanUtils.copyProperties(journalDto, journal);
+		journal.setUpdateDate(new Date());
+		journal.setId(journalDto.getBusinessId());
+		try {
+			super.save(journal);
+		} catch (Exception e) {
+			throw new HioMybatisInsertException(e, "保存日志失败！");
+		}
+		logger.info("保存日志成功，id：{}",journal.getId());
+			
+		List<String> roleIdList = journalDto.getRoleIdList();//角色id
+		List<String> orgIdList = journalDto.getOrgIdList();//所有部门id
+		String journalId = journal.getId();
+		// 通过userIdList,roleIdList,orgIdList保存日志共享范围
+		saveJournalAllowedScopeByUserIdRoleIdOrgId(userIdList, roleIdList, orgIdList, journalId);
+	}
+	
+	@Override
+	public void updateJournalDto(JournalDto journalDto) throws HioException {
+		
+		LoginUser loginUser = getLoginUser();
+		List<String> userIdList = journalDto.getUserIdList();
+		//校验保存信息是否包含离职/删除人员
+		ResultMsg resultMsg = oaUserUtil.checkUserEffective(userIdList, loginUser.getTendId());
+		if(Base.isNotEmpty(resultMsg) && !resultMsg.isSuccess()){
+			throw new HioMybatisUpdateException(resultMsg.getMsg());
+		}		
+		Journal journal = new Journal();
+		BeanUtils.copyProperties(journalDto, journal);
+		journal.setUpdateDate(new Date());
+		try {
+			super.update(journal);
+		} catch (Exception e) {
+			throw new HioMybatisUpdateException(e, "日志更新失败！");
+		}
+		logger.info("编辑日志成功，id：{}",journal.getId());
+		// 删除原有日志共享范围
+		journalAllowedScopeService.deleteJournalScope(journal.getId());
+		
+		List<String> roleIdList = journalDto.getRoleIdList();//角色id
+		List<String> orgIdList = journalDto.getOrgIdList();//所有部门id
+		// 通过userIdList,roleIdList,orgIdList保存日志共享范围
+		saveJournalAllowedScopeByUserIdRoleIdOrgId(userIdList, roleIdList, orgIdList, journal.getId());
+	}
+	
+	@SuppressWarnings("unchecked")
+	@Override
+	public Page<Journal> findShareJournalList(Integer pageNum, Integer pageCount, String journalDate, List<String> userIdList,
+			List<String> loginOrgIdList, List<String> loginRoleIdList, String loginUserId) {
+		Map<String, Object> map = new HashMap<String, Object>();
+		map.put("pageNum", pageNum);
+		map.put("pageCount", pageCount);
+		pageStart(map);
+		List<Journal> journalList = journalMapper.findShareJournalList(journalDate, userIdList, loginOrgIdList, loginRoleIdList, loginUserId);
+		if(journalList != null && journalList.size() > 0) {
+			String tendId = getTendId();
+			String imgUrl = null;
+			for(Journal journal : journalList) {
+				imgUrl = oaUserUtil.queryImgUrl(tendId, journal.getCreatePersonId());
+				journal.setImgUrl(imgUrl);
+			}
+		}
+		return super.pageReturn(journalList);
+	}
+	
+	@SuppressWarnings("unchecked")
+	@Override
+	public Page<Journal> findCommentJournalList(Integer pageNum, Integer pageCount, String journalDate, List<String> userIdList,
+			List<String> loginOrgIdList, List<String> loginRoleIdList, String loginUserId) {
+		List<String> journalShareIdList = journalMapper.findShareJournalIdList(journalDate, userIdList, loginOrgIdList, loginRoleIdList, loginUserId);
+		/*if(journalShareIdList == null || journalShareIdList.size() < 1) {
+			return super.pageReturn(new ArrayList<Journal>());
+		}*/
+		Map<String, Object> map = new HashMap<String, Object>();
+		map.put("pageNum", pageNum);
+		map.put("pageCount", pageCount);
+		pageStart(map);
+		List<Journal> journalList = journalMapper.findCommentJournalList(journalDate, userIdList, loginUserId, journalShareIdList);
+		if(journalList != null && journalList.size() > 0) {
+			String tendId = getTendId();
+			String imgUrl = null;
+			for(Journal journal : journalList) {
+				imgUrl = oaUserUtil.queryImgUrl(tendId, journal.getCreatePersonId());
+				journal.setImgUrl(imgUrl);
+			}
+		}
+		return super.pageReturn(journalList);
+	}
+	
+	@Override
+	public List<String> findShareJournalUserIdList(String journalDate, List<String> loginOrgIdList, List<String> loginRoleIdList,
+			String loginUserId) {
+		return journalMapper.findShareJournalUserIdList(journalDate, loginOrgIdList, loginRoleIdList, loginUserId);
+	}
+	
+	@Override
+	public List<String> findCommentJournalUserIdList(String loginUserId, String journalDate, List<String> journalShareIdList) {
+		return journalMapper.findCommentJournalUserIdList(loginUserId, journalDate, journalShareIdList);
+	}
+
+	@Override
+	public List<String> findShareJournalIdList(String journalDate, List<String> userIdList, List<String> loginOrgIdList,
+			List<String> loginRoleIdList, String loginUserId) {
+		return journalMapper.findShareJournalIdList(journalDate, userIdList, loginOrgIdList, loginRoleIdList, loginUserId);
+	}
+
+	/**
+	 * 通过userIdList,roleIdList,orgIdList保存日志共享范围
+	 * @param userIdList
+	 * @param roleIdList
+	 * @param orgIdList
+	 */
+	private void saveJournalAllowedScopeByUserIdRoleIdOrgId(List<String> userIdList,
+			List<String> roleIdList,List<String> orgIdList,String journalId) {
+		if (userIdList != null && userIdList.size() > 0) {
+			for (String userId : userIdList) {
+				JournalAllowedScope journalAllowedScope = new JournalAllowedScope();
+				journalAllowedScope.setJournalId(journalId);
+				journalAllowedScope.setAllowedType(OaConstant.ALLOWED_TYPE_USER);
+				journalAllowedScope.setAllowedId(userId);
+				journalAllowedScopeService.save(journalAllowedScope);
+			}
+		}
+		if (roleIdList != null && roleIdList.size() > 0) {
+			for (String roleId : roleIdList) {
+				JournalAllowedScope journalAllowedScope = new JournalAllowedScope();
+				journalAllowedScope.setJournalId(journalId);
+				journalAllowedScope.setAllowedType(OaConstant.ALLOWED_TYPE_ROLE);
+				journalAllowedScope.setAllowedId(roleId);
+				journalAllowedScopeService.save(journalAllowedScope);
+			}
+		}
+		if (orgIdList != null && orgIdList.size() > 0) {
+			for (String orgId : orgIdList) {
+				JournalAllowedScope journalAllowedScope = new JournalAllowedScope();
+				journalAllowedScope.setJournalId(journalId);
+				journalAllowedScope.setAllowedType(OaConstant.ALLOWED_TYPE_ORG);
+				journalAllowedScope.setAllowedId(orgId);
+				journalAllowedScopeService.save(journalAllowedScope);
+			}
+		}
+		logger.info("通过userIdList,roleIdList,orgIdList保存日志共享范围成功,日志id：{}",journalId);
+	}
+	
+	@Override
+	public List<Journal> findJournalListByDate(String loginUserId, String startDate, String endDate) {
+		List<Journal> journalList = journalMapper.findJournalListByDate(loginUserId, startDate, endDate);
+		return journalList;
+	}
+	
+	private JournalDto addAttachmentInfo(JournalDto journalDto) {
+		String appId = BaseConstants.App.OA.getId();
+		String categoryId = BaseConstants.AttachmentCategory.OA_JOURNAL.getId();
+		if(journalDto != null && StringUtils.isNotBlank(journalDto.getId())) {
+			journalDto.setAppId(appId);
+			journalDto.setCategoryId(categoryId);
+			journalDto.setBusinessId(journalDto.getId());
+		}else {
+			if(journalDto != null) {
+				journalDto.setAppId(appId);
+				journalDto.setCategoryId(categoryId);
+				journalDto.setBusinessId(generatePk());
+			}else {
+				journalDto = new JournalDto();
+				journalDto.setAppId(appId);
+				journalDto.setCategoryId(categoryId);
+				journalDto.setBusinessId(generatePk());
+			}
+		}
+		return journalDto;
+	}
+	
+}
