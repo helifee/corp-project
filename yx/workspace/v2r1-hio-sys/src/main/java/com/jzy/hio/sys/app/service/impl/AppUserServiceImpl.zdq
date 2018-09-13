@@ -1,0 +1,144 @@
+package com.jzy.hio.sys.app.service.impl;
+
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Set;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.annotation.DataSource;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.entity.OaSysAppUser;
+import com.jzy.hio.sys.app.dto.AppImDto;
+import com.jzy.hio.sys.app.mapper.AppUserMapper;
+import com.jzy.hio.sys.app.service.AppService;
+import com.jzy.hio.sys.app.service.AppUserService;
+
+/**
+ * 
+ * @author wt.coffee
+ * @date 2018年4月25日上午9:17:45
+ */
+@Service
+public class AppUserServiceImpl extends BaseServiceImpl<OaSysAppUser> implements AppUserService {
+
+	@Autowired
+	private AppService appService;
+	@Autowired
+	private AppUserMapper appUserMapper;
+
+	/**
+	 * 覆盖父类的批量删除方法
+	 */
+	@Override
+	public int saveBatch(@DataSource String tendId, String userId, List<OaSysAppUser> newUsers) {
+		// 查询首页
+		List<OaSysAppUser> oldUsers = queryByUserId(userId);
+		List<OaSysAppUser> addUsers = new ArrayList<>();// 新增的
+		List<String> delUsers = new ArrayList<>();// 要删除的
+
+		for (Iterator<OaSysAppUser> it = oldUsers.iterator(); it.hasNext();) {
+			OaSysAppUser old = it.next();
+			if (isEquals(old.getAppId(), BaseConstants.MYSQL_APP_INDEX_ID)) {
+				continue;
+			}
+			if (newUsers.contains(old)) {
+				// 未修改的数据
+				continue;
+			} else {
+				// 待删除
+				delUsers.add(old.getId());
+			}
+		}
+		for (Iterator<OaSysAppUser> it = newUsers.iterator(); it.hasNext();) {
+			OaSysAppUser news = it.next();
+			if (oldUsers.contains(news)) {
+				// 未修改的数据
+				continue;
+			} else {
+				// 待新增
+				addUsers.add(news);
+			}
+		}
+		logger.info("删除  {}", delUsers);
+		super.deleteAllObjectByIds(delUsers);
+		logger.info("新增  {}", addUsers);
+		super.saveBatch(addUsers);
+		return 1;
+	}
+
+	/**
+	 * 用户创建完成以后--添加可用的应用列表
+	 */
+	@Override
+	public void saveOnCreate(@DataSource String tendId, String userId, boolean isPusys) {
+		// 移动端和pc端都可以用queryListByRoleIM
+		List<AppImDto> list = appService.queryListByRoleIM(tendId, userId);
+		List<OaSysAppUser> appUsers = new ArrayList<>();
+		for (AppImDto item : list) {
+			OaSysAppUser appUser = new OaSysAppUser();
+			appUser.setAppId(item.getAppId());
+			appUser.setUserId(userId);
+			if (isPusys) {
+				appUser.setCreatePersonId("1001");
+				appUser.setCreatePersonName("管理员");
+				appUser.setUpdatePersonId("1001");
+				appUser.setUpdatePersonName("管理员");
+			}
+			appUsers.add(appUser);
+		}
+		// 防止数据重复、先清空
+		this.deleteAllByUserId(tendId, userId);
+		//
+		this.saveBatch(tendId, userId, appUsers);
+	}
+
+	@Override
+	public void deleteAllByUserId(@DataSource String tendId, String userId) {
+		logger.info("deleteAllByUserId, tendId-{} userId-{}", tendId, userId);
+		appUserMapper.deleteAllByUserId(userId);
+	}
+
+	/**
+	 * 目前只有一个用户
+	 */
+	@Override
+	// @Transactional(propagation = Propagation.REQUIRES_NEW)
+	public void deleteWithoutRole(@DataSource String tendId, Set<String> userIds) {
+		logger.info("deleteWithoutRole, tendId-{} userId-{}", tendId, userIds);
+		for (String userId : userIds) {
+			// 管理员可能在权限表里没有权限
+			if (isSuper(tendId, userId)) {
+				continue;
+			}
+			appUserMapper.deleteWithoutRole(userId);
+			// List<OaSysAppUser> appUsers = queryByUserId(userId);
+			// for (Iterator<OaSysAppUser> it = appUsers.iterator(); it.hasNext();) {
+			// OaSysAppUser appUser = it.next();
+			// if (isEquals(appUser.getAppId(), BaseConstants.MYSQL_APP_INDEX_ID)) {
+			// it.remove();
+			// }
+			// }
+			// Lock wait timeout exceeded; try restarting transaction
+			// if (appUsers.isEmpty()) {
+			// TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+			// }
+		}
+	}
+
+	@Override
+	public boolean queryContainsIndex(String userId) {
+		return appUserMapper.queryContainsIndex(userId) > 0;
+	}
+
+	public List<OaSysAppUser> queryByUserId(String userId) {
+		// Map<String, Object> paramMap = new HashMap<>();
+		// paramMap.put("userId", userId);
+		// List<OaSysAppUser> appUsers = queryListByExample(paramMap);
+		// return appUsers;
+		return appUserMapper.queryByUserId(userId);
+	}
+}

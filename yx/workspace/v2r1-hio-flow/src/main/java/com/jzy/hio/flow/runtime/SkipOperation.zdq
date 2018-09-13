@@ -1,0 +1,137 @@
+package com.jzy.hio.flow.runtime;
+
+import java.util.Date;
+import java.util.List;
+import java.util.stream.Collectors;
+
+import org.apache.commons.collections.CollectionUtils;
+
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.exception.ApiException;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.flow.entity.FlowInstanceAc;
+import com.jzy.hio.flow.entity.FlowInstanceApprovalRecord;
+import com.jzy.hio.flow.entity.FlowVariables;
+import com.jzy.hio.flow.entity.dto.FlowInstanceInfo;
+import com.jzy.hio.flow.entity.enums.FlowStateEnum;
+import com.jzy.hio.flow.entity.enums.InstanceApproverState;
+import com.jzy.hio.flow.entity.enums.InstanceNodeState;
+import com.jzy.hio.flow.utils.FlowConstants;
+import com.jzy.hio.platform.message.param.MessageEnum;
+import com.jzy.hio.utils.LoginUser;
+
+/**
+ * 管理员跳过
+ * 
+ * @author daoqi
+ *
+ */
+public class SkipOperation extends AbstractBaseOperation  {
+	
+	@Override
+	public String skipOperation(String instanceId) {
+		try {
+			// 需要加锁的代码
+			if (this.getService().getRedisLock().lock(instanceId)) {
+				boolean isAdmin = this.getService().isSuper();
+				if (!this.getService().isRolePermission(BaseConstants.MYSQL_MENU_CODE_FLOW_MANAGE) && !isAdmin) {
+					logger.error("当前用户没用权限跳过");
+					throw new HioException(FlowConstants.NO_PERMISSION_TO_OPERATION.getMessage(),
+							FlowConstants.NO_PERMISSION_TO_OPERATION.getStatus());
+				}
+
+				FlowInstanceInfo instanceInfo =  this.getService().getFlowInstanceDao().getInstanceInfoById(instanceId);
+
+				if (instanceInfo == null) {
+					logger.error("传入实例Id不正确");
+					throw new HioException(FlowConstants.FLOW_NOT_EXIST.getMessage(),
+							FlowConstants.FLOW_NOT_EXIST.getStatus());
+				}
+
+				Integer currentState = instanceInfo.getInstanceState();
+				if (currentState != FlowStateEnum.RUN.getState()) {
+					logger.error("当前流程状态不是运行时");
+					throw new HioException(FlowConstants.FLOW_STATE_CHANGE.getMessage(),
+							FlowConstants.FLOW_STATE_CHANGE.getStatus());
+				}
+				LoginUser loginUser = this.getService().getLoginUser();
+				List<FlowInstanceAc> instanceAcList = instanceInfo.getInstanceAcList();
+				List<FlowInstanceAc> arriveList = instanceAcList.stream()
+						.filter(list -> list.getState() == InstanceNodeState.HAVE_ARRIV.getState())
+						.collect(Collectors.toList());
+				if (CollectionUtils.isEmpty(arriveList)) {
+					logger.error(FlowConstants.FLOW_STATE_CHANGE.getMessage());
+
+					throw new ApiException(FlowConstants.FLOW_STATE_CHANGE.getMessage(),
+							FlowConstants.FLOW_STATE_CHANGE.getStatus());
+				}
+
+				StringBuilder currentAcIds = new StringBuilder();
+				StringBuilder nextAcIds = new StringBuilder();
+
+				FlowVariables flowVariables = getFlowVariables(loginUser, instanceId, instanceInfo,true);
+
+				// 处理如果当前环节是最后一级 实例状态为跳过
+				flowVariables.setSkipOperation(true);
+
+				for (FlowInstanceAc currentInstanceAc : arriveList) {
+
+					currentAcIds.append(currentInstanceAc.getId() + DELIMITER);
+					nextAcIds.append(currentInstanceAc.getNextNodeIds() + DELIMITER);
+				}
+
+				String userId = loginUser.getUserId();
+				String acIds = currentAcIds.substring(0, currentAcIds.length() - 1);
+				 this.getService().getFlowInstanceAcDao().updateRunTimeState(acIds, InstanceNodeState.SKIP.getState(), new Date(),
+						instanceInfo.getInstanceId());
+				Date date = new Date();
+
+				FlowInstanceApprovalRecord flowInstanceApprovalRecord = new FlowInstanceApprovalRecord();
+				flowInstanceApprovalRecord.setState(InstanceApproverState.NO_APPROVAL.getState());
+				flowInstanceApprovalRecord.setFlowInstanceId(instanceId);
+				flowInstanceApprovalRecord.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+
+				List<FlowInstanceApprovalRecord> noApprovalUser = this.getService().getFlowInstanceApprovalRecordDao()
+						.select(flowInstanceApprovalRecord);
+				List<String> userIds = noApprovalUser.stream()
+						.map(FlowInstanceApprovalRecord::getApprovalUser).collect(Collectors.toList());
+
+				// 保存删除消息
+				flowVariables.setSendType(true);
+				flowVariables.setMsgType(MessageEnum.DEL_MSG.getValue());
+				newMessage(userIds, flowVariables);
+				flowVariables.setSendType(false);
+
+				flowInstanceApprovalRecord.setUpdateDate(date);
+				flowInstanceApprovalRecord.setAdminId(userId);
+				flowInstanceApprovalRecord.setUpdatePersonId(userId);
+				flowInstanceApprovalRecord.setFlowInstanceAcId(acIds);
+				flowInstanceApprovalRecord.setState(InstanceApproverState.SKIP.getState());
+				flowInstanceApprovalRecord.setApprovalTime(date);
+				this.getService().getFlowInstanceApprovalRecordDao().updateApprovalState(flowInstanceApprovalRecord);
+
+				String[] ids = currentAcIds.toString().split(DELIMITER);
+				// 处理聚合分支 leftCount
+				for (String currentId : ids) {
+					getCurrentInstanceAc(flowVariables, currentId);
+					isJudgeExecuteNextAc(flowVariables);
+				}
+
+				this.getService().getFlowInstanceDao().updateInstanceUpdateDate(new Date(), flowVariables.getInstanceId());
+				insertApprovalInfo(flowVariables);
+			}
+		} catch (InterruptedException e) {
+			 logger.error("跳过审批人异常: {}", e.getMessage());
+		} finally {
+			this.getService().getRedisLock().unlock(instanceId);
+		}
+		return SUCCESS;
+	}
+
+	@Override
+	public OperateType getType() {
+ 
+		return OperateType.SKIP;
+	}
+
+}

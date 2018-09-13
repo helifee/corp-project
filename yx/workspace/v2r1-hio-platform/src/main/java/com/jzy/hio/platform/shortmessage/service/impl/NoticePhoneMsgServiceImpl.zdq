@@ -1,0 +1,102 @@
+package com.jzy.hio.platform.shortmessage.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.amqp.core.AmqpTemplate;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.config.QueueConfig;
+import com.jzy.hio.platform.constant.UserOrFriendConstant;
+import com.jzy.hio.platform.message.param.IMToUserParam;
+import com.jzy.hio.platform.message.param.ImNoticeMsgsParam;
+import com.jzy.hio.platform.message.param.MessageEnum;
+import com.jzy.hio.platform.message.service.MessageService;
+import com.jzy.hio.platform.shortmessage.param.ImNoticeOrPhoneMsgsParam;
+import com.jzy.hio.platform.shortmessage.service.NoticePhoneMsgService;
+/**
+ * 发送短信、站内信
+ * @author chc
+ *2018年3月26日
+ */
+@Service
+public class NoticePhoneMsgServiceImpl implements NoticePhoneMsgService{
+	protected Logger logger = LoggerFactory.getLogger(NoticePhoneMsgServiceImpl.class);
+
+
+	@Autowired
+    private AmqpTemplate rabbitTemplate;
+	@Autowired
+	MessageService messageService;
+	
+	@Autowired
+	QueueConfig queueConfig;
+	
+	@Override
+	public String sendMsg(ImNoticeOrPhoneMsgsParam param) throws Exception {
+		logger.debug("sendMsg发送消息msgMap{} ", Base.obj2json(param));
+
+		//短信
+		if(param.getNoticeType() == UserOrFriendConstant.NOTICE_TYPE_PHONE) {
+			logger.info("发送短信到mq");
+			this.rabbitTemplate.convertAndSend(queueConfig.getShortNoticeMsgQueue(), param);
+		}
+		else {
+			sendMail(param);
+		}
+        return "ok";
+	}
+	
+	@Override
+	public Object sendMail(ImNoticeOrPhoneMsgsParam param)throws Exception {
+		ImNoticeMsgsParam imNoticeMsg = new ImNoticeMsgsParam();
+		BeanUtils.copyProperties(param, imNoticeMsg);
+		IMToUserParam userParam = new IMToUserParam();
+		userParam.setToUserId(param.getReceiverId());
+		userParam.setToUserPhone(param.getMobile());
+		List<IMToUserParam> toUsers = new ArrayList<IMToUserParam>();
+		toUsers.add(userParam);
+		imNoticeMsg.setToUsers(toUsers);
+		imNoticeMsg.setMsg(Base.isEmpty(param.getZnmsg())?"":param.getZnmsg());
+		imNoticeMsg.setTendId(Base.isEmpty(param.getTendId())?"":param.getTendId());
+		imNoticeMsg.setTendName(Base.isEmpty(param.getTendName())?"":param.getTendName());
+		imNoticeMsg.setMsg(Base.isEmpty(param.getZnmsg())?"":param.getZnmsg());
+		if(Base.isNotEquals(UserOrFriendConstant.SESSION_MSG_TYPE, param.getMsgType())) {
+			Map<String,Object> ext = new HashMap<String,Object>();
+			ext.put("msg", Base.isEmpty(param.getZnmsg())?"":param.getZnmsg());
+			ext.put("sendId", Base.isEmpty(param.getFromUserId())?"":param.getFromUserId());
+			ext.put("sendName", Base.isEmpty(param.getFromUserName())?"":param.getFromUserName());
+			ext.put("tendId", Base.isEmpty(param.getTendId())?"":param.getTendId());
+			ext.put("tendName", Base.isEmpty(param.getTendName())?"":param.getTendName());
+			ext.put("sex", Base.isEmpty(param.getSex())?1:param.getSex());
+			ext.put("headImg",Base.isEmpty(param.getHeadImg())?"":param.getHeadImg());
+			ext.put("sendMobile", Base.isEmpty(param.getSendMobile())?"":param.getSendMobile());
+			ext.put("sharePhone", Base.isEmpty(param.getSharePhone())?0:param.getSharePhone());
+			ext.put("modifyOwerType", Base.isEmpty(param.getModifyOwerType())?0:param.getModifyOwerType());
+			ext.put("type", Base.isEmpty(param.getType())?0:param.getType());
+			//解除好友关系用
+			ext.put("fid", Base.isEmpty(param.getFromUserId())?"":param.getFromUserId());
+			ext.put("isSendFlag", Base.isEmpty(param.getIsSendFlag())?0:param.getIsSendFlag());
+			if(Base.isEquals(param.getModuleType(), MessageEnum.WORKINVITATION.getValue()) || Base.isEquals(param.getModuleType(), MessageEnum.OUTWORKINVITATION.getValue()))
+				ext.put("actionName", "确定加入");
+			//我的好友昵称、备注
+			ext.put("name", Base.isEmpty(param.getName())?"":param.getName());
+			ext.put("nameFull", Base.isEmpty(param.getNameFull())?"":param.getNameFull());
+			ext.put("nameSimple", Base.isEmpty(param.getNameSimple())?"":param.getNameSimple());
+			ext.put("aliasName", Base.isEmpty(param.getAliasName())?"":param.getAliasName());
+			ext.put("aliasNameFull", Base.isEmpty(param.getAliasNameFull())?"":param.getAliasNameFull());
+			ext.put("aliasNameSimple", Base.isEmpty(param.getAliasNameSimple())?"":param.getAliasNameSimple());
+			imNoticeMsg.setExt(ext);
+		}
+		
+		return messageService.sendMessage(imNoticeMsg);
+	}
+}

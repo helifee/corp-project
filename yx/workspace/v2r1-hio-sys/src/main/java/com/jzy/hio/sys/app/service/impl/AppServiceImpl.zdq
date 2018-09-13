@@ -1,0 +1,186 @@
+package com.jzy.hio.sys.app.service.impl;
+
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.annotation.DataSource;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.anno.TargetIM;
+import com.jzy.hio.base.service.impl.BaseSysServiceImpl;
+import com.jzy.hio.entity.OaSysApp;
+import com.jzy.hio.entity.OaSysMenu;
+import com.jzy.hio.entity.OaSysUser;
+import com.jzy.hio.exception.HioRedisSetException;
+import com.jzy.hio.redis.service.RedisSetService;
+import com.jzy.hio.sys.app.dto.AppImDto;
+import com.jzy.hio.sys.app.dto.AppItemDto;
+import com.jzy.hio.sys.app.mapper.AppMapper;
+import com.jzy.hio.sys.app.service.AppService;
+import com.jzy.hio.sys.app.service.AppUserService;
+import com.jzy.hio.sys.menu.service.MenuService;
+import com.jzy.hio.sys.user.service.UserService;
+import com.jzy.hio.utils.LoginUser;
+
+/**
+ * 
+ * @author wt.coffee<br/>
+ *         2018年3月5日下午8:14:00
+ */
+@Service
+public class AppServiceImpl extends BaseSysServiceImpl<OaSysApp> implements AppService {
+
+	@Autowired
+	private UserService userService;
+	@Autowired
+	private AppMapper mapper;
+	@Autowired
+	private AppUserService appUserService;
+	@Autowired
+	private MenuService menuService;
+	@Autowired
+	private RedisSetService redisSetService;
+
+	@Override
+	public List<AppItemDto> queryList() {
+		List<AppItemDto> items = mapper.queryList();
+		return items;
+	}
+
+	/**
+	 * 移动端 只有8个应用
+	 */
+	@TargetIM
+	@Override
+	public List<AppImDto> queryListByRoleIM(@DataSource String tendId, String userId) {
+		OaSysUser user = userService.getObjectById(tendId, userId);
+		if (isEquals(user.getUserType(), BaseConstants.MYSQL_USER_TYPE_EXTERNAL)) {
+			List<AppImDto> items = mapper.queryListByRoleIM("-1");
+			return items;
+		} else {
+			List<AppImDto> items = null;
+			if (isSuper(tendId, userId)) {
+				items = mapper.queryListByRoleIM(null);
+			} else {
+				items = mapper.queryListByRoleIM(userId);
+			}
+			return items;
+		}
+	}
+
+	@Override
+	public List<AppItemDto> queryListByRoleH5(@DataSource String tendId, String userId) {
+		if (isSuper(tendId, userId)) {
+			return mapper.queryListByRoleH5(null);
+		} else {
+			return mapper.queryListByRoleH5(userId);
+		}
+	}
+
+	@Override
+	public List<AppItemDto> queryListByUserId(String userId) {
+		boolean isSuper = isSuper(getTendId(), userId);
+		List<AppItemDto> items = mapper.queryListByUserId(userId, isSuper);
+		// items.clear();
+		// 如果查询为空、则默认查询具备权限的前六个app
+		if (isEmpty(items)) {
+			boolean contains = appUserService.queryContainsIndex(userId);
+			if (contains) {
+				logger.debug("用户已设置首页菜单, 数据库中有首页菜单");
+			} else {
+				logger.debug("用户未设置首页菜单");
+				// 普通员工按照角色权限顺序
+				// 销售员，销售经理按照角色权限顺序计划替换成CRM。
+				// 人事经理，系统管理员按照角色权限顺序计划替换成EHR。
+				String tendId = getTendId();
+				List<AppItemDto> tmps = queryListByRoleH5(tendId, userId);
+				items.addAll(tmps);
+				LoginUser user = getLoginUser();
+				if (user.getRoleIds().contains(BaseConstants.MYSQL_ROLE_SALER) //
+						|| user.getRoleIds().contains(BaseConstants.MYSQL_ROLE_SALELEADER)) {
+					int crmIndex = -1, planIndex = -1;
+					AppItemDto crm = null, plan = null;
+					for (int i = 0; i < items.size(); i++) {
+						AppItemDto item = items.get(i);
+						if (isEquals(item.getName(), "计划")) {
+							planIndex = i;
+							plan = items.get(i);
+						}
+						if (isEquals(item.getName().toLowerCase(), "crm")) {
+							crmIndex = i;
+							crm = items.get(i);
+						}
+					}
+					if (planIndex > -1 && crm != null) {
+						items.set(planIndex, crm);
+					}
+					if (crmIndex > -1 && plan != null) {
+						items.set(crmIndex, plan);
+					}
+				}
+				if (user.getRoleIds().contains(BaseConstants.MYSQL_ROLE_HR) //
+						|| user.getRoleIds().contains(BaseConstants.MYSQL_ROLE_SUPERID)) {
+					int planIndex = -1, ehrIndex = -1;
+					AppItemDto plan = null, ehr = null;
+					for (int i = 0; i < items.size(); i++) {
+						AppItemDto item = items.get(i);
+						if (isEquals(item.getName(), "计划")) {
+							planIndex = i;
+							plan = items.get(i);
+						}
+						if (isEquals(item.getName().toLowerCase(), "ehr")) {
+							ehrIndex = i;
+							ehr = items.get(i);
+						}
+					}
+					if (planIndex > -1 && ehr != null) {
+						items.set(planIndex, ehr);
+					}
+					if (ehrIndex > -1 && plan != null) {
+						items.set(ehrIndex, plan);
+					}
+				}
+			}
+		}
+
+		// 2.如果包含index首页app、则移除
+		for (Iterator<AppItemDto> it = items.iterator(); it.hasNext();) {
+			AppItemDto item = it.next();
+			if (isEquals(BaseConstants.MYSQL_APP_INDEX_ID, item.getId())) {
+				it.remove();
+				break;
+			}
+		}
+		// 3.注意需要在2之后
+		if (items.size() > 5) {
+			items = items.subList(0, 6);
+		}
+		
+		return items;
+	}
+
+	/**
+	 * 注意 --需要保证redis的同步
+	 */
+	@Override
+	public int updateStatus(OaSysApp app) {
+		int result = super.update(app);
+		app = getObjectById(app.getId());
+		Map<String, Object> map = new HashMap<>();
+		map.put("appId", app.getId());
+		List<OaSysMenu> menus = menuService.queryListByExample(map);
+		int success = redisSetService.setAppDisable(getTendId(), app, menus);
+		if (success == 0) {
+			throw new HioRedisSetException("setAppDisable失败 " + app.getId());
+		}
+		// 查询所有的角色用户 -- 担心换新服务器扛不住、暂时不通知
+		// List<OaSysRoleUser> roleUsers = roleUserService.queryListByExample(null);
+		// messageService.noticeAppChanage(roleUsers);
+		return result;
+	}
+
+}

@@ -1,0 +1,165 @@
+
+package com.jzy.hio.flow.runtime;
+
+import java.util.Date;
+import java.util.List;
+
+import javax.servlet.http.HttpServletRequest;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+
+import com.alibaba.fastjson.JSON;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.flow.entity.FlowInstanceAc;
+import com.jzy.hio.flow.entity.FlowInstanceApprovalRecord;
+import com.jzy.hio.flow.entity.FlowVariables;
+import com.jzy.hio.flow.entity.dto.FlowInstanceInfo;
+import com.jzy.hio.flow.entity.enums.FlowApprovalTypeEnum;
+import com.jzy.hio.flow.entity.enums.FlowStateEnum;
+import com.jzy.hio.flow.entity.enums.InstanceAcSource;
+import com.jzy.hio.flow.entity.enums.InstanceApproverState;
+import com.jzy.hio.flow.entity.enums.InstanceNodeState;
+import com.jzy.hio.flow.entity.param.FlowApprovalParam;
+import com.jzy.hio.flow.utils.FlowConstants;
+import com.jzy.hio.platform.message.param.MessageEnum;
+import com.jzy.hio.utils.LoginUser;
+
+public class PassOperation extends AbstractBaseOperation {
+
+	@Override
+	public OperateType getType() {
+		return OperateType.PASS;
+	}
+
+	@Override
+	public String passAction(FlowApprovalParam flowApprovalParam) {
+
+		try {
+
+			logger.info("------进入流程审批----");
+			if (this.getService().getRedisLock().lock(flowApprovalParam.getInstanceId())) {
+				LoginUser loginUser = this.getService().getLoginUser();
+				getTengId(loginUser);
+				boolean isExternal = flowApprovalParam.isExternal();
+				if (isExternal) {
+					HttpServletRequest request = ((ServletRequestAttributes) RequestContextHolder
+							.getRequestAttributes()).getRequest();
+					String tendId = request.getHeader(BaseConstants.HTTP_PARAM_TENDID);
+					loginUser.setTendId(tendId);
+				}
+				String desc = flowApprovalParam.getDesc();
+				if (StringUtils.isNotEmpty(desc)) {
+					if (desc.length() > 200) {
+						logger.error("-------审批意见过长 -------{}", desc);
+						throw new HioException(FlowConstants.FLOW_APPROVAL_DESC_VERY_LONG.getMessage(),
+								FlowConstants.FLOW_APPROVAL_DESC_VERY_LONG.getStatus());
+					}
+				}
+
+				String instanceId = flowApprovalParam.getInstanceId();
+				FlowInstanceInfo instanceInfo = this.getService().getFlowInstanceDao().getInstanceInfoById(instanceId);
+				if (instanceInfo == null) {
+					logger.error("-------传入实例Id不正确 ------- {}", JSON.toJSONString(flowApprovalParam));
+					throw new HioException(FlowConstants.FLOW_NOT_EXIST.getMessage(),
+							FlowConstants.FLOW_NOT_EXIST.getStatus());
+				}
+
+				Integer currentState = instanceInfo.getInstanceState();
+				if (currentState != FlowStateEnum.RUN.getState()) {
+					logger.error("-------当前流程状态已经不是运行时-------,{}", currentState);
+					throw new HioException(FlowConstants.FLOW_STATE_CHANGE.getMessage(),
+							FlowConstants.FLOW_STATE_CHANGE.getStatus());
+				}
+
+				FlowVariables flowVariables = getFlowVariables(loginUser, instanceId, instanceInfo, true);
+				// 判断当前 审批记录是否被管理员操作，或者是有前加签操作
+				List<FlowInstanceApprovalRecord> approverList = this.getService().getFlowInstanceApprovalRecordDao()
+						.queryApprovalRecord(instanceId, loginUser.getUserId());
+				if (CollectionUtils.isEmpty(approverList)) {
+					logger.error("当前审批环节审批人为空");
+					throw new HioException(FlowConstants.FLOW_RECORD_NOT_EXIST.getMessage(),
+							FlowConstants.FLOW_RECORD_NOT_EXIST.getStatus());
+				}
+
+				for (FlowInstanceApprovalRecord record : approverList) {
+
+					Date date = new Date();
+					record.setUpdateDate(date);
+					record.setUpdatePersonId(loginUser.getUserId());
+					record.setState(InstanceApproverState.ALREADY_APPROVAL.getState());
+					record.setApprovalTime(date);
+					record.setApprovalDescription(flowApprovalParam.getDesc());
+					logger.info("修改当前审批记录为已通过审批");
+					this.getService().getFlowInstanceApprovalRecordDao().updateByPrimaryKeySelective(record);
+
+					FlowInstanceAc currentInstanceAc = getCurrentInstanceAc(flowVariables,
+							record.getFlowInstanceAcId());
+					// 查询指定环节下未审批的人的数量
+					Integer count = this.getService().getFlowInstanceApprovalRecordDao()
+							.queryUnapprovedRecordCount(instanceId, record.getFlowInstanceAcId());
+
+					// 审签 会签
+					if ((currentInstanceAc.getType() == FlowApprovalTypeEnum.SHEN_QIAN.getType())
+							|| (currentInstanceAc.getType() == FlowApprovalTypeEnum.HUI_QIAN.getType()
+									&& (count == null || count.intValue() == 0))) {
+						logger.debug("审签或者会签完成,当前租户:{}", loginUser.getTendId(), "当前用户:{}" + loginUser.getUserId());
+
+						generateUpdateInstanceAc(flowVariables, currentInstanceAc.getId(),
+								InstanceNodeState.PASS.getState(), 0);
+
+						if (currentInstanceAc.getSource() == InstanceAcSource.TEMPLATE_SOURCE.getType()) {
+							flowVariables.setMsgType(MessageEnum.TOREAD.getValue());
+							setFlowCopyApproverMsg(flowVariables);
+						}
+						if (currentInstanceAc.getNoSkip() != null
+								&& currentInstanceAc.getNoSkip() == FlowConstants.SKIP) {
+							flowVariables.setRejectOperation(true);
+						}
+						// 判断是否执行下个环节
+						isJudgeExecuteNextAc(flowVariables);
+					}
+
+					Integer isRepeat = flowVariables.getTemplate().getIsRepeat();
+					if (isRepeat != null && isRepeat.intValue() != 0 && isRepeat != FlowConstants.SKIP) {
+						break;
+					}
+
+				}
+				this.getService().getFlowInstanceDao().updateInstanceUpdateDate(new Date(),
+						flowVariables.getInstanceId());
+
+				insertApprovalInfo(flowVariables);
+			}
+		} catch (InterruptedException e) {
+			logger.error("流程通过异常: {}", e.getMessage());
+		} finally {
+
+			this.getService().getRedisLock().unlock(flowApprovalParam.getInstanceId());
+
+		}
+		logger.info("-------审批逻辑结束-----------");
+		return SUCCESS;
+	}
+
+	/**
+	 * 封装流程环节抄送
+	 *
+	 * @param flowVariables
+	 */
+	private void setFlowCopyApproverMsg(FlowVariables flowVariables) {
+		logger.debug("查询模板环节对应的抄送人");
+		// 模板抄送人
+		List<String> copyUserIds = this.getService().getFlowTemplateAcCopyDao()
+				.queryCopyUserIds(flowVariables.getCurrentInstranceAc().getTemplateNodeId());
+
+		// 已经发送的抄送人
+		List<String> sendOutList = this.getService().getFlowCopyDao().haveSentOutList(flowVariables.getInstanceId());
+
+		setCopyAndFilterCopyPerson(flowVariables, copyUserIds, sendOutList);
+	}
+
+}

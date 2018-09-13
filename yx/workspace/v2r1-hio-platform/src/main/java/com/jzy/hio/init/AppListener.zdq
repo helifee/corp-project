@@ -1,0 +1,85 @@
+package com.jzy.hio.init;
+
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.ApplicationEvent;
+import org.springframework.context.ApplicationListener;
+import org.springframework.stereotype.Component;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.entity.ImBasePersonnelSize;
+import com.jzy.hio.entity.SysBaseRegion;
+import com.jzy.hio.entity.SysDictionary;
+import com.jzy.hio.platform.dictionary.dto.DictionaryDto;
+import com.jzy.hio.platform.dictionary.service.DictionaryService;
+import com.jzy.hio.platform.personnelsize.dto.ImBasePersonnelSizeDto;
+import com.jzy.hio.platform.personnelsize.service.ImBasePersonnelSizeService;
+import com.jzy.hio.platform.region.dto.RegionDto;
+import com.jzy.hio.platform.region.service.RegionService;
+import com.jzy.hio.redis.RedisService;
+
+/**
+ * 程序启动监听器
+ * 
+ * @author wt.coffee
+ * @date 2018年4月2日上午11:07:51
+ */
+@Component
+public class AppListener implements ApplicationListener<ApplicationEvent> {
+	@Autowired
+	private DictionaryService dictionaryService;
+	@Autowired
+	private RedisService redisService;
+	@Autowired
+	private ImBasePersonnelSizeService imBasePersonnelSizeService;
+	@Autowired
+	private RegionService regionService;
+	
+	@Override
+	public void onApplicationEvent(ApplicationEvent event) {
+		//org.springframework.context.event.ContextRefreshedEvent[source=org.springframework.context.annotation.AnnotationConfigApplicationContext@2cbb42fb: startup date [Mon Apr 02 15:24:12 CST 2018]; parent: org.springframework.boot.context.embedded.AnnotationConfigEmbeddedWebApplicationContext@6a2d9f99]
+		System.out.println(event);
+		if(event instanceof ApplicationReadyEvent) {
+			//字典表同步redis，企业类型，所属行业
+			Map<String, Object> dicParamMap = new HashMap<>();
+			List<SysDictionary> dicSourceList = dictionaryService.queryListByExample(dicParamMap);
+			List<DictionaryDto> dicTargetList = Base.copyProperties(dicSourceList, DictionaryDto.class);
+			for (DictionaryDto region : dicTargetList) {
+				Map<String, String> map = new LinkedHashMap<>();
+				map.put(region.getId(), Base.obj2json(region));
+				redisService.addRow("platform:dictionary_" + region.getType(), map);
+				redisService.addRow("platform:dictionary", map);
+			}
+			//人员规模同步redis
+			Map<String, Object> pseSizeParamMap = new HashMap<>();
+			List<ImBasePersonnelSize> pseSizeSourceList = imBasePersonnelSizeService.queryListByExample(pseSizeParamMap);
+			List<ImBasePersonnelSizeDto> pseSizeTargetList = Base.copyProperties(pseSizeSourceList, ImBasePersonnelSizeDto.class);
+			for (ImBasePersonnelSizeDto region : pseSizeTargetList) {
+				Map<String, String> map = new LinkedHashMap<>();
+				map.put(region.getId(), Base.obj2json(region));
+				redisService.addRow("platform:"+BaseConstants.MYSQL_TABLE_IM_BASE_PERSONNEL_SIZE, map);
+			}
+			//地区同步redis
+			if(Base.isEmpty(redisService.getRowAll("platform:region"))) {
+				Map<String, Object> paramMap = new HashMap<>();
+				paramMap.put("order by", "sort");
+				paramMap.put("pageCount", "10000");
+				List<SysBaseRegion> sourceList = regionService.queryListByExample(paramMap);
+				List<RegionDto> targetList = Base.copyProperties(sourceList, RegionDto.class);
+				redisService.delAll("platform:region");
+				for (RegionDto region : targetList) {
+					Map<String, String> map = new LinkedHashMap<>();
+					map.put(region.getId(), Base.obj2json(region));
+					redisService.addRow("platform:region", map);
+				}
+			}
+		}
+	}
+
+}

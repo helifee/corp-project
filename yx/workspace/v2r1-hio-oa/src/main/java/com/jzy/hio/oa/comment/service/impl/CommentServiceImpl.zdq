@@ -1,0 +1,171 @@
+
+package com.jzy.hio.oa.comment.service.impl;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.entity.Comment;
+import com.jzy.hio.oa.comment.dto.QueryCommentDto;
+import com.jzy.hio.oa.comment.dto.QueryCommentUserDto;
+import com.jzy.hio.oa.comment.mapper.CommentMapper;
+import com.jzy.hio.oa.comment.param.QueryCommentParam;
+import com.jzy.hio.oa.comment.service.CommentService;
+import com.jzy.hio.platform.redis.PlatformRedis;
+import com.jzy.hio.utils.LoginUser;
+import com.jzy.hio.utils.OaUserUtil;
+import com.jzy.hio.utils.Page;
+
+/**
+ * 评论
+ * @author wdy
+ * @date 2018年4月14日
+ */
+@Service
+public class CommentServiceImpl extends BaseServiceImpl<Comment> implements CommentService
+{
+
+	@Autowired
+	private CommentMapper commentMapper;
+	@Autowired
+	OaUserUtil oaUserUtil;
+	@Autowired
+	private PlatformRedis platformRedis;
+	
+	/**
+	 * 任务伪删除
+	 * @param updateStatusParam
+	 * @return
+	 */
+	@Override
+	public int delete(Comment comment){
+		return commentMapper.delete(comment);
+	}
+
+	/**
+	 * 查询评论列表
+	 * @author wdy
+	 *
+	 */
+	
+	@Override
+	public Page queryTaskList(QueryCommentParam queryCommentParam, LoginUser loginUser) {
+		
+		String tendId = loginUser.getTendId();
+				
+		List<QueryCommentDto> queryCommentList = new ArrayList<QueryCommentDto>();
+		
+		Page resultPage = null;
+		Integer pageNum = queryCommentParam.getPageNum();
+		Integer pageCount = queryCommentParam.getPageCount();
+		Boolean isDelete =  false;
+		
+		if(pageNum == null){
+			pageNum = 1;
+		}
+		
+		if(pageCount == null){
+			pageCount = 10;
+		}
+		
+	
+		Integer count = commentMapper.queryCountCommentList(queryCommentParam);
+
+		Integer start = pageNum.intValue() == 0 ? 1 : pageNum;
+		start = (start - 1) * pageCount.intValue();
+		queryCommentParam.setPageNum(start);
+		queryCommentParam.setPageCount(pageCount.intValue());
+
+		
+		
+		List<Comment> list = commentMapper.queryCommentList(queryCommentParam);
+		
+		if(list != null){
+			
+			for (Comment comment2 : list) {
+				QueryCommentDto queryCommentDto = new QueryCommentDto();
+				QueryCommentUserDto queryCommentUserDto = new QueryCommentUserDto();
+				String userName = "";
+				String commentUserName = "";
+				String imUserId = "";
+						
+				String userId= comment2.getUserId();
+				
+				queryCommentUserDto	= commentMapper.queryCommentUser(userId);
+				if(queryCommentUserDto != null){
+					userName = queryCommentUserDto.getCommentUserName();
+					imUserId = queryCommentUserDto.getImUserId();
+				}
+				
+				String commentUserId = comment2.getCommentUserId();
+				queryCommentUserDto	= commentMapper.queryCommentUser(commentUserId);
+				if(queryCommentUserDto != null){
+					commentUserName = queryCommentUserDto.getCommentUserName();
+				}
+
+				Boolean isSuper = isSuper();//判断当前用户是否是管理员
+
+				//当前登录人的评论、系统管理员具有删除权限
+//				logger.info("loginUser.getUserId()>>>>>>>>>>>>{}",loginUser.getUserId());
+//				logger.info("comment2.getUserId()>>>>>>>>>>>>{}",comment2.getUserId());
+//				logger.info("isSuper>>>>>>>>>>>>{}",isSuper);
+//				
+				if(loginUser.getUserId().equals(comment2.getUserId()) ||  isSuper){
+					isDelete = true;
+				}else{
+					isDelete = false;
+				}
+
+				//获取评论人的头像
+				String resourceImgUrl = "";
+				
+				if(StringUtils.isNotBlank(imUserId)){
+					 resourceImgUrl = platformRedis.getHeadIcon(imUserId);
+				}
+				
+
+				queryCommentDto.setBusinessId(queryCommentParam.getBusinessId());
+				queryCommentDto.setCommentId(comment2.getId());
+				queryCommentDto.setCommentUserId(comment2.getCommentUserId());
+				queryCommentDto.setUserId(comment2.getUserId());
+				queryCommentDto.setCommentUserName(commentUserName);
+				queryCommentDto.setUserName(userName);
+				queryCommentDto.setCommentDate(comment2.getCommentDate());
+				queryCommentDto.setCommentContent(comment2.getCommentContent());
+				queryCommentDto.setIsDelete(isDelete);
+				queryCommentDto.setResourceImgUrl(resourceImgUrl);
+				queryCommentList.add(queryCommentDto);
+			}
+		}else{
+		logger.info(">>>>>>>>未获取到登录信息>>>>>>>>>>");
+	}
+		
+
+		resultPage = getPage(queryCommentParam, count, queryCommentList, pageNum);
+		
+		return resultPage;
+	}
+	
+	/**
+	 * 自己实现分页
+	 * 
+	 * @param queryTaskListParam
+	 * @param totalCount
+	 * @return
+	 */
+	public Page getPage(QueryCommentParam queryCommentParam, Integer totalCount, List<QueryCommentDto> list, Integer pageNum) {
+
+		Page page = new Page();
+
+		page.setPageNum(pageNum);
+		page.setPageCount(queryCommentParam.getPageCount());
+		page.setTotal(totalCount);
+		page.setPageTotal(totalCount % queryCommentParam.getPageCount() == 0 ? totalCount / queryCommentParam.getPageCount() : totalCount / queryCommentParam.getPageCount() + 1);
+		page.setList(list);
+		return page;
+	}
+}

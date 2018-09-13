@@ -1,0 +1,184 @@
+package com.jzy.hio.platform.tenantcompanyinfo.service.impl;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.ibatis.annotations.Param;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.annotation.DataSource;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.RedisKeyConstant;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.entity.ImBasePersonnelSize;
+import com.jzy.hio.entity.SysBaseRegion;
+import com.jzy.hio.entity.SysDictionary;
+import com.jzy.hio.entity.TenantCompanyInfo;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.platform.dictionary.dto.DictionaryDto;
+import com.jzy.hio.platform.dictionary.service.DictionaryService;
+import com.jzy.hio.platform.dto.tenantcompanyinfo.IndustryDto;
+import com.jzy.hio.platform.dto.tenantcompanyinfo.PersonnelScaleDto;
+import com.jzy.hio.platform.dto.tenantcompanyinfo.ProvinceDto;
+import com.jzy.hio.platform.dto.tenantcompanyinfo.TenantCompanyInfoDto;
+import com.jzy.hio.platform.dto.tenantcompanyinfo.TypeDto;
+import com.jzy.hio.platform.personnelsize.dto.ImBasePersonnelSizeDto;
+import com.jzy.hio.platform.personnelsize.service.ImBasePersonnelSizeService;
+import com.jzy.hio.platform.region.service.RegionService;
+import com.jzy.hio.platform.tenantcompanyinfo.mapper.TenantCompanyInfoMapper;
+import com.jzy.hio.platform.tenantcompanyinfo.service.TenantCompanyInfoService;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.redis.RedisService;
+
+/**
+ * 租户信息
+ * @author chc
+ *	2018年4月3日
+ */
+@Service
+public class TenantCompanyInfoServiceImpl extends BaseServiceImpl<TenantCompanyInfo> implements TenantCompanyInfoService {
+	
+	@Autowired
+	private TenantCompanyInfoMapper mapper;
+	@Autowired
+	private RedisService redisService;
+	@Autowired
+	private ImBasePersonnelSizeService imBasePersonnelSizeService;
+	@Autowired
+	private DictionaryService dictionaryService;
+	@Autowired
+	private RegionService regionService;
+
+	@Override
+	public TenantCompanyInfoDto getTenantCompanyInfoByTendId(TenantCompanyInfoDto dto) {
+		String tendId = dto.getTendId();
+		TenantCompanyInfo tenantCompanyInfo = new TenantCompanyInfo();
+		tenantCompanyInfo.setTendId(tendId);
+		tenantCompanyInfo.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+		String tenantId = JedisUtil.fetchIndexMobile(RedisKeyConstant.tenantToInfo, tendId);
+		if(StringUtils.isBlank(tenantId)) {
+			List<TenantCompanyInfo> list = super.queryList(tenantCompanyInfo);
+			if(null != list && list.size() > 0) {
+				JedisUtil.addIndexMobile(RedisKeyConstant.tenantToInfo,list.get(0).getTendId(),list.get(0).getId());
+				tenantCompanyInfo = list.get(0);
+				JedisUtil.addRow(tenantCompanyInfo);
+			}
+		}else {
+			String tenantJson = JedisUtil.fetchRow("tenant_company_info", tenantId);
+			if(StringUtils.isBlank(tenantJson)) {
+				tenantCompanyInfo = super.getObjectById(tenantId);
+				JedisUtil.addRow(tenantCompanyInfo);
+			}else {
+				tenantCompanyInfo = Base.json2obj(tenantJson,TenantCompanyInfo.class);
+			}
+		}
+		TenantCompanyInfoDto resultDto = new TenantCompanyInfoDto();
+		BeanUtils.copyProperties(tenantCompanyInfo, resultDto);
+		//人员规模对象
+		String perSizeJson = redisService.getRow("platform:"+BaseConstants.MYSQL_TABLE_IM_BASE_PERSONNEL_SIZE, resultDto.getPersonnelScale());
+		logger.info("redis 获取人员规模对象{}",perSizeJson);
+		if(isNotEmpty(perSizeJson)) {
+			ImBasePersonnelSizeDto perSizeDto = json2obj(perSizeJson,ImBasePersonnelSizeDto.class);
+			PersonnelScaleDto scaleDto = new PersonnelScaleDto();
+			scaleDto.setScaleId(perSizeDto.getId());
+			scaleDto.setSizeContent(perSizeDto.getSizeContent());
+			resultDto.setPersonnelScaleDto(scaleDto);
+		}else {
+			ImBasePersonnelSize personnelSize = imBasePersonnelSizeService.getObjectById(resultDto.getPersonnelScale());
+			logger.info("mysql 获取人员规模对象{}",obj2json(personnelSize));
+			if(isNotEmpty(personnelSize)) {
+				PersonnelScaleDto scaleDto = new PersonnelScaleDto();
+				scaleDto.setScaleId(personnelSize.getId());
+				scaleDto.setSizeContent(personnelSize.getSizeContent());
+				resultDto.setPersonnelScaleDto(scaleDto);
+			}
+		}
+		//查询所属企业类型
+		if(isNotEmpty(resultDto.getType())) {
+			String typeJson = redisService.getRow("platform:dictionary", resultDto.getType());
+			logger.info("redis 获取企业类型对象{}", typeJson);
+			if (isNotEmpty(typeJson)) {
+				DictionaryDto dictionary = json2obj(typeJson, DictionaryDto.class);
+				TypeDto typeDto = new TypeDto();
+				typeDto.setTypeId(dictionary.getId());
+				typeDto.setTypeName(dictionary.getName());
+				resultDto.setTypeDto(typeDto);
+			} else {
+				SysDictionary dictionary = dictionaryService.getObjectById(resultDto.getType());
+				logger.info("mysql 获取企业类型对象{}", obj2json(dictionary));
+				if (isNotEmpty(dictionary)) {
+					TypeDto typeDto = new TypeDto();
+					typeDto.setTypeId(dictionary.getId());
+					typeDto.setTypeName(dictionary.getName());
+					resultDto.setTypeDto(typeDto);
+				}
+			}
+		}
+		//查询所属行业
+		String industryJson = redisService.getRow("platform:dictionary", resultDto.getIndustry());
+		logger.info("redis 获取行业对象{}",industryJson);
+		if(isNotEmpty(industryJson)) {
+			DictionaryDto dictionary = json2obj(industryJson,DictionaryDto.class);
+			IndustryDto industryDto = new IndustryDto();
+			industryDto.setIndustryId(dictionary.getId());
+			industryDto.setIndustryName(dictionary.getName());
+			resultDto.setIndustryDto(industryDto);
+		}else {
+			SysDictionary dictionary = dictionaryService.getObjectById(resultDto.getIndustry());
+			logger.info("mysql 获取行业对象{}",obj2json(dictionary));
+			if(isNotEmpty(dictionary)) {
+				IndustryDto industryDto = new IndustryDto();
+				industryDto.setIndustryId(dictionary.getId());
+				industryDto.setIndustryName(dictionary.getName());
+				resultDto.setIndustryDto(industryDto);
+			}
+		}
+		//查询所属省份
+		if(isNotEmpty(resultDto.getProvince())) {
+			String regionJson = redisService.getRow("platform:region", resultDto.getProvince());
+			logger.info("redis 获取所属省份对象{}", regionJson);
+			if (isNotEmpty(regionJson)) {
+				SysBaseRegion sysBaseRegion = json2obj(regionJson, SysBaseRegion.class);
+				ProvinceDto provinceDto = new ProvinceDto();
+				provinceDto.setProvinceId(sysBaseRegion.getId());
+				provinceDto.setProvinceName(sysBaseRegion.getName());
+				resultDto.setPrivinceDto(provinceDto);
+			} else {
+				SysBaseRegion sysBaseRegion = regionService.getObjectById(resultDto.getProvince());
+				if (isNotEmpty(sysBaseRegion)) {
+					ProvinceDto provinceDto = new ProvinceDto();
+					provinceDto.setProvinceId(sysBaseRegion.getId());
+					provinceDto.setProvinceName(sysBaseRegion.getName());
+					resultDto.setPrivinceDto(provinceDto);
+				}
+			}
+		}
+		return resultDto;
+	}
+
+	@Override
+	public List<TenantCompanyInfo> findAllTenantCompany() throws HioException {
+		List<TenantCompanyInfo> tendList = super.selectAll();
+		return tendList;
+	}
+
+	/**
+	 * 根据创建人获取创建个数
+	 * @param createPersonId
+	 * @return
+	 */
+	@Override
+	public int getTenantCompanyInfoByCeatePersonId(String createPersonId){
+		return mapper.getTenantCompanyInfoByCeatePersonId(createPersonId);
+	}
+
+	@Override
+	public void updateDelflag(String tendId) {
+		mapper.updateDelflag(tendId);
+	}
+}

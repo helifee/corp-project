@@ -1,0 +1,101 @@
+package com.jzy.hio.flow.runtime;
+
+import java.util.Date;
+import java.util.List;
+import java.util.stream.Collectors;
+
+import org.apache.commons.collections.CollectionUtils;
+
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.flow.entity.FlowCopy;
+import com.jzy.hio.flow.entity.FlowInstance;
+import com.jzy.hio.flow.entity.FlowInstanceAc;
+import com.jzy.hio.flow.entity.FlowInstanceApprovalRecord;
+import com.jzy.hio.flow.entity.enums.FlowCopyType;
+import com.jzy.hio.flow.entity.enums.FlowStateEnum;
+import com.jzy.hio.flow.entity.enums.InstanceApproverState;
+import com.jzy.hio.flow.entity.enums.InstanceNodeState;
+import com.jzy.hio.flow.utils.FlowConstants;
+import com.jzy.hio.platform.message.param.MessageEnum;
+import com.jzy.hio.utils.LoginUser;
+
+/**
+ * 撤回流程
+ * 
+ * @author daoqi
+ *
+ */
+public class WithDrawOperation extends AbstractBaseOperation {
+
+	@Override
+	public String withDrawOperation(String instanceId) {
+		logger.error("进入流程撤回--当前实例id:{}",instanceId);
+
+		LoginUser loginUser = this.getService().getLoginUser();
+		FlowInstance flowInstance = new FlowInstance();
+		flowInstance.setId(instanceId);
+
+		flowInstance = this.getService().getFlowInstanceDao().selectOne(flowInstance);
+
+		if (flowInstance == null) {
+			super.logger.error("传入实例Id不正确");
+			throw new HioException(FlowConstants.FLOW_NOT_EXIST.getMessage(), FlowConstants.FLOW_NOT_EXIST.getStatus());
+		}
+
+		Integer state = flowInstance.getState();
+
+		if (state != FlowStateEnum.RUN.getState()) {
+			logger.error("当前流程不可以撤回");
+			throw new HioException(FlowConstants.FLOW_CANNOT_CANCEL.getMessage(),
+					FlowConstants.FLOW_CANNOT_CANCEL.getStatus());
+		}
+
+		flowInstance.setUpdateDate(new Date());
+		flowInstance.setState(FlowStateEnum.DRAFT.getState());
+		this.getService().getFlowInstanceDao().updateByPrimaryKeySelective(flowInstance);
+
+		FlowInstanceAc flowInstanceAc = new FlowInstanceAc();
+		flowInstanceAc.setFlowIntanceId(instanceId);
+
+		this.getService().getFlowInstanceAcDao().delete(flowInstanceAc);
+
+		FlowInstanceApprovalRecord flowInstanceApprovalRecord = new FlowInstanceApprovalRecord();
+		flowInstanceApprovalRecord.setFlowInstanceId(instanceId);
+		flowInstanceApprovalRecord.setDelflag(0);
+		flowInstanceApprovalRecord.setState(InstanceApproverState.NO_APPROVAL.getState());
+		List<FlowInstanceApprovalRecord> noApproverList = this.getService().getFlowInstanceApprovalRecordDao()
+				.select(flowInstanceApprovalRecord);
+
+		if (CollectionUtils.isNotEmpty(noApproverList)) {
+			List<String> userIds = noApproverList.stream().map(FlowInstanceApprovalRecord::getApprovalUser)
+					.collect(Collectors.toList());
+			flowVariables.setInstanceId(instanceId);
+			flowVariables.setCurrentUser(loginUser);
+			flowVariables.setSendType(true);
+			flowVariables.setMsgType(MessageEnum.DEL_MSG.getValue());
+ 			newMessage(userIds, flowVariables);
+ 			sendMessages(flowVariables.getMessages());
+		}
+
+		this.getService().getFlowInstanceApprovalRecordDao().delete(flowInstanceApprovalRecord);
+
+		FlowCopy flowCopy = new FlowCopy();
+		flowCopy.setFlowInstanceId(instanceId);
+		flowCopy.setSource(FlowCopyType.FORM_COPY.getType());
+
+		// 删除非表单上的抄送
+		this.getService().getFlowCopyDao().deleteCopy(flowCopy);
+
+		String businessId = flowInstance.getBusinessId();
+		String customFormId = flowInstance.getCustomFormId();
+		this.getService().getFlowCustomFormInstanceService().updateFormInstanceStatus(customFormId, businessId,
+				FlowStateEnum.DRAFT.getState());
+		return SUCCESS;
+	}
+
+	@Override
+	public OperateType getType() {
+
+		return OperateType.WITHDRAW;
+	}
+}

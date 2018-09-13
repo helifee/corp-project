@@ -1,0 +1,531 @@
+package  com.jzy.hio.oa.quartz.service.impl;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.commons.lang.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import com.alibaba.fastjson.JSON;
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.annotation.DataSource;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.cloud.core.CoreHeaderInterceptor;
+import com.jzy.hio.entity.Task;
+import com.jzy.hio.entity.TaskRemind;
+import com.jzy.hio.entity.TaskShared;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.oa.OaConstant;
+import com.jzy.hio.oa.OaEunm;
+import com.jzy.hio.oa.quartz.mapper.TaskQuartzMapper;
+import com.jzy.hio.oa.quartz.mapper.TaskQuartzParticipantsMapper;
+import com.jzy.hio.oa.quartz.mapper.TaskQuartzRemindMapper;
+import com.jzy.hio.oa.quartz.mapper.TaskQuartzSharedMapper;
+import com.jzy.hio.oa.quartz.service.TaskQuartzService;
+import com.jzy.hio.oa.task.dto.QueryTaskListDto;
+import com.jzy.hio.oa.task.param.QueryTaskListParam;
+import com.jzy.hio.platform.dto.tenantcompanyinfo.TenantCompanyInfoDto;
+import com.jzy.hio.platform.message.MessageFeignService;
+import com.jzy.hio.platform.message.param.IMToUserParam;
+import com.jzy.hio.platform.message.param.ImNoticeMsgSendParam;
+import com.jzy.hio.platform.message.param.ImNoticeMsgsParam;
+import com.jzy.hio.platform.message.param.MessageEnum;
+import com.jzy.hio.platform.message.param.MsgTypeEnum;
+import com.jzy.hio.sys.user.dto.OAUserDto;
+import com.jzy.hio.sys.user.param.OAUserParam;
+import com.jzy.hio.utils.DateUtil;
+import com.jzy.hio.utils.LoginUser;
+import com.jzy.hio.utils.OaUserUtil;
+
+/**
+ * 任务批量
+ * 
+ * @author wdy
+ * @date 2018年5月7日
+ */
+@Service
+public class TaskQuartzServiceImpl implements TaskQuartzService {
+
+	private static Logger logger = LoggerFactory.getLogger(TaskQuartzServiceImpl.class);
+
+	@Autowired
+	private TaskQuartzMapper taskQuartzMapper;
+	@Value("${oa_task_message.updateStatus}")
+	private String task_message_updateStatus;// 任务变更发送cc消息内容
+
+	@Value("${oa_task_message.sendMessage}")
+	private String task_message_sendMessage;// 任务定时发送cc消息内容
+
+	@Autowired
+	private SysFeignService sysFeignService;// feign接口
+
+	@Autowired
+	private TaskQuartzRemindMapper taskQuartzRemindMapper;// 任务提醒表
+
+	@Autowired
+	private TaskQuartzParticipantsMapper taskQuartzParticipantsMapper;// 参与人表
+
+	@Autowired
+	private TaskQuartzSharedMapper taskQuartzSharedMapper;// 共享人表
+
+	@Autowired
+	private MessageFeignService messageFeignService;// 发送cc消息服务
+
+	@Autowired
+	private OaUserUtil oaUserUtil;// oa工具类
+
+	/**
+	 * 定时执行任务超期变更状态
+	 */
+	@Override
+	public void updateOverdue(@DataSource String tendId,TenantCompanyInfoDto tenantCompanyInfoDto,Date today) {
+
+		Map<String, Object> map = new HashMap<String, Object>();// 发送消息内容map
+
+		String tendName = tenantCompanyInfoDto.getName();
+//		String tendName = "测试";
+
+		int count = 0;
+
+		QueryTaskListParam queryTaskListParam = new QueryTaskListParam();
+		queryTaskListParam.setTaskStatus(OaConstant.TASK_STATUS0);
+		queryTaskListParam.setRemindStatus(OaConstant.REMIND_STATUS1);
+		
+		List<QueryTaskListDto> list = taskQuartzMapper.queryTaskList(queryTaskListParam);
+
+		logger.info(">>>>>>>>>>>>>>>>>定时执行任务超期变更状态总数>>>>{}>>>>>>>>>>>>>>>", list.size());
+
+		LoginUser loginUser = new LoginUser();
+		loginUser.setTendId(tendId);
+
+		for (QueryTaskListDto queryTaskListDto : list) {
+//			logger.info("today:{}",today);
+			if (queryTaskListDto.getEndDate() != null) {
+				Date date = DateUtil.getDateToFormatStr(DateUtil.dateToDateString(today,DateUtil.DATE_DEFAULT_FORMAT),DateUtil.DATAFORMAT_STR);
+				Date endDate = DateUtil.getDateToFormatStr(DateUtil.dateToDateString(queryTaskListDto.getEndDate(),DateUtil.DATE_DEFAULT_FORMAT),DateUtil.DATAFORMAT_STR);
+				
+//				logger.info(">>>>>>>>>>>>>date>>>>>>>>>>>>>{}",date);
+//				logger.info(">>>>>>>>>>>>>endDate>>>>>>>>>>>>>{}",endDate);
+//				logger.info(">>>>>>>>>>>>>判断是否超期>>>>>>>>>>>>>{}",endDate.compareTo(date) < 0);
+				
+				if (date.compareTo(endDate) > 0) {
+					Task task = new Task();
+					task.setTaskStatus(OaConstant.TASK_STATUS3);
+					task.setTaskId(queryTaskListDto.getTaskId());
+
+					// 向创建人、负责人、参与人、共享人发送cc消息
+					logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>开始发送cc消息>>>>>>>>>>>>>>taskId:{}>>>>>>>>>>>>>>>>>", queryTaskListDto.getTaskId());
+
+					// 组装消息发送内容
+					map.put("moduleType", MessageEnum.TASK.getValue() + "_3");
+					map.put("message", queryTaskListDto.getTaskName() + "由" + getStatusName(queryTaskListDto.getTaskStatus()) + "变更为" + getStatusName(task.getTaskStatus()));
+					map.put("updatePersonName", "系统执行");
+					map.put("updateDate", DateUtil.dateToDateString(new Date(),DateUtil.DATE_DEFAULT_FORMAT));
+					map.put("pcUrl","/ccdist/#/task/detail/" + task.getTaskId() + "?tendId=" + loginUser.getTendId());
+					map.put("mobileUrl","/mobiledist/#/m_task/m_details_task/"+ task.getTaskId() + "?tendId=" + loginUser.getTendId());
+
+					sendMessage(queryTaskListDto.getTaskId(), task_message_updateStatus, loginUser, true, true, true, true, "", map, tendName);
+					logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>结束发送cc消息>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+
+					count += taskQuartzMapper.updateRemindStatus(task);
+				}
+			}
+
+		}
+		logger.info(">>>>>>>任务超期共变更{}个状态>>>>>>tendId:{}>>>>", count, tendId);
+
+	}
+
+	/**
+	 * 定时发送cc消息
+	 */
+	@Override
+	public void updateSendMessage(@DataSource String tendId,TenantCompanyInfoDto tenantCompanyInfoDto,Date today) {
+		
+		
+		Map<String, Object> map = new HashMap<String, Object>();// 发送消息内容map
+
+		String tendName = tenantCompanyInfoDto.getName();
+//		String tendId = "hio_tend080";
+//		String tendName = "测试";
+
+		int count = 0;
+
+		// 查询任务提醒表,获取提醒id，根据提醒id查询任务id,调用发送cc消息接口
+		TaskRemind taskRemind = new TaskRemind();
+		taskRemind.setRemindStatus(OaConstant.REMIND_STATUS1);
+		List<TaskRemind> list = taskQuartzRemindMapper.queryTaskRemindList(taskRemind);
+
+		LoginUser loginUser = new LoginUser();
+		loginUser.setTendId(tendId);
+
+		if (list.size() > 0) {
+			for (TaskRemind taskRemind2 : list) {
+				// 提醒时间与当前时间相等，发送cc提醒
+				if (taskRemind2.getRemindTime() != null) {
+					
+					
+					String remindTime = DateUtil.dateToDateString(taskRemind2.getRemindTime(),DateUtil.DATETIMEHOUR_DEFAULT_FORMAT);
+					String date = DateUtil.dateToDateString(today,DateUtil.DATETIMEHOUR_DEFAULT_FORMAT);
+					
+//
+//					logger.info(">>>>>>>跑批时间是否相等>>>>>>>>>{}",remindTime.equals(date));
+//					logger.info(">>>>>>>跑批时间>>>>>>>>>>>>>>>>{}",remindTime);
+//					logger.info(">>>>>>>当前时间>>>>>>>>>>>>>>>>{}",date);
+					
+					if (remindTime.equals(date)) {
+
+						Task task = new Task();
+						task.setRemindId(taskRemind2.getRemindId());
+						Task task1 = taskQuartzMapper.queryTaskId(task);
+						if (task1 != null) {
+
+							CoreHeaderInterceptor.initHystrixRequestContext(CoreHeaderInterceptor.HEADER_LABEL);// 不设置框架会报错
+							map.put("moduleType", MessageEnum.TASK.getValue() + "_2");
+							map.put("message", task1.getTaskName() + "即将到期");
+							map.put("taskLiableName", oaUserUtil.selectUserName(task1.getTaskLiableId(),tendId));
+							map.put("endDate", DateUtil.dateToDateString(task1.getEndDate(),DateUtil.DATE_DEFAULT_FORMAT));
+							map.put("tendId", tendId);
+							map.put("tendName", tendName);
+							map.put("pcUrl", "/ccdist/#/task/detail/" + task1.getTaskId() + "?tendId=" + loginUser.getTendId());
+							map.put("mobileUrl","/mobiledist/#/m_task/m_details_task/"+ task1.getTaskId() + "?tendId=" + loginUser.getTendId());
+
+							// 更新任务提醒表提醒状态
+							TaskRemind taskRemind1 = new TaskRemind();
+							taskRemind1.setRemindId(taskRemind2.getRemindId());
+							taskRemind1.setRemindStatus(OaConstant.REMIND_STATUS0);
+							count += taskQuartzRemindMapper.updateRemindIdStatus(taskRemind1);
+							
+							sendMessage(task1.getTaskId(), task_message_sendMessage, loginUser, taskRemind2.getIsremindCreateperson(), taskRemind2.getIsremindLiable(),
+									taskRemind2.getIsremindAffiliated(), false, "", map, tendName);
+
+						}
+					}
+				}
+
+			}
+			logger.info(">>>>>>>任务共发送{}条cc消息>>>>>>>tendId:{}>>>>", count, tendId);
+
+		}
+
+	}
+
+	/**
+	 * 发送cc消息（创建人、负责人、参与人、共享人）
+	 * 
+	 * @param taskId
+	 *            任务Id
+	 * @param message
+	 *            消息内容
+	 * @param userId
+	 *            用户id
+	 * @param isremindCreateperson
+	 *            是否提醒创建人
+	 * @param isremindLiable
+	 *            是否提醒负责人
+	 * @param isremindAffiliated
+	 *            是否提醒参与人
+	 * @param isremindshared
+	 *            是否提醒共享人
+	 */
+	public void sendMessage(String taskId, String message, LoginUser loginUser, Boolean isremindCreateperson, Boolean isremindLiable, Boolean isremindAffiliated,
+			Boolean isremindshared, String imUserId, Map<String, Object> map, String tendName) {
+
+		String createPersonId = "";
+		String taskLiableId = "";
+		String tendId = loginUser.getTendId();
+
+		Set<String> sendMessageList = new HashSet<String>();//非外部联系人人员集合
+		Set<String> sendMessageOutList = new HashSet<String>();//外部联系人人员集合
+		
+		Set<String> sendMessageList1 = new HashSet<String>();//非外部联系人人员最终发送集合
+		Set<String> sendMessageOutList1 = new HashSet<String>();//外部联系人人员最终发送集合
+
+		// 查询创建人、负责人
+		Task task = new Task();
+		task.setTaskId(taskId);
+		Task task1 = taskQuartzMapper.queryTaskId(task);
+		if (task1 != null) {
+			createPersonId = task1.getCreatePersonId();
+			taskLiableId = task1.getTaskLiableId();
+		}
+
+		if (isremindCreateperson) {// 发送创建人
+//			CoreHeaderInterceptor.initHystrixRequestContext(CoreHeaderInterceptor.HEADER_LABEL);// 不设置框架会报错
+//			String createPersonSengMessageId = oaUserUtil.queryImUserIdByOaUserId(createPersonId, tendId);
+			if(StringUtils.isNotBlank(createPersonId)){
+				sendMessageList.add(createPersonId);// 创建人
+			}
+			
+		}
+		
+		if (isremindLiable) {// 发送负责人
+//			CoreHeaderInterceptor.initHystrixRequestContext(CoreHeaderInterceptor.HEADER_LABEL);// 不设置框架会报错
+//			String taskLiableSengMessageId = oaUserUtil.queryImUserIdByOaUserId(taskLiableId, tendId);
+			if(StringUtils.isNotBlank(taskLiableId)){
+				sendMessageList.add(taskLiableId);// 负责人
+			}
+			
+		}
+
+//		List<String> personIds = new ArrayList<String>();
+		TaskShared TaskShared = new TaskShared();
+		List<String> roleIds = new ArrayList<String>();
+		List<String> organizationIds = new ArrayList<String>();
+		
+		if (isremindAffiliated) {// 发送参与人
+			// 查询参与人员表人员id列表
+			QueryTaskListParam queryTaskListParam = new QueryTaskListParam();
+			queryTaskListParam.setTaskId(taskId);
+			queryTaskListParam.setType(OaConstant.SHAREDSHOW_TYPE0);
+			List<QueryTaskListDto> taskParticipantsList = taskQuartzParticipantsMapper.queryTaskParticipantsList(queryTaskListParam);
+			for (QueryTaskListDto queryTaskListDto : taskParticipantsList) {
+				
+				if(StringUtils.isNotBlank(queryTaskListDto.getSharedshowiId())){
+					if(OaConstant.OUTTYPE0.equals(queryTaskListDto.getOutType())){
+						
+						sendMessageList.add(queryTaskListDto.getSharedshowiId());
+						
+					}else if(OaConstant.OUTTYPE1.equals(queryTaskListDto.getOutType())){
+						
+						sendMessageOutList.add(queryTaskListDto.getSharedshowiId());
+						
+					}else{
+						logger.info(">>>>OUTTYPE为空>>>>");
+					}
+					
+				}
+				
+			}
+		}
+		
+		if (isremindshared) {// 发送共享人
+			// 查询共享人员表人员id列表
+			TaskShared.setTaskId(taskId);
+			TaskShared.setType(OaConstant.SHAREDSHOW_TYPE0);
+			List<TaskShared> personList = taskQuartzSharedMapper.queryTaskSharedList(TaskShared);
+			for (TaskShared taskShared2 : personList) {
+				
+				if(StringUtils.isNotBlank(taskShared2.getSharedshowId())){
+					
+					if(OaConstant.OUTTYPE0.equals(taskShared2.getOutType())){
+						
+						sendMessageList.add(taskShared2.getSharedshowId());
+						
+					}else if(OaConstant.OUTTYPE1.equals(taskShared2.getOutType())){
+						
+						sendMessageOutList.add(taskShared2.getSharedshowId());
+						
+					}else{
+						logger.info(">>>>OUTTYPE为空>>>>");
+					}
+					
+				}
+				
+			}
+
+			// 查询共享人员表角色id列表，调用sys查询角色id对应的人员
+			TaskShared TaskShared1 = new TaskShared();
+			TaskShared1.setTaskId(taskId);
+			TaskShared1.setType(OaConstant.SHAREDSHOW_TYPE1);
+			List<TaskShared> roleList = taskQuartzSharedMapper.queryTaskSharedList(TaskShared1);
+			for (TaskShared taskShared2 : roleList) {
+				String roleId = taskShared2.getSharedshowId();
+				if(StringUtils.isNotBlank(roleId)){
+					roleIds.add(roleId);
+				}
+				
+			}
+
+			// 查询共享人员表部门id列表，调用sys查询部门id对应的人员
+			TaskShared TaskShared2 = new TaskShared();
+			TaskShared2.setTaskId(taskId);
+			TaskShared2.setType(OaConstant.SHAREDSHOW_TYPE2);
+			List<TaskShared> departmentList = taskQuartzSharedMapper.queryTaskSharedList(TaskShared2);
+			for (TaskShared taskShared3 : departmentList) {
+				String departmentId = taskShared3.getSharedshowId();
+				if(StringUtils.isNotBlank(departmentId)){
+					organizationIds.add(departmentId);
+				}
+			
+			}
+		}
+		// 组装调用sys接口数据
+		OAUserParam oAUserParam = new OAUserParam();
+		oAUserParam.setContainsChildOrgUser(true);
+//		oAUserParam.setUserIds(personIds);
+		oAUserParam.setTendId(loginUser.getTendId());
+
+		if(roleIds.size() > 0){
+			oAUserParam.setRoleIds(roleIds);
+		}
+		
+		if(organizationIds.size() > 0){
+			oAUserParam.setOrganizationIds(organizationIds);
+		}
+		
+		if((roleIds.size() > 0) || (organizationIds.size() > 0)){
+			logger.info(">>>>>>>>>>>>>>>>>>>>>>>>开始调用sys服务获取角色、部门下所有人员>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+			CoreHeaderInterceptor.initHystrixRequestContext(CoreHeaderInterceptor.HEADER_LABEL);// 不设置框架会报错
+			ApiFeignResponse<List<OAUserDto>> apiFeignResponse = sysFeignService.queryUserByOrgAndRoleAndUser(oAUserParam);
+			if (apiFeignResponse != null) {
+				if (200 == apiFeignResponse.getStatus()) {
+					List<OAUserDto> list = apiFeignResponse.getResult();
+					for (OAUserDto oaUserDto : list) {
+						sendMessageList.add(oaUserDto.getId());
+					}
+				} else {
+					throw new HioException("调用queryNameByOrgAndRoleAndUser feign接口失败" + apiFeignResponse.getMessage());
+				}
+			}
+		}
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>开始调用cc服务发送非外部联系人cc消息>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+
+		ImNoticeMsgSendParam imNoticeMsgSendParam = new ImNoticeMsgSendParam();
+		List<ImNoticeMsgsParam> imNoticeMsgsList = new ArrayList<ImNoticeMsgsParam>();
+		List<IMToUserParam> iMToUserList = new ArrayList<IMToUserParam>();
+
+		//将人员离职、人员外部联系人删除过滤
+		CoreHeaderInterceptor.initHystrixRequestContext(CoreHeaderInterceptor.HEADER_LABEL);// 不设置框架会报错
+		sendMessageList1 = oaUserUtil.selectUsersByListAndStatus(sendMessageList,loginUser.getTendId(),OaConstant.OA_USER_QUERY_STATUS_0);
+		
+		logger.info("最终发送任务消息人员列表:{}",JSON.toJSONString(sendMessageList1));
+		
+		Iterator<String> it = sendMessageList1.iterator();
+		while (it.hasNext()) {
+			String str = it.next();
+			IMToUserParam iMToUserParam = new IMToUserParam();
+			iMToUserParam.setToUserId(str);
+			iMToUserList.add(iMToUserParam);
+		}
+
+		// 测试im用户
+		// IMToUserParam iMToUserParam = new IMToUserParam();
+		// iMToUserParam.setToUserId("3cc30cf2a2a143ae84bac17167c3174a");
+		// iMToUserList.add(iMToUserParam);
+		//
+
+		if(iMToUserList.size() > 0){
+			ImNoticeMsgsParam imNoticeMsgsParam = new ImNoticeMsgsParam();
+			imNoticeMsgsParam.setToUsers(iMToUserList);
+			imNoticeMsgsParam.setMsg((String) map.get("message"));
+			imNoticeMsgsParam.setSendMsgType("text");
+			imNoticeMsgsParam.setOpenStatus(1);
+			if (isremindshared) {// 发送共享人
+				imNoticeMsgsParam.setFromUserId(imUserId);
+			} else {
+				imNoticeMsgsParam.setFromUserId(BaseConstants.HIO_IM_ADMIN + MessageEnum.TASK.getValue());
+			}
+			imNoticeMsgsParam.setTendId(loginUser.getTendId());
+			imNoticeMsgsParam.setTendName(tendName);
+			imNoticeMsgsParam.setMsgType("msg");
+			imNoticeMsgsParam.setModuleType((String) map.get("moduleType"));
+			imNoticeMsgsParam.setModuleName(MessageEnum.TASK.getDes());
+			imNoticeMsgsParam.setExt(map);
+			imNoticeMsgsList.add(imNoticeMsgsParam);
+			imNoticeMsgSendParam.setMsgs(imNoticeMsgsList);
+
+			CoreHeaderInterceptor.initHystrixRequestContext(CoreHeaderInterceptor.HEADER_LABEL);// 不设置框架会报错
+			ApiFeignResponse  apiFeignResponse1 = messageFeignService.sendMessage(imNoticeMsgSendParam);
+			logger.info(">>>>>>>>>>>>>>调用吴飞接口结果>>>>>>>>>{}>>>>>消息>>>>>>>{}",apiFeignResponse1.getStatus(),apiFeignResponse1.getMessage());
+		}
+		
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>结束调用cc服务发送非外部联系人cc消息>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+		
+		logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>开始调用cc服务发送外部联系人cc消息>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+
+		ImNoticeMsgSendParam imNoticeMsgSendOutParam = new ImNoticeMsgSendParam();
+		List<ImNoticeMsgsParam> imNoticeMsgsOutList = new ArrayList<ImNoticeMsgsParam>();
+		List<IMToUserParam> iMToUserOutList = new ArrayList<IMToUserParam>();
+
+		sendMessageOutList1 = oaUserUtil.selectUsersByListAndStatus(sendMessageOutList,loginUser.getTendId(),OaConstant.OA_USER_QUERY_STATUS_0);
+		
+		Iterator<String> itOut = sendMessageOutList1.iterator();
+		while (itOut.hasNext()) {
+			String str = itOut.next();
+			IMToUserParam iMToUserParam = new IMToUserParam();
+			iMToUserParam.setToUserId(str);
+			iMToUserOutList.add(iMToUserParam);
+		}
+
+		// 测试im用户
+		// IMToUserParam iMToUserParam = new IMToUserParam();
+		// iMToUserParam.setToUserId("3cc30cf2a2a143ae84bac17167c3174a");
+		// iMToUserList.add(iMToUserParam);
+		//
+
+		if(iMToUserOutList.size() > 0){
+			ImNoticeMsgsParam imNoticeMsgsParam = new ImNoticeMsgsParam();
+			imNoticeMsgsParam.setToUsers(iMToUserOutList);
+			imNoticeMsgsParam.setMsg((String) map.get("message"));
+			imNoticeMsgsParam.setSendMsgType("text");
+			imNoticeMsgsParam.setOpenStatus(1);
+			if (isremindshared) {// 发送共享人
+				imNoticeMsgsParam.setFromUserId(imUserId);
+			} else {
+				imNoticeMsgsParam.setFromUserId(BaseConstants.HIO_IM_ADMIN + MessageEnum.TASK.getValue());
+			}
+			imNoticeMsgsParam.setTendId("");
+			imNoticeMsgsParam.setTendName("合作企业");
+			imNoticeMsgsParam.setMsgType(MsgTypeEnum.OUT.getValue());
+			imNoticeMsgsParam.setModuleType((String) map.get("moduleType"));
+			imNoticeMsgsParam.setModuleName(MessageEnum.TASK.getDes());
+			imNoticeMsgsParam.setExt(map);
+			imNoticeMsgsOutList.add(imNoticeMsgsParam);
+			imNoticeMsgSendOutParam.setMsgs(imNoticeMsgsOutList);
+
+			CoreHeaderInterceptor.initHystrixRequestContext(CoreHeaderInterceptor.HEADER_LABEL);// 不设置框架会报错
+			ApiFeignResponse  apiFeignResponse1 = messageFeignService.sendMessage(imNoticeMsgSendOutParam);
+			logger.info(">>>>>>>>>>>>>>调用吴飞接口结果>>>>>>>>>{}>>>>>消息>>>>>>>{}",apiFeignResponse1.getStatus(),apiFeignResponse1.getMessage());
+		}
+		
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>结束调用cc服务发送外部联系人cc消息>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+
+	}
+
+	/**
+	 * 根据状态id获取
+	 * 
+	 * @return
+	 */
+	public String getStatusName(String statusId) {
+
+		String statusName = "";
+
+		if (OaEunm.TASK_STATUS0.getType().equals(statusId)) {
+
+			statusName = OaEunm.TASK_STATUS0.getName();
+
+		} else if (OaEunm.TASK_STATUS1.getType().equals(statusId)) {
+
+			statusName = OaEunm.TASK_STATUS1.getName();
+
+		} else if (OaEunm.TASK_STATUS2.getType().equals(statusId)) {
+
+			statusName = OaEunm.TASK_STATUS2.getName();
+
+		} else if (OaEunm.TASK_STATUS3.getType().equals(statusId)) {
+
+			statusName = OaEunm.TASK_STATUS3.getName();
+
+		} else {
+			logger.info(">>>>>>>>>>>>>>>>状态值异常>>>>>>>>>>{}>>>>>>>>", statusId);
+		}
+
+		return statusName;
+	}
+}

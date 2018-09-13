@@ -1,0 +1,649 @@
+package com.jzy.hio.flow.runtime;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StopWatch;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.flow.entity.FlowInstance;
+import com.jzy.hio.flow.entity.FlowInstanceAc;
+import com.jzy.hio.flow.entity.FlowInstanceApprovalRecord;
+import com.jzy.hio.flow.entity.FlowLinkLine;
+import com.jzy.hio.flow.entity.FlowTemplate;
+import com.jzy.hio.flow.entity.FlowTemplateAc;
+import com.jzy.hio.flow.entity.dto.NodeAddedDto;
+import com.jzy.hio.flow.entity.dto.UserDto;
+import com.jzy.hio.flow.entity.enums.FlowNodeType;
+import com.jzy.hio.flow.entity.enums.FlowStartMode;
+import com.jzy.hio.flow.entity.enums.FlowStateEnum;
+import com.jzy.hio.flow.entity.enums.FlowStopWatch;
+import com.jzy.hio.flow.entity.enums.InstanceAcSource;
+import com.jzy.hio.flow.entity.enums.InstanceApproverState;
+import com.jzy.hio.flow.entity.enums.InstanceNodeState;
+import com.jzy.hio.flow.entity.param.FlowSubmitParam;
+import com.jzy.hio.flow.mapper.FlowInstanceAcDao;
+import com.jzy.hio.flow.mapper.FlowInstanceApprovalRecordDao;
+import com.jzy.hio.flow.mapper.FlowInstanceDao;
+import com.jzy.hio.flow.mapper.FlowLinkLineDao;
+import com.jzy.hio.flow.mapper.FlowTemplateAcDao;
+import com.jzy.hio.flow.mapper.FlowTemplateDao;
+import com.jzy.hio.flow.service.FlowTemplateRoleService;
+import com.jzy.hio.flow.utils.ExpressionUtils;
+import com.jzy.hio.flow.utils.FlowConstants;
+import com.jzy.hio.platform.message.param.MessageEnum;
+import com.jzy.hio.sys.organization.dto.FlowPositionDto;
+import com.jzy.hio.sys.organization.dto.FlowUserDto;
+import com.jzy.hio.utils.LoginUser;
+
+/**
+ * 流程发起操作
+ *
+ * @author daoqi
+ *
+ */
+public class StartOperation extends AbstractBaseOperation {
+
+	private Logger logger = LoggerFactory.getLogger(StartOperation.class);
+
+	private static final String TARGET = "target";
+	private static final String SOURCE = "source";
+
+	private static final String DELIMITER = ",";
+
+	@Transactional(rollbackFor = Exception.class)
+	@Override
+	public String action(FlowSubmitParam startParam) {
+		String lock = startParam.getCustomFormId()  + "_" + startParam.getBusinessId();
+		try {
+			// 需要加锁的代码
+			if (this.getService().getRedisLock().lock(lock)) {
+
+				LoginUser loginUser = super.getService().getLoginUser();
+				this.getFlowVariables().setCurrentUser(loginUser);
+				checkParams(startParam);
+				
+				// 2、保存流程实例
+				startParam.setInstanceState(FlowStateEnum.RUN.getState());
+				DraftOperation draftOperation = (DraftOperation)new OperationFactory().newOperation(OperateType.DRAFT, super.getService());
+				draftOperation.getFlowVariables().setTemplate(this.getFlowVariables().getTemplate()); //  
+				draftOperation.action2(startParam);
+				this.setFlowVariables(draftOperation.getFlowVariables());
+
+				flowVariables.setStartDate(new Date());
+				flowVariables.setInstanceStartPerson(loginUser.getUserId());
+				List<String> list = new ArrayList<>(1);
+				list.add(loginUser.getUserId());
+				logger.error("调用feign接口查询当前用户的基本信息开始 startOperation");
+				Map<String, FlowUserDto> idsTransitionName = this.getService().getTransitionUserNameUtils()
+						.idsTransitionName(list, loginUser.getTendId());
+				logger.error("调用feign接口查询当前用户的基本信息结束  startOperation");
+				FlowUserDto flowUserDto = idsTransitionName.get(flowVariables.getInstanceStartPerson());
+				List<FlowPositionDto> positions = flowUserDto.getPositions();
+				List<String> positionNames = positions.stream().map(FlowPositionDto::getOrganizationName)
+						.collect(Collectors.toList());
+				if (CollectionUtils.isNotEmpty(positionNames)) {
+					flowVariables.setInstanceStartPersonDept(positionNames.get(0));
+				}
+				flowVariables.setInstanceStartPersonName(flowUserDto.getUserName());
+
+				// 0、自由流处理 :与自定义表单发起流程相同逻辑
+				List<FlowInstanceAc> instanceNodes = null;
+				String freeOrTemplate = this.getFlowVariables().getTemplate().getFreeOrTemplate();
+				int instanceState = FlowStateEnum.RUN.getState();
+				if (FlowStartMode.FREE.getCode().equals(freeOrTemplate)) {
+					logger.info("------- 进入自由流发起----");
+					freeFlowHandle(startParam);
+					
+				} else if (FlowConstants.FLOW_AUTO_COMPLATE.equals(flowVariables.getTemplate().getFlowAutoComplate())) {
+					logger.info("------- 流程自动完结 ---- 当前实例Id:{}" ,flowVariables.getInstanceId());
+					flowVariables.setSkipOperation(false);
+					flowSuccess(flowVariables, FlowStateEnum.RUN.getState());
+					instanceState = FlowStateEnum.SUCCESS.getState();
+					
+				} else {
+					// 1、递归出实际路径上的实例环节（如果为空则返回）
+					instanceNodes = resolveTemplate(this.getFlowVariables().getTemplate().getId(),
+							startParam.getInstanceId());
+
+					// 3、保存1中的实例环节数据
+					super.saveInstanceNodes(instanceNodes);
+
+					// 4、（当前节点是开始节点）
+					setCurrentNode(instanceNodes);
+
+					//   封装 消息 查询表单上的抄送人
+					List<String> copyUserIds = queryFlowFormCopy(flowVariables);
+
+					setCopyAndFilterCopyPerson(flowVariables, copyUserIds, null);
+
+					//查找下级审批人 当前是开始
+					setNextApprover(flowVariables);
+
+					// 点亮环节
+					this.service.getFlowInstanceAcDao()
+							.updateBatchInstanceAcState(flowVariables.getUpdateInstanceAcList());
+					// 新增审批人
+					if (CollectionUtils.isNotEmpty(flowVariables.getSaveApproverList())) {
+						this.service.getFlowInstanceApprovalRecordDao().insertList(flowVariables.getSaveApproverList());
+					}
+					
+				}
+				
+				// 新增抄送记录
+				if (CollectionUtils.isNotEmpty(flowVariables.getCopyList())) {
+					this.service.getFlowCopyDao().insertList(flowVariables.getCopyList());
+				}
+				
+				//业务数据保存（自定义表单或第三方表单）
+				draftOperation.saveOrUpdateForm(startParam);
+				
+				// 通知流程状态
+				super.noticeInstanceStatus(instanceState);
+				
+				// 6、发送审批人消息
+				sendMessages(flowVariables.getMessages());
+			}
+		} catch (InterruptedException e) {
+			 logger.error("流程发起异常: {}", e.getMessage());
+		} finally {
+			this.getService().getRedisLock().unlock(lock);
+		}
+		return flowVariables.getInstanceId();
+	}
+
+	private void checkParams(FlowSubmitParam startParam) {
+		String templateId = startParam.getTemplateId();
+
+		FlowTemplateDao flowTemplateDao = this.getService().getFlowTemplateDao();
+		FlowTemplate flowTemplate = flowTemplateDao.getFlowTemplateById(templateId);
+		
+		if(StringUtils.isBlank(startParam.getCustomFormId())) {
+			logger.error("表单定义ID（customFormId）为空，无效请求！");
+			throw new HioException("表单定义ID（customFormId）为空，无效请求！");
+		}
+
+		// 模板删除
+		if (flowTemplate == null) {
+			logger.error("该流程模板已被作废或删除，请重新发起审批");
+			throw new HioException("该流程模板已被作废或删除，请重新发起审批");
+
+		} else {
+			// 模板禁用
+			if (flowTemplate.getState() == 2) {
+				logger.error("对应模板处于禁用状态 ，不能发起流程！");
+				throw new HioException("对应模板处于禁用状态 ，不能发起流程！");
+				// 检查模板权限
+			} else {
+				FlowTemplateRoleService flowTemplateRoleService = this.getService().getFlowTemplateRoleService();
+				LoginUser loginUser = this.flowVariables.getCurrentUser();
+				boolean havePermissions = flowTemplateRoleService.getTemplateRole(loginUser.getUserId(),
+						loginUser.getTendId(), flowTemplate.getCode());
+				if (!havePermissions) {
+					logger.error("当前用户没有对应模板的权限！");
+					throw new HioException("当前用户没有对应模板的权限！");
+				} else {
+					this.getFlowVariables().setTemplate(flowTemplate);
+				}
+			}
+		}
+
+		String freeOrTemplate = flowTemplate.getFreeOrTemplate();
+		if (FlowStartMode.FREE.getCode().equals(freeOrTemplate)) {
+			if (CollectionUtils.isEmpty(startParam.getNodeList())) {
+				logger.error("自由流程环节为空，请选择！");
+				throw new HioException("自由流程环节为空，请选择！");
+			}
+		}
+
+		//流程实例ID状态检查
+		String instanceId = startParam.getInstanceId();
+		if(StringUtils.isNotBlank(instanceId)) {
+			FlowInstanceDao flowInstanceDao = this.getService().getFlowInstanceDao();
+			FlowInstance flowInstance = flowInstanceDao.selectByPrimaryKey(instanceId);
+			this.getFlowVariables().setInstance(flowInstance);
+			if(flowInstance != null && flowInstance.getDelflag() == 1) {
+				logger.error("当前数据已被其他人删除，请刷新页面！");
+				throw new HioException("当前数据已被其他人删除，请刷新页面！");
+			}
+		}
+		
+		//检查同个customFormId与businessId是否存在已运行流程
+		boolean flowAlreadyRun = this.getService().checkRunFlowBy(startParam.getCustomFormId(), startParam.getBusinessId());
+		if(flowAlreadyRun) {
+			logger.error("该表单已发起流程，请不要重复发起！");
+			throw new HioException("该表单已发起流程，请不要重复发起！");
+		}
+
+	}
+
+	private void setCurrentNode(List<FlowInstanceAc> instanceNodes) {
+		this.flowVariables.setInstanceAcList(instanceNodes);
+		this.flowVariables.setCurrentInstranceAc(instanceNodes.get(0));
+	}
+
+	/**
+	 * 从流程模板解析实际流程路径
+	 *
+	 *
+	 * @param templateId
+	 * @param businessData
+	 * @return
+	 */
+	public List<FlowInstanceAc> resolveTemplate(String templateId, String instanceId) {
+		StopWatch stopWatch = new StopWatch(FlowStopWatch.ResolveTemplate.class.getSimpleName());
+		stopWatch.start(FlowStopWatch.ResolveTemplate.QUERY_DB.name());
+
+		// 查询模板上所有的节点与连线
+		FlowTemplateAcDao flowTemplateAcDao = super.getService().getFlowTemplateAcDao();
+		List<FlowTemplateAc> templateNodes = flowTemplateAcDao.findAcByTemplateId(templateId);
+		FlowLinkLineDao flowLinkLineDao = super.getService().getFlowLinkLineDao();
+		List<FlowLinkLine> templateLines = flowLinkLineDao.getLineListByTemplateId(templateId);
+		stopWatch.stop();
+
+		stopWatch.start(FlowStopWatch.ResolveTemplate.RESOLVE.name());
+		if (CollectionUtils.isEmpty(templateLines) || CollectionUtils.isEmpty(templateNodes)) {
+			String errorMsg = "模板解析失败：模板【" + templateId + "】对应 的节点或连线为空！";
+			logger.error(errorMsg);
+			throw new HioException("无符合条件的流程！");
+		}
+
+		// 去除断路
+		deleteBreakLines(templateLines);
+
+		// 构建过滤器
+		Map<String, List<FlowLinkLine>> sourceFilter = getFilter(templateLines, SOURCE);
+		Map<String, List<FlowLinkLine>> targetFilter = getFilter(templateLines, TARGET);
+		Map<String, FlowTemplateAc> nodeFilter = new HashMap<String, FlowTemplateAc>();
+		Map<String, String> keyFilter = new HashMap<String, String>();
+		for (FlowTemplateAc templateNode : templateNodes) {
+			String templateNodeId = templateNode.getId();
+			String instanceNodeId = Base.generatePk(FlowInstanceAc.class);
+			nodeFilter.put(templateNodeId, templateNode);
+			keyFilter.put(templateNodeId, instanceNodeId);
+		}
+
+		// 逆向遍历流程图
+		FlowTemplateAc endNode = findNode(templateNodes, FlowNodeType.END.getType());
+		backwardTraversal(endNode.getId(), targetFilter);
+
+		// 正向遍历流程图
+		FlowTemplateAc startNode = findNode(templateNodes, FlowNodeType.START.getType());
+		List<FlowInstanceAc> instanceNodes = new ArrayList<FlowInstanceAc>();
+		generateInstanceNodes(instanceNodes, startNode, nodeFilter, sourceFilter, keyFilter);
+
+		// 设置节点的pre
+		setPreIds(instanceNodes, instanceId);
+		logger.info("模板解析结果：" + instanceNodes);
+
+		// 模板解析结果检查
+		if (CollectionUtils.isEmpty(instanceNodes)) {
+			logger.error("模板解析出的实例环节为空");
+			throw new HioException("模板解析出的实例环节为空！");
+		}
+
+		stopWatch.stop();
+		System.out.println(stopWatch.prettyPrint());
+		return instanceNodes;
+	}
+
+	private void backwardTraversal(String templateNodeId, Map<String, List<FlowLinkLine>> targetFilter) {
+		List<FlowLinkLine> sourceLines = targetFilter.get(templateNodeId);
+		if (CollectionUtils.isEmpty(sourceLines)) {
+			return;
+		}
+
+		for (FlowLinkLine line : sourceLines) {
+			line.setTraversaled(true);
+			backwardTraversal(line.getStartLine(), targetFilter);
+		}
+	}
+
+	/**
+	 * 遍历流程图
+	 *
+	 * @param instanceNodes
+	 * @param templateNode
+	 * @param nodeFilter
+	 * @param sourceFilter
+	 * @param keyFilter
+	 */
+	private void generateInstanceNodes(List<FlowInstanceAc> instanceNodes, FlowTemplateAc templateNode,
+			Map<String, FlowTemplateAc> nodeFilter, Map<String, List<FlowLinkLine>> sourceFilter,
+			Map<String, String> keyFilter) {
+
+		// 说明已被遍历过
+		if (templateNode.isTraversaled()) {
+			return;
+		}
+
+		String instanceNodeId = keyFilter.get(templateNode.getId());
+		FlowInstanceAc instanceNode = new FlowInstanceAc();
+		instanceNode.setId(instanceNodeId);
+		instanceNode.setType(templateNode.getApprovalType());
+		instanceNode.setNodeType(templateNode.getNodeType());
+		instanceNode.setTemplateNodeId(templateNode.getId());
+		instanceNode.setState(InstanceNodeState.NOT_THROUGH.getState());
+		instanceNode.setSource(InstanceAcSource.TEMPLATE_SOURCE.getType());
+		instanceNode.setCreateDate(new Date());
+		instanceNode.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+		instanceNodes.add(instanceNode);
+
+		templateNode.setTraversaled(true);
+
+		List<FlowTemplateAc> nextNodes = findNextNodes(templateNode, nodeFilter, sourceFilter);
+		if (CollectionUtils.isEmpty(nextNodes)) {
+			return;
+		}
+		List<String> nextNodeIdList = new ArrayList<String>();
+		for (FlowTemplateAc node : nextNodes) {
+			String nextInstanceNodeId = keyFilter.get(node.getId());
+			nextNodeIdList.add(nextInstanceNodeId);
+		}
+
+		if (CollectionUtils.isNotEmpty(nextNodeIdList)) {
+			instanceNode.setNextNodeIdList(nextNodeIdList);
+			String nextNodeIds = String.join(DELIMITER, nextNodeIdList);
+			instanceNode.setNextNodeIds(nextNodeIds);
+		}
+
+		for (FlowTemplateAc node : nextNodes) {
+			generateInstanceNodes(instanceNodes, node, nodeFilter, sourceFilter, keyFilter);
+		}
+
+	}
+
+	private void setPreIds(List<FlowInstanceAc> instanceNodes, String instanceId) {
+		Map<String, List<String>> map = new HashMap<String, List<String>>();
+		for (FlowInstanceAc instanceNode : instanceNodes) {
+			List<String> nextNodeIdList = instanceNode.getNextNodeIdList();
+			if (CollectionUtils.isEmpty(nextNodeIdList)) {
+				continue;
+			}
+			for (String nextNodeId : nextNodeIdList) {
+				List<String> list = map.get(nextNodeId);
+				if (list == null) {
+					list = new ArrayList<String>();
+					map.put(nextNodeId, list);
+				}
+				list.add(instanceNode.getId());
+			}
+		}
+
+		for (FlowInstanceAc instanceNode : instanceNodes) {
+			instanceNode.setFlowIntanceId(instanceId);
+			List<String> preNodeIdList = map.get(instanceNode.getId());
+			if (CollectionUtils.isEmpty(preNodeIdList)) {
+				continue;
+			}
+			instanceNode.setPreNodeIdList(preNodeIdList);
+			String preNodeIds = String.join(DELIMITER, preNodeIdList);
+			instanceNode.setPreNodeIds(preNodeIds);
+			instanceNode.setLeftNodeCount(preNodeIdList.size());
+		}
+	}
+
+
+	/**
+	 * 查询模板上当前节点的可到达目标节点
+	 *
+	 * @param currentNode
+	 * @param nodeFilter
+	 * @param sourceFilter
+	 * @return
+	 */
+	private List<FlowTemplateAc> findNextNodes(FlowTemplateAc currentNode, Map<String, FlowTemplateAc> nodeFilter,
+			Map<String, List<FlowLinkLine>> sourceFilter) {
+		if (FlowNodeType.END.getType() == currentNode.getNodeType()) {
+			return null;
+		}
+
+		List<FlowTemplateAc> nextNodes = new ArrayList<FlowTemplateAc>();
+		List<FlowLinkLine> targetLines = sourceFilter.get(currentNode.getId());
+		if (CollectionUtils.isEmpty(targetLines)) {
+			String errorMsg = "模板解析失败：节点【" + currentNode.getId() + "】没有找到目标连线！";
+			logger.error(errorMsg);
+			// throw new HioException(errorMsg);
+		}
+
+		for (FlowLinkLine line : targetLines) {
+			if (line.isTraversaled()) { // 被逆向遍历过
+				String targetNodeId = line.getTargetLine();
+				FlowTemplateAc targetNode = nodeFilter.get(targetNodeId);
+
+				if (FlowNodeType.FORK.getType() == targetNode.getNodeType()
+				// || FlowNodeType.JOIN.getType() == targetNode.getNodeType() //解析结果中保留join节点
+				) {
+					List<FlowTemplateAc> nexts = findNextNodes(targetNode, nodeFilter, sourceFilter);
+					nextNodes.addAll(nexts);
+
+				} else {
+					nextNodes.add(targetNode);
+				}
+			}
+		}
+
+		if (CollectionUtils.isEmpty(nextNodes)) {
+			String errorMsg = "模板解析失败：当前节点【" + currentNode.getId() + "】没有找到下一节点！";
+			logger.error(errorMsg);
+			String errorMsg1 = "模板解析失败：当前节点没有找到下一节点！";
+			throw new HioException(errorMsg1);
+		}
+		return nextNodes;
+	}
+
+	private Map<String, List<FlowLinkLine>> getFilter(List<FlowLinkLine> templateLines, String type) {
+		Map<String, List<FlowLinkLine>> filter = new HashMap<String, List<FlowLinkLine>>();
+		for (FlowLinkLine line : templateLines) {
+
+			String nodeId = null;
+			if (SOURCE.equals(type)) {
+				nodeId = line.getStartLine();
+			} else {
+				nodeId = line.getTargetLine();
+			}
+
+			List<FlowLinkLine> lines = filter.get(nodeId);
+			if (lines == null) {
+				lines = new ArrayList<FlowLinkLine>();
+				filter.put(nodeId, lines);
+			}
+			lines.add(line);
+		}
+		return filter;
+	}
+
+	/**
+	 * 查询开始或结束节点
+	 *
+	 * @param templateNodes
+	 * @param type
+	 * @return
+	 */
+	private FlowTemplateAc findNode(List<FlowTemplateAc> templateNodes, Integer type) {
+		FlowTemplateAc node = null;
+		for (FlowTemplateAc templateNode : templateNodes) {
+			if (templateNode.getNodeType() == type) {
+				node = templateNode;
+				logger.info("模板解析出节点【" + node.getId() + "】");
+				break;
+			}
+		}
+		if (node == null) {
+			String errorMsg = "模板解析失败：未找到节点!templateId=" + templateNodes.get(0).getFlowTemplateId();
+			logger.error(errorMsg);
+			String errorMsg1 = "模板解析失败：未找到节点!";
+			throw new HioException(errorMsg1);
+		}
+		return node;
+	}
+
+	/**
+	 * 去除断路
+	 *
+	 * @param templateLines
+	 * @param formData
+	 */
+	private void deleteBreakLines(List<FlowLinkLine> templateLines) {
+		List<Map<String,Object>> env = super.generateEnv();
+		Iterator<FlowLinkLine> iter = templateLines.iterator();
+		while (iter.hasNext()) {
+			FlowLinkLine line = iter.next();
+			String expression = line.getConditionFormula();
+			if (StringUtils.isBlank(expression)) {
+				continue;
+			}
+			logger.info("表达式匹配：expression=" + expression + ", env=" + env);
+			boolean success = ExpressionUtils.evaluate(expression, env);
+			if (!success) {
+				iter.remove();
+				logger.info("表达式匹配：成功删除断路【" + line.getId() + "】");
+			}
+		}
+	}
+
+
+	/**
+	 * 自由流处理
+	 *
+	 * @param flowStartParam
+	 */
+	private void freeFlowHandle(FlowSubmitParam flowStartParam) {
+		List<NodeAddedDto> nodeList = flowStartParam.getNodeList();
+		if (CollectionUtils.isEmpty(nodeList)) {
+			logger.error(FlowConstants.FREE_FLOW_APPROVAL_NODE_IS_NULL.getMessage());
+			throw new HioException(FlowConstants.FREE_FLOW_APPROVAL_NODE_IS_NULL.getMessage(),
+					FlowConstants.FREE_FLOW_APPROVAL_NODE_IS_NULL.getStatus());
+		}
+
+		List<FlowInstanceAc> instanceNodes = new ArrayList<FlowInstanceAc>();
+		List<FlowInstanceApprovalRecord> approvers = new ArrayList<FlowInstanceApprovalRecord>();
+
+		String startNodeId = Base.generatePk(FlowInstanceAc.class);
+		flowVariables.setSort(1);
+		Date date = new Date();
+		for (int i = 0; i < nodeList.size(); i++) {
+			int sort = flowVariables.getSort();
+			flowVariables.setSort(++sort);
+			NodeAddedDto nodeAdded = nodeList.get(i);
+			FlowInstanceAc instanceNode = new FlowInstanceAc();
+			String instanceNodeId = Base.generatePk(FlowInstanceAc.class);
+			instanceNode.setId(instanceNodeId);
+			instanceNode.setName(nodeAdded.getNodeName());
+			instanceNode.setFlowIntanceId(flowStartParam.getInstanceId());
+			instanceNode.setType(nodeAdded.getNodeType());
+			instanceNode.setSource(InstanceAcSource.FREE_SOURCE.getType());
+			instanceNode.setNodeType(FlowNodeType.PROCESS.getType());
+			instanceNode.setSort(flowVariables.getSort());
+			instanceNode.setLeftNodeCount(1);
+			instanceNode.setState(
+					i == 0 ? InstanceNodeState.HAVE_ARRIV.getState() : InstanceNodeState.NOT_THROUGH.getState());
+
+			// 设置 pre next
+			if (i == 0) {
+				instanceNode.setPreNodeIds(startNodeId);
+			} else {
+
+				FlowInstanceAc flowInstanceAc = instanceNodes.get(i - 1);
+				flowInstanceAc.setNextNodeIds(instanceNodeId);
+				instanceNode.setPreNodeIds(flowInstanceAc.getId());
+			}
+
+			instanceNode.setCreateDate(date);
+			instanceNodes.add(instanceNode);
+
+			List<UserDto> users = nodeAdded.getApprovers();
+			if (CollectionUtils.isEmpty(users)) {
+				logger.error("自由流发起异常：环节【" + nodeAdded.getNodeName() + "】对应的审批信息为空！");
+				throw new HioException("自由流发起异常：环节【" + nodeAdded.getNodeName() + "】对应的审批信息为空！");
+			}
+
+			for (UserDto userId : users) {
+				if (StringUtils.isBlank(userId.getId())) {
+					logger.error("自由流发起异常：环节【" + nodeAdded.getNodeName() + "】对应的审批信息为空！");
+					throw new HioException("自由流发起异常：环节【" + nodeAdded.getNodeName() + "】对应的审批人为空！");
+				}
+				FlowInstanceApprovalRecord approvalRecord = new FlowInstanceApprovalRecord();
+				approvalRecord.setId(Base.generatePk(FlowInstanceApprovalRecord.class));
+				approvalRecord.setCreateDate(date);
+				approvalRecord.setApprovalUser(userId.getId());
+				approvalRecord.setFlowInstanceAcId(instanceNodeId);
+ 				approvalRecord.setFlowInstanceId(flowStartParam.getInstanceId());
+				approvalRecord.setState(i == 0 ? InstanceApproverState.NO_APPROVAL.getState()
+						: InstanceApproverState.WAIT_APPROVAL.getState());
+				approvalRecord.setDelflag(0);
+				 
+				approvers.add(approvalRecord);
+				// 产生审批人消息
+				if (i == 0) {
+					flowVariables.setMsgType(String.valueOf(MessageEnum.PENDING.getValue()));
+					newMessage(userId.getId(), flowVariables);
+				}
+			}
+		}
+
+		List<String> copyUserIds = flowStartParam.getCopyUserIds();
+		// 封装抄送消息
+		if (CollectionUtils.isNotEmpty(copyUserIds)) {
+			super.setCopyAndFilterCopyPerson(flowVariables,copyUserIds, null);
+		}
+
+		// 新增开始环节
+		FlowInstanceAc startInstanceAc = new FlowInstanceAc();
+		startInstanceAc.setId(startNodeId);
+		startInstanceAc.setName("开始节点");
+		startInstanceAc.setNodeType(FlowNodeType.START.getType());
+		startInstanceAc.setNextNodeIds(instanceNodes.get(0).getId());
+		startInstanceAc.setDelflag(0);
+		startInstanceAc.setSort(1);
+		startInstanceAc.setFlowIntanceId(flowStartParam.getInstanceId());
+		startInstanceAc.setLeftNodeCount(1);
+		startInstanceAc.setCreateDate(date);
+		startInstanceAc.setSource(InstanceAcSource.FREE_SOURCE.getType());
+		// 新增结束环节
+		FlowInstanceAc endInstanceAc = new FlowInstanceAc();
+		endInstanceAc.setId(Base.generatePk(FlowInstanceAc.class));
+		endInstanceAc.setName("结束节点");
+		endInstanceAc.setNodeType(FlowNodeType.END.getType());
+
+		instanceNodes.get(instanceNodes.size() - 1).setNextNodeIds(endInstanceAc.getId());
+		endInstanceAc.setPreNodeIds(instanceNodes.get(instanceNodes.size() - 1).getId());
+		endInstanceAc.setDelflag(0);
+		endInstanceAc.setFlowIntanceId(flowStartParam.getInstanceId());
+		endInstanceAc.setCreateDate(date);
+		endInstanceAc.setSource(InstanceAcSource.FREE_SOURCE.getType());
+		endInstanceAc.setLeftNodeCount(1);
+		endInstanceAc.setSort(flowVariables.getSort() + 1);
+		instanceNodes.add(0, startInstanceAc);
+		instanceNodes.add(endInstanceAc);
+
+		// 保存实例环节
+		FlowInstanceAcDao flowInstanceAcDao = super.getService().getFlowInstanceAcDao();
+		flowInstanceAcDao.insertList(instanceNodes);
+
+		// 保存审批人
+		FlowInstanceApprovalRecordDao flowInstanceApprovalRecordDao = super.getService()
+				.getFlowInstanceApprovalRecordDao();
+		flowInstanceApprovalRecordDao.insertList(approvers);
+		
+
+	}
+
+	@Override
+	public OperateType getType() {
+		return OperateType.START;
+	}
+
+}

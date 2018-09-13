@@ -1,0 +1,666 @@
+package com.jzy.hio.oa.quartz.service.impl;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.commons.lang.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import com.alibaba.fastjson.JSON;
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.annotation.DataSource;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.cloud.core.CoreHeaderInterceptor;
+import com.jzy.hio.entity.Schedule;
+import com.jzy.hio.entity.ScheduleDelete;
+import com.jzy.hio.entity.ScheduleNewTwo;
+import com.jzy.hio.entity.ScheduleRemind;
+import com.jzy.hio.entity.ScheduleShared;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.oa.OaConstant;
+import com.jzy.hio.oa.quartz.mapper.ScheduleQuartzMapper;
+import com.jzy.hio.oa.quartz.mapper.ScheduleQuartzRemindMapper;
+import com.jzy.hio.oa.quartz.mapper.ScheduleQuartzSharedMapper;
+import com.jzy.hio.oa.quartz.service.ScheduleQuartzService;
+import com.jzy.hio.oa.schedule.mapper.ScheduleDeleteMapper;
+import com.jzy.hio.oa.schedule.param.BuildScheduleParam;
+import com.jzy.hio.platform.dto.tenantcompanyinfo.TenantCompanyInfoDto;
+import com.jzy.hio.platform.message.MessageFeignService;
+import com.jzy.hio.platform.message.param.IMToUserParam;
+import com.jzy.hio.platform.message.param.ImNoticeMsgSendParam;
+import com.jzy.hio.platform.message.param.ImNoticeMsgsParam;
+import com.jzy.hio.platform.message.param.MessageEnum;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.sys.user.dto.OAUserDto;
+import com.jzy.hio.sys.user.param.OAUserParam;
+import com.jzy.hio.utils.DateUtil;
+import com.jzy.hio.utils.JacksonUtils;
+import com.jzy.hio.utils.LoginUser;
+import com.jzy.hio.utils.OaUserUtil;
+
+/**
+ * 日程批量
+ * 
+ * @author wdy
+ * @date 2018年5月7日
+ */
+@Service
+public class ScheduleQuartzServiceImpl implements ScheduleQuartzService {
+
+	private static Logger logger = LoggerFactory.getLogger(ScheduleQuartzServiceImpl.class);
+
+	@Autowired
+	private ScheduleQuartzRemindMapper scheduleQuartzRemindMapper;// 提醒表
+	@Autowired
+	private ScheduleQuartzMapper scheduleQuartzMapper;// 日程表
+	@Value("${oa_schedule_message.sendMessage}")
+	private String schedule_message_sendMessage;// 任务定时发送cc消息内容
+	@Autowired
+	private ScheduleQuartzSharedMapper scheduleQuartzSharedMapper;// 共享人员表
+	@Autowired
+	private SysFeignService sysFeignService; // feign接口
+	@Autowired
+	private MessageFeignService messageFeignService;// 发送cc消息服务
+	@Autowired
+	private OaUserUtil oaUserUtil;// oa工具类
+	@Autowired
+	private ScheduleDeleteMapper scheduleDeleteMapper;// 日程删除表
+
+	/**
+	 * 定时发送cc消息
+	 */
+	@Override
+	public void updateSendMessage(@DataSource String tendId, TenantCompanyInfoDto tenantCompanyInfoDto,Date today) {
+
+		String tendName = tenantCompanyInfoDto.getName();
+//		String tendName = "测试批量";
+
+		Map<String, Object> map = new HashMap<String, Object>();// 发送消息内容map
+
+		int count = 0;
+		int count1 = 0;
+
+		// 查询任务提醒表,获取提醒id，根据提醒id查询任务id,调用发送cc消息接口
+		ScheduleRemind scheduleRemind1 = new ScheduleRemind();
+		scheduleRemind1.setRemindStatus(OaConstant.REMIND_STATUS1);
+		//List<ScheduleRemind> list = scheduleQuartzRemindMapper.queryScheduleRemindList(scheduleRemind1);
+		String queryKey = OaConstant.SCHEDULE_REMIND_REDIS_KEY + ":" + tendId + ":" + OaConstant.SCHEDULE_REMIND_TABLE_REMIND;
+		Map<String, String> mapAll = JedisUtil.fetchRelationRow(queryKey);
+		LoginUser loginUser = new LoginUser();
+		loginUser.setTendId(tendId);
+
+		if (Base.isNotEmpty(mapAll)) {
+			
+			for(String key : mapAll.keySet()){
+				String remindJson = mapAll.get(key);
+				ScheduleRemind scheduleRemind = json2obj(remindJson,ScheduleRemind.class);
+				
+				// 提醒时间与当前时间相等，发送cc提醒
+				if (Base.isNotEmpty(scheduleRemind) && Base.isNotEmpty(scheduleRemind.getRemindTime())) {
+					
+					String remindTimeProcess = null;// 提醒时间
+
+					Schedule schedule = new Schedule();
+					schedule.setRemindId(scheduleRemind.getRemindId());
+					schedule.setRemindStatus(OaConstant.REMIND_STATUS1);
+					List<Schedule> scheduleList = scheduleQuartzMapper.queryScheduleList(schedule);
+					if (scheduleList.size() > 0) {
+						for (Schedule schedule1 : scheduleList) {
+							String beginTimeProcess = DateUtil.dateToDateString(schedule1.getBeginTime());// 起始时间
+
+							String date = DateUtil.dateToDateString(today, DateUtil.DATETIMEHOUR_DEFAULT_FORMAT);
+
+							remindTimeProcess = DateUtil.dateToDateString(DateUtil.getDate(DateUtil.getLastDateMinut(beginTimeProcess, schedule1.getAdvanceTime())),
+									DateUtil.DATETIMEHOUR_DEFAULT_FORMAT);// 提醒时间
+
+							// logger.info(">>>>>>>>>>>>>>提醒时间>>>>>>>>>>>{}",remindTimeProcess);
+							// logger.info(">>>>>>>>>>>>>>当前时间>>>>>>>>>>>{}",date);
+							// logger.info(">>>>>>>>>>>>>>是否执行>>>>>>>>>>>{}",remindTimeProcess.equals(date));
+
+							if (remindTimeProcess.equals(date)) {
+
+								CoreHeaderInterceptor.initHystrixRequestContext(CoreHeaderInterceptor.HEADER_LABEL);// 不设置框架会报错
+								map.put("moduleType", MessageEnum.SCHEDULE.getValue());
+								map.put("message", schedule1.getScheduleTitle());
+								//TODO 创建人 schedule1.getCreatePersonName()						
+								map.put("createPersonName", oaUserUtil.selectUserNameByTendId(schedule1.getCreatePersonId(), tendId));
+								map.put("beginTime", schedule1.getBeginTime());
+								map.put("endTime", schedule1.getEndTime());
+								map.put("scheduleId", schedule1.getScheduleId());
+								map.put("tendId", tendId);
+								map.put("tendName", tendName);
+
+								sendMessage(schedule1.getScheduleId(), schedule_message_sendMessage, loginUser, map, tendName, tendId);
+
+								// 更新提醒表状态为已提醒
+								ScheduleRemind scheduleRemind2 = new ScheduleRemind();
+								scheduleRemind2.setRemindId(scheduleRemind.getRemindId());
+								scheduleRemind2.setRemindStatus(OaConstant.REMIND_STATUS0);
+								count += scheduleQuartzRemindMapper.updateRemindIdStatus(scheduleRemind2);								
+								//删除redis中的remind
+								String keyRemind = OaConstant.SCHEDULE_REMIND_REDIS_KEY + ":" + tendId + ":" + OaConstant.SCHEDULE_REMIND_TABLE_REMIND;
+								JedisUtil.delRow(keyRemind,scheduleRemind.getId());
+								
+								//更新日程表提醒状态为已提醒
+								Schedule schedule2= new Schedule();
+								schedule2.setRemindStatus(OaConstant.REMIND_STATUS0);
+								schedule2.setScheduleId(schedule1.getScheduleId());
+								schedule2.setBeginTime(schedule1.getBeginTime());
+								count1 += scheduleQuartzMapper.updateRemindIdStatus(schedule2);
+
+								// 如果重复插入下一提醒时间
+								if (StringUtils.isNotBlank(scheduleRemind.getRepetitionFrequency())) {
+
+									// CoreHeaderInterceptor.initHystrixRequestContext(CoreHeaderInterceptor.HEADER_LABEL);// 不设置框架会报错
+
+									ScheduleRemind remind = new ScheduleRemind();
+									remind.setId(Base.generatePk(ScheduleRemind.class));
+									remind.setRemindId(scheduleRemind.getRemindId());
+									//TODO 创建人 提醒时间应该为下一次提醒时间
+									remind.setRemindTime(schedule1.getBeginTime());
+									remind.setRemindStatus(OaConstant.REMIND_STATUS1);
+									remind.setCreatePersonId(loginUser.getUserId());
+									remind.setCreateDate(today);
+									remind.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+									remind.setRepetitionFrequency(scheduleRemind.getRepetitionFrequency());
+									remind.setEndFrequency(scheduleRemind.getEndFrequency());
+									remind.setRemindEndtime(scheduleRemind.getRemindEndtime());
+									remind.setCreatePersonId(schedule1.getCreatePersonId());
+									// remind.setCreatePersonName(oaUserUtil.selectUserName(schedule1.getCreatePersonId()));
+									scheduleQuartzRemindMapper.insert(remind);
+									//插入redis
+									JedisUtil.addRow(OaConstant.SCHEDULE_REMIND_REDIS_KEY + ":" + loginUser.getTendId(), remind);
+								}
+							}
+
+						}
+					}
+
+				}
+
+			}
+			logger.info(">>>>>>>日程提醒表更新提醒状态{}条,日程表更新提醒状态{}条>>>>>>>tendId:{}>>>>", count,count1,tendId);
+		}
+
+	}
+
+	/**
+	 * 定时发送cc消息(改造) 日程列表改为实时计算
+	 */
+	@Override
+	public void updateNewSendMessage(@DataSource String tendId, TenantCompanyInfoDto tenantCompanyInfoDto) {
+
+		String tendName = tenantCompanyInfoDto.getName();
+//		String tendName = "测试批量";
+
+		Map<String, Object> map = new HashMap<String, Object>();// 发送消息内容map
+
+		int count = 0;
+
+		// 查询任务提醒表,获取提醒id，根据提醒id查询任务id,调用发送cc消息接口
+		ScheduleRemind scheduleRemind1 = new ScheduleRemind();
+		scheduleRemind1.setRemindStatus(OaConstant.REMIND_STATUS1);
+		List<ScheduleRemind> list = scheduleQuartzRemindMapper.queryScheduleRemindList(scheduleRemind1);
+
+		LoginUser loginUser = new LoginUser();
+		loginUser.setTendId(tendId);
+
+		if (list.size() > 0) {
+			for (ScheduleRemind scheduleRemind : list) {
+
+				// 提醒时间与当前时间相等，发送cc提醒
+				if (scheduleRemind.getRemindTime() != null) {
+
+					String remindTimeProcess = null;// 提醒时间
+					List<ScheduleNewTwo> scheduleList = new ArrayList<ScheduleNewTwo>(); // 日程列表
+
+					ScheduleNewTwo schedule = new ScheduleNewTwo();
+					schedule.setRemindId(scheduleRemind.getRemindId());
+
+					ScheduleNewTwo schedule2 = scheduleQuartzMapper.queryNewScheduleId(schedule);
+					if (schedule2 != null) {
+
+						// 查询日程删除列表
+						ScheduleDelete scheduleDelete = new ScheduleDelete();
+						scheduleDelete.setScheduleId(schedule2.getScheduleId());
+						scheduleDelete.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+						List<ScheduleDelete> deleteList = scheduleDeleteMapper.select(scheduleDelete);
+
+						String beginTimeProcess = DateUtil.dateToDateString(schedule2.getBeginTime(), DateUtil.DATATIMEF_STR);// 起始时间
+						String endTimeProcess = DateUtil.dateToDateString(schedule2.getEndTime(), DateUtil.DATATIMEF_STR);// 结束时间
+
+						BuildScheduleParam buildScheduleParam = new BuildScheduleParam();
+						buildScheduleParam.setRepetitionFrequency(schedule2.getRepetitionFrequency());
+						buildScheduleParam.setEndFrequency(schedule2.getEndFrequency());
+						buildScheduleParam.setBeginTime(DateUtil.dateToDateString(schedule2.getBeginTime(), DateUtil.DATATIMEF_STR));
+						buildScheduleParam.setEndTime(DateUtil.dateToDateString(schedule2.getEndTime(), DateUtil.DATATIMEF_STR));
+
+						if (OaConstant.ENDFREQUENCY_TIMES.equals(buildScheduleParam.getEndFrequency())) {// 次数
+							buildScheduleParam.setEndFrequencyNum(schedule2.getEndFrequencyNum());
+						}
+
+						if (OaConstant.ENDFREQUENCY_DATE.equals(buildScheduleParam.getEndFrequency())) {// 日期
+							buildScheduleParam.setEndFrequencyTime(DateUtil.dateToDateString(schedule2.getEndFrequencyTime(), DateUtil.DATATIMEF_STR));
+						}
+
+						int times = (int) getTimes(buildScheduleParam).get("times");// 获取重复次数
+
+						logger.info(">>>>>>>>>新建重复日程重复次数>>>>>>>>>>{}", times);
+						for (int i = 0; i < times; i++) {
+
+							String beginTime = "";
+							String endTime = "";
+
+							if (i == 0) {
+								beginTime = buildScheduleParam.getBeginTime();
+								endTime = buildScheduleParam.getEndTime();
+							} else {
+								if (OaConstant.REPETITIONFREQUENCY_DAY.equals(buildScheduleParam.getRepetitionFrequency())) {// 每天
+									beginTime = DateUtil.nextDay(beginTimeProcess, i);// 起始时间
+									endTime = DateUtil.nextDay(endTimeProcess, i);// 结束时间
+									// remindTimeProcess = DateUtil.getLastDateMinut(beginTimeProcess, buildScheduleParam.getAdvanceTime());// 提醒时间
+								} else if (OaConstant.REPETITIONFREQUENCY_WEEK.equals(buildScheduleParam.getRepetitionFrequency())) {// 每周
+									beginTime = DateUtil.nextWeek(beginTimeProcess, i);// 起始时间
+									endTime = DateUtil.nextWeek(endTimeProcess, i);// 结束时间
+									// remindTimeProcess = DateUtil.getLastDateMinut(beginTimeProcess, buildScheduleParam.getAdvanceTime());// 提醒时间
+								} else if (OaConstant.REPETITIONFREQUENCY_MONTH.equals(buildScheduleParam.getRepetitionFrequency())) {// 每月
+									beginTime = DateUtil.nextMonth(beginTimeProcess, i);// 起始时间
+									endTime = DateUtil.nextMonth(endTimeProcess, i);// 结束时间
+									// remindTimeProcess = DateUtil.getLastDateMinut(beginTimeProcess, buildScheduleParam.getAdvanceTime());// 提醒时间
+								} else if (OaConstant.REPETITIONFREQUENCY_YEAR.equals(buildScheduleParam.getRepetitionFrequency())) {// 每年
+									beginTime = DateUtil.nextYear(beginTimeProcess, i);// 起始时间
+									endTime = DateUtil.nextYear(endTimeProcess, i);// 结束时间
+									// remindTimeProcess = DateUtil.getLastDateMinut(beginTimeProcess, buildScheduleParam.getAdvanceTime());// 提醒时间
+								} else {
+
+								}
+							}
+
+							// 日期筛选
+							Date jBeginTime = DateUtil.getDate(beginTime);// 计算开始日期
+							Date jEndTime = DateUtil.getDate(endTime);// 计算结束日期
+
+							if (deleteList.size() > 0) {
+								for (ScheduleDelete scheduleDelete2 : deleteList) {
+
+									if ((scheduleDelete2.getScheduleId().equals(schedule2.getScheduleId())) && (scheduleDelete2.getBeginTime().compareTo(jBeginTime) != 0)
+											&& (scheduleDelete2.getEndTime().compareTo(jEndTime) != 0)) {
+										
+										schedule2.setBeginTime(DateUtil.getDate(beginTime));
+										schedule2.setEndTime(DateUtil.getDate(endTime));
+										scheduleList.add(schedule2);
+									}
+								}
+							}
+						}
+					}
+
+					if (scheduleList.size() > 0) {
+						for (ScheduleNewTwo schedule1 : scheduleList) {
+							String beginTimeProcess = DateUtil.dateToDateString(schedule1.getBeginTime());// 起始时间
+
+							String date = DateUtil.dateToDateString(new Date(), DateUtil.DATETIMEHOUR_DEFAULT_FORMAT);
+
+							remindTimeProcess = DateUtil.dateToDateString(DateUtil.getDate(DateUtil.getLastDateMinut(beginTimeProcess, schedule1.getAdvanceTime())),
+									DateUtil.DATETIMEHOUR_DEFAULT_FORMAT);// 提醒时间
+
+							// logger.info(">>>>>>>>>>>>>>提醒时间>>>>>>>>>>>{}",remindTimeProcess);
+							// logger.info(">>>>>>>>>>>>>>当前时间>>>>>>>>>>>{}",date);
+							// logger.info(">>>>>>>>>>>>>>是否执行>>>>>>>>>>>{}",remindTimeProcess.equals(date));
+
+							if (remindTimeProcess.equals(date)) {
+
+								CoreHeaderInterceptor.initHystrixRequestContext(CoreHeaderInterceptor.HEADER_LABEL);// 不设置框架会报错
+								map.put("moduleType", MessageEnum.SCHEDULE.getValue());
+								map.put("message", schedule1.getScheduleTitle());
+								map.put("createPersonName", oaUserUtil.selectUserNameByTendId(schedule1.getCreatePersonId(), tendId));
+								map.put("beginTime", schedule1.getBeginTime());
+								map.put("endTime", schedule1.getEndTime());
+								map.put("scheduleId", schedule1.getScheduleId());
+								map.put("tendId", tendId);
+								map.put("tendName", tendName);
+
+								sendMessage(schedule1.getScheduleId(), schedule_message_sendMessage, loginUser, map, tendName, tendId);
+
+								// 更新提醒表状态为已提醒
+								ScheduleRemind scheduleRemind2 = new ScheduleRemind();
+								scheduleRemind2.setRemindId(scheduleRemind.getRemindId());
+								scheduleRemind2.setRemindStatus(OaConstant.REMIND_STATUS0);
+								count += scheduleQuartzRemindMapper.updateRemindIdStatus(scheduleRemind2);
+
+								// 如果重复插入下一提醒时间
+								if (StringUtils.isNotBlank(scheduleRemind.getRepetitionFrequency())) {
+
+									// CoreHeaderInterceptor.initHystrixRequestContext(CoreHeaderInterceptor.HEADER_LABEL);// 不设置框架会报错
+
+									ScheduleRemind remind = new ScheduleRemind();
+									remind.setId(Base.generatePk(ScheduleRemind.class));
+									remind.setRemindId(scheduleRemind.getRemindId());
+									remind.setRemindTime(schedule1.getBeginTime());
+									remind.setRemindStatus(OaConstant.REMIND_STATUS1);
+									remind.setCreatePersonId(loginUser.getUserId());
+									remind.setCreateDate(new Date());
+									remind.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+									remind.setRepetitionFrequency(scheduleRemind.getRepetitionFrequency());
+									remind.setEndFrequency(scheduleRemind.getEndFrequency());
+									remind.setRemindEndtime(scheduleRemind.getRemindEndtime());
+									remind.setCreatePersonId(schedule1.getCreatePersonId());
+									// remind.setCreatePersonName(oaUserUtil.selectUserName(schedule1.getCreatePersonId()));
+									scheduleQuartzRemindMapper.insert(remind);
+								}
+							}
+
+						}
+					}
+
+				}
+
+			}
+			logger.info(">>>>>>>日程共发送{}条cc消息>>>>>>>tendId:{}>>>>", count, tendId);
+		}
+
+	}
+
+	/**
+	 * 发送cc消息（创建人、共享人）
+	 */
+	public void sendMessage(String scheduleId, String message, LoginUser loginUser, Map<String, Object> map, String tendName, String tendId) {
+
+		String createPersonId = "";
+
+		Set<String> sendMessageList = new HashSet<String>();
+		Set<String> sendMessageList1 = new HashSet<String>();
+
+		// 查询创建人
+		Schedule schedule = new Schedule();
+		schedule.setScheduleId(scheduleId);
+		Schedule schedule1 = scheduleQuartzMapper.queryScheduleId(schedule);
+		if (schedule1 != null) {
+//			CoreHeaderInterceptor.initHystrixRequestContext(CoreHeaderInterceptor.HEADER_LABEL);// 不设置框架会报错
+			createPersonId = schedule1.getCreatePersonId();
+//			String createPersonSendMessageId = oaUserUtil.queryImUserIdByOaUserId(createPersonId, tendId);
+			if (StringUtils.isNotBlank(createPersonId)) {
+				sendMessageList.add(createPersonId);
+			}
+
+		}
+
+		// 查询共享人
+		// 查询人员列表
+		List<String> personIds = new ArrayList<String>();
+		ScheduleShared scheduleSharedShowPerson = new ScheduleShared();
+		if (StringUtils.isNotBlank(schedule1.getScheduleGroupId())) {
+			scheduleSharedShowPerson.setScheduleGroupId(schedule1.getScheduleGroupId());
+		} else {
+			scheduleSharedShowPerson.setScheduleId(scheduleId);
+		}
+		scheduleSharedShowPerson.setType(OaConstant.SHAREDSHOW_TYPE0);
+		List<ScheduleShared> personList = scheduleQuartzSharedMapper.select(scheduleSharedShowPerson);
+		for (ScheduleShared scheduleShared : personList) {
+			String personId = scheduleShared.getSharedShowId();
+			if (StringUtils.isNotBlank(personId)) {
+				personIds.add(personId);
+			}
+
+		}
+
+		// 查询角色列表
+		List<String> roleIds = new ArrayList<String>();
+		ScheduleShared scheduleSharedShowRole = new ScheduleShared();
+		if (StringUtils.isNotBlank(schedule1.getScheduleGroupId())) {
+			scheduleSharedShowRole.setScheduleGroupId(schedule1.getScheduleGroupId());
+		} else {
+			scheduleSharedShowRole.setScheduleId(scheduleId);
+		}
+		scheduleSharedShowRole.setType(OaConstant.SHAREDSHOW_TYPE1);
+		List<ScheduleShared> roleList = scheduleQuartzSharedMapper.select(scheduleSharedShowRole);
+		for (ScheduleShared scheduleShared : roleList) {
+			String roleId = scheduleShared.getSharedShowId();
+			if (StringUtils.isNotBlank(roleId)) {
+				roleIds.add(roleId);
+			}
+
+		}
+
+		// 查询部门列表
+		List<String> organizationIds = new ArrayList<String>();
+		ScheduleShared scheduleSharedShowDepartment = new ScheduleShared();
+		if (StringUtils.isNotBlank(schedule1.getScheduleGroupId())) {
+			scheduleSharedShowDepartment.setScheduleGroupId(schedule1.getScheduleGroupId());
+		} else {
+			scheduleSharedShowDepartment.setScheduleId(scheduleId);
+		}
+		scheduleSharedShowDepartment.setType(OaConstant.SHAREDSHOW_TYPE2);
+		List<ScheduleShared> departmentList = scheduleQuartzSharedMapper.select(scheduleSharedShowDepartment);
+		for (ScheduleShared scheduleShared : departmentList) {
+			String departmentId = scheduleShared.getSharedShowId();
+			if (StringUtils.isNotBlank(departmentId)) {
+				organizationIds.add(departmentId);
+			}
+
+		}
+
+		// 组装调用sys接口数据
+		OAUserParam oAUserParam = new OAUserParam();
+		oAUserParam.setTendId(loginUser.getTendId());
+		oAUserParam.setContainsChildOrgUser(true);
+		
+		if (personIds.size() > 0) {
+			oAUserParam.setUserIds(personIds);
+		}
+
+		if (roleIds.size() > 0) {
+			oAUserParam.setRoleIds(roleIds);
+		}
+
+		if (organizationIds.size() > 0) {
+			oAUserParam.setOrganizationIds(organizationIds);
+		}
+
+		logger.info("personIds.size()>>>>>>>>>{},tendId>>>>{}", personIds.size(), tendId);
+		logger.info("roleIds.size()>>>>>>>>>{},tendId>>>>{}", roleIds.size(), tendId);
+		logger.info("organizationIds.size()>>>>>>>>>{},tendId>>>>{}", organizationIds.size(), tendId);
+
+		if ((personIds.size() > 0) || (roleIds.size() > 0) || (organizationIds.size() > 0)) {
+			logger.info(">>>>>>>>>>>>>>>>>>>>>>>>开始调用sys服务获取角色、部门下所有人员>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+			CoreHeaderInterceptor.initHystrixRequestContext(CoreHeaderInterceptor.HEADER_LABEL);// 不设置框架会报错
+			ApiFeignResponse<List<OAUserDto>> apiFeignResponse = sysFeignService.queryUserByOrgAndRoleAndUser(oAUserParam);
+			if (apiFeignResponse != null) {
+				if (200 == apiFeignResponse.getStatus()) {
+					List<OAUserDto> list = apiFeignResponse.getResult();
+					for (OAUserDto oaUserDto : list) {
+						sendMessageList.add(oaUserDto.getId());
+					}
+				} else {
+					throw new HioException("调用queryNameByOrgAndRoleAndUser feign接口失败" + apiFeignResponse.getMessage());
+				}
+			}
+		}
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>开始调用cc服务发送cc消息>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+
+		ImNoticeMsgSendParam imNoticeMsgSendParam = new ImNoticeMsgSendParam();
+		List<ImNoticeMsgsParam> imNoticeMsgsList = new ArrayList<ImNoticeMsgsParam>();
+		List<IMToUserParam> iMToUserList = new ArrayList<IMToUserParam>();
+
+		CoreHeaderInterceptor.initHystrixRequestContext(CoreHeaderInterceptor.HEADER_LABEL);// 不设置框架会报错
+		sendMessageList1 = oaUserUtil.selectUsersByListAndStatus(sendMessageList,loginUser.getTendId(),OaConstant.OA_USER_QUERY_STATUS_0);
+		
+		logger.info("最终发送日程消息人员列表:{}",JSON.toJSONString(sendMessageList1));
+		
+		Iterator<String> it = sendMessageList1.iterator();
+		while (it.hasNext()) {
+			String str = it.next();
+			IMToUserParam iMToUserParam = new IMToUserParam();
+			iMToUserParam.setToUserId(str);
+			iMToUserList.add(iMToUserParam);
+		}
+
+		// 测试im用户
+		// IMToUserParam iMToUserParam = new IMToUserParam();
+		// iMToUserParam.setToUserId("3cc30cf2a2a143ae84bac17167c3174a");
+		// iMToUserList.add(iMToUserParam);
+		//
+
+		ImNoticeMsgsParam imNoticeMsgsParam = new ImNoticeMsgsParam();
+		imNoticeMsgsParam.setToUsers(iMToUserList);
+		imNoticeMsgsParam.setMsg((String) map.get("message"));
+		imNoticeMsgsParam.setSendMsgType("text");
+		imNoticeMsgsParam.setFromUserId(BaseConstants.HIO_IM_ADMIN + MessageEnum.SCHEDULE.getValue());
+		imNoticeMsgsParam.setTendId(loginUser.getTendId());
+		imNoticeMsgsParam.setTendName(tendName);
+		imNoticeMsgsParam.setMsgType("msg");
+		imNoticeMsgsParam.setModuleType((String) map.get("moduleType"));
+		imNoticeMsgsParam.setModuleName(MessageEnum.SCHEDULE.getDes());
+		imNoticeMsgsParam.setExt(map);
+		imNoticeMsgsParam.setOpenStatus(1);
+		imNoticeMsgsList.add(imNoticeMsgsParam);
+		imNoticeMsgSendParam.setMsgs(imNoticeMsgsList);
+
+		CoreHeaderInterceptor.initHystrixRequestContext(CoreHeaderInterceptor.HEADER_LABEL);// 不设置框架会报错
+		ApiFeignResponse apiFeignResponse1 = messageFeignService.sendMessage(imNoticeMsgSendParam);
+		logger.info(">>>>>>>>>>>>调用吴飞接口结果>>>>{}>>>>>信息>>>>>>{}>>>>>>>>>>>>", apiFeignResponse1.getStatus(), apiFeignResponse1.getMessage());
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>结束调用cc服务发送cc消息>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+	}
+
+	/**
+	 * 获取事件重复次数
+	 * 
+	 * @param buildScheduleParam
+	 *            输入对象
+	 * @return
+	 */
+	public Map<String, Object> getTimes(BuildScheduleParam buildScheduleParam) {
+
+		Map<String, Object> map = new HashMap<String, Object>();
+
+		String repetitionResult = "";
+		String beginTime = "";// 计算时使用起始时间
+		String endTime = "";// 计算时使用结束时间
+
+		int times = 0;// 重复次数
+
+		if (OaConstant.REPETITIONFREQUENCY_DAY.equals(buildScheduleParam.getRepetitionFrequency())) {// 每天
+
+			if (OaConstant.ENDFREQUENCY_NEVER.equals(buildScheduleParam.getEndFrequency())) {// 永不
+
+				beginTime = buildScheduleParam.getBeginTime();
+				endTime = DateUtil.addYear(beginTime, OaConstant.SCHEDULE_YEAR);
+				times = DateUtil.reductDate(beginTime, endTime) + 1;// 此算法是按时期间隔计算的，实际是包头尾日期
+				repetitionResult = "每天";
+
+			} else if (OaConstant.ENDFREQUENCY_TIMES.equals(buildScheduleParam.getEndFrequency())) {// 次数
+
+				times = buildScheduleParam.getEndFrequencyNum();
+				repetitionResult = "每天 共" + times + "次";
+
+			} else if (OaConstant.ENDFREQUENCY_DATE.equals(buildScheduleParam.getEndFrequency())) {// 日期
+
+				beginTime = buildScheduleParam.getBeginTime();
+				endTime = buildScheduleParam.getEndFrequencyTime();
+				times = DateUtil.reductDate(beginTime, endTime) + 1;// 此算法是按时期间隔计算的，实际是包头尾日期
+				repetitionResult = "每天 截止到" + endTime + "";
+			} else {
+				logger.info("结束类型参数传入错误=={}", buildScheduleParam.getEndFrequency());
+			}
+
+		} else if (OaConstant.REPETITIONFREQUENCY_WEEK.equals(buildScheduleParam.getRepetitionFrequency())) {// 每周
+
+			if (OaConstant.ENDFREQUENCY_NEVER.equals(buildScheduleParam.getEndFrequency())) {// 永不
+
+				beginTime = buildScheduleParam.getBeginTime();
+				endTime = DateUtil.addYear(beginTime, OaConstant.SCHEDULE_YEAR);
+				times = DateUtil.reductWeek(beginTime, endTime) + 1;// 此算法是按时期间隔计算的，实际是包头尾日期
+				repetitionResult = "每周";
+
+			} else if (OaConstant.ENDFREQUENCY_TIMES.equals(buildScheduleParam.getEndFrequency())) {// 次数
+
+				times = buildScheduleParam.getEndFrequencyNum();
+				repetitionResult = "每周 共" + times + "次";
+
+			} else if (OaConstant.ENDFREQUENCY_DATE.equals(buildScheduleParam.getEndFrequency())) {// 日期
+
+				beginTime = buildScheduleParam.getBeginTime();
+				endTime = buildScheduleParam.getEndFrequencyTime();
+				times = DateUtil.reductWeek(beginTime, endTime) + 1;// 此算法是按时期间隔计算的，实际是包头尾日期
+				repetitionResult = "每周 截止到" + endTime + "";
+
+			} else {
+				logger.info("结束类型参数传入错误=={}", buildScheduleParam.getEndFrequency());
+			}
+		} else if (OaConstant.REPETITIONFREQUENCY_MONTH.equals(buildScheduleParam.getRepetitionFrequency())) {// 每月
+
+			if (OaConstant.ENDFREQUENCY_NEVER.equals(buildScheduleParam.getEndFrequency())) {// 永不
+
+				beginTime = buildScheduleParam.getBeginTime();
+				endTime = DateUtil.addYear(beginTime, OaConstant.SCHEDULE_YEAR);
+				times = DateUtil.reductMonth(beginTime, endTime) + 1;// 此算法是按时期间隔计算的，实际是包头尾日期
+				repetitionResult = "每月";
+
+			} else if (OaConstant.ENDFREQUENCY_TIMES.equals(buildScheduleParam.getEndFrequency())) {// 次数
+
+				times = buildScheduleParam.getEndFrequencyNum();
+				repetitionResult = "每月 共" + times + "次";
+
+			} else if (OaConstant.ENDFREQUENCY_DATE.equals(buildScheduleParam.getEndFrequency())) {// 日期
+
+				beginTime = buildScheduleParam.getBeginTime();
+				endTime = buildScheduleParam.getEndFrequencyTime();
+				times = DateUtil.reductMonth(beginTime, endTime) + 1;// 此算法是按时期间隔计算的，实际是包头尾日期
+				repetitionResult = "每月 截止到" + endTime + "";
+
+			} else {
+				logger.info("结束类型参数传入错误=={}", buildScheduleParam.getEndFrequency());
+			}
+		} else if (OaConstant.REPETITIONFREQUENCY_YEAR.equals(buildScheduleParam.getRepetitionFrequency())) {// 每年
+
+			if (OaConstant.ENDFREQUENCY_NEVER.equals(buildScheduleParam.getEndFrequency())) {// 永不
+
+				beginTime = buildScheduleParam.getBeginTime();
+				endTime = DateUtil.addYear(beginTime, OaConstant.SCHEDULE_YEAR);
+				times = DateUtil.reductYear(beginTime, endTime) + 1;// 此算法是按时期间隔计算的，实际是包头尾日期
+				repetitionResult = "每年";
+
+			} else if (OaConstant.ENDFREQUENCY_TIMES.equals(buildScheduleParam.getEndFrequency())) {// 次数
+
+				times = buildScheduleParam.getEndFrequencyNum();
+				repetitionResult = "每年 共" + times + "次";
+
+			} else if (OaConstant.ENDFREQUENCY_DATE.equals(buildScheduleParam.getEndFrequency())) {// 日期
+
+				beginTime = buildScheduleParam.getBeginTime();
+				endTime = buildScheduleParam.getEndFrequencyTime();
+				times = DateUtil.reductYear(beginTime, endTime) + 1;// 此算法是按时期间隔计算的，实际是包头尾日期
+				repetitionResult = "每年 截止到" + endTime + "";
+
+			} else {
+				logger.info("结束类型参数传入错误=={}", buildScheduleParam.getEndFrequency());
+			}
+		} else {
+			logger.info("重复类型参数传入错误=={}", buildScheduleParam.getRepetitionFrequency());
+		}
+
+		map.put("repetitionResult", repetitionResult);
+		map.put("times", times);
+		return map;
+	}
+	
+	
+	public static <T> T json2obj(String json, Class<T> tclass) {
+		return JacksonUtils.fromJson(json, tclass);
+	}
+
+}

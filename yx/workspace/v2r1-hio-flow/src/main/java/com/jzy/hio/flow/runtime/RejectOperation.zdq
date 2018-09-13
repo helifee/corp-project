@@ -1,0 +1,730 @@
+package com.jzy.hio.flow.runtime;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import javax.servlet.http.HttpServletRequest;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.BeanUtils;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.exception.ApiException;
+import com.jzy.hio.flow.entity.FlowCopy;
+import com.jzy.hio.flow.entity.FlowInstance;
+import com.jzy.hio.flow.entity.FlowInstanceAc;
+import com.jzy.hio.flow.entity.FlowInstanceApprovalRecord;
+import com.jzy.hio.flow.entity.FlowVariables;
+import com.jzy.hio.flow.entity.dto.FlowInstanceInfo;
+import com.jzy.hio.flow.entity.enums.FlowCopyType;
+import com.jzy.hio.flow.entity.enums.FlowNodeType;
+import com.jzy.hio.flow.entity.enums.FlowStateEnum;
+import com.jzy.hio.flow.entity.enums.InstanceAcSource;
+import com.jzy.hio.flow.entity.enums.InstanceApproverState;
+import com.jzy.hio.flow.entity.enums.InstanceNodeState;
+import com.jzy.hio.flow.entity.enums.OperationType;
+import com.jzy.hio.flow.entity.param.FlowRejectParam;
+import com.jzy.hio.flow.utils.FlowConstants;
+import com.jzy.hio.platform.message.param.MessageEnum;
+import com.jzy.hio.utils.LoginUser;
+
+/**
+ * 流程驳回
+ * 
+ * @author daoqi
+ *
+ */
+public class RejectOperation extends AbstractBaseOperation {
+
+	@Override
+	public OperateType getType() {
+
+		return OperateType.REJECT;
+	}
+
+	@Override
+	public String rejectAction(FlowRejectParam flowRejectParam) {
+
+		try {
+
+			logger.info("------进入流程拒绝----当前实例id: {}", flowRejectParam.getInstanceId());
+			// 需要加锁的代码
+			if (this.getService().getRedisLock().lock(flowRejectParam.getInstanceId())) {
+				LoginUser loginUser = this.getService().getLoginUser();
+				getTengId(loginUser);
+				boolean isExternal = flowRejectParam.isExternal();
+				if (isExternal) {
+					HttpServletRequest request = ((ServletRequestAttributes) RequestContextHolder
+							.getRequestAttributes()).getRequest();
+					String tendId = request.getHeader(BaseConstants.HTTP_PARAM_TENDID);
+					loginUser.setTendId(tendId);
+				}
+				String desc = flowRejectParam.getDesc();
+				if (StringUtils.isNotEmpty(desc)) {
+					if (desc.length() > 200) {
+						logger.error("审批意见过长");
+						throw new ApiException(FlowConstants.FLOW_APPROVAL_DESC_VERY_LONG.getMessage(),
+								FlowConstants.FLOW_APPROVAL_DESC_VERY_LONG.getStatus());
+					}
+				}
+
+				int state = flowRejectParam.getState();
+				if (state > OperationType.RETURN_THE_INITIATOR.getState()) {
+					logger.error(FlowConstants.FLOW_REJECT_STATE_NOT_EXIST.getMessage());
+
+					throw new ApiException(FlowConstants.FLOW_REJECT_STATE_NOT_EXIST.getMessage(),
+							FlowConstants.FLOW_REJECT_STATE_NOT_EXIST.getStatus());
+				}
+
+				FlowInstanceInfo instanceInfo = this.getService().getFlowInstanceDao()
+						.getInstanceInfoById(flowRejectParam.getInstanceId());
+
+				if (instanceInfo == null) {
+					logger.error("---传入实例Id不正确----");
+					throw new ApiException(FlowConstants.FLOW_NOT_EXIST.getMessage(),
+							FlowConstants.FLOW_NOT_EXIST.getStatus());
+				}
+
+				if (instanceInfo.getInstanceState() != FlowStateEnum.RUN.getState()) {
+					logger.error("当前流程状态已经不是运行时");
+					throw new ApiException(FlowConstants.FLOW_STATE_CHANGE.getMessage(),
+							FlowConstants.FLOW_STATE_CHANGE.getStatus());
+				}
+
+				String instanceId = flowRejectParam.getInstanceId();
+				String currentInstanceAcId = flowRejectParam.getInstanceAcId();
+
+				FlowVariables flowVariables = getFlowVariables(loginUser, instanceId, instanceInfo, true);
+				flowVariables.setRejectOperation(true);
+				FlowInstanceAc currentInstanceAc = getCurrentInstanceAc(flowVariables, currentInstanceAcId);
+				// 判断当前环节是否已经完成
+				if (currentInstanceAc == null
+						|| currentInstanceAc.getState() > InstanceNodeState.HAVE_ARRIV.getState()) {
+					logger.error("当前审批环节审批已经处理");
+					throw new ApiException(FlowConstants.FLOW_ALREADY_PROCESSED.getMessage(),
+							FlowConstants.FLOW_ALREADY_PROCESSED.getStatus());
+				}
+
+				boolean isAdmin = this.getService().isSuper();
+				if (!isAdmin && !this.getService().isRolePermission(BaseConstants.MYSQL_MENU_CODE_FLOW_MANAGE)) {
+					isAdmin = false;
+				}
+				FlowInstanceApprovalRecord flowInstanceApprover = new FlowInstanceApprovalRecord();
+				flowInstanceApprover.setFlowInstanceId(instanceId);
+				flowInstanceApprover.setState(InstanceApproverState.NO_APPROVAL.getState());
+				flowInstanceApprover.setDelflag(0);
+				List<FlowInstanceApprovalRecord> approverList = this.getService().getFlowInstanceApprovalRecordDao()
+						.select(flowInstanceApprover);
+				if ((!isAdmin && !this.getService().isRolePermission(BaseConstants.MYSQL_MENU_CODE_FLOW_MANAGE))
+						|| (state == OperationType.REJECT_UPPER_LEVEL.getState()
+								&& state == OperationType.REJECT_TO_THE_INITIATOR.getState())) {
+					List<FlowInstanceApprovalRecord> collect = approverList.stream()
+							.filter(approval -> approval.getApprovalUser().equals(loginUser.getUserId()))
+							.collect(Collectors.toList());
+
+					if (CollectionUtils.isEmpty(collect)) {
+						logger.error(FlowConstants.FLOW_RECORD_NOT_EXIST.getMessage());
+
+						throw new ApiException(FlowConstants.FLOW_RECORD_NOT_EXIST.getMessage(),
+								FlowConstants.FLOW_RECORD_NOT_EXIST.getStatus());
+					}
+				}
+
+				// 判断 驳回到上一级 或者退回到上一级 是否是开始 如果是开始 则 调用上面方法
+				String preNodeIds = currentInstanceAc.getPreNodeIds();
+				boolean isStartNode = judgementIsStartNode(preNodeIds, flowVariables.getInstanceAcList());
+
+				// 退回到发起人
+				if (!isStartNode && (flowRejectParam.getState() == OperationType.RETURN_THE_INITIATOR.getState()
+						// 驳回到发起人
+						|| flowRejectParam.getState() == OperationType.REJECT_TO_THE_INITIATOR.getState())) {
+					isStartNode = true;
+				}
+				// 修改状态审批人状态 和环节状态
+				updateApproverInfo(flowRejectParam, flowVariables, state, isStartNode, approverList);
+
+				/*
+				 * // 驳回 发送消息 acDeleteNoApprovalAc(instanceInfo, currentInstanceAcId,
+				 * flowVariables, isStartNode, isAdminOperation, approverList, state,
+				 * instanceAcIds);
+				 */
+				// 退回到发起人
+				if (isStartNode) {
+					logger.info("退回 或者驳回到发起 , 流程驳回状态:{}", flowRejectParam.getState());
+					disposeReject(flowVariables, flowRejectParam);
+				} else {
+					logger.info("驳回到上级, 流程驳回状态:{}", flowRejectParam.getState());
+					/**
+					 * ======= 驳回到上级 ======= 当前阶段改成驳回 获取到上一级的实例Ids
+					 *
+					 */
+					Set<String> changeInstanceAcSet = new HashSet<>();
+
+					String currentAcId = currentInstanceAc.getId();
+
+					String currentAcPreIds = currentInstanceAc.getPreNodeIds();
+					String[] split = currentAcPreIds.split(DELIMITER);
+					Map<String, Integer> joinCountMap = new HashMap<>(10);
+					// 筛选出pre环节 不包含当前执行的所有环节
+					for (String preInstanceAcId : split) {
+
+						filterAc(flowVariables, changeInstanceAcSet, preInstanceAcId, joinCountMap);
+					}
+
+					List<String> executeInstanceAcIds = new ArrayList<>();
+					// 克隆所有需要改动的环节 并点亮环节
+					Map<String, FlowInstanceAc> cloneInstanceAc = cloneInstanceAc(flowVariables, changeInstanceAcSet,
+							currentAcId, executeInstanceAcIds);
+
+					// 环节关联 并 查出需要变动的pre next 环节 节点
+					List<FlowInstanceAc> updateAroundNodeIdList = relevanceAc(flowVariables, cloneInstanceAc,
+							joinCountMap, currentAcId);
+					updateAroundNodeIdList = updateAroundNodeIdList.stream().distinct().collect(Collectors.toList());
+
+					// 保存 新的 环节 和新的 网关 修改左右变动的pre next 并返回 要执行的环节ID
+					String newNextNodeIds = insertCloneInstanceAcReturnIds(cloneInstanceAc, updateAroundNodeIdList,
+							flowVariables);
+
+					// 新增加签或者 自由流 审批记录
+					if (CollectionUtils.isNotEmpty(executeInstanceAcIds)) {
+						insertCloneInstanceApprover(executeInstanceAcIds, flowVariables.getInstanceId(),
+								cloneInstanceAc);
+					}
+
+					currentInstanceAc.setNextNodeIds(newNextNodeIds);
+					flowVariables.setCurrentInstranceAc(currentInstanceAc);
+
+					// 计算审批人
+					setNextApprover(flowVariables);
+
+					this.getService().getFlowInstanceDao().updateInstanceUpdateDate(new Date(),
+							flowVariables.getInstanceId());
+					insertApprovalInfo(flowVariables);
+				}
+
+			}
+
+		} catch (InterruptedException e) {
+			logger.error("流程拒绝异常: {}", e.getMessage());
+			e.printStackTrace();
+		} finally {
+			this.getService().getRedisLock().unlock(flowRejectParam.getInstanceId());
+		}
+		return SUCCESS;
+	}
+
+	private void updateApproverInfo(FlowRejectParam flowRejectParam, FlowVariables flowVariables, int approvalState,
+			boolean isStartNode, List<FlowInstanceApprovalRecord> approverList) {
+		FlowInstanceAc currentInstranceAc = flowVariables.getCurrentInstranceAc();
+
+		int updateAcState = 0;
+		int updateApprovalState = 0;
+		boolean isAdminOperation = false;
+		if (approvalState == OperationType.RETURN_THE_INITIATOR.getState()
+				|| approvalState == OperationType.RETURN_UPPER_LEVEL.getState()) {
+			updateApprovalState = InstanceApproverState.RETURN.getState();
+			updateAcState = InstanceNodeState.RETURN.getState();
+			isAdminOperation = true;
+		} else {
+			updateApprovalState = InstanceApproverState.REJECT.getState();
+			updateAcState = InstanceNodeState.REJECT.getState();
+		}
+		List<String> userIds = approverList.stream().map(FlowInstanceApprovalRecord::getApprovalUser)
+				.collect(Collectors.toList());
+		flowVariables.setSendType(true);
+		flowVariables.setMsgType(MessageEnum.DEL_MSG.getValue());
+
+		List<String> executeInstanceAc = flowVariables.getInstanceAcList().stream()
+				.filter(instanceAc -> instanceAc.getState() == InstanceNodeState.HAVE_ARRIV.getState())
+				.map(FlowInstanceAc::getId).collect(Collectors.toList());
+		List<String> instanceAcIds = new ArrayList<>();
+		// 退回到发起人
+		if (isStartNode && isAdminOperation) {
+			
+			this.getService().getFlowInstanceAcDao().updateInstanceAcState(flowVariables.getInstanceId(),
+					String.join(DELIMITER, executeInstanceAc), updateAcState, new Date());
+			this.getService().getFlowInstanceApprovalRecordDao().updateRejectState(flowVariables.getInstanceId(),
+					updateApprovalState, flowRejectParam.getDesc(), flowVariables.getCurrentUser().getUserId(),
+					isAdminOperation, String.join(DELIMITER, executeInstanceAc), new Date());
+			
+			newMessage(userIds, flowVariables);
+			// 驳回到发起人
+		} else if (isStartNode && !isAdminOperation) {
+
+			userIds.remove(flowVariables.getCurrentUser().getUserId());
+			newMessage(userIds, flowVariables);
+
+			Set<String> acIds = new HashSet<>();
+			String preNodeId = currentInstranceAc.getPreNodeIds();
+			FlowInstanceAc preInstanceAc = getCurrentInstanceAc(flowVariables, preNodeId);
+			String[] executeInstanceAcIds = preInstanceAc.getNextNodeIds().split(DELIMITER);
+			for (String instanceAcId : executeInstanceAcIds) {
+				FlowInstanceAc instanceAc = getCurrentInstanceAc(flowVariables, instanceAcId);
+				if (instanceAc.getState() == InstanceNodeState.HAVE_ARRIV.getState()) {
+					acIds.add(instanceAc.getId());
+				}
+			}
+
+			this.getService().getFlowInstanceAcDao().updateInstanceAcState(flowVariables.getInstanceId(),
+					currentInstranceAc.getId(), updateAcState, new Date());
+			this.getService().getFlowInstanceApprovalRecordDao().updateRejectState(flowVariables.getInstanceId(),
+					updateApprovalState, flowRejectParam.getDesc(), flowVariables.getCurrentUser().getUserId(),
+					isAdminOperation, currentInstranceAc.getId(), new Date());
+
+			executeInstanceAc.remove(currentInstranceAc.getId());
+
+			if (CollectionUtils.isNotEmpty(executeInstanceAc)) {
+
+				// 删除驳回 未审环节
+				this.getService().getFlowInstanceAcDao().deleteBatchPseudoAllAcById(executeInstanceAc,
+						flowVariables.getInstanceId(), new Date(), isStartNode);
+			}
+			// 如果是会签环节 且还有其他人未审 需要把未审的删除掉
+			List<FlowInstanceApprovalRecord> currentApprover = approverList.stream()
+					.filter(approver -> approver.getFlowInstanceAcId().equals(currentInstranceAc.getId())
+							&& !approver.getApprovalUser().equals(flowVariables.getCurrentUser().getUserId()))
+					.collect(Collectors.toList());
+			if (CollectionUtils.isNotEmpty(currentApprover)) {
+				executeInstanceAc.add(currentInstranceAc.getId());
+			}
+			// 删除没审批的记录
+			this.getService().getFlowInstanceApprovalRecordDao().deleteBatchPseudoAllAcApproverById(executeInstanceAc,
+					flowVariables.getInstanceId(), new Date(), isStartNode);
+
+			// 退回到上一级 查出此环节所有执行的节点
+		} else if (!isStartNode && isAdminOperation) {
+
+			String preNodeId = currentInstranceAc.getPreNodeIds();
+			FlowInstanceAc preInstanceAc = getCurrentInstanceAc(flowVariables, preNodeId);
+			String[] split = preInstanceAc.getNextNodeIds().split(DELIMITER);
+			instanceAcIds.addAll(Arrays.asList(split));
+
+			// sql中只删除环节已到达和 未审批的数据
+			this.getService().getFlowInstanceAcDao().updateInstanceAcState(flowVariables.getInstanceId(),
+					String.join(DELIMITER, instanceAcIds), updateAcState, new Date());
+			this.getService().getFlowInstanceApprovalRecordDao().updateRejectState(flowVariables.getInstanceId(),
+					updateApprovalState, flowRejectParam.getDesc(), flowVariables.getCurrentUser().getUserId(),
+					isAdminOperation, String.join(DELIMITER, instanceAcIds), new Date());
+			
+			// 查找当前执行的所有环节还未审的审批 删除消息
+			List<String> userIdList = approverList.stream()
+					.filter(approverInfo -> instanceAcIds.contains(approverInfo.getFlowInstanceAcId()))
+					.map(FlowInstanceApprovalRecord::getApprovalUser).collect(Collectors.toList());
+			newMessage(userIdList, flowVariables);
+			// 驳回上一级
+		} else {
+ 
+			this.getService().getFlowInstanceAcDao().updateInstanceAcState(flowVariables.getInstanceId(),
+					currentInstranceAc.getId(), updateAcState, new Date());
+			this.getService().getFlowInstanceApprovalRecordDao().updateRejectState(flowVariables.getInstanceId(),
+					updateApprovalState, flowRejectParam.getDesc(), flowVariables.getCurrentUser().getUserId(),
+					isAdminOperation, currentInstranceAc.getId(), new Date());
+
+			String preNodeId = currentInstranceAc.getPreNodeIds();
+			FlowInstanceAc preInstanceAc = getCurrentInstanceAc(flowVariables, preNodeId);
+			String[] split = preInstanceAc.getNextNodeIds().split(DELIMITER);
+			instanceAcIds.addAll(Arrays.asList(split));
+			instanceAcIds.remove(currentInstranceAc.getId());
+
+			// sql中只删除环节已到达和 未审批的数据
+			if (CollectionUtils.isNotEmpty(instanceAcIds)) {
+				// 删除驳回 未审环节
+				this.getService().getFlowInstanceAcDao().deleteBatchPseudoAllAcById(instanceAcIds,
+						flowVariables.getInstanceId(), new Date(), isStartNode);
+			}
+			// 如果是会签环节 且还有其他人未审 需要把未审的删除掉
+			List<FlowInstanceApprovalRecord> currentApprover = approverList.stream()
+					.filter(approver -> approver.getFlowInstanceAcId().equals(currentInstranceAc.getId())
+							&& !approver.getApprovalUser().equals(flowVariables.getCurrentUser().getUserId()))
+					.collect(Collectors.toList());
+			if (CollectionUtils.isNotEmpty(currentApprover)) {
+				instanceAcIds.add(currentInstranceAc.getId());
+			}
+			if (CollectionUtils.isNotEmpty(instanceAcIds)) {
+				// 删除没审批的记录
+				this.getService().getFlowInstanceApprovalRecordDao().deleteBatchPseudoAllAcApproverById(instanceAcIds,
+						flowVariables.getInstanceId(), new Date(), isStartNode);
+				// 查找当前执行的所有环节还未审的审批 删除消息
+				List<String> userIdList = approverList.stream()
+						.filter(approverInfo -> instanceAcIds.contains(approverInfo.getFlowInstanceAcId()))
+						.map(FlowInstanceApprovalRecord::getApprovalUser).collect(Collectors.toList());
+				userIdList.remove(flowVariables.getCurrentUser().getUserId());
+				newMessage(userIdList, flowVariables);
+			}
+
+		}
+
+		flowVariables.setSendType(false);
+	}
+
+	/**
+	 * 判断是否是开始节点
+	 *
+	 * @param preNodeIds
+	 * @param instanceAcList
+	 * @return
+	 */
+
+	private boolean judgementIsStartNode(String preNodeIds, List<FlowInstanceAc> instanceAcList) {
+		String[] acIds = preNodeIds.split(DELIMITER);
+		for (String instanceAcId : acIds) {
+			for (FlowInstanceAc instanceAc : instanceAcList) {
+				if (instanceAc.getId().equals(instanceAcId)) {
+					if (instanceAc.getNodeType() == FlowNodeType.START.getType()) {
+						return true;
+					} else if (instanceAc.getNodeType() == FlowNodeType.JOIN.getType()) {
+						String[] preIds = instanceAc.getPreNodeIds().split(DELIMITER);
+						if (preIds.length == 1) {
+							return judgementIsStartNode(preIds[0], instanceAcList);
+						}
+						return false;
+					} else {
+						return false;
+					}
+				}
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * 主要处理 如果上一级是 模板开始节点
+	 * 
+	 * @param flowVariables
+	 * @param flowRejectParam
+	 */
+	private void disposeReject(FlowVariables flowVariables, FlowRejectParam flowRejectParam) {
+
+		int instanceState = flowRejectParam.getState();
+		if (instanceState == OperationType.REJECT_UPPER_LEVEL.getState()
+				|| instanceState == OperationType.REJECT_TO_THE_INITIATOR.getState()) {
+			instanceState = FlowStateEnum.REJECT.getState();
+		} else {
+			instanceState = FlowStateEnum.RETURN.getState();
+			// 删除非表单上的抄送
+			FlowCopy flowCopy = new FlowCopy();
+			flowCopy.setSource(FlowCopyType.FORM_COPY.getType());
+			this.getService().getFlowCopyDao().deleteCopy(flowCopy);
+		}
+
+		// 终止所有 操作
+		FlowInstance flowInstance = new FlowInstance();
+		flowInstance.setUpdateDate(new Date());
+		flowInstance.setId(flowVariables.getInstanceId());
+		flowInstance.setState(instanceState);
+		flowInstance.setUpdatePersonId(flowVariables.getCurrentUser().getUserId());
+		this.getService().getFlowInstanceDao().updateByPrimaryKeySelective(flowInstance);
+		String instanceStartPersonId = flowVariables.getInstanceStartPerson();
+
+		flowVariables.setMsgType(MessageEnum.TOREAD.getValue());
+		this.newMessage(instanceStartPersonId, flowVariables);
+
+		sendMessages(flowVariables.getMessages());
+		noticeInstanceStatus(instanceState, flowVariables);
+	}
+
+	/**
+	 * 递归获取pre参与所有环节
+	 * 
+	 * @param flowVariables
+	 * @param changeInstanceAcSet
+	 * @param currentPreId
+	 * @param joinCountMap
+	 */
+	private void filterAc(FlowVariables flowVariables, Set<String> changeInstanceAcSet, String currentPreId,
+			Map<String, Integer> joinCountMap) {
+
+		FlowInstanceAc currentPreAc = getCurrentInstanceAc(flowVariables, currentPreId);
+		changeInstanceAcSet.add(currentPreAc.getId());
+		if (currentPreAc.getNodeType() == FlowNodeType.JOIN.getType()) {
+			String[] split = currentPreAc.getPreNodeIds().split(DELIMITER);
+
+			for (String preId : split) {
+
+				FlowInstanceAc preInstanceAc = getCurrentInstanceAc(flowVariables, preId);
+				if (preInstanceAc.getNextNodeIds().split(DELIMITER).length == 1) {
+					filterAc(flowVariables, changeInstanceAcSet, preId, joinCountMap);
+				} else {
+					// 解决聚合网关的pre是条件网关
+					Integer count = joinCountMap.get(currentPreAc.getId());
+					if (count == null) {
+						joinCountMap.put(currentPreAc.getId(), 1);
+					} else {
+						count += 1;
+					}
+					changeInstanceAcSet.add(preId);
+				}
+			}
+		}
+	}
+
+	/**
+	 * clone 新的审批记录
+	 * 
+	 * @param executeInstanceAcIds
+	 * @param instanceId
+	 * @param cloneInstanceAc
+	 */
+	private void insertCloneInstanceApprover(List<String> executeInstanceAcIds, String instanceId,
+			Map<String, FlowInstanceAc> cloneInstanceAc) {
+
+		// 查询所有环节审批人
+		List<FlowInstanceApprovalRecord> list = this.getService().getFlowInstanceApprovalRecordDao()
+				.queryInstanceApprover(String.join(DELIMITER, executeInstanceAcIds), instanceId);
+		List<FlowInstanceApprovalRecord> newApprover = new ArrayList<>();
+		for (FlowInstanceApprovalRecord flowInstanceApprovalRecord : list) {
+			FlowInstanceApprovalRecord newApproval = new FlowInstanceApprovalRecord();
+			BeanUtils.copyProperties(flowInstanceApprovalRecord, newApproval);
+			Date date = new Date();
+			newApproval.setCreateDate(date);
+			newApproval.setState(InstanceApproverState.WAIT_APPROVAL.getState());
+			FlowInstanceAc flowInstanceAc = cloneInstanceAc.get(newApproval.getFlowInstanceAcId());
+			String newInstanceAcId = flowInstanceAc.getId();
+			newApproval.setFlowInstanceAcId(newInstanceAcId);
+			newApproval.setId(Base.generatePk(FlowInstanceApprovalRecord.class));
+			newApprover.add(newApproval);
+		}
+		this.getService().getFlowInstanceApprovalRecordDao().insertList(newApprover);
+	}
+
+	/**
+	 * 插入克隆实例环节 并返回实例环节ids
+	 * 
+	 * @param cloneInstanceAc
+	 * @param updateAroundNodeIdList
+	 * @param flowVariables
+	 * @return
+	 */
+	private String insertCloneInstanceAcReturnIds(Map<String, FlowInstanceAc> cloneInstanceAc,
+			List<FlowInstanceAc> updateAroundNodeIdList, FlowVariables flowVariables) {
+
+		List<FlowInstanceAc> list = new ArrayList<>();
+		cloneInstanceAc.forEach((k, v) -> list.add(v));
+
+		this.getService().getFlowInstanceAcDao().insertList(list);
+		this.getService().getFlowInstanceAcDao().updateAroundNodeIdList(updateAroundNodeIdList);
+
+		flowVariables.getInstanceAcList().addAll(list);
+		flowVariables.getInstanceAcList().addAll(updateAroundNodeIdList);
+		List<String> ids = list.stream()
+				.filter(instanceAc -> instanceAc.getState() == InstanceNodeState.HAVE_ARRIV.getState())
+				.map(FlowInstanceAc::getId).collect(Collectors.toList());
+
+		return String.join(DELIMITER, ids);
+	}
+
+	/**
+	 * 关联环节
+	 *
+	 * @param flowVariables
+	 * @param cloneInstanceAc
+	 * @param joinCountMap
+	 * @param currentAcId
+	 */
+	private List<FlowInstanceAc> relevanceAc(FlowVariables flowVariables, Map<String, FlowInstanceAc> cloneInstanceAc,
+			Map<String, Integer> joinCountMap, String currentAcId) {
+		Iterator<Entry<String, FlowInstanceAc>> iterator = cloneInstanceAc.entrySet().iterator();
+		List<FlowInstanceAc> updateAroundNodeIdList = new ArrayList<>();
+		while (iterator.hasNext()) {
+
+			Entry<String, FlowInstanceAc> cloneNext = iterator.next();
+			String oldAcId = cloneNext.getKey();
+			FlowInstanceAc newInstanceAc = cloneNext.getValue();
+			Integer leftCount = joinCountMap.get(oldAcId);
+
+			if (leftCount != null) {
+				newInstanceAc.setLeftNodeCount(newInstanceAc.getPreNodeIds().split(DELIMITER).length - leftCount);
+			}
+
+			// 关联pre环节的 nextIds
+			StringBuilder newPreId = new StringBuilder();
+			String preNodeIds = newInstanceAc.getPreNodeIds();
+			if (StringUtils.isNotBlank(preNodeIds)) {
+				String[] preIds = preNodeIds.split(DELIMITER);
+				for (String preId : preIds) {
+					FlowInstanceAc cloneFlowInstanceAc = cloneInstanceAc.get(preId);
+
+					if (cloneFlowInstanceAc == null) {
+						FlowInstanceAc instaneAc = getCurrentInstanceAc(flowVariables, preId);
+						String nextNodeIds = instaneAc.getNextNodeIds();
+						String[] oldNextId = nextNodeIds.split(DELIMITER);
+						for (int i = 0; i < oldNextId.length; i++) {
+							String nextAcId = oldNextId[i];
+							if (nextAcId.equals(oldAcId)) {
+								oldNextId[i] = newInstanceAc.getId();
+							}
+						}
+
+						if (instaneAc.getNodeType() == FlowNodeType.JOIN.getType()) {
+
+							instaneAc.setLeftNodeCount(instaneAc.getPreNodeIds().split(DELIMITER).length);
+						}
+
+						instaneAc.setUpdateDate(new Date());
+						instaneAc.setNextNodeIds(String.join(DELIMITER, oldNextId));
+						updateAroundNodeIdList.add(instaneAc);
+					} else {
+						newPreId.append(cloneFlowInstanceAc.getId() + DELIMITER);
+					}
+				}
+				if (newPreId != null && newPreId.length() > 0) {
+					newInstanceAc.setPreNodeIds(newPreId.substring(0, newPreId.length() - 1));
+				}
+			}
+			// 关联next
+			StringBuilder newNextId = new StringBuilder();
+			String nextNodeIds = newInstanceAc.getNextNodeIds();
+			String[] nextIds = nextNodeIds.split(DELIMITER);
+			for (String nextId : nextIds) {
+				FlowInstanceAc flowInstanceAc = cloneInstanceAc.get(nextId);
+				// 说明是驳回的环节的next环节
+				if (flowInstanceAc == null) {
+					FlowInstanceAc instaneAc = getCurrentInstanceAc(flowVariables, nextId);
+					String preAcIds = instaneAc.getPreNodeIds();
+					String[] oldPreIds = preAcIds.split(DELIMITER);
+					for (int i = 0; i < oldPreIds.length; i++) {
+
+						if (oldPreIds[i].equals(oldAcId)) {
+							oldPreIds[i] = newInstanceAc.getId();
+						}
+					}
+					// 只有一种情况 下一环节是聚合 的情况才会进入 处理下一环节是聚合 且 当前环节的上一环节不是条件网关 且 条件网关有或者没有直接到聚合
+					if (instaneAc.getNodeType() == FlowNodeType.JOIN.getType()) {
+
+						instaneAc.setLeftNodeCount(instaneAc.getPreNodeIds().split(DELIMITER).length);
+						// 修改当前环节 如果是在条件网关的条件上, next节点正好是聚合 pre不是条件网关 修改 leftCount 数量
+						updateNextAcLeftCount(flowVariables, instaneAc, currentAcId);
+					}
+					instaneAc.setUpdateDate(new Date());
+					instaneAc.setPreNodeIds(String.join(DELIMITER, oldPreIds));
+					updateAroundNodeIdList.add(instaneAc);
+				} else {
+					newNextId.append(flowInstanceAc.getId() + DELIMITER);
+				}
+			}
+			if (newNextId != null && newNextId.length() > 0) {
+				newInstanceAc.setNextNodeIds(newNextId.substring(0, newNextId.length() - 1));
+			}
+		}
+		// 如果当前驳回的节点的next是网关聚合
+
+		return updateAroundNodeIdList;
+	}
+
+	/**
+	 * 克隆实例环节
+	 * 
+	 * @param flowVariables
+	 * @param changeInstanceAcSet
+	 * @param currentAcId
+	 * @param executeInstanceAcIds
+	 * @return
+	 */
+	private Map<String, FlowInstanceAc> cloneInstanceAc(FlowVariables flowVariables, Set<String> changeInstanceAcSet,
+			String currentAcId, List<String> executeInstanceAcIds) {
+		Map<String, FlowInstanceAc> cloneAcMap = new HashMap<>(10);
+
+		// 获取当前阶段执行的所有环节 如果是加签环节
+		FlowInstanceAc currentInstanceAc = getCurrentInstanceAc(flowVariables, currentAcId);
+
+		for (String instanceAcId : changeInstanceAcSet) {
+
+			FlowInstanceAc instanceAc = getCurrentInstanceAc(flowVariables, instanceAcId);
+			if (instanceAc.getNodeType() == FlowNodeType.PROCESS.getType()
+					&& instanceAc.getSource() != InstanceAcSource.TEMPLATE_SOURCE.getType()) {
+				executeInstanceAcIds.add(instanceAc.getId());
+			}
+			FlowInstanceAc flowInstanceAc = new FlowInstanceAc();
+			BeanUtils.copyProperties(instanceAc, flowInstanceAc);
+			flowInstanceAc.setId(Base.generatePk(FlowInstanceAc.class));
+			Date date = new Date();
+			flowInstanceAc.setCreateDate(date);
+			flowInstanceAc.setUpdateDate(date);
+			flowInstanceAc.setNoSkip(FlowConstants.FLOW_NO_SKIP);
+			if (flowInstanceAc.getNodeType() == FlowNodeType.JOIN.getType()) {
+				flowInstanceAc.setLeftNodeCount(flowInstanceAc.getPreNodeIds().split(DELIMITER).length);
+				flowInstanceAc.setState(InstanceNodeState.NOT_THROUGH.getState());
+			} else if (instanceAc.getNodeType() == FlowNodeType.START.getType()) {
+				flowInstanceAc.setState(InstanceNodeState.NOT_THROUGH.getState());
+			} else {
+				flowInstanceAc.setState(InstanceNodeState.HAVE_ARRIV.getState());
+			}
+			cloneAcMap.put(instanceAcId, flowInstanceAc);
+		}
+
+		if (currentInstanceAc.getPreNodeIds().split(DELIMITER).length == 1) {
+			FlowInstanceAc preInstanceAc = getCurrentInstanceAc(flowVariables, currentInstanceAc.getPreNodeIds());
+
+			// 长度大于1 说明 条件网关执行多条
+			String[] nodeIds = preInstanceAc.getNextNodeIds().split(DELIMITER);
+			for (int i = 0; i < nodeIds.length; i++) {
+
+				String nodeId = nodeIds[i];
+				FlowInstanceAc instanceAc = getCurrentInstanceAc(flowVariables, nodeId);
+				if (instanceAc.getSource() != InstanceAcSource.TEMPLATE_SOURCE.getType()) {
+					executeInstanceAcIds.add(instanceAc.getId());
+				}
+				FlowInstanceAc flowInstanceAc = new FlowInstanceAc();
+				BeanUtils.copyProperties(instanceAc, flowInstanceAc);
+				flowInstanceAc.setId(Base.generatePk(FlowInstanceAc.class));
+				Date date = new Date();
+				flowInstanceAc.setCreateDate(date);
+				flowInstanceAc.setUpdateDate(date);
+				flowInstanceAc.setNoSkip(FlowConstants.FLOW_NO_SKIP);
+				flowInstanceAc.setState(InstanceNodeState.NOT_THROUGH.getState());
+				cloneAcMap.put(nodeId, flowInstanceAc);
+			}
+		}
+
+		return cloneAcMap;
+	}
+
+	/**
+	 * 修改聚合网关leftCount
+	 * 
+	 * @param flowVariables
+	 * @param updateAroundNodeIdList
+	 * @param currentAcId
+	 * @param changeInstanceAcSet
+	 */
+	private void updateNextAcLeftCount(FlowVariables flowVariables, FlowInstanceAc joinAc, String currentAcId) {
+		FlowInstanceAc currentInstanceAc = getCurrentInstanceAc(flowVariables, currentAcId);
+		if (currentInstanceAc.getPreNodeIds().split(DELIMITER).length == 1) {
+			FlowInstanceAc currentPreInstanceAc = getCurrentInstanceAc(flowVariables,
+					currentInstanceAc.getPreNodeIds());
+
+			String[] split = joinAc.getPreNodeIds().split(DELIMITER);
+			// 确定当前环节的pre环节 不是条件网关
+			if (split.length > 1 && currentPreInstanceAc.getNextNodeIds().split(DELIMITER).length == 1) {
+				int alreadyPassCount = 0;
+				for (String preId : split) {
+					FlowInstanceAc instanceAc = getCurrentInstanceAc(flowVariables, preId);
+					if (instanceAc.getState() == InstanceNodeState.PASS.getState()
+							|| instanceAc.getState() == InstanceNodeState.SKIP.getState()) {
+						alreadyPassCount += 1;
+					} else if (instanceAc.getNodeType() == FlowNodeType.START.getType()) {
+						alreadyPassCount += 1;
+					}
+				}
+
+				int resultLeftCount = joinAc.getLeftNodeCount() - alreadyPassCount;
+				joinAc.setLeftNodeCount(resultLeftCount);
+
+			}
+		}
+	}
+
+}

@@ -1,0 +1,166 @@
+package com.jzy.hio.platform.message.service.impl;
+
+import java.sql.Timestamp;
+import java.util.Date;
+import java.util.List;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.amqp.core.AmqpTemplate;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.config.QueueConfig;
+import com.jzy.hio.entity.ImNoticeMsg;
+import com.jzy.hio.entity.ImNoticeMsgTemp;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.platform.message.comm.EasemobAPI;
+import com.jzy.hio.platform.message.comm.MessageConstant;
+import com.jzy.hio.platform.message.comm.OrgInfo;
+import com.jzy.hio.platform.message.comm.ResponseHandler;
+import com.jzy.hio.platform.message.comm.TokenUtil;
+import com.jzy.hio.platform.message.param.IMToUserParam;
+import com.jzy.hio.platform.message.param.ImNoticeMsgSendParam;
+import com.jzy.hio.platform.message.param.ImNoticeMsgsParam;
+import com.jzy.hio.platform.message.service.ImNoticeMsgService;
+import com.jzy.hio.platform.message.service.ImNoticeMsgTempService;
+import com.jzy.hio.platform.message.service.MessageService;
+
+import io.swagger.client.ApiException;
+import io.swagger.client.api.MessagesApi;
+import io.swagger.client.model.Msg;
+
+@Service
+public class MessageServiceImpl implements MessageService  {
+    private static Logger logger = LoggerFactory.getLogger(MessageServiceImpl.class);
+
+    private ResponseHandler responseHandler = new ResponseHandler();
+
+    private MessagesApi api = new MessagesApi();
+
+    @Autowired
+    private AmqpTemplate rabbitTemplate;
+
+    @Autowired
+    ImNoticeMsgService imNoticeMsgService;
+
+    @Autowired
+    ImNoticeMsgTempService imNoticeMsgTempService;
+
+    @Autowired
+    QueueConfig queueConfig;
+
+    /**
+     * 消息发送调用环信服务
+     * @param payload  消息体
+     * @return
+     */
+    @Override
+    public Object sendMessage( Object payload) {
+
+        return responseHandler.handle(new EasemobAPI() {
+            @Override
+            public Object invokeEasemobAPI() throws ApiException {
+                return api.orgNameAppNameMessagesPost(OrgInfo.ORG_NAME,OrgInfo.APP_NAME, TokenUtil.getAccessToken(), (Msg) payload);
+            }
+        });
+    }
+
+    /**
+     * 发送消息 调用mq服务
+     * @param imNoticeMsg
+     * @return
+     */
+//    @Override
+//    public Object sendMessage(ImNoticeMsg imNoticeMsg) {
+//        imNoticeMsg.setSendDate(new Timestamp(new Date().getTime()));//发送消息时间
+//        logger.info("发送消息 imNoticeMsg: "+imNoticeMsg);
+//        imNoticeMsg.setId(imNoticeMsgService.generatePk());
+//        imNoticeMsg.setStatus(MessageConstant.SEND_MSG_STATUS_ALREADY);
+//        imNoticeMsgService.save(imNoticeMsg);
+//        this.rabbitTemplate.convertAndSend(queueConfig.getImNoticeMsgQueue(), imNoticeMsg);
+//        //发送成功之后，返回消息id
+//        return imNoticeMsg.getId();
+//    }
+
+    /**
+     * 发送消息 调用mq服务
+     * @param imNoticeMsgsParam
+     * @return
+     */
+    public Object sendMessage(ImNoticeMsgsParam imNoticeMsgsParam) {
+        ImNoticeMsg imNoticeMsg = new ImNoticeMsg();
+        BeanUtils.copyProperties(imNoticeMsgsParam, imNoticeMsg);
+        if(imNoticeMsgsParam.getExt() != null){
+            imNoticeMsg.setExt(Base.obj2json(imNoticeMsgsParam.getExt()));
+        }
+        imNoticeMsg.setSendDate(new Timestamp(new Date().getTime()));//发送消息时间
+        logger.info("发送消息 imNoticeMsg: "+imNoticeMsg);
+        imNoticeMsg.setStatus(MessageConstant.SEND_MSG_STATUS_ALREADY);
+        List<IMToUserParam> imToUserParams = imNoticeMsgsParam.getToUsers();
+        if(imToUserParams != null && imToUserParams.size() > 0){
+            for(int i=0;i < imToUserParams.size();i++){
+                imNoticeMsg.setToUserId(imToUserParams.get(i).getToUserId());
+                imNoticeMsg.setToUserPhone(imToUserParams.get(i).getToUserPhone());
+                imNoticeMsg.setToUserName(imToUserParams.get(i).getToUserName());
+                imNoticeMsg.setCreatePersonId(imToUserParams.get(i).getToUserId());
+                imNoticeMsg.setUpdatePersonId(imToUserParams.get(i).getToUserId());
+                imNoticeMsg.setCreatePersonName("");
+                imNoticeMsg.setUpdatePersonName("");
+                imNoticeMsg.setId(imNoticeMsgService.generatePk());
+                imNoticeMsg.setCreateDate(new Date());
+                imNoticeMsgService.save(imNoticeMsg);
+                this.rabbitTemplate.convertAndSend(queueConfig.getImNoticeMsgQueue(), imNoticeMsg);
+            }
+        }
+        logger.info("发送消息成功！");
+        return "suc";
+    }
+    /**
+     * 发送消息失败 重发
+     * @param imNoticeMsgTemp
+     * @return
+     */
+    @Override
+    public Object sendMessage(ImNoticeMsgTemp imNoticeMsgTemp) {
+        this.rabbitTemplate.convertAndSend(queueConfig.getImNoticeMsgTempQueue(), imNoticeMsgTemp);
+         return "ok";
+    }
+
+    @Override
+    public Object sendMessage(ImNoticeMsgSendParam imNoticeMsgSendParam)  throws HioException{
+        try {
+            ImNoticeMsg imNoticeMsg = null;
+            for (int i = 0; i < imNoticeMsgSendParam.getMsgs().size(); i++) {
+                ImNoticeMsgsParam imNoticeMsgsParam = imNoticeMsgSendParam.getMsgs().get(i);
+                imNoticeMsg = new ImNoticeMsg();
+                BeanUtils.copyProperties(imNoticeMsgsParam, imNoticeMsg);
+                List<IMToUserParam> toUsers = imNoticeMsgsParam.getToUsers();
+                if(imNoticeMsgsParam.getExt() != null){
+                    imNoticeMsg.setExt(Base.obj2json(imNoticeMsgsParam.getExt()));
+                }
+                for (int k = 0; k < toUsers.size(); k++) {
+                    IMToUserParam imToUserParam = toUsers.get(k);
+                    imNoticeMsg.setToUserId(imToUserParam.getToUserId());
+                    imNoticeMsg.setToUserName(imToUserParam.getToUserName());
+                    imNoticeMsg.setToUserPhone(imToUserParam.getToUserPhone());
+                    //TODO 统一引用工具类时间 DATE mysql DateTime
+                    imNoticeMsg.setSendDate(new Timestamp(new Date().getTime()));//发送消息时间
+                    imNoticeMsg.setId(imNoticeMsgService.generatePk());
+                    imNoticeMsg.setStatus(MessageConstant.SEND_MSG_STATUS_ALREADY);
+                    imNoticeMsg.setCreatePersonId(imToUserParam.getToUserId());
+                    imNoticeMsg.setUpdatePersonId(imToUserParam.getToUserId());
+                    imNoticeMsg.setCreatePersonName("");
+                    imNoticeMsg.setUpdatePersonName("");
+                    imNoticeMsgService.save(imNoticeMsg);
+                    this.rabbitTemplate.convertAndSend(queueConfig.getImNoticeMsgQueue(), imNoticeMsg);
+                }
+            }
+        } catch (Exception e) {
+            throw new HioException("发送消息失败!"+e.getMessage());
+        }
+        return "suc";
+    }
+}

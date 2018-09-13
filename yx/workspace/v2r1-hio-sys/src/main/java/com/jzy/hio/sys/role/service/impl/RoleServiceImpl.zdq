@@ -1,0 +1,352 @@
+package com.jzy.hio.sys.role.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.annotation.DataSource;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.entity.BaseEntity;
+import com.jzy.hio.base.service.impl.BaseSysServiceImpl;
+import com.jzy.hio.entity.OaSysRole;
+import com.jzy.hio.entity.OaSysRolePermission;
+import com.jzy.hio.entity.OaSysRoleUser;
+import com.jzy.hio.exception.HioMybatisDeleteException;
+import com.jzy.hio.exception.HioMybatisInsertException;
+import com.jzy.hio.exception.HioMybatisUpdateException;
+import com.jzy.hio.redis.service.RedisSetService;
+import com.jzy.hio.sys.SysConstants;
+import com.jzy.hio.sys.message.MessageService;
+import com.jzy.hio.sys.organization.dto.GeneralDto;
+import com.jzy.hio.sys.role.dto.RoleDetailDto;
+import com.jzy.hio.sys.role.dto.RoleDto;
+import com.jzy.hio.sys.role.dto.RolePermissionTreeDto;
+import com.jzy.hio.sys.role.dto.RoleUserDto;
+import com.jzy.hio.sys.role.mapper.RoleMapper;
+import com.jzy.hio.sys.role.param.RoleParam;
+import com.jzy.hio.sys.role.service.RolePermissionService;
+import com.jzy.hio.sys.role.service.RoleService;
+import com.jzy.hio.sys.role.service.RoleUserService;
+import com.jzy.hio.utils.Page;
+
+/**
+ * 组织机构
+ *
+ * @author wt.coffee<br>
+ *         2018年3月8日下午1:02:17
+ */
+@Service
+public class RoleServiceImpl extends BaseSysServiceImpl<OaSysRole> implements RoleService {
+
+	@Autowired
+	private RoleMapper roleMapper;
+	@Autowired
+	private RoleUserService roleUserService;
+	@Autowired
+	private RolePermissionService rolePermissionService;
+	@Autowired
+	private RedisSetService redisSetService;
+	@Autowired
+	private MessageService messageService;
+
+	/**
+	 * 重写父类的方法--去掉前后空格
+	 */
+	@Override
+	public int save(BaseEntity paramT) {
+		OaSysRole role = (OaSysRole) paramT;
+		role.setName(role.getName().trim());
+		if (role.getRemark() != null) {
+			role.setRemark(role.getRemark().trim());
+		}
+		return super.save(role);
+	}
+
+	/**
+	 * 重写父类的方法--去掉前后空格
+	 */
+	@Override
+	public int update(BaseEntity paramT) {
+		OaSysRole role = (OaSysRole) paramT;
+		if (role.getName() != null) {
+			role.setName(role.getName().trim());
+		}
+		if (role.getRemark() != null) {
+			role.setRemark(role.getRemark().trim());
+		}
+		return super.update(role);
+	}
+
+	@Override
+	public String saveAll(RoleParam roleParam) {
+		OaSysRole role = roleParam.getRole();
+		role.setType(BaseConstants.MYSQL_DELFLAG_NORMAL);
+		initBaseEntity(role, true);
+		// 插入角色
+		int result = save(role);
+		if (result == 0) {
+			throw new HioMybatisInsertException();
+		}
+		// 插入角色下的用户
+		if (isNotEmpty(roleParam.getUsers())) {
+			for (OaSysRoleUser user : roleParam.getUsers()) {
+				user.setRoleId(role.getId());
+			}
+			initBaseEntity(roleParam.getUsers(), true);
+			result = roleUserService.saveBatch(roleParam.getUsers());
+			if (result == 0) {
+				throw new HioMybatisInsertException();
+			} else {
+				if (isEquals(role.getId(), BaseConstants.MYSQL_ROLE_SUPERID)) {
+					messageService.noticeSuper(roleParam.getUsers());
+				} else {
+					// 无操作
+				}
+				messageService.noticeAppChanage(getTendId(),roleParam.getUsers());
+			}
+		}
+		// 插入角色的权限
+		if (isNotEmpty(roleParam.getPermissions())) {
+			for (OaSysRolePermission permission : roleParam.getPermissions()) {
+				permission.setRoleId(role.getId());
+			}
+			initBaseEntity(roleParam.getPermissions(), true);
+			result = rolePermissionService.saveBatch(roleParam.getPermissions());
+			if (result == 0) {
+				throw new HioMybatisInsertException();
+			}
+		}
+		// 同步redis
+		redisSetService.setRoleAll(getTendId(), roleParam, null);
+		return role.getId();
+	}
+
+	/**
+	 * 目前只支持修改同一个角色相关的role-roleUser-rolePermission <br>
+	 * 
+	 * 对于roleUser 目前只有新增roleUser操作, 删除在RoleUserController#delete
+	 */
+	@Override
+	public int updateAll(RoleParam roleParam) {
+		OaSysRole role = roleParam.getRole();
+		String roleId = role.getId();
+		int result = 0;
+		result = update(role);
+		if (result == 0) {
+			throw new HioMybatisUpdateException();
+		}
+
+		Map<String, Object> paramMap = new HashMap<>();
+		paramMap.put("roleId", roleId);
+		List<OaSysRoleUser> oldUsers = roleUserService.queryListByExample(paramMap);
+		if (roleParam.getUsers() == null) {
+			// 前端没修改、不处理
+		} else {
+			// 保证roleUser表 userId有正确的roleId
+			for (OaSysRoleUser roleUser : roleParam.getUsers()) {
+				if (isEmpty(roleUser.getRoleId())) {
+					roleUser.setRoleId(roleId);
+				} else {
+					continue;
+				}
+			}
+
+			List<OaSysRoleUser> addUsers = new ArrayList<>();// 新增的
+			List<String> delUsers = new ArrayList<>();// 要删除的
+
+			// 新数据
+			List<OaSysRoleUser> newUsers = roleParam.getUsers();
+
+			for (Iterator<OaSysRoleUser> it = oldUsers.iterator(); it.hasNext();) {
+				OaSysRoleUser old = it.next();
+				if (newUsers.contains(old) == false) {
+					delUsers.add(old.getId());// 待删除
+				}
+			}
+			for (Iterator<OaSysRoleUser> it = newUsers.iterator(); it.hasNext();) {
+				OaSysRoleUser news = it.next();
+				if (oldUsers.contains(news) == false) {
+					addUsers.add(news);// 待新增
+				}
+			}
+
+			logger.info("删除roleUser {}", delUsers);
+			roleUserService.deleteAllObjectByIds(delUsers);
+			// 特别处理 **** 注意需要同步redis
+			for (String roleUserId : delUsers) {
+				redisSetService.deleteRoleUser(getTendId(), roleId, roleUserId);
+			}
+
+			logger.info("新增 roleUser {}", addUsers);
+			roleUserService.saveBatch(addUsers);
+			if (isNotEmpty(addUsers)) {
+				if (isEquals(role.getId(), BaseConstants.MYSQL_ROLE_SUPERID)) {
+					messageService.noticeSuper(addUsers);
+				} else {
+					// 无操作
+				}
+			}
+		}
+		// ********************* 准备更新rolePermission ***********************
+		if (roleParam.getPermissions() == null) {
+			// 前端未修改
+		} else {
+			// 保证roleUser表 userId有记录
+			for (OaSysRolePermission rolePermission : roleParam.getPermissions()) {
+				if (isEmpty(rolePermission.getRoleId())) {
+					rolePermission.setRoleId(roleId);
+				} else {
+					continue;
+				}
+			}
+			paramMap.put("roleId", roleId);
+			// 数据库中的老数据
+			List<OaSysRolePermission> oldPerms = rolePermissionService.queryListByExample(paramMap);
+			List<OaSysRolePermission> addPerms = new ArrayList<>();// 新增的
+			List<String> delPerms = new ArrayList<>();// 要删除的
+			List<OaSysRolePermission> updPerms = new ArrayList<>();// 要修改的
+			// 新数据
+			List<OaSysRolePermission> newPerms = roleParam.getPermissions();
+			for (OaSysRolePermission perm : newPerms) {
+				perm.setRoleId(roleId);
+			}
+
+			for (Iterator<OaSysRolePermission> it = oldPerms.iterator(); it.hasNext();) {
+				OaSysRolePermission old = it.next();
+				if (newPerms.contains(old) == false) {
+					delPerms.add(old.getId());// 待删除
+				}
+			}
+			for (Iterator<OaSysRolePermission> it = newPerms.iterator(); it.hasNext();) {
+				OaSysRolePermission news = it.next();
+				if (oldPerms.contains(news) == false) {
+					addPerms.add(news);// 待新增
+				}
+			}
+			for (OaSysRolePermission old : oldPerms) {
+				for (OaSysRolePermission news : newPerms) {
+					if (isEquals(old.getAppId(), news.getAppId()) && isEquals(old.getMenuId(), news.getMenuId())//
+							&& old.getPermissionValue() != news.getPermissionValue()) {
+						// 注意需要设置id
+						news.setId(old.getId());
+						updPerms.add(news);// 待修改
+					}
+				}
+			}
+			logger.info("删除role Permission {}", delPerms);
+			rolePermissionService.deleteAllObjectByIds(delPerms);
+
+			logger.info("更新role Permission {}", updPerms);
+			rolePermissionService.updateBatch(updPerms);
+			logger.info("新增role Permission {}", addPerms);
+			rolePermissionService.saveBatch(addPerms);
+
+		}
+
+		// 2、权限变更、更新appUser表--删除用户首页菜单不具备权限的应用
+		List<OaSysRoleUser> newUsers = roleParam.getUsers();
+		List<OaSysRoleUser> allUsers = new ArrayList<>();
+		if (isNotEmpty(oldUsers)) {
+			allUsers.addAll(oldUsers);
+		}
+		if (isNotEmpty(newUsers)) {
+			allUsers.addAll(newUsers);
+		}
+		if (isNotEmpty(allUsers)) {
+			Set<String> userIds = new HashSet<>();
+			for (OaSysRoleUser roleUser : allUsers) {
+				userIds.add(roleUser.getUserId());
+			}
+			// updateAll操作目前只有新增用户的操作--删除在
+			// appUserService.deleteWithoutRole(getTendId(), userIds);
+			// 通知用户app权限变更
+			messageService.noticeAppChanage(getTendId(),allUsers);
+		}
+
+		// 3、 同步redis -- 修改role-user 相关的数据
+		roleParam.setUsers(roleUserService.queryListByExample(paramMap));
+		roleParam.setPermissions(rolePermissionService.queryListByExample(paramMap));
+		redisSetService.setRoleAll(getTendId(), roleParam, oldUsers);
+		return 1;
+	}
+
+	@Override
+	public Page<RoleDto> queryRoles(Map<String, Object> map) {
+		pageStart(map);
+		String orderBy = getStr(map, "orderBy");
+		if (orderBy != null) {
+			String newVal = hump2underline(orderBy);
+			map.put("orderBy", newVal);
+		}
+		List<RoleDto> list = roleMapper.queryRoles(map);
+		return super.list2page(list);
+	}
+
+	@Override
+	public RoleDetailDto queryRoleAll(String roleId) {
+		RoleDetailDto roleAll = new RoleDetailDto();
+		RoleDto role = roleMapper.queryRoleById(roleId);
+		roleAll.setRole(role);
+		List<RoleUserDto> roleUserList = roleUserService.queryRoleUsers(null, roleId);
+		roleAll.setUsers(roleUserList);
+		List<RolePermissionTreeDto> rolePermissionList = rolePermissionService.queryMenuAndRolePermission(roleId);
+		roleAll.setPermissions(rolePermissionList);
+		return roleAll;
+	}
+
+	@Override
+	public boolean queryIsExists(String roleName, String roleId) {
+		int count = roleMapper.queryRoleIsExist(roleName, roleId);
+		return count > 0;
+	}
+
+	@Override
+	public boolean queryIsCanDelete(String roleId) {
+		int count = roleMapper.queryRoleUserCount(roleId);
+		return count == 0;
+	}
+
+	/**
+	 * 注意一下这个方法---需要清理垃圾数据
+	 */
+	@Override
+	public int deleteAll(String roleId) {
+		int result = deleteObjectById(roleId);
+		if (result < 1) {
+			throw new HioMybatisDeleteException("删除角色失败, roleId " + roleId);
+		}
+		result = roleUserService.deleteByRoleId(roleId);
+		result = rolePermissionService.deleteByRoleId(roleId);
+		return result;
+	}
+
+	@Override
+	public List<OaSysRole> queryRoleByUserId(@DataSource String tendId, String userId) {
+		List<OaSysRole> roles = roleMapper.queryRoleByUserId(userId);
+		return roles;
+	}
+
+	@Override
+	public GeneralDto queryRoleNameById(@DataSource String tendId, String id) {
+		GeneralDto dto = new GeneralDto();
+		OaSysRole oaSysRole = roleMapper.selectByPrimaryKey(id);
+		if (oaSysRole != null) {
+			dto.setSid(oaSysRole.getId());
+			dto.setName(oaSysRole.getName());
+			dto.setType(SysConstants.SYS_TYPE_ROLE);
+		}
+		return dto;
+	}
+
+	@Override
+	public List<String> queryManagerUserIdIM(@DataSource String tendId) {
+		return roleMapper.queryManagerUserIdIM();
+	}
+}

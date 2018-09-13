@@ -1,0 +1,179 @@
+package com.jzy.hio.flow.runtime;
+
+import java.util.Date;
+import java.util.List;
+import java.util.stream.Collectors;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang3.StringUtils;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.exception.ApiException;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.flow.entity.FlowChangeApprover;
+import com.jzy.hio.flow.entity.FlowInstanceAc;
+import com.jzy.hio.flow.entity.FlowInstanceApprovalRecord;
+import com.jzy.hio.flow.entity.FlowVariables;
+import com.jzy.hio.flow.entity.dto.FlowInstanceInfo;
+import com.jzy.hio.flow.entity.enums.FlowStateEnum;
+import com.jzy.hio.flow.entity.enums.InstanceApproverState;
+import com.jzy.hio.flow.entity.param.UpdateApproverParam;
+import com.jzy.hio.flow.utils.FlowConstants;
+import com.jzy.hio.platform.message.param.MessageEnum;
+import com.jzy.hio.utils.LoginUser;
+
+/**
+ * 修改审批人
+ * 
+ * @author daoqi
+ *
+ */
+public class ReplaceApproverOperation extends AbstractBaseOperation {
+
+	@Override
+	public OperateType getType() {
+
+		return OperateType.REPLACE_APPROVER;
+	}
+
+	@Override
+	public String replaceApproverOperateation(UpdateApproverParam updateApproverParam) {
+
+		try {
+
+			boolean lock = this.service.getRedisLock().lock(updateApproverParam.getInstanceId());
+			if (lock) {
+				boolean isAdmin = this.service.isSuper();
+				if (!isAdmin) {
+					isAdmin = false;
+				}
+				if (this.service.isRolePermission(BaseConstants.MYSQL_MENU_CODE_FLOW_MANAGE)) {
+					isAdmin = true;
+				}
+				if (!isAdmin) {
+					logger.error("当前用户没用权限修改审批人");
+					throw new HioException(FlowConstants.NO_PERMISSION_TO_OPERATION.getMessage(),
+							FlowConstants.NO_PERMISSION_TO_OPERATION.getStatus());
+				}
+				String instanceId = updateApproverParam.getInstanceId();
+				FlowInstanceInfo instanceInfo = this.getService().getFlowInstanceDao().getInstanceInfoById(instanceId);
+				Integer currentState = instanceInfo.getInstanceState();
+
+				if (currentState != FlowStateEnum.RUN.getState()) {
+					logger.error("当前流程状态已经不是运行时");
+					throw new HioException(FlowConstants.FLOW_STATE_CHANGE.getMessage(),
+							FlowConstants.FLOW_STATE_CHANGE.getStatus());
+				}
+
+				FlowInstanceApprovalRecord approvalRecord = new FlowInstanceApprovalRecord();
+				Date date = new Date();
+				LoginUser loginUser = this.service.getLoginUser();
+				FlowVariables flowVariables = getFlowVariables(loginUser, instanceId, instanceInfo, true);
+				if (updateApproverParam.getType() == FlowConstants.FLOW_ADD_APPROVER.intValue()) {
+
+					// 新增 环节改变审批人
+					FlowChangeApprover flowChangeApprover = new FlowChangeApprover();
+					flowChangeApprover.setFlowInstanceId(instanceId);
+					flowChangeApprover.setFlowTemplateId(instanceInfo.getTemplateId());
+					flowChangeApprover.setFlowApprovalId(updateApproverParam.getApproverRecordId());
+					FlowChangeApprover selectOne = this.getService().getFlowChangeApproverDao()
+							.selectOne(flowChangeApprover);
+					if (selectOne != null) {
+						
+						logger.error(FlowConstants.FLOW_AlREADY_CHANGE.getMessage());
+
+						throw new ApiException(FlowConstants.FLOW_AlREADY_CHANGE.getMessage(),
+								FlowConstants.FLOW_AlREADY_CHANGE.getStatus());
+					}
+
+					flowChangeApprover.setNewApprover(updateApproverParam.getApproverId());
+					flowChangeApprover.setCreateDate(date);
+					flowChangeApprover.setCreatePersonId(loginUser.getUserId());
+					flowChangeApprover.setId(Base.generatePk(FlowChangeApprover.class));
+
+					String instanceAcId = updateApproverParam.getInstanceAcId();
+					List<FlowInstanceAc> collect = instanceInfo.getInstanceAcList().stream()
+							.filter(instanceAc -> instanceAc.getId().equals(instanceAcId)).collect(Collectors.toList());
+					if (CollectionUtils.isNotEmpty(collect)) {
+						FlowInstanceAc flowInstanceAc = collect.get(0);
+						String templateNodeId = flowInstanceAc.getTemplateNodeId();
+						flowChangeApprover.setTemplateAcId(templateNodeId);
+					}
+					this.getService().getFlowChangeApproverDao().insert(flowChangeApprover);
+					// 新增审批记录
+					approvalRecord.setCreateDate(date);
+					approvalRecord.setUpdateDate(date);
+					approvalRecord.setId(updateApproverParam.getApproverRecordId());
+					approvalRecord.setApprovalUser(updateApproverParam.getApproverId());
+					approvalRecord.setFlowInstanceId(instanceId);
+					approvalRecord.setState(InstanceApproverState.NO_APPROVAL.getState());
+					approvalRecord.setDelflag(0);
+					approvalRecord.setFlowInstanceAcId(updateApproverParam.getInstanceAcId());
+					approvalRecord.setCreatePersonId(loginUser.getUserId());
+					this.getService().getFlowInstanceApprovalRecordDao().updateByPrimaryKeySelective(approvalRecord);
+
+				} else {
+					String approverRecordId = updateApproverParam.getApproverRecordId();
+					approvalRecord.setId(approverRecordId);
+					approvalRecord.setFlowInstanceId(approvalRecord.getFlowInstanceId());
+					approvalRecord.setState(InstanceApproverState.NO_APPROVAL.getState());
+					FlowInstanceApprovalRecord record = this.getService().getFlowInstanceApprovalRecordDao()
+							.selectOne(approvalRecord);
+					if (record == null) {
+						logger.error("流程审批不存在,无法更改审批人");
+						throw new HioException(FlowConstants.FLOW_APPROVAL_NOT_EXIST.getMessage(),
+								FlowConstants.FLOW_APPROVAL_NOT_EXIST.getStatus());
+					}
+
+					String oldUser = record.getApprovalUser();
+
+					List<FlowInstanceAc> instanceAcList = instanceInfo.getInstanceAcList();
+
+					FlowInstanceAc flowInstanceAc = instanceAcList.stream()
+							.filter(instanceAc -> instanceAc.getId().equals(record.getFlowInstanceAcId())).findFirst()
+							.get();
+					if (StringUtils.isNotBlank(flowInstanceAc.getTemplateNodeId())) {
+						FlowChangeApprover flowChangeApprover = new FlowChangeApprover();
+						flowChangeApprover.setNewApprover(updateApproverParam.getApproverId());
+						flowChangeApprover.setTemplateAcId(flowInstanceAc.getTemplateNodeId());
+						flowChangeApprover.setFlowTemplateId(instanceInfo.getTemplateId());
+						flowChangeApprover.setFlowInstanceId(instanceId);
+						flowChangeApprover.setFlowApprovalId(updateApproverParam.getApproverRecordId());
+						// 查询要修改的审批人 是否是之前修改后的审批人
+						FlowChangeApprover selectOne = this.getService().getFlowChangeApproverDao()
+								.selectOne(flowChangeApprover);
+						flowChangeApprover.setCreateDate(date);
+						if (selectOne == null) {
+							flowChangeApprover.setOldApprover(record.getApprovalUser());
+						} else {
+
+							throw new ApiException(FlowConstants.FLOW_UPDATE_APPROVER.getMessage(),FlowConstants.FLOW_UPDATE_APPROVER.getStatus());
+						}
+						flowChangeApprover.setNewApprover(updateApproverParam.getApproverId());
+						flowChangeApprover.setDelflag(0);
+						this.getService().getFlowChangeApproverDao().insert(flowChangeApprover);
+					}
+					record.setApprovalUser(updateApproverParam.getApproverId());
+					record.setUpdateDate(date);
+					record.setCreateDate(date);
+					record.setUpdatePersonId(loginUser.getUserId());
+					this.getService().getFlowInstanceApprovalRecordDao().updateByPrimaryKeySelective(record);
+					flowVariables.setMsgType(MessageEnum.DEL_MSG.getValue());
+					flowVariables.setSendType(true);
+					newMessage(oldUser, flowVariables);
+					flowVariables.setSendType(false);
+				}
+				flowVariables.setMsgType(MessageEnum.PENDING.getValue());
+				this.newMessage(updateApproverParam.getApproverId(), flowVariables);
+				sendMessages(flowVariables.getMessages());
+			}
+		} catch (InterruptedException e) {
+			logger.error("修改审批人异常: {}", e.getMessage());
+		} finally {
+			this.getService().getRedisLock().unlock(updateApproverParam.getInstanceId());
+		}
+		return SUCCESS;
+	}
+
+}

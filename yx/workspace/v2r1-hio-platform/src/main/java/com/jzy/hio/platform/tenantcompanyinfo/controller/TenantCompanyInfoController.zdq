@@ -1,0 +1,264 @@
+package com.jzy.hio.platform.tenantcompanyinfo.controller;
+
+import java.io.InputStream;
+import java.security.Principal;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cloud.context.config.annotation.RefreshScope;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
+
+import com.aliyun.oss.model.ObjectMetadata;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.RedisKeyConstant;
+import com.jzy.hio.base.controller.BasePlatformController;
+import com.jzy.hio.base.mq.Sender;
+import com.jzy.hio.config.QueueConfig;
+import com.jzy.hio.entity.TenantCompanyInfo;
+import com.jzy.hio.entity.TendUserInfo;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.exception.HioMybatisInsertException;
+import com.jzy.hio.platform.constant.UserOrFriendConstant;
+import com.jzy.hio.platform.dto.tenantcompanyinfo.TenantCompanyInfoDto;
+import com.jzy.hio.platform.message.comm.OSSClientUtil;
+import com.jzy.hio.platform.message.comm.RandomUtil;
+import com.jzy.hio.platform.tenantcompanyinfo.service.TenantCompanyInfoService;
+import com.jzy.hio.platform.tenduser.controller.SensitiveWordUtil;
+import com.jzy.hio.platform.tenduser.service.TendUserInfoService;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.springmvc.ApiResponse;
+
+/**
+ * 租户信息
+ *
+ * @author chc<br       />
+ * 2018年4月3日
+ */
+
+@RestController
+@RequestMapping("/tenantInfo")
+//@RefreshScope
+public class TenantCompanyInfoController extends BasePlatformController<TenantCompanyInfoService> {
+    @Autowired
+    private TenantCompanyInfoService tenantCompanyInfoService;
+    @Autowired
+	private TendUserInfoService tendUserInfoService;
+    @Autowired
+    private Sender sender;
+    @Autowired
+    private QueueConfig queueConfig;
+
+    //图片空间
+    @Value("${oss.ossGroupAvatarBucket}")
+    private String ossGroupAvatarBucket;
+
+
+    //访问域名
+    @Value("${oss.domain}")
+    private String domain;
+
+    public ApiResponse<String> save(@RequestBody TenantCompanyInfo tenantCompanyInfo) {
+        ApiResponse<String> ares = new ApiResponse<String>();
+        try {
+            tenantCompanyInfo = (TenantCompanyInfo) super.save(tenantCompanyInfo);
+            sender.send(queueConfig.getTenantCompanyInfo(), obj2json(tenantCompanyInfo));
+            JedisUtil.addIndexMobile(RedisKeyConstant.tenantToInfo, tenantCompanyInfo.getTendId(), tenantCompanyInfo.getId());
+            ares.setStatus(200);
+            ares.setMessage("保存成功！");
+            ares.setResult(obj2json(tenantCompanyInfo));
+        } catch (Exception e) {
+            ares.setStatus(400);
+            ares.setMessage("保存失败！");
+            ares.setResult(e.getMessage());
+            e.printStackTrace();
+            throw new HioMybatisInsertException("保存失败！");
+        }
+        return ares;
+    }
+
+    /**
+     * 更新租户信息
+     *
+     * @param dto
+     * @return
+     * @throws HioException
+     */
+    @RequestMapping("update")
+    public ApiResponse<String> update(@RequestBody TenantCompanyInfoDto dto, Principal user) throws Exception {
+        ApiResponse<String> ares = new ApiResponse<String>();
+        //如果包含敏感词，则提示
+        if(SensitiveWordUtil.containsMe(dto.getName())){
+            throw new HioException("该公司名称不可用，请更换名称！");
+        }
+        TenantCompanyInfo tenantCompanyInfo = tenantCompanyInfoService.getObjectById(dto.getId());
+        if(isEmpty(tenantCompanyInfo) || isNotEquals(tenantCompanyInfo.getTendId(), dto.getTendId())) {
+            throw new HioException("公司id不存在或者公司id与tendId不匹配！");
+        }
+        try {
+
+            Map userSession = JedisUtil.fetchSession(user.getName());
+//            TenantCompanyInfo tenantCompanyInfo = new TenantCompanyInfo();
+            BeanUtils.copyProperties(dto, tenantCompanyInfo);
+            tenantCompanyInfo.setUpdateDate(new Date());
+            tenantCompanyInfo.setUpdatePersonName(userSession.get("name") + "");
+            tenantCompanyInfo.setUpdatePersonId(getUserIdIM());
+            tenantCompanyInfoService.update(tenantCompanyInfo);
+            JedisUtil.addIndexMobile(RedisKeyConstant.tenantToInfo, tenantCompanyInfo.getTendId(), tenantCompanyInfo.getId());
+            tenantCompanyInfo = tenantCompanyInfoService.getObjectById(dto.getId());
+            JedisUtil.addRow(tenantCompanyInfo);
+          //获取团队下的所有用户
+    		List<TendUserInfo> listTendUsers = tendUserInfoService.queryTendUserInfosByTendId(tenantCompanyInfo.getTendId());
+    		//修改redis中用户的租户信息
+    		for(TendUserInfo info : listTendUsers) {
+    			Map<String,String> tendUserMap = JedisUtil.fetchRelationRow(RedisKeyConstant.userTendList + info.getUid());
+    			if(tendUserMap != null && tendUserMap.size() > 0) {
+    				for(String key : tendUserMap.keySet()) {
+    					if(!key.equals("table_name") && isEquals(key, dto.getTendId())) {
+    						String json = tendUserMap.get(key);
+    						TendUserInfo tendUserInfo = json2obj(json,TendUserInfo.class);
+    						tendUserInfo.setTendName(dto.getName());
+    						tendUserInfoService.update(tendUserInfo);
+    						Map<String, Object> userTendmap = json2map(obj2json(tendUserInfo));
+    						userTendmap.put("id", tendUserInfo.getTendId());
+    						JedisUtil.addRow(RedisKeyConstant.userTendList + info.getUid(), userTendmap);
+    					}
+    				}
+    			}
+    		}
+            ares.setStatus(200);
+            ares.setMessage("更新成功！");
+            ares.setResult(obj2json(tenantCompanyInfo));
+        } catch (Exception e) {
+            ares.setStatus(400);
+            ares.setMessage("更新失败！");
+            ares.setResult(e.getMessage());
+            e.printStackTrace();
+            logger.info("更新租户信息失败" + e.getMessage());
+        }
+        return ares;
+    }
+
+    /**
+     * 根据租户id获取租户信息
+     *
+     * @param dto
+     * @return
+     * @throws HioException
+     */
+    @RequestMapping("/getTenantCompanyInfo")
+    public TenantCompanyInfoDto getTenantCompanyInfo(@RequestBody TenantCompanyInfoDto dto) throws HioException {
+        return tenantCompanyInfoService.getTenantCompanyInfoByTendId(dto);
+    }
+
+    /**
+     * 上传文件
+     *
+     * @param file
+     * @return
+     * @throws HioException
+     */
+    @RequestMapping("/uploadLogo")
+    public String uploadLogo(@RequestBody MultipartFile file) throws Exception {
+        String fileId = null;
+        InputStream in = file.getInputStream();
+        String fileName = file.getOriginalFilename();
+        long fileSize = file.getSize();
+        if (fileSize >= 3145728L) {
+            //上传文件大小控制
+            logger.error("上传图片过大，不允许超过3M！");
+            return "上传图片过大，不允许超过3M！";
+        }
+        fileId = System.currentTimeMillis() + RandomUtil.getRandom(6);
+        ObjectMetadata meta = new ObjectMetadata();
+        meta.setContentType("image/" + fileName.substring(fileName.lastIndexOf(".") + 1));
+        meta.setContentEncoding("UTF-8");
+        meta.addUserMetadata("fileName", fileName);
+        logger.info("fileId: " + fileId);
+        OSSClientUtil.uploadFile(ossGroupAvatarBucket, fileId, in, meta);
+        logger.info(domain + "/" + fileId);
+        return domain + "/" + fileId;
+    }
+
+    /**
+     * 获取所有租户信息
+     *
+     * @return
+     * @throws HioException
+     */
+    @RequestMapping("/getTenantCompanyList")
+    public ApiResponse<List<TenantCompanyInfoDto>> getTenantCompanyList() throws HioException {
+        
+        List<TenantCompanyInfoDto> result = new ArrayList<TenantCompanyInfoDto>();
+        
+        Map<String, String> tenantMap = JedisUtil.fetchRelationRow(BaseConstants.REDIS_TENANT_COMPANY_INFO);
+        if(null == tenantMap || tenantMap.size() < 1) {
+        	TenantCompanyInfo param = new TenantCompanyInfo();
+            param.setDelflag(UserOrFriendConstant.IS_DEL_NO);
+            List<TenantCompanyInfo> list = tenantCompanyInfoService.queryList(param);
+            result = copyProperties(list, TenantCompanyInfoDto.class);
+        }else {
+        	for(String key : tenantMap.keySet()) {
+        		if(isNotEquals("table_name", key)) {
+	        		String tenantJson = tenantMap.get(key);
+	        		TenantCompanyInfoDto dto = json2obj(tenantJson,TenantCompanyInfoDto.class);
+	        		result.add(dto);
+        		}
+        	}
+        }
+        ApiResponse<List<TenantCompanyInfoDto>> response = new ApiResponse<>();
+        response.setResult(result);
+        response.setStatus(HioException.SUCCESS);
+        response.setMessage("请求成功");
+        return response;
+    }
+
+    /**
+     * 根据租户id查询创建人
+     *
+     * @param tendId
+     * @return
+     */
+    @GetMapping(value = "/get/{tendId}")
+    public ApiResponse<String> getTenantCompanyCreater(@PathVariable("tendId") String tendId) {
+        ApiResponse<String> apir = new ApiResponse<String>();
+        TenantCompanyInfo param = new TenantCompanyInfo();
+        param.setTendId(tendId);
+        List<TenantCompanyInfo> list = tenantCompanyInfoService.queryList(param);
+        if (isNotEmpty(list) && list.size() > 0) {
+            apir.setStatus(HioException.SUCCESS);
+            apir.setResult(list.get(0).getCreatePersonId());
+            apir.setMessage("查询成功");
+            return apir;
+        }
+        apir.setStatus(HioException.MYBATIS_GET_FAILED);
+        apir.setMessage("没有该tendId的租户");
+        return apir;
+    }
+    
+    /**
+	 * 同步mysql到redis
+	 */
+	@PostMapping("/syncTendToRedis")
+	public void syncTendToRedis() {
+		TenantCompanyInfo param = new TenantCompanyInfo();
+		param.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+		List<TenantCompanyInfo> list = tenantCompanyInfoService.queryList(param);
+		JedisUtil.batchDel(RedisKeyConstant.tenantToInfo);
+		JedisUtil.del(BaseConstants.REDIS_TENANT_COMPANY_INFO);
+		for(TenantCompanyInfo dto : list) {
+			JedisUtil.addRow(dto);
+			JedisUtil.addIndexMobile(RedisKeyConstant.tenantToInfo,dto.getTendId(),dto.getId());
+		}
+	}
+}
