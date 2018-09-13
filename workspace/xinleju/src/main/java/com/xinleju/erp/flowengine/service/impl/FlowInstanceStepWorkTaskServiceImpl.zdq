@@ -1,0 +1,612 @@
+package com.xinleju.erp.flowengine.service.impl;
+
+import java.lang.reflect.InvocationTargetException;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import javax.annotation.Resource;
+
+import org.apache.commons.beanutils.PropertyUtils;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.flow.models.OpRelation;
+import com.xinleju.erp.flowengine.models.FlowInstanceStepWork;
+import com.xinleju.erp.flowengine.models.FlowInstanceStepWorkTask;
+import com.xinleju.erp.flowengine.service.FlowInstanceManagerService;
+import com.xinleju.erp.flowengine.service.FlowInstanceOrgnApISerive;
+import com.xinleju.erp.flowengine.service.FlowInstanceStepWorkTaskService;
+import com.xinleju.erp.flowengine.utils.IDGenerator;
+import com.xinleju.erp.flowengine.utils.TaskMsgContext;
+import com.xinleju.erp.flowengine.utils.TaskTypeStatus;
+import com.xinleju.erp.flowengine.utils.TaskTypeStatus.TaskType;
+import com.xinleju.erp.frame.models.User;
+import com.xinleju.erp.frame.service.FlowAuthService;
+
+@Service
+public class FlowInstanceStepWorkTaskServiceImpl  extends BaseService implements FlowInstanceStepWorkTaskService{
+
+	@Resource
+	private FlowInstanceManagerService flowInstanceManagerService;
+	@Resource
+	private FlowInstanceOrgnApISerive flowInstanceOrgnApISerive;
+	
+	@Resource
+	private FlowAuthService flowAuthService;
+
+	/* 
+	 * 
+	 * 结束本人无干扰对应的同级任务
+	 * 完成work的当前任务，作废work其他相关任务，因为work内的任务永远是竞争关系，返回true
+	 */
+	public boolean tryComplementWorkTask(FlowInstanceStepWork flowInstanceStepWork,FlowInstanceStepWorkTask flowInstanceStepWorkTask)  throws Exception{
+		// TODO Auto-generated method stub
+		List<FlowInstanceStepWorkTask>   flowInstanceStepWorkTasks=flowInstanceStepWork.getLstFlowInstanceStepWorkTask();
+		if(flowInstanceStepWorkTasks!=null && flowInstanceStepWorkTasks.size()>0){
+        	for(FlowInstanceStepWorkTask  task:flowInstanceStepWorkTasks){
+        		if(TaskTypeStatus.STATUS_COMPLETE!=task.getStatus() && TaskTypeStatus.STATUS_OVERDUE!=task.getStatus()){
+	        		if(task.getGuid().equals(flowInstanceStepWorkTask.getGuid())){
+	        			task.setCompleteTime(new Date());
+	        			task.setStatus(TaskTypeStatus.STATUS_COMPLETE);
+	        		}else{
+	        			task.setCompleteTime(new Date());
+	        			task.setStatus(TaskTypeStatus.STATUS_OVERDUE);
+	            		task.setIsEffectFlow(TaskTypeStatus.TaskType.ZF.getIsEffectFlow());
+	            		task.setType(TaskTypeStatus.TaskType.ZF.getCode());
+	        		}
+	        		task.setCompleteTime(new Date());
+	        		flowInstanceManagerService.updateFlowInstanceStepWorkTask(task);
+        		}
+        	}
+        }
+		getDao().flush();
+		return true;
+	}
+	
+	
+	/* 
+	 * 
+	 * 作废未完成的任务，work下的所有任务
+	 *
+	 * @see com.xinleju.erp.flowengine.servcie.FlowInstanceStepWorkTaskService#tryComplementWorkTask(com.xinleju.erp.flowengine.models.FlowInstanceStepWork, com.xinleju.erp.flowengine.models.FlowInstanceStepWorkTask)
+	 */
+	public boolean tryOverWorkTask(FlowInstanceStepWork flowInstanceStepWork)  throws Exception{
+		// TODO Auto-generated method stub
+		List<FlowInstanceStepWorkTask>   flowInstanceStepWorkTasks=flowInstanceStepWork.getLstFlowInstanceStepWorkTask();
+		if(flowInstanceStepWorkTasks!=null && flowInstanceStepWorkTasks.size()>0){
+        	for(FlowInstanceStepWorkTask  task:flowInstanceStepWorkTasks){
+        		if(TaskTypeStatus.STATUS_COMPLETE!=task.getStatus() && TaskTypeStatus.STATUS_OVERDUE!=task.getStatus()){
+        		    task.setCompleteTime(new Date());
+        			task.setStatus(TaskTypeStatus.STATUS_OVERDUE);
+            		task.setIsEffectFlow(TaskTypeStatus.TaskType.ZF.getIsEffectFlow());
+            		task.setType(TaskTypeStatus.TaskType.ZF.getCode());
+            		flowInstanceManagerService.updateFlowInstanceStepWorkTask(task);
+        		}
+        	}
+        }
+		getDao().flush();
+		return false;
+	}
+
+	/* 
+	 * 开启work下的任务
+	 * 1.对于没有参与人的环节，我们只能生成LOG任务，而且返回true，表示此任务开启后，完成
+	 * 1.对于有参与人的环节，我们就生成相应的任务，并且返回false，表示此任务开启后，不会完成
+	 * 
+	 * (non-Javadoc)
+	 * @see com.xinleju.erp.flowengine.servcie.FlowInstanceStepWorkTaskService#tryStartWorkTask(com.xinleju.erp.flowengine.models.FlowInstanceStepWorkTask)
+	 */
+	@Override
+	public boolean tryStartNextWorkTask(
+			FlowInstanceStepWork flowInstanceStepWork)  throws Exception{
+		// TODO Auto-generated method stub
+		//解析flowInstanceStepWorkTask生成相关任务
+		//真正执行的人员
+		String participants=flowInstanceStepWork.getParticipants();
+		String participantsName=flowInstanceStepWork.getParticipantsName();
+		Map map=new HashMap();
+		if(participants!=null && !"".equals(participants)){
+			String[] parts=participants.split(",");
+			String[] partsName=participantsName.split(",");
+			for(int i=0;i<parts.length;i++){
+				String key=parts[i];
+				String val=partsName[i];
+				map.put(key, val);
+			}
+		}
+		
+		
+		//应该执行的人员
+		String participantsDefine=flowInstanceStepWork.getParticipantsDefine();
+		String participantsDefineName=flowInstanceStepWork.getParticipantsDefineName();
+		
+		if(participantsDefine!=null && !"".equals(participantsDefine)){
+			boolean result=true;
+			String[] parts=participantsDefine.split(",");
+			String[] partsName=participantsDefineName.split(",");
+			for(int i=0;i<parts.length;i++){
+				String part=parts[i];
+				String partName=partsName[i];
+				if(map.get(part)!=null && !"null".equals(part)){
+					FlowInstanceStepWorkTask flowInstanceStepWorkTask=new FlowInstanceStepWorkTask();
+					flowInstanceStepWorkTask.setGuid(IDGenerator.getUUID());
+					flowInstanceStepWorkTask.setCreateTime(new Date());
+					flowInstanceStepWorkTask.setFiId(flowInstanceStepWork.getFiId());
+					flowInstanceStepWorkTask.setIsEffectFlow(TaskTypeStatus.TaskType.ZC.getIsEffectFlow());
+					flowInstanceStepWorkTask.setWorkId(flowInstanceStepWork.getGuid());
+					flowInstanceStepWorkTask.setSort(IDGenerator.getTimeLongStr());
+					flowInstanceStepWorkTask.setNum(IDGenerator.getNumberLongStr());
+					flowInstanceStepWorkTask.setStatus(TaskTypeStatus.STATUS_RUNNING);
+					flowInstanceStepWorkTask.setStepId(flowInstanceStepWork.getStepId());
+					flowInstanceStepWorkTask.setOriginParticipant(part);
+					flowInstanceStepWorkTask.setOperCtrl(OpRelation.OP_USER_TYPE_CLR);
+					flowInstanceStepWorkTask.setOriginParticipantName(partName);
+					//分发任务类型
+					flowInstanceStepWorkTask.setType(TaskTypeStatus.TaskType.ZC.getCode());
+					flowInstanceStepWorkTask.setParticipant(part);
+					flowInstanceStepWorkTask.setParticipantUserName(partName);
+					flowInstanceManagerService.saveFlowInstanceStepWorkTask(flowInstanceStepWorkTask);
+					
+					//查询是否有合适的代理流程
+					List<String> userIds=flowAuthService.getFlowAuthList(flowInstanceStepWork.getFiId(),Long.valueOf(part) , flowInstanceStepWork.getParticipantPostId());
+					
+					if(userIds!=null && userIds.size()>0){
+						for(String userId:userIds){
+							User user=flowInstanceOrgnApISerive.getUserByuserId(userId);
+							FlowInstanceStepWorkTask target=new FlowInstanceStepWorkTask();
+							PropertyUtils.copyProperties(target, flowInstanceStepWorkTask);
+							target.setGuid(IDGenerator.getUUID());
+							target.setParticipant(user.getId()+"");
+							target.setFlowBusinessId(flowInstanceStepWorkTask.getGuid());
+							target.setFlowBusinessType(TaskTypeStatus.BUSINESS_TYPE_PROXY);
+							target.setParticipantLoginName(user.getLoginname());
+							target.setParticipantUserName(user.getRealName());
+							target.setOriginParticipant(user.getId()+"");
+							target.setOriginParticipantName(user.getRealName());
+							flowInstanceManagerService.saveFlowInstanceStepWorkTask(target);
+						}
+						
+					}
+					
+					result=false;
+				}else{
+					FlowInstanceStepWorkTask flowInstanceStepWorkTask=new FlowInstanceStepWorkTask();
+					flowInstanceStepWorkTask.setGuid(IDGenerator.getUUID());
+					flowInstanceStepWorkTask.setCreateTime(new Date());
+					flowInstanceStepWorkTask.setWorkId(flowInstanceStepWork.getGuid());
+					flowInstanceStepWorkTask.setOriginParticipant(part);
+					flowInstanceStepWorkTask.setOriginParticipantName(partName);
+					flowInstanceStepWorkTask.setFiId(flowInstanceStepWork.getFiId());
+					flowInstanceStepWorkTask.setUserNote(TaskMsgContext.AutoRepeatPersonMsg);
+					flowInstanceStepWorkTask.setOpCode(TaskMsgContext.SYSTEMCODE);
+					flowInstanceStepWorkTask.setCompleteTime(new Date());
+					flowInstanceStepWorkTask.setIsEffectFlow(TaskTypeStatus.TaskType.LG.getIsEffectFlow());
+					flowInstanceStepWorkTask.setSort(IDGenerator.getTimeLongStr());
+					flowInstanceStepWorkTask.setStatus(TaskTypeStatus.STATUS_COMPLETE);
+					flowInstanceStepWorkTask.setStepId(flowInstanceStepWork.getStepId());
+					//分发任务类型
+					flowInstanceStepWorkTask.setType(TaskTypeStatus.TaskType.LG.getCode());
+					flowInstanceManagerService.saveFlowInstanceStepWorkTask(flowInstanceStepWorkTask);
+				}
+				
+			}
+			
+			return result;
+		}else{
+			FlowInstanceStepWorkTask flowInstanceStepWorkTask=new FlowInstanceStepWorkTask();
+			flowInstanceStepWorkTask.setGuid(IDGenerator.getUUID());
+			flowInstanceStepWorkTask.setCreateTime(new Date());
+			flowInstanceStepWorkTask.setWorkId(flowInstanceStepWork.getGuid());
+			flowInstanceStepWorkTask.setOriginParticipant(null);
+			flowInstanceStepWorkTask.setOriginParticipantName(null);
+			flowInstanceStepWorkTask.setFiId(flowInstanceStepWork.getFiId());
+			flowInstanceStepWorkTask.setUserNote(TaskMsgContext.AutoPassNotEmpty);
+			flowInstanceStepWorkTask.setOpCode(TaskMsgContext.SYSTEMCODE);
+			flowInstanceStepWorkTask.setCompleteTime(new Date());
+			flowInstanceStepWorkTask.setIsEffectFlow(TaskTypeStatus.TaskType.LG.getIsEffectFlow());
+			flowInstanceStepWorkTask.setSort(IDGenerator.getTimeLongStr());
+			flowInstanceStepWorkTask.setStatus(TaskTypeStatus.STATUS_COMPLETE);
+			flowInstanceStepWorkTask.setStepId(flowInstanceStepWork.getStepId());
+			//分发任务类型
+			flowInstanceStepWorkTask.setType(TaskTypeStatus.TaskType.LG.getCode());
+			flowInstanceManagerService.saveFlowInstanceStepWorkTask(flowInstanceStepWorkTask);
+			return true;
+		}
+	}
+
+
+	@Override
+	public boolean tryStartZbFlowInstanceStepWorkTask(FlowInstanceStepWork flowInstanceStepWork,
+			FlowInstanceStepWorkTask flowInstanceStepWorkTask ,String userId) throws Exception{
+		// TODO Auto-generated method stub
+		User user=flowInstanceOrgnApISerive.getUserByuserId(userId);
+		FlowInstanceStepWorkTask targetFlowInstanceStepWorkTask=new FlowInstanceStepWorkTask();
+		  //作废竞争的人员
+		List<FlowInstanceStepWorkTask>   flowInstanceStepWorkTasks=flowInstanceStepWork.getLstFlowInstanceStepWorkTask();
+		if(flowInstanceStepWorkTasks!=null && flowInstanceStepWorkTasks.size()>0){
+        	for(FlowInstanceStepWorkTask  task:flowInstanceStepWorkTasks){
+        		if(TaskTypeStatus.STATUS_COMPLETE!=task.getStatus() && TaskTypeStatus.STATUS_OVERDUE!=task.getStatus() && !task.getGuid().equals(flowInstanceStepWorkTask.getGuid())){
+        		    task.setCompleteTime(new Date());
+        			task.setStatus(TaskTypeStatus.STATUS_OVERDUE);
+            		task.setIsEffectFlow(TaskTypeStatus.TaskType.ZF.getIsEffectFlow());
+            		task.setType(TaskTypeStatus.TaskType.ZF.getCode());
+            		flowInstanceManagerService.updateFlowInstanceStepWorkTask(task);
+        		}
+        	}
+		}
+		
+		
+		
+		if(flowInstanceStepWorkTask!=null){
+			try {
+				//被转办的任务
+		
+				flowInstanceStepWorkTask.setType(TaskTypeStatus.TaskType.ZB.getCode());
+				flowInstanceStepWorkTask.setCompleteTime(new Date());
+				flowInstanceStepWorkTask.setStatus(TaskTypeStatus.STATUS_COMPLETE);
+				flowInstanceStepWorkTask.setIsEffectFlow(TaskTypeStatus.TaskType.ZB.getIsEffectFlow());
+				flowInstanceStepWorkTask.setUserNote("【转办到:"+user.getRealName()+"】意见："+flowInstanceStepWorkTask.getUserNote());
+        		flowInstanceManagerService.updateFlowInstanceStepWorkTask(flowInstanceStepWorkTask);
+        		
+        	
+        		//转办任务
+        		targetFlowInstanceStepWorkTask.setStepId(flowInstanceStepWorkTask.getStepId());
+        		targetFlowInstanceStepWorkTask.setWorkId(flowInstanceStepWorkTask.getWorkId());
+        		targetFlowInstanceStepWorkTask.setFiId(flowInstanceStepWorkTask.getFiId());
+        		targetFlowInstanceStepWorkTask.setOperCtrl(OpRelation.OP_USER_TYPE_CLR);
+				targetFlowInstanceStepWorkTask.setAssignTaskId(flowInstanceStepWorkTask.getGuid());
+				targetFlowInstanceStepWorkTask.setTaskInstanceType(TaskTypeStatus.TaskType.ZB.getCode());
+				targetFlowInstanceStepWorkTask.setAssignerId(flowInstanceStepWorkTask.getCompleteUserId());
+				targetFlowInstanceStepWorkTask.setAssignerLoginName(flowInstanceStepWorkTask.getCompleteUserLoginName());
+				targetFlowInstanceStepWorkTask.setAssignerUserName(flowInstanceStepWorkTask.getAssignerUserName());
+				targetFlowInstanceStepWorkTask.setAcceptTime(new Date());
+				targetFlowInstanceStepWorkTask.setStatus(TaskTypeStatus.STATUS_RUNNING);
+				targetFlowInstanceStepWorkTask.setGuid(IDGenerator.getUUID());
+				targetFlowInstanceStepWorkTask.setIsEffectFlow(TaskTypeStatus.TaskType.ZC.getIsEffectFlow());
+				targetFlowInstanceStepWorkTask.setType(TaskTypeStatus.TaskType.ZC.getCode());
+				targetFlowInstanceStepWorkTask.setCreateTime(new Date());
+				targetFlowInstanceStepWorkTask.setParticipant(userId);
+				targetFlowInstanceStepWorkTask.setParticipantUserName(user.getRealName());
+				targetFlowInstanceStepWorkTask.setSort(flowInstanceStepWorkTask.getSort());
+				targetFlowInstanceStepWorkTask.setNum(flowInstanceStepWorkTask.getNum());
+				flowInstanceManagerService.saveFlowInstanceStepWorkTask(targetFlowInstanceStepWorkTask);
+				
+				
+			} catch (IllegalAccessException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			} catch (InvocationTargetException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+			
+			
+		}
+		return true;
+	}
+
+
+	@Override
+	public boolean tryStartXbFlowInstanceStepWorkTask(FlowInstanceStepWork flowInstanceStepWork,
+			FlowInstanceStepWorkTask flowInstanceStepWorkTask,
+			List<String> lstUserId) throws Exception {
+		// TODO Auto-generated method stub
+	
+        //作废竞争的人员
+		List<String> xbrenList=new ArrayList<String>();
+		List<FlowInstanceStepWorkTask>   flowInstanceStepWorkTasks=flowInstanceStepWork.getLstFlowInstanceStepWorkTask();
+		if(flowInstanceStepWorkTasks!=null && flowInstanceStepWorkTasks.size()>0){
+        	for(FlowInstanceStepWorkTask  task:flowInstanceStepWorkTasks){
+        		if(TaskTypeStatus.STATUS_COMPLETE!=task.getStatus()  && TaskTypeStatus.STATUS_OVERDUE!=task.getStatus() && !task.getGuid().equals(flowInstanceStepWorkTask.getGuid())){
+        			if(!(OpRelation.OP_USER_TYPE_XBR.equals(task.getOperCtrl()) && task.getAssignTaskId()!=null )){
+        				 task.setCompleteTime(new Date());
+             			task.setStatus(TaskTypeStatus.STATUS_OVERDUE);
+                 		task.setIsEffectFlow(TaskTypeStatus.TaskType.ZF.getIsEffectFlow());
+                 		task.setType(TaskTypeStatus.TaskType.ZF.getCode());
+                 		flowInstanceManagerService.updateFlowInstanceStepWorkTask(task);
+        			}else{
+        				System.out.println(task.getParticipantUserName());
+        				xbrenList.add(task.getParticipant());
+        			}
+        		   
+        		}
+        		
+        	}
+		}
+		
+		
+		if(flowInstanceStepWorkTask!=null){
+			try {
+				
+				//协办人
+        		StringBuffer sb=new StringBuffer();
+        	    if(lstUserId!=null && lstUserId.size()>0){
+        	    	for(String userId:lstUserId){
+        	    	    //协办人是否存在系统里面
+        	    		User user=flowInstanceOrgnApISerive.getUserByuserId(userId);
+        	    		sb.append(user.getRealName()+",");
+        	    		if(xbrenList.contains(userId))continue;
+        	    		FlowInstanceStepWorkTask targetFlowInstanceStepWorkTask=new FlowInstanceStepWorkTask();
+		        		//转办任务
+		        		targetFlowInstanceStepWorkTask.setStepId(flowInstanceStepWorkTask.getStepId());
+		        		targetFlowInstanceStepWorkTask.setWorkId(flowInstanceStepWorkTask.getWorkId());
+		        		targetFlowInstanceStepWorkTask.setFiId(flowInstanceStepWorkTask.getFiId());
+		        		targetFlowInstanceStepWorkTask.setOperCtrl(OpRelation.OP_USER_TYPE_XBR);
+						targetFlowInstanceStepWorkTask.setAssignTaskId(flowInstanceStepWorkTask.getGuid());
+						targetFlowInstanceStepWorkTask.setAssignerId(flowInstanceStepWorkTask.getCompleteUserId());
+						targetFlowInstanceStepWorkTask.setAssignerLoginName(flowInstanceStepWorkTask.getCompleteUserLoginName());
+						targetFlowInstanceStepWorkTask.setAssignerUserName(flowInstanceStepWorkTask.getCompleteUserName());
+						targetFlowInstanceStepWorkTask.setAcceptTime(new Date());
+						targetFlowInstanceStepWorkTask.setStatus(TaskTypeStatus.STATUS_RUNNING);
+						targetFlowInstanceStepWorkTask.setGuid(IDGenerator.getUUID());
+						targetFlowInstanceStepWorkTask.setTaskInstanceType(TaskTypeStatus.TaskType.XB.getCode());
+						targetFlowInstanceStepWorkTask.setIsEffectFlow(TaskTypeStatus.TaskType.ZC.getIsEffectFlow());
+						targetFlowInstanceStepWorkTask.setType(TaskTypeStatus.TaskType.ZC.getCode());
+						targetFlowInstanceStepWorkTask.setCreateTime(new Date());
+						targetFlowInstanceStepWorkTask.setParticipant(userId);
+						targetFlowInstanceStepWorkTask.setOriginParticipant(userId);
+						targetFlowInstanceStepWorkTask.setOriginParticipantName(user.getRealName());
+						targetFlowInstanceStepWorkTask.setParticipantUserName(user.getRealName());
+						targetFlowInstanceStepWorkTask.setSort(flowInstanceStepWorkTask.getSort());
+						targetFlowInstanceStepWorkTask.setNum(flowInstanceStepWorkTask.getNum());
+						flowInstanceManagerService.saveFlowInstanceStepWorkTask(targetFlowInstanceStepWorkTask);
+        	    	}
+        	    }
+        		
+        	    ////被协办的任务
+        	    
+        	    String userNames="";
+        	    if(sb.toString().endsWith(",")){
+        	    	userNames=sb.toString().substring(0,sb.toString().length()-1);
+        	    }else{
+        	    	userNames=sb.toString();
+        	    }
+        		FlowInstanceStepWorkTask newFlowInstanceStepWorkTask=new FlowInstanceStepWorkTask();
+        		newFlowInstanceStepWorkTask.setGuid(IDGenerator.getUUID());
+				newFlowInstanceStepWorkTask.setStepId(flowInstanceStepWorkTask.getStepId());
+				newFlowInstanceStepWorkTask.setWorkId(flowInstanceStepWorkTask.getWorkId());
+				newFlowInstanceStepWorkTask.setFiId(flowInstanceStepWorkTask.getFiId());
+				newFlowInstanceStepWorkTask.setOperCtrl(OpRelation.OP_USER_TYPE_CLR);
+				newFlowInstanceStepWorkTask.setAssignTaskId(flowInstanceStepWorkTask.getGuid());
+				newFlowInstanceStepWorkTask.setAssignerId(flowInstanceStepWorkTask.getCompleteUserId());
+				newFlowInstanceStepWorkTask.setTaskInstanceType(TaskTypeStatus.TaskType.XB.getCode());
+				newFlowInstanceStepWorkTask.setAssignerLoginName(flowInstanceStepWorkTask.getCompleteUserLoginName());
+				newFlowInstanceStepWorkTask.setAssignerUserName(flowInstanceStepWorkTask.getCompleteUserName());
+				newFlowInstanceStepWorkTask.setAcceptTime(new Date());
+				newFlowInstanceStepWorkTask.setStatus(TaskTypeStatus.STATUS_COMPLETE);
+				newFlowInstanceStepWorkTask.setOpCode(flowInstanceStepWorkTask.getOpCode());
+				newFlowInstanceStepWorkTask.setUserNote("【协办到:"+userNames+"】意见："+flowInstanceStepWorkTask.getUserNote());
+				newFlowInstanceStepWorkTask.setIsEffectFlow(TaskTypeStatus.TaskType.XB.getIsEffectFlow());
+				newFlowInstanceStepWorkTask.setType(TaskTypeStatus.TaskType.XB.getCode());
+				newFlowInstanceStepWorkTask.setCreateTime(flowInstanceStepWorkTask.getCreateTime());
+				newFlowInstanceStepWorkTask.setCompleteTime(new Date());
+				newFlowInstanceStepWorkTask.setParticipant(flowInstanceStepWorkTask.getParticipant());
+				newFlowInstanceStepWorkTask.setParticipantUserName(flowInstanceStepWorkTask.getParticipantUserName());
+				newFlowInstanceStepWorkTask.setOriginParticipant(flowInstanceStepWorkTask.getParticipant());
+				newFlowInstanceStepWorkTask.setOriginParticipantName(flowInstanceStepWorkTask.getParticipantUserName());
+				newFlowInstanceStepWorkTask.setSort(flowInstanceStepWorkTask.getSort());
+				newFlowInstanceStepWorkTask.setNum(flowInstanceStepWorkTask.getNum());
+				flowInstanceManagerService.saveFlowInstanceStepWorkTask(newFlowInstanceStepWorkTask);
+				
+
+				
+        	    
+        	   /**
+        	    //当前任务
+        	    //被协办的任务
+				flowInstanceStepWorkTask.setType(TaskTypeStatus.TaskType.XB.getCode());
+				//flowInstanceStepWorkTask.setCompleteTime(new Date());
+				//flowInstanceStepWorkTask.setStatus(TaskTypeStatus.STATUS_COMPLETE);
+				flowInstanceStepWorkTask.setIsEffectFlow(TaskTypeStatus.TaskType.XB.getIsEffectFlow());
+				flowInstanceStepWorkTask.setUserNote("【协办到:"+userNames+"】意见："+flowInstanceStepWorkTask.getUserNote());
+        		flowInstanceManagerService.updateFlowInstanceStepWorkTask(flowInstanceStepWorkTask);
+				**/
+				flowInstanceStepWorkTask.setOpCode(null);
+				flowInstanceStepWorkTask.setUserNote(null);
+				flowInstanceStepWorkTask.setCompleteUserId(null);
+				flowInstanceStepWorkTask.setCompleteUserLoginName(null);
+				flowInstanceStepWorkTask.setCompleteUserName(null);
+				newFlowInstanceStepWorkTask.setSort(IDGenerator.getTimeLongStr());
+				newFlowInstanceStepWorkTask.setNum(IDGenerator.getNumberLongStr());
+				getDao().update(flowInstanceStepWorkTask);
+				
+			} catch (IllegalAccessException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			} catch (InvocationTargetException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+			
+			
+		}
+		return true;
+	}
+
+
+
+
+	@Override
+	public boolean tryXBtoHFComplementTask(
+			FlowInstanceStepWorkTask flowInstanceStepWorkTask) throws Exception {
+		// TODO Auto-generated method stub
+		if(TaskTypeStatus.STATUS_COMPLETE!=flowInstanceStepWorkTask.getStatus() && TaskTypeStatus.STATUS_OVERDUE!=flowInstanceStepWorkTask.getStatus()){
+			flowInstanceStepWorkTask.setCompleteTime(new Date());
+			flowInstanceStepWorkTask.setStatus(TaskTypeStatus.STATUS_COMPLETE);
+			flowInstanceStepWorkTask.setType(TaskTypeStatus.TaskType.HF.getCode());
+			flowInstanceStepWorkTask.setIsEffectFlow(TaskTypeStatus.TaskType.HF.getIsEffectFlow());
+			flowInstanceStepWorkTask.setCompleteTime(new Date());
+    		flowInstanceManagerService.updateFlowInstanceStepWorkTask(flowInstanceStepWorkTask);
+	    }
+		return false;
+	}
+
+
+	@Override
+	public boolean tryGTtoHFComplementTask(
+			FlowInstanceStepWorkTask flowInstanceStepWorkTask) throws Exception {
+		// TODO Auto-generated method stub
+		if(TaskTypeStatus.STATUS_COMPLETE!=flowInstanceStepWorkTask.getStatus() && TaskTypeStatus.STATUS_OVERDUE!=flowInstanceStepWorkTask.getStatus()){
+			flowInstanceStepWorkTask.setCompleteTime(new Date());
+			flowInstanceStepWorkTask.setStatus(TaskTypeStatus.STATUS_COMPLETE);
+			flowInstanceStepWorkTask.setType(TaskTypeStatus.TaskType.HF.getCode());
+			flowInstanceStepWorkTask.setIsEffectFlow(TaskTypeStatus.TaskType.HF.getIsEffectFlow());
+			flowInstanceStepWorkTask.setCompleteTime(new Date());
+    		flowInstanceManagerService.updateFlowInstanceStepWorkTask(flowInstanceStepWorkTask);
+    		
+    		
+    		
+    		//沟通回复任务人
+    		FlowInstanceStepWorkTask targetFlowInstanceStepWorkTask=new FlowInstanceStepWorkTask();
+    		targetFlowInstanceStepWorkTask.setStepId(flowInstanceStepWorkTask.getStepId());
+    		targetFlowInstanceStepWorkTask.setWorkId(flowInstanceStepWorkTask.getWorkId());
+    		targetFlowInstanceStepWorkTask.setFiId(flowInstanceStepWorkTask.getFiId());
+    		targetFlowInstanceStepWorkTask.setOperCtrl(OpRelation.OP_USER_TYPE_CLR);
+    		targetFlowInstanceStepWorkTask.setTaskInstanceType(TaskTypeStatus.TaskType.HF.getCode());
+//			targetFlowInstanceStepWorkTask.setAssignTaskId(flowInstanceStepWorkTask.getGuid());
+//			targetFlowInstanceStepWorkTask.setAssignerId(flowInstanceStepWorkTask.getCompleteUserId());
+//			targetFlowInstanceStepWorkTask.setAssignerLoginName(flowInstanceStepWorkTask.getCompleteUserLoginName());
+//			targetFlowInstanceStepWorkTask.setAssignerUserName(flowInstanceStepWorkTask.getAssignerUserName());
+			targetFlowInstanceStepWorkTask.setAcceptTime(new Date());
+			targetFlowInstanceStepWorkTask.setStatus(TaskTypeStatus.STATUS_RUNNING);
+			targetFlowInstanceStepWorkTask.setGuid(IDGenerator.getUUID());
+			targetFlowInstanceStepWorkTask.setIsEffectFlow(TaskTypeStatus.TaskType.ZC.getIsEffectFlow());
+			targetFlowInstanceStepWorkTask.setType(TaskTypeStatus.TaskType.ZC.getCode());
+			targetFlowInstanceStepWorkTask.setCreateTime(new Date());
+			targetFlowInstanceStepWorkTask.setParticipant(flowInstanceStepWorkTask.getAssignerId().toString());
+			targetFlowInstanceStepWorkTask.setParticipantUserName(flowInstanceStepWorkTask.getAssignerUserName());
+			targetFlowInstanceStepWorkTask.setSort(flowInstanceStepWorkTask.getSort());
+			targetFlowInstanceStepWorkTask.setNum(flowInstanceStepWorkTask.getNum());
+			flowInstanceManagerService.saveFlowInstanceStepWorkTask(targetFlowInstanceStepWorkTask);
+    		
+    		
+    		
+	    }
+		return false;
+	}
+
+
+	@Override
+	public boolean tryStartGtFlowInstanceStepWorkTask(FlowInstanceStepWork flowInstanceStepWork,
+			FlowInstanceStepWorkTask flowInstanceStepWorkTask, String userId)
+			throws Exception {
+		//作废竞争的人员
+		List<FlowInstanceStepWorkTask> flowInstanceStepWorkTasks=flowInstanceStepWork.getLstFlowInstanceStepWorkTask();
+		if(flowInstanceStepWorkTasks!=null && flowInstanceStepWorkTasks.size()>0){
+        	for(FlowInstanceStepWorkTask  task:flowInstanceStepWorkTasks){
+        		if(TaskTypeStatus.STATUS_COMPLETE!=task.getStatus() && TaskTypeStatus.STATUS_OVERDUE!=task.getStatus() && !task.getGuid().equals(flowInstanceStepWorkTask.getGuid())){
+        		    task.setCompleteTime(new Date());
+        			task.setStatus(TaskTypeStatus.STATUS_OVERDUE);
+            		task.setIsEffectFlow(TaskTypeStatus.TaskType.ZF.getIsEffectFlow());
+            		task.setType(TaskTypeStatus.TaskType.ZF.getCode());
+            		flowInstanceManagerService.updateFlowInstanceStepWorkTask(task);
+        		}
+        	}
+		}
+		
+		User user=flowInstanceOrgnApISerive.getUserByuserId(userId);
+		FlowInstanceStepWorkTask targetFlowInstanceStepWorkTask=new FlowInstanceStepWorkTask();
+		if(flowInstanceStepWorkTask!=null){
+			try {
+				//被沟通的任务
+				flowInstanceStepWorkTask.setType(TaskTypeStatus.TaskType.GT.getCode());
+				flowInstanceStepWorkTask.setCompleteTime(new Date());
+				flowInstanceStepWorkTask.setStatus(TaskTypeStatus.STATUS_COMPLETE);
+				flowInstanceStepWorkTask.setIsEffectFlow(TaskTypeStatus.TaskType.GT.getIsEffectFlow());
+				flowInstanceStepWorkTask.setUserNote("【沟通:"+user.getRealName()+"】意见："+flowInstanceStepWorkTask.getUserNote());
+        		flowInstanceManagerService.updateFlowInstanceStepWorkTask(flowInstanceStepWorkTask);
+        		
+        	
+        		//沟通任务
+        		targetFlowInstanceStepWorkTask.setStepId(flowInstanceStepWorkTask.getStepId());
+        		targetFlowInstanceStepWorkTask.setWorkId(flowInstanceStepWorkTask.getWorkId());
+        		targetFlowInstanceStepWorkTask.setFiId(flowInstanceStepWorkTask.getFiId());
+        		targetFlowInstanceStepWorkTask.setTaskInstanceType(TaskTypeStatus.TaskType.GT.getCode());
+        		targetFlowInstanceStepWorkTask.setOperCtrl(OpRelation.OP_USER_TYPE_QCR);
+				targetFlowInstanceStepWorkTask.setAssignTaskId(flowInstanceStepWorkTask.getGuid());
+				targetFlowInstanceStepWorkTask.setAssignerId(flowInstanceStepWorkTask.getCompleteUserId());
+				targetFlowInstanceStepWorkTask.setAssignerLoginName(flowInstanceStepWorkTask.getCompleteUserLoginName());
+				targetFlowInstanceStepWorkTask.setAssignerUserName(flowInstanceStepWorkTask.getCompleteUserName());
+				targetFlowInstanceStepWorkTask.setAcceptTime(new Date());
+				targetFlowInstanceStepWorkTask.setStatus(TaskTypeStatus.STATUS_RUNNING);
+				targetFlowInstanceStepWorkTask.setGuid(IDGenerator.getUUID());
+				targetFlowInstanceStepWorkTask.setIsEffectFlow(TaskTypeStatus.TaskType.ZC.getIsEffectFlow());
+				targetFlowInstanceStepWorkTask.setType(TaskTypeStatus.TaskType.ZC.getCode());
+				targetFlowInstanceStepWorkTask.setCreateTime(new Date());
+				targetFlowInstanceStepWorkTask.setParticipant(userId);
+				targetFlowInstanceStepWorkTask.setParticipantUserName(user.getRealName());
+				targetFlowInstanceStepWorkTask.setSort(flowInstanceStepWorkTask.getSort());
+				targetFlowInstanceStepWorkTask.setNum(flowInstanceStepWorkTask.getNum());
+				flowInstanceManagerService.saveFlowInstanceStepWorkTask(targetFlowInstanceStepWorkTask);
+				
+				
+			} catch (IllegalAccessException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			} catch (InvocationTargetException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+			
+			
+		}
+		return true;
+	}
+
+
+	@Override
+	public List<FlowInstanceStepWorkTask> getFlowInstanceStepWorkTaskByAssignTaskId(
+			String assignTaskId, String operCtrl, int status) throws Exception {
+		// TODO Auto-generated method stub
+		List<FlowInstanceStepWorkTask> result= getDao().findAll(FlowInstanceStepWorkTask.class, " assignTaskId = ? and  operCtrl = ? and  status = ? ", new Object[]{assignTaskId,operCtrl,status});	
+		return result;
+	}
+
+
+	@Override
+	public boolean tryReplaceFlowInstanceStepWorkTask(
+			FlowInstanceStepWorkTask flowInstanceStepWorkTask, String userId,
+			String repalceUserId) throws Exception {
+		// TODO Auto-generated method stub
+		
+		//作废以前的任务
+		flowInstanceStepWorkTask.setCompleteTime(new Date());
+		flowInstanceStepWorkTask.setStatus(TaskTypeStatus.STATUS_OVERDUE);
+		flowInstanceStepWorkTask.setIsEffectFlow(TaskTypeStatus.TaskType.ZF.getIsEffectFlow());
+		flowInstanceStepWorkTask.setType(TaskTypeStatus.TaskType.ZF.getCode());
+		flowInstanceManagerService.updateFlowInstanceStepWorkTask(flowInstanceStepWorkTask);
+
+		//替换成新任务
+		FlowInstanceStepWorkTask replaceFlowInstanceStepWorkTask=new FlowInstanceStepWorkTask();
+		User user=flowInstanceOrgnApISerive.getUserByuserId(repalceUserId);
+		replaceFlowInstanceStepWorkTask.setStepId(flowInstanceStepWorkTask.getStepId());
+		replaceFlowInstanceStepWorkTask.setWorkId(flowInstanceStepWorkTask.getWorkId());
+		replaceFlowInstanceStepWorkTask.setFiId(flowInstanceStepWorkTask.getFiId());
+		replaceFlowInstanceStepWorkTask.setOperCtrl(flowInstanceStepWorkTask.getOperCtrl());
+		replaceFlowInstanceStepWorkTask.setAcceptTime(flowInstanceStepWorkTask.getAcceptTime());
+		replaceFlowInstanceStepWorkTask.setStatus(TaskTypeStatus.STATUS_RUNNING);
+		replaceFlowInstanceStepWorkTask.setGuid(IDGenerator.getUUID());
+		replaceFlowInstanceStepWorkTask.setIsEffectFlow(flowInstanceStepWorkTask.getIsEffectFlow());
+		replaceFlowInstanceStepWorkTask.setType(TaskType.ZC.getCode());
+		replaceFlowInstanceStepWorkTask.setCreateTime(flowInstanceStepWorkTask.getCreateTime());
+		replaceFlowInstanceStepWorkTask.setParticipant(repalceUserId);
+	
+		replaceFlowInstanceStepWorkTask.setParticipantUserName(user.getRealName());
+		replaceFlowInstanceStepWorkTask.setSort(flowInstanceStepWorkTask.getSort());
+		replaceFlowInstanceStepWorkTask.setNum(flowInstanceStepWorkTask.getNum());
+		flowInstanceManagerService.saveFlowInstanceStepWorkTask(replaceFlowInstanceStepWorkTask);
+
+		return false;
+	}
+
+
+
+	
+
+
+	
+
+}

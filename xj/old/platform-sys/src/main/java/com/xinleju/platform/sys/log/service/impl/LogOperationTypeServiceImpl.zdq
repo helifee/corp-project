@@ -1,0 +1,26 @@
+package com.xinleju.platform.sys.log.service.impl;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.sys.log.dao.LogOperationTypeDao;
+import com.xinleju.platform.sys.log.entity.LogOperationType;
+import com.xinleju.platform.sys.log.service.LogOperationTypeService;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class LogOperationTypeServiceImpl extends  BaseServiceImpl<String,LogOperationType> implements LogOperationTypeService{
+	
+
+	@Autowired
+	private LogOperationTypeDao logOperationTypeDao;
+	
+
+}

@@ -1,0 +1,830 @@
+/*
+ * Copyright (c) 2009-2010 by DaLian YuDong Computer System CO.,LTD
+ * All rights reserved.
+ *      Project: SSH
+ *    SubSystem: 会议室管理子系统
+ */
+
+package com.ysys.www.hy.action;
+
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.List;
+
+import com.opensymphony.xwork2.ActionSupport;
+import com.ysys.www.hy.dao.condition.TabHysyl;
+import com.ysys.www.hy.service.YuyueService;
+import com.ysys.www.hy.service.common.CommonConstants;
+import com.ysys.www.hy.service.common.CommonMessage;
+import com.ysys.www.hy.service.common.SessionManager;
+import com.ysys.www.hy.service.common.UserInfo;
+import com.ysys.www.hy.service.condition.Pinfo;
+import com.ysys.www.hy.service.condition.YuyueInfo;
+
+/**
+ * 会议预约Action. 完成以下预约类型的预约：单日；周期（日，周，月） 功能：1.对某一会议室进行会议登记预约；
+ * 2.对已经预约的会议可以修改（日期，时间，人员等）；取消会议。
+ * 
+ * @version 1.00 2009/08/28
+ * @author zhangdaoqiang
+ */
+public class YuyueAction extends ActionSupport {
+
+	private static final long serialVersionUID = 7129976431179228717L;
+
+	private int yuyueInfoSource;	// 初始化信息来源标志
+	private int permission; 		// 1:读写；2：只读；3：不可读
+
+	private String errormsg; 		// 错误信息
+	private String yilanDate; 		// 返回一览：日期
+	private String searchType; 		// 返回详细：查询类型
+	private String startDate; 		// 返回详细：查询开始日期
+	private String endDate; 		// 返回详细：查询结束日期
+	private int pageNumber; 		// 返回详细：分页面数
+
+	private YuyueService yuyueService;	// 预约Action对应Service
+	private YuyueInfo yuyueinfo;		// jsp预约信息
+	private List<TabHysyl> hysList;		// 会议室一览信息
+	private String rsString;
+
+	/**
+	 * 预约初始化.
+	 * 
+	 * @return SUCCESS:预约初始化成功 ERROR：预约初始化失败
+	 */
+	@Override
+	public String execute() {
+
+		// 从session取得预约信息
+		SessionManager session = new SessionManager();
+		if (yuyueInfoSource == CommonConstants.FROMSESSION) {
+			this.yuyueinfo = (YuyueInfo) session.get(CommonConstants.YUYUEINFO);
+
+			List<String> cjrList = yuyueService.getCjr(yuyueinfo);
+
+			String cjr = cjrList.get(0);	// 显示参加人
+			String cjrs = cjrList.get(1);	// 参加人数
+			String cjrId = cjrList.get(2);	// 参加人ID 对应JSP中为一hidden
+
+			yuyueinfo.setCjr(cjr);
+			yuyueinfo.setCjrs(cjrs);
+			yuyueinfo.setCjrIdList(cjrId);
+
+			// 设置会议室下拉列表
+			this.setHysList(yuyueService.getHysAll());
+
+			// set rsString
+			this.setRsString(this.getRsString(hysList));
+
+		} else {
+			// 从页面取得预约信息
+
+			if (null == yuyueinfo) {
+				return ERROR;
+			}
+
+			// 从session中清除预约信息
+			session.set(CommonConstants.YUYUEINFO, null);
+
+			// 默认为单日预约
+			yuyueinfo.setYuyuetype(CommonConstants.SDAY_MEETING);
+			yuyueinfo.setEnddate(yuyueinfo.getStartdate());
+
+			// 从session中取得申请人
+			String sqr = ((UserInfo) session.get(CommonConstants.USERINFO))
+					.getUserName();
+			yuyueinfo.setSqr(sqr);
+
+			// 设置会议室下拉列表
+			this.setHysList(yuyueService.getHysAll());
+		}
+
+		// 返回预约一览所用日期
+		this.setYilanDate(yuyueinfo.getStartdate());
+
+		return SUCCESS;
+	}
+
+	/**
+	 * 取得会议室容纳人数字符串
+	 * 
+	 * @param hysList
+	 *            会议室List
+	 * @return String 会议室容纳人数字符串
+	 */
+	private String getRsString(List<TabHysyl> hysList) {
+
+		int length = hysList.size();
+		StringBuffer rsString = new StringBuffer();
+
+		for (int i = 0; i < length; i++) {
+			TabHysyl hys = hysList.get(i);
+
+			// 取得会议室容纳人数
+			String tmp = hys.getRnrs().toString();
+
+			if (i == (length - 1)) {
+				rsString.append(tmp);
+			} else {
+				rsString.append(tmp + ",");
+			}
+		}
+
+		return rsString.toString();
+	}
+
+	/**
+	 * 保存数据.
+	 * 
+	 * @return SUCCESS:保存预约成功 ERROR:保存预约失败
+	 */
+	public String save() {
+
+		// 预约处理返回标志
+		int sign = yuyueService.saveYuyueData(yuyueinfo);
+
+		// 不可以预约时的状态判断
+		if (sign != CommonConstants.INSERTOK) {
+
+			// 预约时间已过
+			if (sign == CommonConstants.INSERTOVERTIME) {
+				this.setErrormsg(CommonMessage.RESERVE_TIMEOUT);
+
+				// 已有人预约
+			} else if (sign == CommonConstants.INSERTCRASH) {
+				this.setErrormsg(CommonMessage.RESERVE_CRASH);
+
+				// 预约时间错误
+			} else if (sign == CommonConstants.TIMEERROR) {
+				this.setErrormsg(CommonMessage.RESERVE_TIMEERROR);
+
+				// 预约的星期不存在
+			} else if (sign == CommonConstants.WEEKNOTEXIST) {
+				this.setErrormsg(CommonMessage.WEEKNOTEXIST);
+
+				// 每月选择的日期不存在
+			} else if (sign == CommonConstants.DATE_NOT_EXIST) {
+				this.setErrormsg(CommonMessage.DATE_NOT_EXIST);
+			}
+
+			this.setHysList(yuyueService.getHysAll());
+			return ERROR; // 冲突
+		}
+
+		// 返回一览所用日期
+		this.setYilanDate(yuyueinfo.getStartdate());
+
+		// 清空session中的预约信息
+		SessionManager session = new SessionManager();
+		session.set(CommonConstants.YUYUEINFO, null);
+
+		return SUCCESS;
+	}
+
+	/**
+	 * 初始化修改页面.
+	 * 
+	 * @return SUCCESS:修改初始化成功 ERROR:修改初始化失败
+	 */
+	public String init() {
+
+		// 从session取得预约信息，对相应属性设值。
+		SessionManager session = new SessionManager();
+
+		// 选择参加人员返回
+		if (yuyueInfoSource == CommonConstants.FROMSESSION) {
+			this.yuyueinfo = (YuyueInfo) session.get(CommonConstants.YUYUEINFO);
+
+			List<String> cjrList = yuyueService.getCjr(yuyueinfo);
+
+			String cjr = cjrList.get(0);
+			String cjrs = cjrList.get(1);
+			String cjrId = cjrList.get(2); // 参加人ID
+
+			yuyueinfo.setCjr(cjr);
+			yuyueinfo.setCjrs(cjrs);
+			yuyueinfo.setCjrIdList(cjrId);
+
+			// 返回详细所用参数
+			if (yuyueinfo.getPreInfoSource() == CommonConstants.FROMDETAIL) {
+
+				this.setSearchType(yuyueinfo.getSearchType());
+				this.setStartDate(yuyueinfo.getStartDate());
+				this.setEndDate(yuyueinfo.getEndDate());
+				this.setPageNumber(yuyueinfo.getPageNumber());
+
+				// 返回一览所用的日期
+			} else if (this.yuyueInfoSource == CommonConstants.FROMYILAN) {
+
+				this.setYilanDate(yuyueinfo.getStartdate());
+			}
+
+			this.setHysList(yuyueService.getHysAll());
+
+			// set rsString
+			this.setRsString(this.getRsString(hysList));
+
+			// 清空session中的预约信息
+			session.set(CommonConstants.YUYUEINFO, null);
+
+			// 从详细或一览返回
+		} else {
+
+			if (null == yuyueinfo) {
+				return ERROR;
+			}
+
+			// 从DB取得预约信息
+			String startdate = yuyueinfo.getStartdate();
+			String hys = yuyueinfo.getHys();
+			String start_hour = yuyueinfo.getStart_hour();
+			String start_minute = yuyueinfo.getStart_minute();
+
+			this.yuyueinfo = yuyueService.getYuyueInfo(hys, startdate,
+					start_hour, start_minute);
+
+			// 保持返回详细的参数（选择人员后再返回时用）
+			yuyueinfo.setPreInfoSource(this.yuyueInfoSource);
+			yuyueinfo.setSearchType(this.searchType);
+			yuyueinfo.setStartDate(this.startDate);
+			yuyueinfo.setEndDate(this.endDate);
+			yuyueinfo.setPageNumber(this.pageNumber);
+			session.set(CommonConstants.YUYUEINFO_SOURCE, yuyueinfo);
+
+			// 返回预约一览所用日期
+			this.setYilanDate(yuyueinfo.getStartdate());
+
+			this.setHysList(yuyueService.getHysAll());
+
+			// set rsString
+			this.setRsString(this.getRsString(hysList));
+		}
+
+		// 权限设置
+		this.setInitPermission();
+		if (this.permission == 3) {
+			return ERROR;
+		}
+
+		return SUCCESS;
+	}
+
+	/**
+	 * 初始化时权限设置.
+	 */
+	private void setInitPermission() {
+
+		// 取得登陆者ID
+		SessionManager session = new SessionManager();
+		String userId = ((UserInfo) session.get(CommonConstants.USERINFO))
+				.getUserID();
+
+		// 取得预约人ID
+		String yyrid = yuyueinfo.getYyrid();
+
+		// 取得参加者ID
+		List<Pinfo> pinfoList = yuyueService.getPinfo(yuyueinfo);
+		String cjr = "";
+
+		// 是否参加人标志
+		boolean isCjr = false;
+		for (int i = 0; i < pinfoList.size(); i++) {
+			cjr = pinfoList.get(i).getEmpid();
+
+			if (userId.equals(cjr)) {
+				isCjr = true;
+				break;
+			}
+		}
+
+		// 登陆者为预约人
+		if (userId.equals(yyrid)) {
+			this.permission = CommonConstants.WRITE;
+
+			// 登陆者为参加人
+		} else if (isCjr) {
+			this.permission = CommonConstants.READ_ONLY;
+
+			// 其它
+		} else {
+			this.permission = CommonConstants.NOT_READ;
+		}
+	}
+
+	/**
+	 * 修改预约.
+	 * 
+	 * @return "yilan":返回到预约一览页面 "detail":返回预约详细页面 ERROR:程序错误
+	 */
+	public String modify() {
+
+		SessionManager session = new SessionManager();
+		YuyueInfo source = (YuyueInfo) session
+				.get(CommonConstants.YUYUEINFO_SOURCE);
+
+		// 修改预约处理返回标志
+		int sign = yuyueService.modifyYuyueData(yuyueinfo);
+
+		// 不可以预约时的状态判断
+		if (sign != CommonConstants.INSERTOK) {
+
+			// 超过当前时间
+			if (sign == CommonConstants.INSERTOVERTIME) {
+				this.setErrormsg(CommonMessage.RESERVE_TIMEOUT);
+
+				// 有人预约
+			} else if (sign == CommonConstants.INSERTCRASH) {
+				this.setErrormsg(CommonMessage.RESERVE_CRASH);
+
+				// 时间错误
+			} else if (sign == CommonConstants.TIMEERROR) {
+				this.setErrormsg(CommonMessage.RESERVE_TIMEERROR);
+
+				// 预约过期，不能修改
+			} else if (sign == CommonConstants.DELETE_TIME_OVER) {
+				this.setErrormsg(CommonMessage.DELETEOUTTIME);
+
+				// 修改时星期不存在
+			} else if (sign == CommonConstants.WEEKNOTEXIST) {
+				this.setErrormsg(CommonMessage.WEEK_EMPTY);
+
+				// 每月选择的日期不存在
+			} else if (sign == CommonConstants.DATE_NOT_EXIST) {
+				this.setErrormsg(CommonMessage.DATE_EMPTY);
+			}
+
+			// 如果出错，设置"返回"
+			yuyueinfo.setPreInfoSource(source.getPreInfoSource());
+
+			// 保持预约类型
+			yuyueinfo.setPageYuyueType(yuyueinfo.getYuyuetype());
+
+			// 保持会议报告标志bgbz
+			yuyueinfo.setBgbz(source.getBgbz());
+
+			this.setHysList(yuyueService.getHysAll());
+			return ERROR;
+		}
+
+		int preInfoSource = source.getPreInfoSource();
+		if (preInfoSource == CommonConstants.FROMYILAN) {
+
+			// 返回一览预约日期
+			this.setYilanDate(yuyueinfo.getStartdate());
+			return "yilan";
+
+		} else if (preInfoSource == CommonConstants.FROMDETAIL) {
+
+			this.setSearchType(source.getSearchType());
+			this.setStartDate(source.getStartDate());
+			this.setEndDate(source.getEndDate());
+			this.setPageNumber(source.getPageNumber());
+
+			return "detail";
+		}
+		return ERROR;
+	}
+
+	/**
+	 * 删除预约.
+	 * 
+	 * @return "yilan":返回到预约一览页面 "detail":返回预约详细页面 ERROR:程序错误
+	 */
+	public String delete() {
+
+		// 删除处理返回的标志
+		int sign = yuyueService.deleteYuyueData(yuyueinfo);
+
+		if (sign != CommonConstants.OK) {
+
+			// 已过期，不能删除
+			this.setErrormsg(CommonMessage.DELETEOUTTIME);
+			this.setHysList(yuyueService.getHysAll());
+
+			return ERROR;
+		}
+
+		// 设置返回页面
+		SessionManager session = new SessionManager();
+		YuyueInfo source = (YuyueInfo) session
+				.get(CommonConstants.YUYUEINFO_SOURCE);
+		int preInfoSource = source.getPreInfoSource();
+
+		// 返回一览预约日期
+		if (preInfoSource == CommonConstants.FROMYILAN) {
+
+			this.setYilanDate(yuyueinfo.getStartdate());
+			return "yilan";
+
+			// 设置返回详细的参数
+		} else if (preInfoSource == CommonConstants.FROMDETAIL) {
+
+			this.setSearchType(source.getSearchType());
+			this.setStartDate(source.getStartDate());
+			this.setEndDate(source.getEndDate());
+			this.setPageNumber(source.getPageNumber());
+
+			return "detail";
+		}
+
+		return ERROR;
+	}
+
+	/**
+	 * 预约时选择参加人员.
+	 * 
+	 * @return SUCCESS 返回预约页面
+	 */
+	public String reserve_select() {
+
+		SessionManager session = new SessionManager();
+
+		// set预约信息
+		yuyueinfo.setReserve_modify_flg(CommonConstants.RESERVE);
+
+		// set cjr_list
+		if (null != session.get(CommonConstants.YUYUEINFO)) {
+
+			List<Pinfo> cjr_list = ((YuyueInfo) session
+					.get(CommonConstants.YUYUEINFO)).getCjr_list();
+			yuyueinfo.setCjr_list(cjr_list);
+		}
+
+		// yuyueinfo to session
+		session.set(CommonConstants.YUYUEINFO, yuyueinfo);
+
+		// set yuyueinfo 的显示标志
+		yuyueInfoSource = CommonConstants.FROMYILAN;
+
+		return SUCCESS;
+	}
+
+	/**
+	 * 预约修改时选择参加人员.
+	 * 
+	 * @return SUCCESS 返回修改页面
+	 */
+	public String modify_select() {
+
+		SessionManager session = new SessionManager();
+
+		// set cjr_list
+		List<Pinfo> pinfoList = yuyueService.getPinfo(yuyueinfo);
+		yuyueinfo.setCjr_list(pinfoList);
+
+		// set yuyueinfo
+		yuyueinfo.setReserve_modify_flg(CommonConstants.MODIFY);
+
+		// 设置返回详细的参数
+		YuyueInfo source = (YuyueInfo) session
+				.get(CommonConstants.YUYUEINFO_SOURCE);
+		yuyueinfo.setPreInfoSource(source.getPreInfoSource());
+		yuyueinfo.setSearchType(source.getSearchType());
+		yuyueinfo.setStartDate(source.getStartDate());
+		yuyueinfo.setEndDate(source.getEndDate());
+		yuyueinfo.setPageNumber(source.getPageNumber());
+
+		// 保持预约类型（多次反复选择）
+		yuyueinfo.setPageYuyueType(yuyueinfo.getYuyuetype());// 页面所选择的类型
+		yuyueinfo.setYuyuetype(source.getYuyuetype());// 预约的真实类型
+
+		// 保持会议报告标志bgbz
+		yuyueinfo.setBgbz(source.getBgbz());
+
+		// 保持预约人ID
+		yuyueinfo.setYyrid(source.getYyrid());
+
+		// yuyueinfo to session
+		session.set(CommonConstants.YUYUEINFO, yuyueinfo);
+
+		return SUCCESS;
+	}
+
+	/**
+	 * 填写会议报告
+	 * 
+	 * @return "yilan":返回到预约一览页面 "detail":返回预约详细页面 ERROR:程序错误
+	 */
+	public String writeBg() {
+
+		SessionManager session = new SessionManager();
+
+		YuyueInfo yuyueinfo_old = (YuyueInfo) session
+				.get(CommonConstants.YUYUEINFO);
+
+		yuyueService.writeBg(yuyueinfo, yuyueinfo_old);
+
+		YuyueInfo source = (YuyueInfo) session
+				.get(CommonConstants.YUYUEINFO_SOURCE);
+		int preInfoSource = source.getPreInfoSource();
+
+		// 返回一览所用的日期
+		if (preInfoSource == CommonConstants.FROMYILAN) {
+
+			this.setYilanDate(yuyueinfo_old.getStartdate());
+			return "yilan";
+
+			// 设置返回详细的参数
+		} else if (preInfoSource == CommonConstants.FROMDETAIL) {
+
+			yuyueinfo.setHys(yuyueinfo_old.getHys());
+			this.setSearchType(source.getSearchType());
+			this.setStartDate(source.getStartDate());
+			this.setEndDate(source.getEndDate());
+			this.setPageNumber(source.getPageNumber());
+
+			return "detail";
+		}
+		return ERROR;
+	}
+
+	/**
+	 * 预约时输入合法性校验
+	 */
+	public void validateSave() {
+
+		// 预约类型必须选择一个：单日/周期
+		if (null == yuyueinfo.getYuyuetype()) {
+			this.addFieldError("yuyuetype", "请选择预约类型！");
+
+		}
+
+		// 若选择周期，则周期类型必须选择一个：每日/每月/每周
+		if (CommonConstants.SCYCLE_MEETING.equals(yuyueinfo.getYuyuetype())) {
+			if (null == yuyueinfo.getZhouqitype()) {
+				this.addFieldError("zhouqitype", "请选择周期类型！");
+			}
+		}
+
+		// 若选择每周，则周一到周五至少选择一个
+		if (CommonConstants.SCYCLE_WEEK.equals(yuyueinfo.getZhouqitype())) {
+			boolean mon = (null == yuyueinfo.getMon());
+			boolean tue = (null == yuyueinfo.getTue());
+			boolean wen = (null == yuyueinfo.getWen());
+			boolean thu = (null == yuyueinfo.getThu());
+			boolean fri = (null == yuyueinfo.getFri());
+
+			if (mon & tue & wen & thu & fri) {
+				this.addFieldError("weekcheck", "请选择星期几！");
+			}
+		}
+
+		// 若选择每月，则每月具体日期及后延标志必须选择
+		if (CommonConstants.SCYCLE_MONTH.equals(yuyueinfo.getZhouqitype())) {
+			String day = yuyueinfo.getDay();
+			int d = 0;
+			if ("".equals(day)) {
+				this.addFieldError("day", "请输入每月具体日期！");
+
+			} else {
+
+				try {
+					d = Integer.parseInt(day);
+
+					if ((d < 1) || (d > 31)) {
+						this.addFieldError("day3", "请输入合法的日期！");
+					}
+
+				} catch (Exception e) {
+					this.addFieldError("day2", "请输入合法的日期！");
+				}
+			}
+
+			if (null == yuyueinfo.getQianhou()) {
+				this.addFieldError("houyan", "请选择遇休日类型！");
+			}
+		}
+
+		// 若选择周期，周期开始结束日期判断
+		if (CommonConstants.SCYCLE_MEETING.equals(yuyueinfo.getYuyuetype())) {
+			String startdate = yuyueinfo.getStartdate_cycle();
+			String enddate = yuyueinfo.getEnddate();
+
+			if ("".equals(startdate)) {
+				this.addFieldError("startdate", "请输入开始日期！");
+
+			} else {
+
+				if ("".equals(enddate)) {
+					this.addFieldError("enddate", "请输入结束日期！");
+
+				} else {
+					SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd");
+					Date sd = null;
+					Date ed = null;
+					try {
+						sd = format.parse(startdate);
+						ed = format.parse(enddate);
+
+						if (sd.after(ed)) {
+							this.addFieldError("dateerror", "请输入合法的日期！");
+						}
+
+					} catch (ParseException e) {
+						this.addFieldError("dateerror", "请输入合法的日期！");
+					}
+				}
+			}
+		}
+
+		// 会议室不能为非法的
+		String hys = yuyueinfo.getHys();
+		try {
+			int hysid = Integer.parseInt(hys);
+			if (hysid == 0) {
+				this.addFieldError("hyserror", "请选择会议室！");
+			}
+
+		} catch (Exception e) {
+			this.addFieldError("hyserror", "会议室错误！");
+		}
+
+		// 会议主题不能为空
+		if ("".equals(yuyueinfo.getHyzt())) {
+			this.addFieldError("hyzt", "请填写会议主题！");
+		}
+
+		// 判断时间合法性
+		String starthour = yuyueinfo.getStart_hour();
+		String startminute = yuyueinfo.getStart_minute();
+		String endhour = yuyueinfo.getEnd_hour();
+		String endminute = yuyueinfo.getEnd_minute();
+		String shead = starthour.substring(0, 1);
+		String ehead = endhour.substring(0, 1);
+
+		if (shead == "0") { // 去除开头的0
+			starthour = starthour.substring(1, 2);
+		}
+		if (ehead == "0") {
+			endhour = endhour.substring(1, 2);
+		}
+
+		try {
+			int sh = Integer.parseInt(starthour);
+			int eh = Integer.parseInt(endhour);
+
+			if (sh < 8 || sh > 22 || eh < 8 || eh > 22) {
+				this.addFieldError("timeerror", "时间错误！");
+			} else {
+				if (sh > eh) {
+					this.addFieldError("timeerror", "时间错误！");
+
+				} else if (sh == eh) {
+					int sm = Integer.parseInt(startminute);
+					int em = Integer.parseInt(endminute);
+					if (sm >= em) {
+						this.addFieldError("timeerror", "时间错误！");
+					}
+				}
+			}
+
+		} catch (Exception e) {
+			this.addFieldError("timeerror", "时间错误！");
+		}
+
+		// 申请人不能为空
+		if ("".equals(yuyueinfo.getSqr())) {
+			this.addFieldError("sqr", "请输入申请人");
+		}
+
+		// 参加人不能为空
+		if ("".equals(yuyueinfo.getCjr())) {
+			this.addFieldError("cjr", "请选择参加人！");
+		}
+
+		// 参加人数不能为空
+		if ("".equals(yuyueinfo.getCjrs())) {
+			this.addFieldError("cjrs", "人数错误！");
+		}
+
+		this.setHysList(yuyueService.getHysAll());
+	}
+
+	/**
+	 * 修改时输入合法性校验
+	 */
+	public void validateModify() {
+
+		this.validateSave();
+
+		// 检查报告字数
+		checkReportLength();
+	}
+
+	/**
+	 * 填写报告时报告长度检查
+	 */
+	public void validateWriteBg() {
+
+		// 检查报告字数
+		checkReportLength();
+	}
+
+	/**
+	 * 检查报告长度
+	 */
+	private void checkReportLength() {
+
+		String hyjl = yuyueinfo.getHyjl();
+		if (null != hyjl) {
+			int length = hyjl.length();
+			if (length > CommonConstants.REPORT_LENGTH) {
+				this.addFieldError("reportLength", "您填写的会议报告太长，请修改一下！");
+			}
+		}
+	}
+
+	public int getYuyueInfoSource() {
+		return yuyueInfoSource;
+	}
+
+	public void setYuyueInfoSource(int yuyueInfoSource) {
+		this.yuyueInfoSource = yuyueInfoSource;
+	}
+
+	public int getPermission() {
+		return permission;
+	}
+
+	public void setPermission(int permission) {
+		this.permission = permission;
+	}
+
+	public String getErrormsg() {
+		return errormsg;
+	}
+
+	public void setErrormsg(String errormsg) {
+		this.errormsg = errormsg;
+	}
+
+	public String getSearchType() {
+		return searchType;
+	}
+
+	public void setSearchType(String searchType) {
+		this.searchType = searchType;
+	}
+
+	public String getStartDate() {
+		return startDate;
+	}
+
+	public void setStartDate(String startDate) {
+		this.startDate = startDate;
+	}
+
+	public String getEndDate() {
+		return endDate;
+	}
+
+	public void setEndDate(String endDate) {
+		this.endDate = endDate;
+	}
+
+	public void setYuyueService(YuyueService yuyueService) {
+		this.yuyueService = yuyueService;
+	}
+
+	public YuyueInfo getYuyueinfo() {
+		return yuyueinfo;
+	}
+
+	public void setYuyueinfo(YuyueInfo yuyueinfo) {
+		this.yuyueinfo = yuyueinfo;
+	}
+
+	public List<TabHysyl> getHysList() {
+		return hysList;
+	}
+
+	public void setHysList(List<TabHysyl> hysList) {
+		this.hysList = hysList;
+	}
+
+	public String getRsString() {
+		return rsString;
+	}
+
+	public void setRsString(String rsString) {
+		this.rsString = rsString;
+	}
+
+	public String getYilanDate() {
+		return yilanDate;
+	}
+
+	public void setYilanDate(String yilanDate) {
+		this.yilanDate = yilanDate;
+	}
+
+	public int getPageNumber() {
+		return pageNumber;
+	}
+
+	public void setPageNumber(int pageNumber) {
+		this.pageNumber = pageNumber;
+	}
+
+}

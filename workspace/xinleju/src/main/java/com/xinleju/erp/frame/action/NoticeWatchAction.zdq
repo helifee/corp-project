@@ -1,0 +1,169 @@
+package com.xinleju.erp.frame.action;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.commons.lang3.StringUtils;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.MatchMode;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.xinleju.erp.base.app.action.BaseAction;
+import com.xinleju.erp.frame.dao.UserDao;
+import com.xinleju.erp.frame.models.BizDataCtrl;
+import com.xinleju.erp.frame.models.BizDataRole;
+import com.xinleju.erp.frame.models.Notice;
+import com.xinleju.erp.frame.models.NoticeTemplate;
+import com.xinleju.erp.frame.models.NoticeType;
+import com.xinleju.erp.frame.models.User;
+
+public class NoticeWatchAction extends BaseAction{
+	
+	@Autowired
+	private UserDao userDao;
+	
+	/**
+	 * 查看公告列表
+	 * @return
+	 */
+	public String list() {
+		String keyword=getParameter("keyword");
+		String loginName = request.getUserPrincipal().getName();
+		
+		DetachedCriteria dc = DetachedCriteria.forClass(Notice.class);
+		 
+		dc.add(Restrictions.eq("status", Notice.STATUS_COMPLETE));
+		dc.add(Restrictions.or(Restrictions.in("noticeTemplateId", templateId()),
+				               Restrictions.eq("createUserId", userDao.findUserIdByLoginName(loginName))));
+		
+		if(StringUtils.isNotEmpty(keyword)){
+			dc.add(Restrictions.like("title", keyword,MatchMode.ANYWHERE));
+
+		}
+		page = getCommonService().findPage(dc, start, limit);
+		request.setAttribute("statusMap", Notice.getStatusMap());
+		return "list";
+	}
+	
+	/**
+	 * 根据用户取得能查看的公告模板类型
+	 * @return
+	 */
+	public List<Long> templateId(){
+		String loginName = request.getUserPrincipal().getName();
+		List<Long> idList=userDao.getRoleIds(loginName);
+		List<BizDataRole> bizDataRoleList=new ArrayList<BizDataRole>();
+		for(Long id:idList){
+			List<BizDataRole> bizDataRole=getCommonService().findByHQL(BizDataRole.class, 
+					"from BizDataRole bdr where bdr.roleId= ? and bdr.bizDataField.bizDataCtrl.code= ?", 
+					id,BizDataCtrl.notice_read);
+			for(BizDataRole bdr : bizDataRole){
+				bizDataRoleList.add(bdr);
+			}
+		}
+		List<String> otherOptions=new ArrayList<String>();
+		for(BizDataRole bizDataRole:bizDataRoleList){
+			otherOptions.add(bizDataRole.getOtherOptions());
+		}
+		//解析更多分类
+		List<String[]> other=new ArrayList<String[]>();
+		for(int i=0;i<otherOptions.size();i++){
+			String[] otherOption=otherOptions.get(i).split(",");
+			other.add(otherOption);
+		}
+		List<String[]> code_name=new ArrayList<String[]>();
+		for(int i=0;i<other.size();i++){
+			for(int j=0;j<other.get(i).length;j++){
+				code_name.add(other.get(i)[j].split("/"));
+			}
+			
+		}
+		//类型_id
+		List<String> codeList=new ArrayList<String>();
+		for(int i=0;i<code_name.size();i++){
+			codeList.add(code_name.get(i)[0]);
+		}
+		
+		List<Long> noticeTemplateId=new ArrayList<Long>();
+		for(String code_id : codeList){
+			String code=code_id.split("_")[0];
+			Long id=Long.valueOf(code_id.split("_")[1]);
+			if(code.equals("NOTICETEMPLATE")){
+				noticeTemplateId.add(id);
+			}else{
+				List<NoticeType> noticeTypeList=getCommonService().findByHQL(NoticeType.class,
+						"from NoticeType n where n.prefix like ?", "%"+id+"%");
+				List<NoticeTemplate> noticeTemplateList=new ArrayList<NoticeTemplate>();
+				for(NoticeType noticeType : noticeTypeList){
+					List<NoticeTemplate> noticeTemplate=getCommonService().findByHQL(NoticeTemplate.class,
+							"from NoticeTemplate nt where nt.noticeTypeId= ?",noticeType.getId());
+					for(NoticeTemplate nt:noticeTemplate){
+						noticeTemplateList.add(nt);
+					}
+				}
+				for(NoticeTemplate nt : noticeTemplateList){
+					noticeTemplateId.add(nt.getId());
+				}
+			}
+		}
+		
+		return noticeTemplateId;
+	}
+	
+	/**
+	 * 查看公告具体内容
+	 */
+	public String watch(){
+		StringBuilder sb=new StringBuilder();
+		Notice notice=getCommonService().getById(Notice.class,id);
+		User user=getCommonService().getById(User.class, notice.getCreateUserId());
+		getCommonService().execute("update Notice n set n.clickCount = ? where n.id= ?", notice.getClickCount()+1,notice.getId());
+		Long noticeTemplateId=notice.getNoticeTemplateId();
+		NoticeTemplate noticeTemplate=getCommonService().getById(NoticeTemplate.class, noticeTemplateId);
+		NoticeType noticeType=getCommonService().getById(NoticeType.class,noticeTemplate.getNoticeTypeId());
+		sb.append(noticeType.getName()+";");
+		NoticeWatchAction.getType(noticeType,sb);
+		String[] nt=sb.toString().split(";");
+		StringBuilder type=new StringBuilder();
+		if(nt.length>1){
+		for(int i=nt.length-1;i>0;i--){
+			type.append(nt[i]+"/");
+		}
+		}
+		type.append(nt[0]);
+		request.setAttribute("createUser", user.getRealName());
+		request.setAttribute("clickCount", notice.getClickCount());
+		request.setAttribute("content", notice.getContent());
+		request.setAttribute("title", notice.getTitle());
+		request.setAttribute("noticeType", type);
+		return "watch";
+	}
+
+	/**
+	 * 查看父类型
+	 * @param noticeType
+	 * @param sb
+	 * @return
+	 */
+	public static StringBuilder  getType(NoticeType noticeType,StringBuilder sb){
+		
+		if(noticeType.getParent()!=null){
+			sb.append(noticeType.getParent().getName()+";");
+			getType(noticeType.getParent(),sb);
+		}
+		return sb;
+	}
+
+}
+
+
+	
+
+
+
+
+
+
+
+

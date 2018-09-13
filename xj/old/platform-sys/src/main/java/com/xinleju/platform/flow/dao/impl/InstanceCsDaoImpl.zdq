@@ -1,0 +1,33 @@
+package com.xinleju.platform.flow.dao.impl;
+
+import java.util.HashMap;
+import java.util.Map;
+
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.platform.base.dao.impl.BaseDaoImpl;
+import com.xinleju.platform.flow.dao.InstanceCsDao;
+import com.xinleju.platform.flow.entity.InstanceCs;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Repository
+public class InstanceCsDaoImpl extends BaseDaoImpl<String,InstanceCs> implements InstanceCsDao{
+
+	public InstanceCsDaoImpl() {
+		super();
+	}
+
+	@Override
+	public int updateAcId(String oldAcId, String newAcId) {
+		Map<String, String> params = new HashMap<String, String>();
+		params.put("oldAcId", oldAcId);
+		params.put("newAcId", newAcId);
+		return getSqlSession().update(InstanceCs.class.getName() + ".updateAcId", params);
+	}
+	
+}

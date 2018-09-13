@@ -1,0 +1,602 @@
+package com.xinleju.platform.flow.operation;
+
+import com.alibaba.druid.util.StringUtils;
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.flow.dto.ApprovalList;
+import com.xinleju.platform.flow.dto.ApprovalSubmitDto;
+import com.xinleju.platform.flow.dto.UserDto;
+import com.xinleju.platform.flow.entity.SysNoticeMsg;
+import com.xinleju.platform.flow.enumeration.*;
+import com.xinleju.platform.flow.exception.FlowException;
+import com.xinleju.platform.flow.model.*;
+import com.xinleju.platform.flow.operation.concurrent.CompetitionStrategy;
+import com.xinleju.platform.flow.operation.concurrent.ConcurrentStrategy;
+import com.xinleju.platform.flow.utils.JavaBeanCopier;
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.log4j.Logger;
+
+import java.sql.Timestamp;
+import java.util.*;
+import java.util.concurrent.CopyOnWriteArrayList;
+
+/**
+ * 打回操作
+ * 1、只打回审批人、转办人
+ * 2、当前审批人完成
+ * 3、插入一条指定人记录
+ * 
+ * @author daoqi
+ *
+ */
+public class ReturnOperation extends DefaultOperation implements Operation{
+	
+	private static Logger log = Logger.getLogger("flowLogger");
+
+	ReturnOperation() {
+		super(OperationType.RETURN);
+	}
+
+	/**
+	 * 如果复用父类，operate内的异常无法抛出，待修改。
+	 */
+	@Override
+	public String action(InstanceUnit instanceUnit, ApprovalSubmitDto approvalDto)
+			throws Exception {
+		
+		//1、设置模型中的当前位置
+		setCurrentLocation(instanceUnit, approvalDto);
+		
+		super.saveTransition(currentApprover, approvalDto.getOperationName());
+		
+		//2、模型操作
+		operate(instanceUnit, approvalDto);
+		
+		//3、设置实例当前审批人
+		setCurrentApprovers(instanceUnit);
+		
+		//4、保存模型
+		save(instanceUnit);
+		
+		//5、处理消息
+		handleMessages(instanceUnit, approvalDto);
+		
+		return null;
+	}
+	
+	@Override
+	protected void operate(InstanceUnit instanceUnit, ApprovalSubmitDto approvalDto) throws Exception {
+		/*
+		 * 打回流程发起人:
+		 * 1、完成当前人处理，不再往下走
+		 * 2、流程实例置为打回状态
+		 * 3、给发起人发待办消息
+		 * 4、通知业务数据变为草稿
+		 * 5、当再发起时，根据flId、bizId检查打回记录 TODO zhangdaoqiang 流程发起检查逻辑需要修改
+		 * 
+		 */
+		String returnApprover = approvalDto.getReturnApprover();
+		if(StringUtils.isEmpty(returnApprover)) {
+			throw new FlowException("打回操作时没有选择打回人！");
+		}
+		
+		ACUnit startAc = instanceUnit.getAcList().get(0);
+		ApproverUnit startApprover = startAc.getPosts().get(0).getApprovers().get(0);
+		String starter = startApprover.getApproverId();
+		if(returnApprover.equals(startAc.getAcId() + "." + starter)) {	//单个审批人ID无法确认相同
+			instanceUnit.setStatus(InstanceStatus.REJECT.getValue());
+			instanceUnit.setReturnRepeatApproval(approvalDto.getApproveRepeat());
+			if(currentAc.getReturnPx()==null || currentAc.getReturnPx()==0){
+				currentAc.setReturnPx(currentAc.getAcPx());
+			}
+			completeCurrent(approvalDto);
+			
+			//删除未完成的数据
+			deleteNotFinished(instanceUnit);
+			
+			//给发起人发待阅消息 
+			/*UserDto user = new UserDto(startApprover.getApproverId(), startApprover.getApproverName());
+			instanceUnit.getMessages().add(createToReadMsg(instanceUnit, instanceUnit.getCustomFormURL(), user));*/
+			
+			service.getInstanceLogService().saveLogData(instanceUnit.getId(), currentAc.getAcId(), 
+					currentApprover.getId(), currentApprover.getTask().getTaskId(), 
+					InstanceOperateType.TO_DO.getValue(), currentApprover.getApproverId(), null, null);
+			//通知业务系统
+			super.noticeBusinessSystem(instanceUnit, approvalDto);
+
+
+		} else {
+			//取打回指定人到当前人之间的已审批部分
+			List<ACUnit> acListBetween = getAcBetween(instanceUnit, approvalDto);
+			reset(acListBetween);
+			instanceUnit.setAcList(this.resetSort(instanceUnit.getAcList()));
+			instanceUnit.getAcList().addAll(currentAc.getAcPx(), acListBetween);
+			super.turnOn(acListBetween.get(0), instanceUnit);
+			this.completeCurrent(approvalDto);
+			
+			this.deleteRunningAndNotStartFromCurrentAc();
+			
+			//重新对AC排序
+			resort(instanceUnit.getAcList());
+		}
+		
+		//记录操作日志
+		try {
+			service.getInstanceLogService().saveLogData(instanceUnit.getId(), currentAc.getAcId(), 
+					currentApprover.getId(), currentApprover.getTask().getTaskId(), 
+					InstanceOperateType.SEND_BACK.getValue(), currentApprover.getApproverId(), null, null);
+		} catch (Exception e) {
+			throw new FlowException("记录流程日志异常：", e);
+		}
+		
+		//监控处理
+		super.monitorHandle(null, instanceUnit.getFlId(), FlowMonitorPoint.FLOW_RETURN);
+
+		//打回发起人，在 我的发起 消息标题加前缀
+		if(returnApprover.indexOf(starter)>0){
+			service.editLastStartMsgTitle(instanceUnit.getId(),"【打回】");
+			//给发起人发待阅消息
+			UserDto user = new UserDto(startApprover.getApproverId(), startApprover.getApproverName());
+			SysNoticeMsg toReadMsg = createToReadMsg(instanceUnit, instanceUnit.getCustomFormURL(), user);
+			service.getMsgService().saveAndNotifyOthers(toReadMsg);
+		}
+
+	}
+
+	private List<ACUnit> resetSort(List<ACUnit> acList) {
+		int s=0;
+		if(acList!=null && acList.size()>0){
+			for(int i=0;i<acList.size();i++){
+				acList.get(i).setAcPx(++s);
+			}
+		}
+		return acList;
+	}
+
+	private void deleteRunningAndNotStartFromCurrentAc() {
+		for(PostUnit post : currentAc.getPosts()) {
+			int leftPerson = 0;
+			List<ApproverUnit> approvers = post.getApprovers();
+			if(CollectionUtils.isEmpty(approvers)) {
+				continue;
+			}
+			for(ApproverUnit approver : approvers) {
+				TaskUnit task = approver.getTask();
+				if(StringUtils.isEmpty(task.getTaskStatus()) 
+						|| TaskStatus.NOT_RUNNING.getValue().equals(task.getTaskStatus())
+						|| TaskStatus.RUNNING.getValue().equals(task.getTaskStatus())) {
+					task.setDbAction(2);
+					approver.setDbAction(2);
+					leftPerson++;
+				}
+			}
+			if(leftPerson == approvers.size()) {
+				post.setDbAction(2);
+			}
+		}
+	}
+
+	private ACUnit generateCurrentAcDone(ApprovalSubmitDto approvalDto) {
+		ACUnit currentAcDone = (ACUnit) JavaBeanCopier.copy(currentAc);
+		currentAcDone.setDbAction(1);
+		currentAcDone.setAcStatus(ACStatus.NOT_RUNNING.getValue());
+		
+		ConcurrentStrategy personStrategy = getPersonStrategy(instanceUnit, currentAc);
+		ConcurrentStrategy postStrategy = getPostStrategy(currentAc);
+		
+		List<PostUnit> posts = new CopyOnWriteArrayList<PostUnit>();
+		for(PostUnit postOld : currentAc.getPosts()) {
+			
+			//本环节内非当前岗的竞争岗位跳过
+			if(!currentPost.getId().equals(postOld.getId())
+					&& postStrategy instanceof CompetitionStrategy) {
+				continue;
+			}
+			
+			
+			int finishPersonCnt = 0;
+			List<ApproverUnit> approvers = new CopyOnWriteArrayList<ApproverUnit>();
+			for(ApproverUnit approver : postOld.getApprovers()) {
+				
+				//已完成也加上
+				String toReturnApproverId = approvalDto.getReturnApprover().split("\\.")[1];
+				if(TaskStatus.FINISHED.getValue().equals(approver.getTask().getTaskStatus())
+						&& !approver.getApproverId().equals(toReturnApproverId)) {	//且非打回人
+					ApproverUnit copy2 = (ApproverUnit)JavaBeanCopier.copy(approver);
+					copy2.setId(IDGenerator.getUUID());
+					copy2.setTask(new TaskUnit());
+					approvers.add(copy2);
+					finishPersonCnt++;
+				}
+				
+				//当前处理人已设置为完成
+				if(
+//						TaskStatus.FINISHED.getValue().equals(approver.getTask().getTaskStatus()) ||
+						TaskStatus.RUNNING.getValue().equals(approver.getTask().getTaskStatus())
+								) {
+					if(postOld.getApprovers().size() == 1 
+							|| !(personStrategy instanceof CompetitionStrategy)
+							|| approver.getId().equals(currentApprover.getId())) {	//把当前人加上
+						ApproverUnit copy2 = (ApproverUnit)JavaBeanCopier.copy(approver);
+						copy2.setId(IDGenerator.getUUID());
+						copy2.setTask(new TaskUnit());
+						approvers.add(copy2);
+					}
+					
+					finishPersonCnt++;
+				}
+			}
+			
+			//只有下面有已审完的人时，此岗位才加上
+			if(finishPersonCnt > 0) {
+				PostUnit copy = (PostUnit)JavaBeanCopier.copy(postOld);
+				copy.setId(IDGenerator.getUUID());
+				copy.setPostStatus(PostStatus.NOT_RUNNING.getValue());
+				copy.setDbAction(1);				
+				copy.setApprovers(approvers);
+				posts.add(copy);
+			}
+		}
+		currentAcDone.setPosts(posts);
+		
+//		List<PostUnit> posts = new ArrayList<PostUnit>();
+//		PostUnit newPost = (PostUnit) JavaBeanCopier.copy(currentPost);
+//		newPost.setAcId(currentAcDone.getAcId());
+//		newPost.setId(IDGenerator.getUUID());
+//		newPost.setDbAction(1);
+//		newPost.setPostStatus(PostStatus.FINISHED.getValue());
+//		posts.add(newPost);
+//		currentAcDone.setPosts(posts);
+//		
+//		
+//		ApproverUnit newApprover = (ApproverUnit) JavaBeanCopier.copy(currentApprover);
+//		newApprover.setAcPostId(newPost.getId());
+//		newApprover.setId(IDGenerator.getUUID());
+//		newApprover.setDbAction(1);
+//		List<ApproverUnit> approvers = new ArrayList<ApproverUnit>();
+//		approvers.add(newApprover);
+//		newPost.setApprovers(approvers);
+//		
+//		TaskUnit newTask = (TaskUnit) JavaBeanCopier.copy(currentApprover.getTask());
+////		newTask.setTaskId(IDGenerator.getUUID());	//任务ID与以前保持一致，撤回任务或其他操作时用
+//		newTask.setDbAction(1);
+//		newTask.setTaskId(currentApprover.getTask().getTaskId());	//setDbAction内重新设置过ID
+//		newTask.setEndTime(new Timestamp(System.currentTimeMillis()));
+//		newTask.setTaskStatus(TaskStatus.FINISHED.getValue());
+//		newTask.setTaskResult(approvalDto.getOperationType());
+//		newTask.setTaskResultName(approvalDto.getOperationName());
+//		newTask.setTaskComments("打回到："  + approvalDto.getReturnApproverName() + approvalDto.getUserNote());
+//		newApprover.setTask(newTask);
+		
+		return currentAcDone;
+	}
+
+//	private void setNotRun(ACUnit currentAc) {
+//		currentAc.setAcStatus(ACStatus.NOT_RUNNING.getValue());
+//		List<PostUnit> posts = currentAc.getPosts();
+//		if(CollectionUtils.isEmpty(posts)) {
+//			return ;
+//		}
+//		currentAc.setLeftPost(posts.size());
+//		for(PostUnit post : posts) {
+//			post.setPostStatus(PostStatus.NOT_RUNNING.getValue());
+//			List<ApproverUnit> approvers = post.getApprovers();
+//			if(CollectionUtils.isEmpty(approvers)) {
+//				continue;
+//			}
+//			post.setLeftPerson(approvers.size());
+//			for(ApproverUnit approver : approvers) {
+//				approver.getTask().setDbAction(2);
+//			}
+//		}
+//	}
+
+	private void deleteNotFinished(InstanceUnit instanceUnit) {
+		for(ACUnit acUnit : instanceUnit.getAcList()) {
+			int a = 0;
+			List<PostUnit> posts = acUnit.getPosts();
+			if(CollectionUtils.isEmpty(posts)) {
+				acUnit.setDbAction(2);
+				continue;
+			}
+			for(PostUnit postUnit : posts) {
+				int p = 0;
+				List<ApproverUnit> approvers = postUnit.getApprovers();
+				if(CollectionUtils.isEmpty(approvers)) {
+					postUnit.setDbAction(2);
+					continue;
+				}
+				for(ApproverUnit approverUnit : approvers) {
+					if(!TaskStatus.FINISHED.getValue().equals(approverUnit.getTask().getTaskStatus())) {
+						approverUnit.setDbAction(2);
+						TaskUnit task = approverUnit.getTask();
+						if(task != null) {
+							task.setDbAction(2);
+						}
+						p++;
+					}
+				}
+				
+				if(p == approvers.size()) {
+					postUnit.setDbAction(2);
+					a++;
+				}
+			}
+			
+			if(a == posts.size()) {
+				acUnit.setDbAction(2);
+			}
+		}
+	}
+
+	/**
+	 * 生成ID，并设置关系联系等，即流程发起保存后的空白状态
+	 * 
+	 * @param acListBetween
+	 */
+	private void reset(List<ACUnit> acListBetween) {
+		for(int a=0; a<acListBetween.size(); a++) {
+			ACUnit acUnit = acListBetween.get(a);
+			 
+			String oldAcId = acUnit.getAcId();
+			String newAcId = IDGenerator.getUUID();
+			
+			//更新环节抄送人
+			updateCs(oldAcId, newAcId);
+			
+			acUnit.setAcId(newAcId);
+			List<PostUnit> posts = acUnit.getPosts();
+			if(CollectionUtils.isEmpty(posts)) {
+				continue;
+			}
+			acUnit.setLeftPost(posts.size());
+			acUnit.setAcStatus(ACStatus.NOT_RUNNING.getValue());
+			acUnit.setDbAction(1);	//设置新增标志位
+			
+			for(int i=0; i<posts.size(); i++) {
+				PostUnit postUnit = posts.get(i);
+				postUnit.setId(IDGenerator.getUUID());
+				postUnit.setAcId(acUnit.getAcId());
+				List<ApproverUnit> approvers = postUnit.getApprovers();
+				if(CollectionUtils.isEmpty(approvers)) {
+					continue;
+				}
+				postUnit.setLeftPerson(approvers.size());
+				postUnit.setPostStatus(PostStatus.NOT_RUNNING.getValue());
+				postUnit.setPostSeq(i + 1);
+				postUnit.setDbAction(1);
+				
+				for(int j=0; j<approvers.size(); j++) {
+					ApproverUnit approver = approvers.get(j);
+					approver.setId(IDGenerator.getUUID());
+					approver.setAcPostId(postUnit.getId());
+					approver.setApproverSeq(j + 1);
+					approver.setDbAction(1);
+					
+					TaskUnit task = approver.getTask();
+					if(task != null) {
+						task.setTaskId(IDGenerator.getUUID());
+						task.setTaskResult(null);
+						task.setTaskResultName(null);
+						task.setTaskComments(null);
+						task.setTaskStatus(TaskStatus.NOT_RUNNING.getValue());
+						task.setStartTime(null);
+						task.setEndTime(null);
+					}
+				}
+			}
+		}
+		
+		for(int i = 0; i<acListBetween.size(); i++) {
+			ACUnit acUnit = acListBetween.get(i);
+			List<ACUnit> preAcs = acUnit.getPreAcs();
+			if(CollectionUtils.isNotEmpty(preAcs)) {
+				String preAcIds = "";
+				for(ACUnit preAc : preAcs) {
+					if(preAc == null) {
+						continue;
+					}
+					if(StringUtils.isEmpty(preAcIds)) {
+						preAcIds = preAc.getAcId();
+					} else {
+						preAcIds = preAcIds + "," + preAc.getAcId();
+					}
+				}
+				acUnit.setPreAcIds(preAcIds);
+				
+			}
+			
+//			List<ACUnit> nextAcs = acUnit.getNextAcs();
+//			if(CollectionUtils.isNotEmpty(nextAcs)) {
+//				String nextAcIds = "";
+//				for(ACUnit nextAc : nextAcs) {
+//					if(nextAc == null) {
+//						continue;
+//					}
+//					if(StringUtils.isEmpty(nextAcIds)) {
+//						nextAcIds = nextAc.getAcId();
+//					} else {
+//						nextAcIds = nextAcIds + "," + nextAc.getAcId();
+//					}
+//				}
+//				acUnit.setNextAcIds(nextAcIds);
+//			} else {
+//				acUnit.setNextAcIds(currentAc.getAcId());	//???
+//			}
+			if(i == acListBetween.size() - 1) {
+				acUnit.setNextAcIds(currentAc.getNextAcIds());
+			} else {
+				acUnit.setNextAcIds(acListBetween.get(i + 1).getAcId());
+			}
+			
+		}
+	}
+
+	private int updateCs(String oldAcId, String newAcId) {
+		int updateCnt = service.getInstanceCsService().updateAcId(oldAcId, newAcId);
+		log.info("打回时更新环节抄送人：oldAcId = " + oldAcId + ", newAcId=" + newAcId + ", updateCnt=" + updateCnt);
+		return updateCnt;
+	}
+
+//	private List<ACUnit> getAcBetween(InstanceUnit instanceUnit, ApprovalSubmitDto approvalDto) {
+//		List<ACUnit> acList = new ArrayList<ACUnit>();
+//		String approveRepeat = approvalDto.getApproveRepeat();
+//		ACUnit fromAc = getAcReturn(instanceUnit, approvalDto);
+//		
+//		//不重复审批
+//		if("0".equals(approveRepeat)) {
+//			acList.add((ACUnit) JavaBeanCopier.copy(fromAc));
+//			return acList;
+//		} else {
+//			for(int i = fromAc.getAcPx(); i<currentAc.getAcPx(); i++) {
+//				ACUnit ac = instanceUnit.getAcList().get(i - 1);
+//				acList.add((ACUnit) JavaBeanCopier.copy(ac));
+//			}
+//		}
+//		
+//		return acList;
+//	}
+	
+	private List<ACUnit> getAcBetween(InstanceUnit instanceUnit, ApprovalSubmitDto approvalDto) {
+		String instanceId = instanceUnit.getId();
+		List<ApprovalList> approverDone = service.queryApprovalList(instanceId, TaskStatus.FINISHED.getValue());
+		
+		
+		Iterator<ApprovalList> iter = approverDone.iterator();
+		while(iter.hasNext()) {
+			//去除协办人记录
+			ApprovalList next = iter.next();
+			if(TaskType.ASSIST.getValue().equals(next.getTaskType())) {
+				iter.remove();
+				continue;
+			}
+			
+			//去除本环节的已完成人
+			if(currentAc.getAcId().equals(next.getAcId())) {
+				String toReturnAcId = approvalDto.getReturnApprover().split("\\.")[0];
+				if(!currentAc.getAcId().equals(toReturnAcId)) {	//打回人非当前环节	
+					iter.remove();
+					continue;
+				}
+			}
+			
+			//去除虚节点
+			if(FlAcType.JOIN.getAcType().equals(next.getAcType())
+					|| FlAcType.FORK.getAcType().equals(next.getAcType())) {
+				iter.remove();
+				continue;
+			}
+		}
+		
+		//以岗位+人去重
+		Map<String, ApprovalList> filter = new LinkedHashMap<String, ApprovalList>();
+		for(ApprovalList approval : approverDone) {
+			String key = approval.getAcId() + approval.getPostId() + approval.getApproverId();
+			filter.put(key, approval);
+		}
+		
+		approverDone.clear();
+		for(ApprovalList approval : filter.values()) {
+			approverDone.add(approval);
+		}
+		
+		//步骤1要先于步骤2，否则在打回到同环节的情况下无法执行步骤1
+		//1、
+		approverDone = removeBeforeReturnStarter(approverDone, approvalDto);
+
+		//2、
+		//去除与当前打回人同环节的已审批人 TODO 待重构
+//		Iterator<ApprovalList> iter = approverDone.iterator();
+//		while(iter.hasNext()) {
+//			String acId = iter.next().getAcId();
+//			if(currentAc.getAcId().equals(acId)) {
+//				iter.remove();
+//			}
+//		}
+		
+		
+		//不重复审批
+		String approveRepeat = approvalDto.getApproveRepeat();
+		if("0".equals(approveRepeat)) {
+			approverDone = approverDone.subList(0, 1);
+			
+			
+		}
+		
+		ACUnit currentAcReset = generateCurrentAcDone(approvalDto);		
+		List<ACUnit> acList = new ArrayList<ACUnit>();
+		if(CollectionUtils.isNotEmpty(approverDone)) {
+			InstanceUnit newInstanceUnit = service.translate(instanceUnit, approverDone);
+			
+			//上下环节关联
+			acList = newInstanceUnit.getAcList();
+			ACUnit last = acList.get(acList.size() - 1);		
+			List<ACUnit> nextAcs = new ArrayList<ACUnit>();
+			nextAcs.add(currentAcReset);
+			last.setNextAcs(nextAcs);
+			List<ACUnit> preAcs = new ArrayList<ACUnit>();
+			preAcs.add(last);
+			currentAcReset.setPreAcs(preAcs);
+		}
+		
+		//加上当前环节
+		acList.add(currentAcReset);
+		
+		for(ACUnit acUnit : acList) {
+			acUnit.setFromReturn("1");
+		}
+		
+		return acList;
+	}
+
+//	private ACUnit getAcReturn(InstanceUnit instanceUnit, ApprovalSubmitDto approvalDto) {
+//		String returnApprover = approvalDto.getReturnApprover();
+//		for(ACUnit acUnit : instanceUnit.getAcList()) {
+//			List<PostUnit> posts = acUnit.getPosts();
+//			if(CollectionUtils.isEmpty(posts)) {
+//				continue;
+//			}
+//			for(PostUnit postUnit : posts) {
+//				List<ApproverUnit> approvers = postUnit.getApprovers();
+//				if(CollectionUtils.isEmpty(approvers)) {
+//					continue;
+//				}
+//				for(ApproverUnit approver : approvers) {
+//					if(returnApprover.equals(acUnit.getAcId() + "." + approver.getApproverId())) {
+//						return acUnit;
+//					}
+//				}
+//			}
+//		}
+//		return null;
+//	}
+	
+	private List<ApprovalList> removeBeforeReturnStarter(List<ApprovalList> approverDone, ApprovalSubmitDto approvalDto) {
+		String returnApprover = approvalDto.getReturnApprover();
+		for(int i=0; i<approverDone.size(); i++) {
+			ApprovalList approvalList = approverDone.get(i);
+			if(returnApprover.equals(approvalList.getAcId() + "." + approvalList.getApproverId())) {
+				approvalDto.setReturnApproverName(approvalList.getApproverName());
+				return approverDone.subList(i, approverDone.size());
+			}
+		}
+		return null;
+	}
+
+	private void completeCurrent(ApprovalSubmitDto approvalDto) {
+		TaskUnit task = currentApprover.getTask();
+		task.setTaskStatus(TaskStatus.FINISHED.getValue());
+		task.setEndTime(new Timestamp(System.currentTimeMillis()));
+		task.setTaskResult(approvalDto.getOperationType());
+		task.setTaskResultName(approvalDto.getOperationName());
+		task.setTaskComments("打回到【" + approvalDto.getReturnApproverName() + "】:" + approvalDto.getUserNote());
+		
+		super.complate(currentPost);
+		
+		//避免在完成时发送抄送人消息
+		currentAc.setAcStatus(ACStatus.FINISHED.getValue());
+		currentAc.setAcEndTime(new Timestamp(System.currentTimeMillis()));
+		
+		super.complate(currentAc);
+	}
+
+}

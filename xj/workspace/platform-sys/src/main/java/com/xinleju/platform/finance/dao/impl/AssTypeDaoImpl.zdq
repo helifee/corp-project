@@ -1,0 +1,30 @@
+package com.xinleju.platform.finance.dao.impl;
+
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.platform.base.dao.impl.BaseDaoImpl;
+import com.xinleju.platform.finance.dao.AssTypeDao;
+import com.xinleju.platform.finance.dto.AssTypeMappingDto;
+import com.xinleju.platform.finance.entity.AssType;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Repository
+public class AssTypeDaoImpl extends BaseDaoImpl<String,AssType> implements AssTypeDao{
+
+	public AssTypeDaoImpl() {
+		super();
+	}
+
+	public List<AssTypeMappingDto> queryTree(List<String> list){
+		return getSqlSession().selectList("com.xinleju.platform.finance.entity.AssType.queryTree", list);
+	}
+	
+}

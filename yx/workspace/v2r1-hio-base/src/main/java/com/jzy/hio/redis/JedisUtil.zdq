@@ -1,0 +1,1356 @@
+package com.jzy.hio.redis;
+
+import java.util.*;
+
+import javax.persistence.Table;
+import javax.sql.DataSource;
+
+import com.alibaba.druid.pool.DruidDataSource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.entity.BaseEntity;
+import com.jzy.hio.exception.HioRedisDeleteException;
+import com.jzy.hio.exception.HioRedisSetException;
+import com.jzy.hio.utils.JacksonUtils;
+import com.jzy.hio.utils.OrderValue;
+
+import redis.clients.jedis.HostAndPort;
+import redis.clients.jedis.Jedis;
+import redis.clients.jedis.JedisCluster;
+import redis.clients.jedis.JedisPool;
+import redis.clients.jedis.JedisPoolConfig;
+
+@Order(OrderValue.INIT_BEAN_JEDIS_POOL)
+@Configuration
+public class JedisUtil {
+
+	private static final Logger logger = LoggerFactory.getLogger(JedisUtil.class);
+
+	/**
+	 * redis加锁返回结果
+	 */
+	private static final String LOCK_MSG = "OK";
+
+	/**
+	 * redis解锁返回值
+	 */
+	private static final Long UNLOCK_MSG = 1L;
+	private static final String SET_IF_NOT_EXIST = "NX";
+	private static final String SET_WITH_EXPIRE_TIME = "PX";
+	/**
+	 * 设置redis超时时间 1秒 second
+	 */
+	private static final int TIME = 1000;
+
+	private static String host;
+	private static int port;
+	private static String password;
+
+	@Autowired
+	private static JedisPoolConfig config;
+	private static JedisPool jedisPool;
+
+	private static int connectionTimeout;
+	private static int soTimeout;
+
+	public JedisUtil() {
+		logger.info("jedisUtil");
+	}
+
+	private static JedisCluster jedis;
+
+	private static String nodes;
+
+	@ConfigurationProperties(prefix = "redis.cluster.pool")
+	@Bean(name="jedisPoolConfig")
+	public JedisPoolConfig jedisPoolConfig() {
+		config = new JedisPoolConfig();
+		return config;
+	}
+
+	// private static JedisPool getJedisPool() {
+	// if (jedisPool == null) {
+	// jedisPool = new JedisPool(getRedisConfig(), host, port, 15000, password, 1);
+	// }
+	// return jedisPool;
+	// }
+
+	private static JedisCluster getJedis() {
+//		if (config == null) {
+//			config = new JedisPoolConfig();
+//			config.setMaxTotal(10000);// 最大连接数
+//			config.setMaxIdle(6);// 闲置最大连接数
+//			config.setMinIdle(0);// 闲置最小连接数
+//			config.setMaxWaitMillis(15000);// 到达最大连接数后，调用者阻塞时间
+//			config.setMinEvictableIdleTimeMillis(300000);// 连接空闲的最小时间，可能被移除
+//			config.setSoftMinEvictableIdleTimeMillis(-1);// 连接空闲的最小时间，多余最小闲置连接的将被移除
+//			config.setNumTestsPerEvictionRun(3);// 设置每次检查闲置的个数
+//			config.setTestOnBorrow(false);// 申请连接时，是否检查连接有效
+//			config.setTestOnReturn(false);// 返回连接时，是否检查连接有效
+//			config.setTestWhileIdle(true);// 空闲超时,是否执行检查有效
+//			config.setTimeBetweenEvictionRunsMillis(60000);// 空闲检查时间
+//			config.setBlockWhenExhausted(true);// 当连接数耗尽，是否阻塞
+//		}
+		if (jedis == null) {
+			Set<HostAndPort> hostAndPorts = new LinkedHashSet<HostAndPort>();
+			String[] nodeArray = nodes.split(",");
+			for (int i = 0; i < nodeArray.length; i++) {
+				String host = nodeArray[i].split(":")[0];
+				int port = Integer.parseInt(nodeArray[i].split(":")[1]);
+				hostAndPorts.add(new HostAndPort(host, port));
+			}
+			// hostAndPorts.add(new HostAndPort("192.168.3.155", 6382));
+			// hostAndPorts.add(new HostAndPort("192.168.3.155", 6383));
+			// hostAndPorts.add(new HostAndPort("192.168.3.155", 6384));
+			// hostAndPorts.add(new HostAndPort("192.168.3.154", 6379));
+			// hostAndPorts.add(new HostAndPort("192.168.3.154", 6380));
+			// hostAndPorts.add(new HostAndPort("192.168.3.154", 6381));
+			jedis = new JedisCluster(hostAndPorts, connectionTimeout, soTimeout, 1, password, config);
+		}
+		return jedis;
+	}
+
+	/**
+	 * 获取redis key数据
+	 * 
+	 * @return
+	 */
+
+	public static String getKey(String id) {
+		JedisCluster jedis = getJedis();
+		try {
+			String m = jedis.get(id);
+			return m;
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("getKey error,{}", id);
+		} finally {
+			// try {
+			// jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+		return null;
+	}
+
+	/**
+	 * 存短信验证码
+	 * 
+	 * @param mobile
+	 * @param value
+	 * @return
+	 */
+	public static String addSmsCode(String mobile, String value) {
+		JedisCluster jedis = getJedis();
+		try {
+			String status = jedis.set(Constants.key_prefix_sms+ mobile, String.valueOf(value));
+			jedis.expire(Constants.key_prefix_sms + mobile, 60*15);
+			return status;
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("addSmsCode error,{},{}", mobile, value);
+		} finally {
+			// jedis.close();
+		}
+		return null;
+	}
+	public static String getSmsCode(String mobile) {
+		JedisCluster jedis = getJedis();
+		String oldSmsCode="";
+		try {
+			oldSmsCode=jedis.get(Constants.key_prefix_sms+mobile);
+			return oldSmsCode;
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("getSmsCode error,{},{}", mobile, oldSmsCode);
+		} finally {
+			// jedis.close();
+		}
+		return null;
+	}
+
+	/**
+	 * 存手机设备号
+	 *
+	 * @param mobile
+	 * @param value
+	 * @return
+	 */
+	public static String addPhoneDeviceCode(String mobile, String value) {
+		JedisCluster jedis = getJedis();
+		try {
+			String status = jedis.set(Constants.key_prefix_phoneDevice+ mobile, String.valueOf(value));
+			jedis.expire(Constants.key_prefix_phoneDevice + mobile, 60*60*24);
+			return status;
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("addPhoneDeviceCode error,{},{}", mobile, value);
+		} finally {
+			// jedis.close();
+		}
+		return null;
+	}
+	/**
+	 * 存图片验证码
+	 * 
+	 * @param mobile
+	 * @param value
+	 * @return
+	 */
+	public static String addPicVilidateCode(String mobile, String value) {
+		JedisCluster jedis = getJedis();
+		try {
+			String status = jedis.set(Constants.key_prefix_pic + mobile, String.valueOf(value));
+			jedis.expire(Constants.key_prefix_pic + mobile, 60*15);
+			return status;
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("picVilidateCode error,{},{}", mobile, value);
+		} finally {
+			// jedis.close();
+		}
+		return null;
+	}
+	
+	/**
+	 * 带有效时间的redis存储
+	 * 
+	 * @param value
+	 * @return
+	 */
+	public static String addEffectiveTime(String key, String value,Integer effectiveTime) {
+		JedisCluster jedis = getJedis();
+		try {
+			String status = jedis.set(key, String.valueOf(value));
+			jedis.expire(key, effectiveTime);
+			return status;
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("picVilidateCode error,{},{}", key, value);
+		} finally {
+			// jedis.close();
+		}
+		return null;
+	}
+
+	/**
+	 * 是否存在此key
+	 *
+	 * @param key
+	 * @return
+	 */
+	public static boolean exists(String key) {
+		JedisCluster jedis = getJedis();
+		try {
+			return jedis.exists(key);
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("redis exists error,{}", key);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+		return false;
+	}
+
+	/**
+	 * 保存value
+	 *
+	 * @param key
+	 * @param value
+	 * @return
+	 */
+	public static String set(String key, String value) {
+		JedisCluster jedis = getJedis();
+		try {
+			return jedis.set(key, value);
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("redis set error,{},{}", key, value);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+		return null;
+	}
+
+	/**
+	 * 保存value，并设置过期秒数
+	 *
+	 * @param key
+	 * @param value
+	 * @return
+	 */
+	public static String set(String key, String value, int seconds) {
+		JedisCluster jedis = getJedis();
+		try {
+			return jedis.setex(key, seconds, value);
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("redis setex error,{},{},{}", key, value, seconds);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+		return null;
+	}
+
+	/**
+	 * 获取value
+	 *
+	 * @param key
+	 * @param
+	 * @return
+	 */
+	public static String get(String key) {
+		JedisCluster jedis = getJedis();
+		try {
+			return jedis.get(key);
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("redis get error,{}", key);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+		return null;
+	}
+	/**
+	 * 设置value ,成功返回OK，失败或者重复返回null
+	 *    ex 秒 px 毫秒
+	 * @param key
+	 * @param
+	 * @return
+	 */
+	public static String setNxExPx(String key,String value,String expx,int second) {
+		JedisCluster jedis = getJedis();
+		try {
+			return jedis.set(key,value,"nx",expx,second);
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("redis setNxEx error,{} {}  {}", key,value,second);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+		return null;
+	}
+	/**
+	 * 删除key
+	 *
+	 * @param key
+	 * @param
+	 * @return
+	 */
+	public static long del(String key) {
+		JedisCluster jedis = getJedis();
+		try {
+			return jedis.del(key);
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("redis del error,{}", key);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+		return 0;
+	}
+
+	/**
+	 * 获取key 剩余生存时间
+	 *
+	 * @param key
+	 * @param
+	 * @return
+	 */
+	public static long ttl(String key) {
+		JedisCluster jedis = getJedis();
+		try {
+			return jedis.ttl(key);
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("redis ttl error,{}", key);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+		return 0;
+	}
+
+	/**
+	 * hash 单条赋值
+	 *
+	 * @param key
+	 * @param value
+	 * @return
+	 */
+	public static long hset(String key, String field, String value) {
+		JedisCluster jedis = getJedis();
+		try {
+			return jedis.hset(key, field, value);
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("redis hset error,{},{},{}", key, field, value);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+		return 0;
+	}
+
+	/**
+	 * hash 单条赋值 obj转成json存入
+	 *
+	 * @param key
+	 * @param field
+	 * @param obj
+	 * @return
+	 */
+	public static long hsetObject(String key, String field, Object obj) {
+		return hset(key, field, JacksonUtils.toJson(obj));
+	}
+
+	/**
+	 * hash 单条获取
+	 *
+	 * @param key
+	 * @param
+	 * @return
+	 */
+	public static String hget(String key, String field) {
+		JedisCluster jedis = getJedis();
+		try {
+			return jedis.hget(key, field);
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("redis hget error,{},{}", key, field);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+		return null;
+	}
+
+	/**
+	 * 单条获取 转为clazz
+	 *
+	 * @param key
+	 * @param field
+	 * @param clazz
+	 * @return
+	 */
+	public static <T> T hgetObject(String key, String field, Class<T> clazz) {
+		String json = hget(key, field);
+		if (json == null) {
+			return null;
+		}
+		return JacksonUtils.fromJson(json, clazz);
+	}
+
+	/**
+	 * 单条获取 转为list<clazz>
+	 *
+	 * @param key
+	 * @param field
+	 * @param clazz
+	 * @return
+	 */
+	public static <T> List<T> hgetArray(String key, String field, Class<T> clazz) {
+		String json = hget(key, field);
+		if (json == null) {
+			return null;
+		}
+		return JacksonUtils.fromJson(json, ArrayList.class, clazz);
+	}
+
+	/**
+	 * 根据key和field删除hash表
+	 *
+	 * @param key
+	 * @return
+	 */
+	public static long hdel(String key, String field) {
+		JedisCluster jedis = getJedis();
+		try {
+			return jedis.hdel(key, field);
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("redis hdel error,{}", key);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+		return 0;
+	}
+
+	/**
+	 * 存redis表--添加表记录
+	 *
+	 * @param entity
+	 * @return
+	 */
+	public static String addRowCustomKey(String customKey, BaseEntity entity) {
+		JedisCluster jedis = getJedis();
+		String entityJson = null;
+		String tableName = entity.getClass().getAnnotation(Table.class).name();
+		try {
+			entityJson = JacksonUtils.toJson(entity);
+			Map<String, String> map = new HashMap<>();
+			map.put(customKey, entityJson);
+			map.put("table_name", tableName);
+			return jedis.hmset(tableName, map);
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("addRow error,{},{}", tableName, entityJson);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+		return null;
+	}
+
+	/**
+	 * 存redis表--添加表记录
+	 *
+	 * @author wt.coffee
+	 * @param entity
+	 * @return
+	 */
+	public static String addRow(String tendCode, BaseEntity entity) {
+		JedisCluster jedis = getJedis();
+		String entityJson = null;
+		String tableName = entity.getClass().getAnnotation(Table.class).name();
+		try {
+			entityJson = JacksonUtils.toJson(entity);
+			Map<String, String> map = new HashMap<>();
+			map.put(entity.getId(), entityJson);
+			logger.info("tableName:{},value resource:{}",tableName,entityJson);
+			logger.info("tableName:{},value:{}",tableName,JacksonUtils.toJson(map));
+			return jedis.hmset(tendCode + ":" + tableName, map);
+		} catch (Exception e) {
+			logger.error("addRow error,{},{}", tableName, entityJson);
+			throw new HioRedisSetException(e);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+	}
+
+	/**
+	 * 修改redis表数据
+	 *
+	 * @author wt.coffee
+	 * @param tendCode
+	 * @param
+	 * @return
+	 */
+	@SuppressWarnings("unchecked")
+	public static Long editRow(String tendCode, BaseEntity entity) {
+		JedisCluster jedis = getJedis();
+		String tableName = entity.getClass().getAnnotation(Table.class).name();
+		String key = tendCode + ":" + tableName;
+		String newJson = JacksonUtils.toJson(entity);
+		try {
+			if (entity.getId() != null) {
+				String data = fetchRow(key, entity.getId());
+				Map<String, String> oldMap = JacksonUtils.fromJson(data, Map.class);
+				Map<String, String> newMap = JacksonUtils.fromJson(newJson, Map.class);
+				oldMap.putAll(newMap);
+				// return jedis.hmset(tendCode + ":" + tableName, map);
+				return jedis.hset(key, entity.getId(), JacksonUtils.toJson(oldMap));
+			} else {
+				return null;
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("editRow error, {} {}", tableName, newJson);
+			throw new HioRedisSetException(e);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+	}
+
+	/**
+	 * 存redis表<br>
+	 * hio_tend095:user_detail:1001
+	 * 如果这个key下面  有三个key
+	 * 但是调用的时候map只有两个、另外一个不会被删除
+	 * @author wt.coffee
+	 * @param 
+	 * @param
+	 * @return
+	 */
+	public static String addRowMap(String key, Map<String, String> map) {
+		JedisCluster jedis = getJedis();
+		try {
+			logger.info("tableName:{},value resource:{}",key,JacksonUtils.toJson(map));
+			return jedis.hmset(key, map);
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("addRow error,{},{}", map, key);
+			throw new HioRedisSetException(e);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+	}
+
+	/**
+	 * 通配符获取keys
+	 * 
+	 * @param pattern
+	 * @return
+	 */
+	public static TreeSet<String> keys(String pattern) {
+		logger.debug("Start getting keys...");
+		JedisCluster jedis = getJedis();
+		TreeSet<String> keys = new TreeSet<>();
+		Map<String, JedisPool> clusterNodes = jedis.getClusterNodes();
+		for (String k : clusterNodes.keySet()) {
+			logger.debug("Getting keys from: {}", k);
+			JedisPool jp = clusterNodes.get(k);
+			Jedis connection = jp.getResource();
+			try {
+				keys.addAll(connection.keys(pattern));
+			} catch (Exception e) {
+				logger.error("Getting keys error: {}", e);
+			} finally {
+				logger.debug("Connection closed.");
+				connection.close();// 用完一定要close这个链接！！！
+			}
+		}
+		logger.debug("Keys gotten!");
+		return keys;
+	}
+
+	/**
+	 * 删除整个表、或者整个文件夹的数据
+	 *
+	 * @author coffee
+	 * @param key
+	 * @return
+	 */
+	public static Long delAll(String key) {
+		JedisCluster jedis = getJedis();
+		try {
+			// if (key.endsWith("*") == false) {
+			// key += "*";
+			// }
+			Set<String> keys = keys(key);
+			// keys为空的时候 不能执行删除操作、会报错
+			// Caused by: redis.clients.jedis.exceptions.JedisDataException: ERR wrong number of arguments for 'del' command
+			if (keys.size() > 0) {
+				for (String item : keys) {
+					Long result = jedis.del(item);
+					if (result == null || result == 0) {
+						logger.error("删除失败{} ", key);
+					}
+				}
+				return 1L;
+				// Long m = jedis.del(keys.toArray(new String[] {}));
+				// return m;
+			} else {
+				return 0L;
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("delRow error,{}", key);
+			throw new HioRedisDeleteException(e);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+	}
+
+	/**
+	 * 
+	 * 存redis表
+	 *
+	 * JedisUtil.addRow<BR>
+	 * <p>
+	 * Author：yifeihu
+	 * </p>
+	 * <p>
+	 * Date：2018年4月12日 下午2:01:52
+	 * </p>
+	 * 
+	 * @param tableName
+	 * @param row
+	 * @return
+	 */
+	public static String addRow(String tableName, Map<String, Object> row) {
+		JedisCluster jedis = getJedis();
+		try {
+			Map<String, String> table = new HashMap<String, String>();
+			table.put(row.get("id").toString(), JacksonUtils.toJson(row));
+			logger.info("tableName:{},value resource:{}",tableName,JacksonUtils.toJson(row));
+			logger.info("tableName:{},value:{}",tableName,JacksonUtils.toJson(table));
+			return jedis.hmset(tableName, table);
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("addRow error,{},{}", JacksonUtils.toJson(row), tableName);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+		return null;
+	}
+
+	/**
+	 * 
+	 * 修改redis表数据
+	 *
+	 * JedisUtil.editRow<BR>
+	 * <p>
+	 * Author：yifeihu
+	 * </p>
+	 * <p>
+	 * Date：2018年4月12日 下午2:02:02
+	 * </p>
+	 * 
+	 * @param tableName
+	 * @param row
+	 * @return
+	 */
+	@SuppressWarnings("unchecked")
+	public static Long editRow(String tableName, Map<String, Object> row) {
+		JedisCluster jedis = getJedis();
+		try {
+			if (row.get("id") != null) {
+				String data = fetchRow(tableName, row.get("id").toString());
+				Map<String, Object> old = JacksonUtils.fromJson(data, Map.class);
+				for (String key : row.keySet()) {
+					old.put(key, row.get(key));
+				}
+				return jedis.hset(tableName, row.get("id").toString(), JacksonUtils.toJson(old));
+			} else {
+				return -1l;
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("editRow error,{}", JacksonUtils.toJson(row));
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+		return -1l;
+	}
+
+	/**
+	 * 获取redis表数据
+	 *
+	 * @return
+	 */
+	public static String fetchRow(String key, String feild) {
+		JedisCluster jedis = getJedis();
+		try {
+			String m = jedis.hget(key, feild);
+			return m;
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("fetchRow error,key-{} field-{}", key, feild);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+		return null;
+	}
+
+	/**
+	 * 获取redis表数据
+	 *
+	 * @return
+	 */
+	public static String fetchValueByKey(String key, String field) {
+		JedisCluster jedis = getJedis();
+		try {
+			String m = jedis.hget(key, field);
+			return m;
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("fetchRow error,{}", field);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+		return null;
+	}
+
+	/**
+	 * 删除redis表数据
+	 *
+	 * @return
+	 */
+	public static Long delRow(String key, String id) {
+		JedisCluster jedis = getJedis();
+		try {
+			Long m = jedis.hdel(key, id);
+			return m;
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("delRow error,{}", id);
+			throw new HioRedisDeleteException(e);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+	}
+
+	/**
+	 * 添加手机号索引
+	 *
+	 * @param tableName
+	 * @param mobile
+	 * @return
+	 */
+	public static String addIndexMobile(String tableName, String mobile, String userid) {
+		JedisCluster jedis = getJedis();
+		try {
+			Map table = new HashMap();
+			table.put("table_name", tableName);
+			table.put(mobile, userid);
+			return jedis.hmset("index:" + tableName + ":mobile", table);
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("addIndexMobile error,{},{}", mobile, tableName);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+		return null;
+	}
+
+	/**
+	 * 查询手机号索引
+	 *
+	 * @param tableName
+	 * @param mobile
+	 * @return
+	 */
+	public static String fetchIndexMobile(String tableName, String mobile) {
+		JedisCluster jedis = getJedis();
+		try {
+			String m = jedis.hget("index:" + tableName + ":mobile", mobile);
+			return m;
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("fetchIndexMobile error,{}", mobile);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+		return null;
+	}
+
+	/**
+	 * 删除手机号索引
+	 *
+	 * @param tableName
+	 * @param mobile
+	 * @return
+	 */
+	public static Long delIndexMobile(String tableName, String mobile, String userid) {
+		JedisCluster jedis = getJedis();
+		try {
+			Long m = jedis.hdel("index:" + tableName + ":mobile", mobile);
+			return m;
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("delIndexMobile error,{}", mobile);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+		return null;
+	}
+
+	/**
+	 * 创建session
+	 *
+	 * @param value
+	 * @param mobile
+	 * @return
+	 */
+	public static String createSession(Map value, String mobile) {
+		JedisCluster jedis = getJedis();
+		try {
+			String status = jedis.hmset("session:" + mobile, value);
+			 jedis.expire("session:" + mobile, 60 * 60 * 25*30);
+			return status;
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("createSession error,{},{}", value, mobile);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+		return null;
+	}
+
+	/**
+	 * 刷新session存在时间
+	 * @param mobile
+	 * @return
+	 */
+	public static long refreshSessionTime(String mobile){
+		JedisCluster jedis = getJedis();
+		try {
+			return jedis.expire("session:" + mobile, 60 * 60 * 25 *30);
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("refreshSessionTime error,{}", mobile);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+		return 0;
+	}
+
+	/*
+	 * 根据key查询数据 (查询整张表的数据)
+	 *
+	 * @param tableName
+	 *
+	 * @param mobile
+	 *
+	 * @return
+	 */
+	public static Map<String, String> fetchRelationRow(String key) {
+		JedisCluster jedis = getJedis();
+		try {
+			Map<String, String> m = jedis.hgetAll(key);
+			return m;
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("fetchRelationRow error,{}", key);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+		return null;
+	}
+
+	/**
+	 * 根据key编辑数据
+	 *
+	 * @param
+	 * @param
+	 * @return
+	 */
+	public static String addRelationRow(String key, Map map) {
+		JedisCluster jedis = getJedis();
+		try {
+			// Map table = new HashMap();
+			// table.put(key, gson.create().toJson(map));
+			// table.put("table_name", key);
+			logger.info("tableName:{},value resource:{}",key,JacksonUtils.toJson(map));
+			return jedis.hmset(key, map);
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("addRelationRow error,{}", key);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+		return null;
+	}
+
+	/**
+	 * 根据key删除数据
+	 *
+	 * @param
+	 * @param
+	 * @return
+	 */
+	public static Long delRelationRow(String key) {
+		JedisCluster jedis = getJedis();
+		try {
+			return jedis.del(key);
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("addRelationRow error,{}", key);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+		return null;
+	}
+
+	/**
+	 * 获取session
+	 *
+	 * @param mobile
+	 * @return
+	 */
+	public static Map fetchSession(String mobile) {
+		JedisCluster jedis = getJedis();
+		try {
+			Map m = jedis.hgetAll("session:" + mobile);
+			return m;
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("fetchSession error,{}", mobile);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+		return null;
+	}
+
+	/**
+	 * 存redis表--添加表记录
+	 *
+	 * @author wt.coffee
+	 *
+	 * @param entity
+	 * @return
+	 */
+	public static String addRow(BaseEntity entity) {
+		JedisCluster jedis = getJedis();
+		String entityJson = null;
+		String tableName = entity.getClass().getAnnotation(Table.class).name();
+		entityJson = JacksonUtils.toJson(entity);
+		Map<String, String> map = new HashMap<>();
+		map.put(entity.getId(), entityJson);
+		map.put("table_name", tableName);
+		logger.info("tableName:{},value:{}",tableName,map.toString());
+		return jedis.hmset(tableName, map);
+	}
+
+	/**
+	 * 修改redis表数据
+	 *
+	 * @author wt.coffee
+	 *
+	 * @param
+	 * @param
+	 * @return
+	 */
+	@SuppressWarnings("unchecked")
+	public static Long editRow(BaseEntity entity) {
+		JedisCluster jedis = getJedis();
+		String tableName = entity.getClass().getAnnotation(Table.class).name();
+		String key = tableName;
+		String newJson = JacksonUtils.toJson(entity);
+		try {
+			if (entity.getId() != null) {
+				String data = fetchRow(key, entity.getId());
+				Map<String, String> oldMap = JacksonUtils.fromJson(data, Map.class);
+				Map<String, String> newMap = JacksonUtils.fromJson(newJson, Map.class);
+				oldMap.putAll(newMap);
+				return jedis.hset(key, entity.getId(), JacksonUtils.toJson(oldMap));
+			} else {
+				return null;
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("editRow error, {} {}", tableName, newJson);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+		return null;
+	}
+
+	/**
+	 * 根据key编辑数据
+	 *
+	 * @param
+	 * @param
+	 * @return
+	 */
+	public static String addListRow(String key, Map map) {
+		JedisCluster jedis = getJedis();
+		try {
+			Map table = new HashMap();
+			if (Base.isEmpty(map.get("id"))) {
+				map.put("id", map.get("sid"));
+			}
+			table.put(map.get("id"), JacksonUtils.toJson(map));
+			return jedis.hmset(key, table);
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("addRelationRow error,{}", JacksonUtils.toJson(key));
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+		return null;
+	}
+
+	public static List<String> lrange(String key, int start, int end) {
+		JedisCluster jedis = getJedis();
+		List<String> result = jedis.lrange(key, start, end);
+
+		return result;
+	}
+
+	/**
+	 * 通过redis获取表主键序列 <br/>
+	 * 10000以下的数值预留给sql脚本
+	 *
+	 * @param tableName
+	 * @return
+	 */
+	public static String generateKey(String tableName) {
+		JedisCluster jedis = getJedis();
+		try {
+			long key = jedis.incrBy("sequence", 1);
+			return String.valueOf(BaseConstants.MYSQL_ID_ORIGIN + key);
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("generateKey error,{}", tableName);
+		} finally {
+			// try {
+			// //jedis.close();
+			// } catch (IOException e) {
+			// e.printStackTrace();
+			// }
+		}
+		return null;
+
+	}
+	
+	public static void batchDel(String key){  
+		JedisCluster jedis = getJedis();
+        Set<String> set = jedis.hkeys(key +"*");
+        Iterator<String> it = set.iterator();  
+        while(it.hasNext()){  
+            String keyStr = it.next();  
+            System.out.println(keyStr);  
+            jedis.del(keyStr);  
+        }  
+    }  
+
+	/**
+	 * redis加锁 wf
+	 * @param key  设置key
+	 * @param request 设置value
+	 * @param expireTime 过期时间，单位秒
+	 * @return
+	 */
+	public  static boolean tryLock(String key, String request,int expireTime) {
+		String result = jedis.set(key, request, SET_IF_NOT_EXIST, SET_WITH_EXPIRE_TIME, expireTime*TIME);
+		if (LOCK_MSG.equals(result)){
+			return true ;
+		}else {
+			return false ;
+		}
+	}
+
+	/**
+	 * redis 解锁 wf
+	 * 判断锁是否自己的
+	 * @param key 要解锁的key值
+	 * @param request 要解锁的value值
+	 * @return
+	 */
+	public static   boolean unlock(String key,String request){
+		//lua script
+		String script = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
+		Object result = null ;
+		result = ((JedisCluster)jedis).eval(script, Collections.singletonList(key), Collections.singletonList(request));
+		if (UNLOCK_MSG.equals(result)){
+			return true ;
+		}else {
+			return false ;
+		}
+	}
+
+	public static JedisCluster getResource() {
+		JedisCluster jedis = null;
+		try {
+			jedis = getJedis();
+			logger.debug("getResource:{}", jedis);
+		} catch (Exception e) {
+			logger.error("getResource:{}", e);
+			throw e;
+		}
+		return jedis;
+	}
+
+
+
+	// setter
+	@Value("${spring.redis.host}")
+	public void setHost(String host) {
+		JedisUtil.host = host;
+	}
+
+	@Value("${spring.redis.port}")
+	public void setPort(int port) {
+		JedisUtil.port = port;
+	}
+
+	@Value("${redis.cluster.password}")
+	public void setPassword(String password) {
+		JedisUtil.password = password;
+	}
+
+	@Value("${redis.cluster.nodes}")
+	public void setNodes(String nodes) {
+		JedisUtil.nodes = nodes;
+	}
+
+	@Value("${redis.cluster.connectionTimeout}")
+	public void setConnectionTimeout(int connectionTimeout) {
+		JedisUtil.connectionTimeout = connectionTimeout;
+	}
+
+	@Value("${redis.cluster.soTimeout}")
+	public void setSoTimeout(int soTimeout) {
+		JedisUtil.soTimeout = soTimeout;
+	}
+
+//	public static void main(String[] a) {
+//		JedisPoolConfig poolConfig = new JedisPoolConfig();
+//		// 最大连接数
+//		poolConfig.setMaxTotal(1);
+//		// 最大空闲数
+//		poolConfig.setMaxIdle(1);
+//		// 最大允许等待时间，如果超过这个时间还未获取到连接，则会报JedisException异常：
+//		// Could not get a resource from the pool
+//		poolConfig.setMaxWaitMillis(1000);
+//
+//		Set<HostAndPort> nodes = new LinkedHashSet<HostAndPort>();
+//		nodes.add(new HostAndPort("192.168.3.55", 6379));
+//		nodes.add(new HostAndPort("192.168.3.55", 6380));
+//		nodes.add(new HostAndPort("192.168.3.55", 6381));
+//		nodes.add(new HostAndPort("192.168.3.55", 6382));
+//		nodes.add(new HostAndPort("192.168.3.55", 6383));
+//		nodes.add(new HostAndPort("192.168.3.55", 6384));
+//		JedisCluster cluster = new JedisCluster(nodes, 1000, 1000, 1, "xinleju", poolConfig);
+//
+//
+//		String mobile="15210021027";
+//		String status = cluster.set(Constants.key_prefix_sms+ mobile, String.valueOf(111232));
+//		cluster.expire(Constants.key_prefix_sms + mobile, 60);
+//
+//
+//		String name = cluster.get(Constants.key_prefix_sms+mobile);
+//		System.out.println(name);
+//		// try {
+//		// cluster.close();
+//		// } catch (IOException e) {
+//		// e.printStackTrace();
+//		// }
+//		// Map<String, String> s = new HashMap();
+//		// s.put("id", "2");
+//		// s.put("name", "admin");
+//		// s.put("code", "4526111");
+//		// s.put("codeUrl", "http://lo/ab.jpg");
+//		// JedisUtil.editRow("table:user",s);
+//
+//		// logger.info(JedisUtil.createSession(s, "13245632542"));
+//
+//		// JedisUtil.delRow("table:user","1");
+//		// logger.info(JedisUtil.generateKey("table_user1"));
+//		// JedisUtil.addIndexMobile("mytable", "13254652353", "13");
+//		//
+//		// logger.info(JedisUtil.fetchValueByKey("index:mytable:mobile","13254652352"));
+//	}
+}

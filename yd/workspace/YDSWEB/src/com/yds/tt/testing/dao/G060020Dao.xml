@@ -1,0 +1,238 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE sqlMap PUBLIC "-//ibatis.apache.org//DTDSQLMap2.0//EN" "http://ibatis.apache.org/dtd/sql-map-2.dtd">
+<sqlMap namespace="G060020Dao">
+
+	<typeAlias alias="g060020ExamineInfo" type="com.yds.tt.testing.bean.G060020ExamineInfo"/>
+	<typeAlias alias="g060020UserInfo" type="com.yds.common.bean.UserInfo"/>
+
+	<!-- 1.参加考试处理 -->
+	<!-- 考试可见标识更新 -->
+	<update id="updateExamVisible">
+		<![CDATA[
+			UPDATE 
+				TT_KS_XINXI
+			SET 
+				EXAMINE_VISIBLE_FLG = 1
+			WHERE 
+				EXAMINE_STATUS = 3
+				AND EXAMINE_NOTIFY_DATE <= NOW()
+				AND EXAMINE_VISIBLE_FLG = 0;
+		]]>
+	</update>
+
+	<!-- 得到发布的考试名称列表 -->
+	<select id="getPublishedExams" resultClass="g060020ExamineInfo">
+		SELECT
+			EXAMINE_ID AS examineId,
+			EXAMINE_NAME AS examineName,
+			APPLY_CLOSING_TIME AS applyClosingTime
+		FROM 
+			TT_KS_XINXI
+		WHERE
+			EXAMINE_STATUS = 3
+			AND EXAMINE_FLG != 3
+			AND EXAMINE_VISIBLE_FLG = 1;
+	</select>
+	
+	<!-- 得到考试名相同的提醒消息数 -->
+	<select id="getSameExamMsgCount" parameterClass="com.yds.tt.manager.bean.MessageReminding" resultClass="Integer">
+		SELECT
+			COUNT(1)
+		FROM 
+			TT_TXXIAOXI
+		WHERE
+			USER_ID = #userId#
+			AND MODE = #mode#
+			AND PARAMETER = #parameter#;
+	</select>
+	
+	<!-- 2.考试结束状态设定 -->
+	<!-- 未提交试卷将状态置为放弃考试 -->
+	<update id="updateDropExamEmployee">
+		<![CDATA[
+			UPDATE 
+				TT_KS_YUANGONG
+			SET 
+				EMP_EXAM_STATUS = 6
+			WHERE 
+				EXAMINE_END_TIME < NOW()
+				AND EMP_EXAM_STATUS = 4;
+		]]>
+	</update>
+	
+	<!-- 将考试状态置为评分中 -->
+	<update id="updateToMarking">
+		<![CDATA[
+			UPDATE 
+				TT_KS_XINXI
+			SET 
+				EXAMINE_STATUS = 9
+			WHERE 
+				EXAMINE_END_TIME < NOW()
+				AND EXAMINE_STATUS = 8;
+		]]>
+	</update>
+	
+	<!-- 3.考试实施者提醒消息设定 -->
+	<!-- 需要批准的考试检索 -->
+	<select id="getExamsForApproval" resultClass="g060020ExamineInfo">
+		SELECT
+			A.EXAMINE_ID AS examineId,
+			A.EXAMINE_NAME AS examineName,
+			A.EXAMINE_START_TIME AS examineStartTime,
+			B.USER_ID AS implementer
+		FROM 
+			TT_KS_XINXI A,
+			TT_QUANXIAN B
+		WHERE
+			A.APPLY_CONFIRM_FLG = 2
+			AND A.EXAMINE_STATUS = 5
+			AND CONCAT(SUBSTRING(A.EXAMINE_ID,1,6),0,0) = B.RELATEDOBJECT_ID
+			AND B.AUTHORITY_ID = 12;
+	</select>
+	
+	<!-- 4.考试报名截止时，修改考试状态 -->
+	<!-- 检索考试报名截止的考试 -->
+	<select id="getEntryEndExams" resultClass="g060020ExamineInfo">
+		<![CDATA[		
+			SELECT
+				EXAMINE_ID AS examineId,
+				APPLY_CONFIRM_FLG AS applyConfirmFlg
+			FROM 
+				TT_KS_XINXI
+			WHERE
+				APPLY_CLOSING_TIME < NOW()
+				AND EXAMINE_START_TIME > NOW()
+				AND EXAMINE_FLG = 1
+				AND EXAMINE_STATUS = 3;
+		]]>
+	</select>
+	
+	<!-- 得到考试报名人数 -->
+	<select id="getExamEntrantCount" parameterClass="g060020ExamineInfo" resultClass="Integer">
+		SELECT
+			COUNT(1)
+		FROM 
+			TT_KS_YUANGONG
+		WHERE
+			EXAMINE_ID = #examineId#
+			AND EMP_EXAM_STATUS = 2;
+	</select>
+	
+	<!-- 报名需要批准的考试，将考试状态设为报名结束。 
+		 报名不需要批准的考试，将考试状态设为报名已批准。-->
+	<update id="updateExamineStatus" parameterClass="g060020ExamineInfo">
+		UPDATE 
+			TT_KS_XINXI
+		SET 
+			EXAMINE_STATUS = #examineStatus#
+		WHERE 
+			EXAMINE_ID = #examineId#
+			AND APPLY_CONFIRM_FLG = #applyConfirmFlg#;
+	</update>
+		
+	<!-- 5.报名截止日期前一天，写入提醒信息 -->
+	<!-- 需要提醒的考试检索 -->
+	<select id="getRemindExams" parameterClass="g060020ExamineInfo" resultClass="g060020ExamineInfo">
+		SELECT
+			EXAMINE_ID AS examineId,
+			EXAMINE_NAME AS examineName,
+			APPLY_CLOSING_TIME AS applyClosingTime,
+			OBJECT_TYPE AS objectType,
+			OBJECT_VALUE AS objectValue
+		FROM 
+			TT_KS_XINXI
+		WHERE
+			EXAMINE_FLG = #examineFlg#
+			AND APPLY_CONFIRM_FLG = #applyConfirmFlg#
+			AND EXAMINE_STATUS = #examineStatus#
+			AND EXAMINE_VISIBLE_FLG = 1
+			AND APPLY_CLOSING_TIME 
+				BETWEEN #paramDateBegin# AND #paramDateEnd#;
+	</select>
+	
+	<!-- 取得考试指定项目的员工列表 -->
+	<select id="getProjectUsers" parameterClass="g060020ExamineInfo" resultClass="g060020UserInfo">
+		SELECT
+			EMP_ID AS userId
+		FROM 
+			v_emp_org_list
+		WHERE
+			ORG_ID = #objectValue#;
+	</select>
+	
+	<!-- 取得考试指定工龄的员工列表 -->
+	<select id="getWorkAgeUsers" parameterClass="Date" resultClass="g060020UserInfo">
+		<![CDATA[
+			SELECT
+				EMP_ID AS userId
+			FROM 
+				V_EMP_LIST_NOQUIT
+			WHERE
+				START_DATE >= #limitDate#;
+		]]>
+	</select>
+	
+	<!-- 取得考试指定个人的列表 -->
+	<select id="getPersonalUsers" parameterClass="g060020ExamineInfo" resultClass="g060020UserInfo">
+		SELECT
+			EXAMINE_OBJECT_ID AS userId
+		FROM 
+			TT_KS_DUIXIANG
+		WHERE
+			EXAMINE_ID = #examineId#;
+	</select>
+	
+	<!-- 6.考试开始当天，写入提醒考试信息 -->
+	<!-- 检索出报名已批准并且考试未开始的考试信息 -->
+	<select id="getTodayExams" parameterClass="g060020ExamineInfo" resultClass="g060020ExamineInfo">
+		SELECT
+			EXAMINE_ID AS examineId,
+			EXAMINE_NAME AS examineName,
+			EXAMINE_END_TIME AS examineEndTime
+		FROM 
+			TT_KS_XINXI
+		WHERE
+			EXAMINE_FLG = #examineFlg#
+			AND EXAMINE_STATUS = #examineStatus#
+			AND EXAMINE_VISIBLE_FLG = 1
+			AND EXAMINE_START_TIME 
+				BETWEEN #paramDateBegin# AND #paramDateEnd#;
+	</select>
+	
+	<!-- 检索出考试报名已批准的员工 -->
+	<select id="getExamEntrantUsers" parameterClass="g060020ExamineInfo" resultClass="g060020UserInfo">
+		SELECT
+			EMPLOYEES_ID AS userId
+		FROM 
+			TT_KS_YUANGONG
+		WHERE
+			EXAMINE_ID = #examineId#
+			AND EMP_EXAM_STATUS = 2;
+	</select>
+	
+	<!-- 7.给评分中的考试的评分者发送提醒消息 -->
+	<!-- 检索出评分中的考试 -->
+	<select id="getMarkingExams" resultClass="g060020ExamineInfo">
+		SELECT
+			EXAMINE_ID AS examineId,
+			EXAMINE_NAME AS examineName
+		FROM 
+			TT_KS_XINXI
+		WHERE
+			EXAMINE_FLG = 1
+			AND EXAMINE_STATUS = 9
+			AND EXAMINE_VISIBLE_FLG = 1;
+	</select>
+	
+	<!-- 检索出考试评分者 -->
+	<select id="getExamMarker" parameterClass="g060020ExamineInfo" resultClass="g060020UserInfo">
+		SELECT
+			EXAMINE_MARKER_ID AS userId
+		FROM 
+			TT_PINGFENRENWU
+		WHERE
+			EXAMINE_ID = #examineId#;
+	</select>
+	
+</sqlMap>

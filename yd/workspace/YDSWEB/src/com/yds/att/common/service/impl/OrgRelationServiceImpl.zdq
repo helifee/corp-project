@@ -1,0 +1,398 @@
+/*
+ * @(#)OrgRelationServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 考勤管理
+ */
+package com.yds.att.common.service.impl;
+
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Collections;
+import java.util.Date;
+import java.util.GregorianCalendar;
+import java.util.Iterator;
+import java.util.List;
+
+import org.springframework.stereotype.Service;
+
+import com.yds.att.bean.AttEmpOrgInfo;
+import com.yds.att.bean.OrgInfo;
+import com.yds.att.common.dao.OrgRelationDao;
+import com.yds.att.common.service.OrgRelationService;
+import com.yds.att.service.AttConstants;
+import com.yds.att.service.AttConstants.OrgLifeCycle;
+import com.yds.base.service.AbstractBaseService;
+import com.yds.common.bean.UserInfo;
+import com.yds.util.service.DateUtil;
+import com.yds.util.service.StringUtil;
+import com.yds.util.service.TreeUtil;
+
+/**
+ * @see com.yds.att.common.service.OrgRelationService
+ */
+@Service("orgRelationService")
+public class OrgRelationServiceImpl extends AbstractBaseService implements OrgRelationService {
+	
+	private OrgRelationDao orgRelationDao; 
+	
+	/** 
+	 *  {@inheritDoc}
+	 */
+	@Override
+	public List<List<OrgInfo>> getFlowForLeave(String empId, float days, Date fromDate) {
+		return getFlow(empId, days, AttConstants.FlowType.LEAVE_FLOW.value(), fromDate);
+	}
+	
+	/** 
+	 *  {@inheritDoc}
+	 */
+	@Override
+	public List<List<OrgInfo>> getFlowForAtt(String empId, Date attDate) {
+		return getFlow(empId, 0, AttConstants.FlowType.KQ_FLOW.value(), attDate);
+	}
+
+	/** 
+	 *  {@inheritDoc}
+	 */
+	@Override
+	public List<List<OrgInfo>> getFlowForOvertime(String empId, Date date) {
+		return getFlow(empId, 0, AttConstants.FlowType.OVERTIME_FLOW.value(), date);
+	}
+
+	/** 
+	 *  {@inheritDoc}
+	 */
+	@Override
+	public List<OrgInfo> getManagedOrgBy(String empId) {
+		List<AttEmpOrgInfo> orgList = this.orgRelationDao.getManagedOrgBy(empId);
+		return this.convert(orgList);
+	}
+	
+	/** 
+	 *  {@inheritDoc}
+	 */
+	@Override
+	public List<OrgInfo> getManagedProjectBy(String empId, AttConstants.OrgLifeCycle type) {
+		
+		List<AttEmpOrgInfo> ret = new ArrayList<AttEmpOrgInfo>();
+		
+		//取得指定人员所能管理的所有项目（包括过期的，正在进行的，筹备中的）
+		List<AttEmpOrgInfo> orgList = this.orgRelationDao.getManagedProjectBy(empId);
+		
+		//取得当前日期
+		Calendar today = Calendar.getInstance();
+		
+		//清除时分秒
+		today.clear(Calendar.HOUR_OF_DAY);
+		today.clear(Calendar.MINUTE);
+		today.clear(Calendar.SECOND);
+		today.clear(Calendar.MILLISECOND);
+		
+		Calendar start = new GregorianCalendar();
+		Calendar end = new GregorianCalendar();
+		
+		Iterator<AttEmpOrgInfo> iter = orgList.iterator();
+		
+		//过期项目
+		if(AttConstants.OrgLifeCycle.PASS.equals(type)) {
+			while(iter.hasNext()) {
+				AttEmpOrgInfo info = iter.next();
+				end.setTime(info.getOrgEndDate());
+				
+				//项目结束日期小于当前日期
+				if(today.after(end)) {
+					ret.add(info);
+				}
+			}	
+			
+		} 
+		
+		//正在进行的项目
+		if(AttConstants.OrgLifeCycle.NOW.equals(type)) {
+			while(iter.hasNext()) {
+				AttEmpOrgInfo info = iter.next();
+				start.setTime(info.getOrgStDate());
+				end.setTime(info.getOrgEndDate());
+				
+				//当前日期在项目开始日期与结束日期之前
+				if(!today.before(start) && !today.after(end)) {
+					ret.add(info);
+				}
+			}
+		}
+		
+		return this.convert(ret);
+	}
+
+	/** 
+	 *  {@inheritDoc}
+	 */
+	@Override
+	public OrgInfo getParentOrgBy(String orgId) {
+		
+		//取得组织层级
+		String level = this.orgRelationDao.getOrgLevelBy(orgId);
+		
+		//取得"00000"
+		String unitStr = StringUtil.getUnit(AttConstants.BIT_LENGTH);
+		
+		//对除末尾的零
+		level = StringUtil.rTrim(level, unitStr);
+		level = level.substring(0, level.length() - AttConstants.BIT_LENGTH);
+		
+		//取得父组织的层级
+		StringBuffer buf = new StringBuffer(level);
+		while(buf.length() < 100) {
+			buf.append("0");
+		}
+		AttEmpOrgInfo info = this.orgRelationDao.getOrgBy(buf.toString()); 
+		return convert(info);
+	}
+
+	/** 
+	 *  {@inheritDoc}
+	 */
+	@Override
+	public List<UserInfo> getMembersBy(String orgId, Date date) {
+		
+		//date清除时分秒
+		date = DateUtil.clearTime(date);
+		
+		return this.orgRelationDao.getMembersBy(orgId, date);
+	}
+	
+	/** 
+	 *  {@inheritDoc}
+	 */
+	@Override
+	public List<OrgInfo> getJoinProjectBy(String empId, OrgLifeCycle type) {
+		
+		List<AttEmpOrgInfo> joinPrjt = this.orgRelationDao.getJoinPrjt(empId, type.value());
+
+		return this.convert(joinPrjt);
+	}
+
+	/** 
+	 *  {@inheritDoc}
+	 */
+	@Override
+	public OrgInfo getOrgInfoBy(String orgId) {
+		AttEmpOrgInfo attEmpOrgInfo = this.orgRelationDao.getOrgInfoBy(orgId); 
+		return convert(attEmpOrgInfo);
+	}
+
+	/**
+	 * 取得申请人所对应的审批流程
+	 * 
+	 * @param empId ： 申请人
+	 * @param days ： 申请天数
+	 * @param flg ： 请假/考勤
+	 * @param date	请假开始日期（暂未用）
+	 * @return
+	 */
+	private List<List<OrgInfo>> getFlow(String empId, float days, String flg, Date date) {
+		
+		//date清除时分秒
+		DateUtil.clearTime(date);
+		
+		//初始化返回值
+		List<List<OrgInfo>> flowList = new ArrayList<List<OrgInfo>>();
+		
+		//取得指定人所在的全部组织
+		List<AttEmpOrgInfo> orgList = this.orgRelationDao.getOrgsBy(empId, date);
+		
+		//排除YD000000的情况
+		if(null == orgList || orgList.size() == 0) {
+			return null;
+		}
+		
+		//取得叶子结点
+		List<AttEmpOrgInfo> leafs = (List<AttEmpOrgInfo>) TreeUtil.getLeafs(orgList, AttConstants.BIT_LENGTH);
+		
+		//排序（按流程的第一个组织的开始时间倒序排列）
+		Collections.sort(leafs);
+		
+		//取得各个分支
+		if(null != leafs) {
+			Iterator<AttEmpOrgInfo> iter = leafs.iterator();
+			while(iter.hasNext()) {
+				List<AttEmpOrgInfo> flow = (List<AttEmpOrgInfo>) TreeUtil.getBranches(orgList, 
+						iter.next(), AttConstants.BIT_LENGTH);
+				
+				//根据情况处理返回的流程
+				flow = filt(flow, days, flg);
+				
+				//转换成所需要的Bean
+				flowList.add(convert(flow));
+				
+			}
+		}		
+		return flowList;
+	}
+	
+	/**
+	 * 根据情况处理一个审批流程
+	 * 
+	 * @param flow : 待审批流程
+	 * @param days ： 请假天数
+	 * @param flg ： 请假/考勤
+	 */
+	private List<AttEmpOrgInfo> filt(List<AttEmpOrgInfo> flow, float days, String flg) {
+		
+		if(null == flow || flow.size() == 0) {
+			return null;
+		}
+		
+		List<AttEmpOrgInfo> subFlow = new ArrayList<AttEmpOrgInfo>();
+		
+		//加班（取得项目的最后一个组织与部门的第一个组织. eg : 1, [1], [2], 2, 3, 3...）
+		if(AttConstants.FlowType.OVERTIME_FLOW.value().equals(flg)) {
+			for(int i=0; i<flow.size(); i++) {
+				
+				if(AttConstants.OrgProperty.DEPARTMENT.value().equals(
+						flow.get(i).getOrgProType())) {
+					if(i > 0) {
+						subFlow.add(flow.get(i - 1));
+					}
+					subFlow.add(flow.get(i));
+					break;
+				}
+			}
+			
+		} else {	
+			
+			//在每个级别上选取第一个组织([1], 1, [2], 2, [3], 3...)
+			Iterator<AttEmpOrgInfo> iter = flow.iterator();
+			String preType = ""; 
+			while(iter.hasNext()) {
+				String type = iter.next().getOrgProType();
+				if(preType.equals(type)) {
+					iter.remove();
+				} else {
+					preType = type;
+				}
+			}
+			
+			//请假
+			if(AttConstants.FlowType.LEAVE_FLOW.value().equals(flg)) {
+				if(days < AttConstants.LEAVE_ONE) {	//项目组
+					
+					if(flow.size() >= 1) {
+						subFlow = flow.subList(0, 1);						
+					}
+					
+				} else if(days >= AttConstants.LEAVE_ONE 
+						&& days <= AttConstants.LEAVE_TWO) {	//部门
+					
+					if(flow.size() < 2) {
+						subFlow = flow.subList(0, flow.size());
+					} else {
+						subFlow = flow.subList(0, 2);
+					}
+					
+					Iterator<AttEmpOrgInfo> it = subFlow.iterator();
+					while(it.hasNext()) {
+						String type = it.next().getOrgProType();
+						if("comp".equals(type)) {
+							it.remove();
+						} 
+					}
+					
+				} else {	//公司
+					
+					if(flow.size() < 3) {
+						subFlow = flow.subList(0, flow.size());
+					} else {
+						subFlow = flow.subList(0, 3);
+					}
+				}
+			}
+			//考勤(<=部门)
+			if(AttConstants.FlowType.KQ_FLOW.value().equals(flg)) {
+				for(int i=0; i<flow.size(); i++) {
+					if(AttConstants.OrgProperty.DEPARTMENT.value().equals(
+							flow.get(i).getOrgProType())) {
+						subFlow.add(flow.get(i));
+						break;
+					} else {
+						subFlow.add(flow.get(i));
+					}
+				}
+			}
+		}
+		
+		return subFlow;
+	}
+	
+	/**
+	 * 将List<AttEmpOrgInfo>转化为List<OrgInfo>
+	 * AttEmpOrgInfo对应于DB， OrgInfo为对外提供的接口
+	 * 
+	 * @param list ： 转化前的确list
+	 * @return 转化后的list
+	 */
+	private List<OrgInfo> convert(List<AttEmpOrgInfo> list) {
+		List<OrgInfo> ret = new ArrayList<OrgInfo>();
+		if(null != list) {
+			Iterator<AttEmpOrgInfo> iter = list.iterator();
+			while(iter.hasNext()) {
+				AttEmpOrgInfo empInfo = iter.next();
+				OrgInfo info = new OrgInfo();
+				info.setOrgId(empInfo.getOrgId());
+				info.setOrgNm(empInfo.getOrgNm());
+				info.setOrgSnm(empInfo.getOrgSnm());
+				info.setOrgStDate(empInfo.getOrgStDate());
+				info.setOrgEndDate(empInfo.getOrgEndDate());
+				info.setOrgMnger(empInfo.getOrgMnger());
+				info.setOrgMngerName(empInfo.getOrgMngerName());
+				
+				//设置相应的枚举类型
+				for(AttConstants.OrgProperty pro : AttConstants.OrgProperty.values()) {
+					if(pro.value().equals(empInfo.getOrgProType())) {
+						info.setOrgProperty(pro);
+					}
+					
+				}
+				ret.add(info);
+			}
+		}
+		return ret;
+	}
+	
+	/**
+	 * 将AttEmpOrgInfo转化为OrgInfo
+	 * AttEmpOrgInfo对应于DB； OrgInfo为对外提供的接口
+	 * 
+	 * @param OrgInfo ： 转化前的Bean
+	 * @return 转化后的Bean
+	 */
+	private OrgInfo convert(AttEmpOrgInfo empInfo) {
+		
+		if(null == empInfo) {
+			return null;
+		}
+		OrgInfo info = new OrgInfo();
+		info.setOrgId(empInfo.getOrgId());
+		info.setOrgNm(empInfo.getOrgNm());
+		info.setOrgSnm(empInfo.getOrgSnm());
+		info.setOrgStDate(empInfo.getOrgStDate());
+		info.setOrgEndDate(empInfo.getOrgEndDate());
+		info.setOrgMnger(empInfo.getOrgMnger());
+		info.setOrgMngerName(empInfo.getOrgMngerName());
+		
+		//设置对应的枚举类型
+		for(AttConstants.OrgProperty pro : AttConstants.OrgProperty.values()) {
+			if(pro.value().equals(empInfo.getOrgProType())) {
+				info.setOrgProperty(pro);
+			}
+			
+		}
+		return info;
+	}
+
+	public void setOrgRelationDao(OrgRelationDao orgRelationDao) {
+		this.orgRelationDao = orgRelationDao;
+	}
+}

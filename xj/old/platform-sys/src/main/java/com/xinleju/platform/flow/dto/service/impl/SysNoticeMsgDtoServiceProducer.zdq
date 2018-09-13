@@ -1,0 +1,1011 @@
+package com.xinleju.platform.flow.dto.service.impl;
+
+import java.io.IOException;
+import java.lang.Exception;
+import java.sql.Timestamp;
+import java.util.*;
+
+import com.xinleju.platform.base.utils.*;
+import com.xinleju.platform.flow.entity.SysNoticeMsgTemp;
+import com.xinleju.platform.flow.service.SysNoticeMsgService;
+import com.xinleju.platform.flow.service.SysNoticeMsgTempService;
+import com.xinleju.platform.flow.ws.msg.*;
+import org.apache.commons.lang.StringUtils;
+import org.apache.http.*;
+import org.apache.http.client.ClientProtocolException;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.entity.StringEntity;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.util.EntityUtils;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.xinleju.platform.flow.dto.MobileApproveDto;
+import com.xinleju.platform.flow.dto.SysNoticeMsgDto;
+import com.xinleju.platform.flow.dto.SysNoticeMsgStatDto;
+import com.xinleju.platform.flow.dto.service.SysNoticeMsgDtoServiceCustomer;
+import com.xinleju.platform.flow.entity.SysNoticeMsg;
+import com.xinleju.platform.flow.exception.FlowException;
+import com.xinleju.platform.flow.service.MobileApproveService;
+import com.xinleju.platform.flow.utils.FlowLogUtil;
+import com.xinleju.platform.tools.data.JacksonUtils;
+import com.xinleju.platform.weixin.pojo.Token;
+import com.xinleju.platform.weixin.utils.CommonUtil;
+import com.xinleju.platform.weixin.utils.OAuth2Util;
+import com.xinleju.platform.weixin.utils.ParamesAPI;
+import org.springframework.beans.factory.annotation.Value;
+
+/**
+ * @author admin
+ * 
+ *
+ */
+ 
+public class SysNoticeMsgDtoServiceProducer implements SysNoticeMsgDtoServiceCustomer{
+	
+	private static Logger log = Logger.getLogger(SysNoticeMsgDtoServiceProducer.class);
+	@Autowired
+	private SysNoticeMsgService msgService;
+
+	@Autowired
+	private MobileApproveService mobileApproveService;
+
+    @Autowired
+    private SysNoticeMsgTempService msgTempService;
+
+	@Value("#{configuration['innerLoginUrl']}")
+	private String innerLoginUrl;
+	
+	public String save(String userInfo, String saveJson){
+	   DubboServiceResultInfo info=new DubboServiceResultInfo();
+	   try {
+		   SysNoticeMsg msg=JacksonUtils.fromJson(saveJson, SysNoticeMsg.class);
+		   if(Objects.equals (msg.getAppCode (),"LLOA")){
+		   	//LLOA平台过来的待办消息过滤重复
+               Map msgMap = new HashMap ();
+				   msgMap.put ("userId",msg.getUserId ());
+				   msgMap.put("id",msg.getId ());
+				   List<SysNoticeMsg> msgOlds = msgService.queryList (msgMap);
+				   if(msgOlds!=null&&!msgOlds.isEmpty ()){
+					   info.setResult(null);
+					   info.setCode ("40002");
+					   info.setSucess(true);
+					   info.setMsg("本消息已经发送过!");
+					   return JacksonUtils.toJson(info);
+			   }
+			   msg.setSource("LLOA");
+		   }
+           if(Objects.equals (msg.getSource(),"OA")){
+               //OA平台过来的待办消息过滤重复
+               SysNoticeMsg msgOld = msgService.getObjectById (msg.getId ());
+               if(msgOld!=null){
+                   info.setResult(null);
+                   info.setCode ("40002");
+                   info.setSucess(true);
+                   info.setMsg("本消息已经发送过!");
+                   return JacksonUtils.toJson(info);
+               }
+           }
+
+
+           Timestamp sendDate = msg.getSendDate();
+		   if(sendDate == null){
+			   Timestamp timestamp = new Timestamp(System.currentTimeMillis()); 
+			   msg.setSendDate(timestamp);
+		   }
+		   //msgService.save(msg);
+		   if(msg.getId() == null){
+			   msg.setId(IDGenerator.getUUID());
+		   }
+		   log.debug("\n\n saveAndNotifyOthers() will be called... msg="+JacksonUtils.toJson(msg));
+		   String resultInfo =  msgService.saveAndNotifyOthers(msg);
+		   FlowLogUtil.logSyncMsg(msg.getAppCode(), "平台", "平台接收待办待阅消息", msg.getLoginName(), saveJson, "成功");
+		   return resultInfo;
+		  /* info.setResult(JacksonUtils.toJson(msg));
+		   info.setSucess(true);
+		   info.setMsg("保存对象成功!");*/
+		} catch (Exception e) {
+		 log.error("消息推送失败!"+e.getMessage());
+		 info.setSucess(false);
+		 info.setMsg("消息推送失败!");
+		   info.setCode ("50001");
+		 info.setExceptionMsg(e.getMessage());
+		}
+	   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String saveBatch(String userInfo, String saveJsonList) {
+		return null;
+	}
+
+	@Override
+	public String updateBatch(String userInfo, String updateJsonList) {
+		return null;
+	}
+
+	@Override
+	public String update(String userInfo, String updateJson)  {
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   SysNoticeMsg msg=JacksonUtils.fromJson(updateJson, SysNoticeMsg.class);
+			   int result=   msgService.update(msg);
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("更新对象成功!");
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deleteObjectById(String userInfo, String deleteJson) {
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   SysNoticeMsg msg=JacksonUtils.fromJson(deleteJson, SysNoticeMsg.class);
+			   int result= msgService.deleteObjectById(msg.getId());
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("删除对象成功!");
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deleteAllObjectByIds(String userInfo, String deleteJsonList) {
+		 DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   if (StringUtils.isNotBlank(deleteJsonList)) {
+				   Map map=JacksonUtils.fromJson(deleteJsonList, HashMap.class);
+				   List<String> list=Arrays.asList(map.get("id").toString().split(","));
+				   int result= msgService.deleteAllObjectByIds(list);
+				   info.setResult(JacksonUtils.toJson(result));
+				   info.setSucess(true);
+				   info.setMsg("删除对象成功!");
+				}
+			} catch (Exception e) {
+			 log.error("删除对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getObjectById(String userInfo, String getJson) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			SysNoticeMsg msg=JacksonUtils.fromJson(getJson, SysNoticeMsg.class);
+			SysNoticeMsg	result = msgService.getObjectById(msg.getId());
+			info.setResult(JacksonUtils.toJson(result));
+		    info.setSucess(true);
+		    info.setMsg("获取对象成功!");
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getPage(String userInfo, String paramater) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map map=JacksonUtils.fromJson(paramater, HashMap.class);
+				Page page=msgService.getPage(map, (Integer)map.get("start"),  (Integer)map.get("limit"));
+				info.setResult(JacksonUtils.toJson(page));
+			    info.setSucess(true);
+			    info.setMsg("获取分页对象成功!");
+			}else{
+				Page page=msgService.getPage(new HashMap(), null, null);
+				info.setResult(JacksonUtils.toJson(page));
+			    info.setSucess(true);
+			    info.setMsg("获取分页对象成功!");
+			}
+		} catch (Exception e) {
+			 log.error("获取分页对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取分页对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String queryList(String userInfo, String paramater){
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map map=JacksonUtils.fromJson(paramater, HashMap.class);
+				List list=msgService.queryList(map);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}else{
+				List list=msgService.queryList(null);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}
+		} catch (Exception e) {
+			 log.error("获取列表对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取列表对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getCount(String userInfo, String paramater)  {
+		return null;
+	}
+	
+	@Override
+	public String deletePseudoObjectById(String userInfo, String deleteJson) {
+		
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   SysNoticeMsg msg=JacksonUtils.fromJson(deleteJson, SysNoticeMsg.class);
+			   int result= msgService.deletePseudoObjectById(msg.getId());
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("删除对象成功!");
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deletePseudoAllObjectByIds(String userInfo, String deleteJsonList) {
+		 DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   if (StringUtils.isNotBlank(deleteJsonList)) {
+				   Map map=JacksonUtils.fromJson(deleteJsonList, HashMap.class);
+				   List<String> list=Arrays.asList(map.get("id").toString().split(","));
+				   int result= msgService.deletePseudoAllObjectByIds(list);
+				   info.setResult(JacksonUtils.toJson(result));
+				   info.setSucess(true);
+				   info.setMsg("删除对象成功!");
+				}
+			} catch (Exception e) {
+			 log.error("删除对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String queryTwoSumData(String userInfo, String paramater){
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map<String, String> map=JacksonUtils.fromJson(paramater, HashMap.class);
+				List<SysNoticeMsgDto> list=msgService.queryTwoSumData(map);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}else{
+				List list=msgService.queryList(null);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}
+		} catch (Exception e) {
+			 log.error("获取列表对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取列表对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String queryHaveDoneList(String userInfo, String paramater) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map<String, String> map=JacksonUtils.fromJson(paramater, HashMap.class);
+				List<SysNoticeMsg> list=msgService.queryHaveDoneList(map);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}else{
+				List list=msgService.queryList(null);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}
+		} catch (Exception e) {
+			 log.error("获取列表对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取列表对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String queryDBDYList(String userJson, String paramater) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map<String, String> map=JacksonUtils.fromJson(paramater, HashMap.class);
+				List<SysNoticeMsgDto> list=msgService.queryDBDYList(map);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}else{
+				List list=msgService.queryList(null);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}
+		} catch (Exception e) {
+			 log.error("获取列表对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取列表对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String updateStatusOfNoticeMsg(String userJson, String paramater) {
+	   DubboServiceResultInfo info=new DubboServiceResultInfo();
+	   try {
+		   log.info ("updateStatusOfNoticeMsg的param"+paramater+"  userJson="+userJson);
+		   if(StringUtils.isNotBlank(paramater)){
+				Map<String, Object> map=JacksonUtils.fromJson(paramater, HashMap.class);
+				int result = msgService.updateStatusOfNoticeMsg(map);
+				info.setResult(String.valueOf(result));
+			    info.setSucess(true);
+			    info.setMsg("修改消息的状态操作成功!");
+			}
+		} catch (Exception e) {
+			e.printStackTrace ();
+		 log.error("修改消息的状态操作失败!"+e.getMessage());
+		 info.setSucess(false);
+		 info.setMsg("修改消息的状态操作失败!");
+		 info.setExceptionMsg(e.getMessage());
+		}
+	   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String searchDataByKeyword(String userJson, String paramater) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map<String, Object> map=JacksonUtils.fromJson(paramater, HashMap.class);
+				Page page = msgService.searchDataByKeywordPageParam(map);
+				info.setResult(JacksonUtils.toJson(page));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}
+		} catch (Exception e) {
+			 log.error("获取列表对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取列表对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String setMessageOpened(String userJson, String messageId) {
+		msgService.setMessageOpened(messageId);
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		info.setSucess(true);
+		info.setMsg("消息状态修改成功");
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deleteOpTypeDataByParamMap(String userJson, String paramater) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   if(StringUtils.isNotBlank(paramater)){
+					Map<String, Object> map=JacksonUtils.fromJson(paramater, HashMap.class);
+				    map.put("userInfo",userJson);
+					int result = msgService.deleteOpTypeDataByParamMap(map);
+
+					info.setResult("逻辑删除了"+result+"条消息");
+				    info.setSucess(true);
+				    info.setMsg("修改消息的状态操作成功!");
+				}
+			} catch (Exception e) {
+			 log.error("修改消息的状态操作失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("修改消息的状态操作失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String pageQueryByParamMap(String userJson, String paramater) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map<String, Object> map=JacksonUtils.fromJson(paramater, HashMap.class);//start  limit
+				Page page = msgService.pageQueryByParamMap(map, (Integer)map.get("start"),  (Integer)map.get("limit"));
+				info.setResult(JacksonUtils.toJson(page));
+			    info.setSucess(true);
+			    info.setMsg("获取分页对象成功!");
+			}else{
+				Page page=msgService.getPage(new HashMap(), null, null);
+				info.setResult(JacksonUtils.toJson(page));
+			    info.setSucess(true);
+			    info.setMsg("获取分页对象成功!");
+			}
+		} catch (Exception e) {
+			 log.error("获取分页对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取分页对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String queryMobileApproveByParamMap(String userJson, String paramater) {
+		long time1 = System.currentTimeMillis();
+		System.out.println("queryMobileApproveByParamMap time1="+time1);
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map<String, Object> paramMap = JacksonUtils.fromJson(paramater, HashMap.class);
+				MobileApproveDto mobileApprove = mobileApproveService.queryMobileApproveByParamMap(paramMap);
+				info.setResult(JacksonUtils.toJson(mobileApprove));
+			    info.setSucess(true);
+			    info.setMsg("获取对象成功!");
+			}
+		} catch (Exception e) {
+			 log.error("获取对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			 throw new FlowException(e);
+		}
+		long time2 = System.currentTimeMillis();
+		System.out.println("queryMobileApproveByParamMap time2="+time2+" total="+(time2-time1));
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String updateStatusOfNoticeMsgByCurrentUser(String userJson, String paramater) {
+		log.info("updateStatusOfNoticeMsgByCurrentUser：" + paramater + "当前用户：" + userJson);
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   if(StringUtils.isNotBlank(paramater)){
+					Map<String, Object> map=JacksonUtils.fromJson(paramater, HashMap.class);
+					
+					//增加检查：
+					String msgId = (map.get("id") == null) ? "" : (String)map.get("id");
+					String businessId = (map.get("businessId") == null) ? "" : (String) map.get("businessId");
+					if(StringUtils.isEmpty(msgId) && StringUtils.isEmpty(businessId)) {
+						info.setSucess(false);
+						info.setMsg("参数为空，消息状态更新失败");
+						return JacksonUtils.toJson(info);
+					}
+					
+					int result = msgService.updateStatusOfNoticeMsgByCurrentUser(map);
+					info.setResult("修改了"+result+"条消息");
+				    info.setSucess(true);
+				    info.setMsg("修改消息的状态操作成功!");
+				}
+			} catch (Exception e) {
+			 log.error("修改消息的状态操作失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("修改消息的状态操作失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String queryTotalStatData(String userJson, String paramater) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String, String> map = JacksonUtils.fromJson(paramater, HashMap.class);
+//			map.put("msgType", "1");
+			SecurityUserBeanInfo userBeanInfo = JacksonUtils.fromJson(userJson, SecurityUserBeanInfo.class);
+//			map.put("userId", userBeanInfo.getSecurityUserDto().getId());
+			SysNoticeMsgDto msgDto = msgService.queryTotalStatData(map);
+			SysNoticeMsgStatDto statDto = new SysNoticeMsgStatDto();
+			statDto.setToDoSum(msgDto.getToDoSum());
+			statDto.setToReadSum(msgDto.getToReadSum());
+			statDto.setToDoSum24Hours(msgDto.getToDoSum24Hours());
+			info.setResult(JacksonUtils.toJson(statDto));
+		    info.setSucess(true);
+		    info.setMsg("获取列表对象成功!");
+			
+		} catch (Exception e) {
+			 log.error("获取列表对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取列表对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String queryFirstTypeStatData(String userJson, String paramater) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String, String> map = JacksonUtils.fromJson(paramater, HashMap.class);
+			SecurityUserBeanInfo userBeanInfo = JacksonUtils.fromJson(userJson, SecurityUserBeanInfo.class);
+			map.put("userId", userBeanInfo.getSecurityUserDto().getId());
+			SysNoticeMsgStatDto statDto = msgService.queryFirstTypeStatData(map);
+			info.setResult(JacksonUtils.toJson(statDto));
+		    info.setSucess(true);
+		    info.setMsg("获取列表对象成功!");
+			
+		} catch (Exception e) {
+			 log.error("获取列表对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取列表对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	//执行给微信平台发送消息的操作
+	@Override
+	public String sendWeixinMsg(String userJson, String updateJson) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+		   int resultSum = msgService.doSendWeixinMsgAction();
+		   info.setResult("一共发送了"+resultSum+"条微信消息");
+		   info.setSucess(true);
+		   info.setMsg("保存对象成功!");
+		} catch (Exception e) {
+			 log.error("保存对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("保存对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String queryMsgListByPage(String userJson,String parameters){
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(parameters)){
+				Map map=JacksonUtils.fromJson(parameters, HashMap.class);
+				Page page= msgService.queryMsgListByPage(map);
+				info.setResult(JacksonUtils.toJson(page));
+				info.setSucess(true);
+				info.setMsg("获取分页对象成功!");
+			}
+		} catch (Exception e) {
+			log.error("获取分页对象失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取分页对象失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String queryPersonalMsgForPortal2(String userJson, Map<String, Object> params) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+			if(params != null && params.size() > 0){
+				Page page = msgService.queryMsgListByPage(params);
+				info.setResult(JacksonUtils.toJson(page));
+				info.setSucess(true);
+				info.setMsg("获取分页对象成功!");
+			}
+		} catch (Exception e) {
+			log.error("获取分页对象失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取分页对象失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	
+	@Override
+	public String queryPersonalMsgForPortal(String userJson, String parameters) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			/*SecurityUserBeanInfo userBeanInfo = JacksonUtils.fromJson(userJson,SecurityUserBeanInfo.class);
+			SecurityUserDto userDto = userBeanInfo.getSecurityUserDto();*/
+			if(StringUtils.isNotBlank(parameters)){
+				Map map=JacksonUtils.fromJson(parameters, HashMap.class);
+				Map<String,Object> resultMap = msgService.queryPersonalMsgForPortal(map);
+				info.setResult(JacksonUtils.toJson(resultMap));
+				info.setSucess(true);
+				info.setMsg("获取分页对象成功!");
+			}
+		} catch (Exception e) {
+			log.error("获取分页对象失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取分页对象失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	
+
+	@Override
+	public int queryMsgTotal(String userInfo, Map<String, Object> params) {
+		return msgService.queryMsgTotal(params);
+	}
+	
+	@Override
+	public List<SysNoticeMsgDto> queryMsgList(String userInfo, Map<String, Object> params) {
+		return msgService.queryMsgList(params);
+	}
+
+	@Override
+	public int queryMsgMoreTotal(String userInfo, Map<String, Object> params) {
+		return msgService.queryMsgMoreTotal(params);
+	}
+	
+	@Override
+	public List<SysNoticeMsgDto> queryMsgMoreList(String userInfo, Map<String, Object> params) {
+		return msgService.queryMsgMoreList(params);
+	}
+
+	@Override
+	public String getLoginNameByVX(String userJson, String parameters) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		Map<String, String> dataMap = new HashMap<String, String>();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(parameters, HashMap.class);
+			String code=param.get("code").toString();//从微信获取的code
+			String domainTwo=param.get("domainTwo").toString();//微信配置的二级域名domainTwo
+			Token token = CommonUtil.getToken(ParamesAPI.corpId, ParamesAPI.corpsecret);
+			String loginName = "";
+			if (token != null) {
+				//根据微信获取系统用户登陆名
+				loginName = OAuth2Util.GetUserID(token.getAccessToken(), code, ParamesAPI.mobiletodoAgentId);
+			}
+			
+			//if (StringUtils.isBlank(loginName)) {loginName="jixy";}
+			if (StringUtils.isNotBlank(loginName)) {
+				
+				dataMap.put("loginName", loginName);
+				dataMap.put("domainTwo", domainTwo);
+				dataMap.put("userInfo", loginName+"@"+domainTwo);
+				//根据domainTwo获取wx的第三方配置
+				//TODO
+				dataMap.put("appId", "vx");
+				dataMap.put("appSecret", "vx123456");
+				info.setSucess(true);
+				info.setMsg("获取对象成功!");
+			}else{
+				info.setSucess(false);
+				info.setExceptionMsg("获取微信授权失败");
+			}
+			info.setResult(JacksonUtils.toJson(dataMap));
+//			info.setSucess(true);
+//			info.setMsg("获取对象成功!");
+		} catch (Exception e) {
+			e.printStackTrace();
+			log.error("获取对象失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取对象失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+    /**
+     * 查询消息 for 老平台和蓝凌
+     * @param  userInfo
+     * @param params
+     * @return
+     */
+    @Override
+    public String queryNoticeMsg(String userInfo, String params) {
+        DubboServiceResultInfo info=new DubboServiceResultInfo();
+        try {
+        	System.out.println("进入queryNoticeMsg方法="+params);
+            if(StringUtils.isNotBlank(params)){
+                Map map=JacksonUtils.fromJson(params, Map.class);
+                if (Objects.equals (String.valueOf (map.get ("appCode")),"LLOA")) {
+                	 //暂时处理
+                       map.put ("dataType","DB");
+					   map.remove ("timeType");
+                }
+                map.put ("delflag",false);
+				System.out.println("进入queryNoticeMsg方法处理参数map="+JacksonUtils.toJson (map));
+                List<SysNoticeMsgDto> resultMap = msgService.queryNoticeMsg(map);
+				if(resultMap!=null&&!resultMap.isEmpty ()){
+					for(SysNoticeMsgDto sysNoticeMsgDto:resultMap){
+						sysNoticeMsgDto.setTitle (this.xssEncode(sysNoticeMsgDto.getTitle ()));
+					};
+					info.setResult(JacksonUtils.toJson(resultMap));
+					info.setSucess(true);
+					info.setMsg("获取消息数据成功!");
+				}else{
+					info.setResult(JacksonUtils.toJson(resultMap));
+					info.setSucess(true);
+					info.setMsg("获取消息数据为空!");
+				}
+
+            }else{
+                info.setSucess(false);
+                info.setMsg("请求参数为空!");
+                info.setCode (ErrorInfoCode.NULL_ERROR.getValue ());
+            }
+        } catch (Exception e) {
+            log.error("获取消息数据失败!"+e.getMessage());
+            info.setSucess(false);
+            info.setMsg("获取消息数据失败!");
+            info.setCode (ErrorInfoCode.SYSTEM_ERROR.getValue ());
+        }
+        return JacksonUtils.toJson(info);
+    }
+
+	/**
+	 * 将特殊字符替换为全角
+	 * @param s
+	 * @return
+	 */
+	private  String xssEncode(String s) {
+
+        if (s == null || s.isEmpty()) {
+            return s;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+               /* case '>':
+                    sb.append('＞');// 全角大于号
+                    break;
+                case '<':
+                    sb.append('＜');// 全角小于号
+                    break;
+                case '\'':
+                    sb.append('‘');// 全角单引号
+                    break;*/
+                case '\"':
+                    sb.append('“');// 全角双引号
+                    break;
+               /* case '&':
+                    sb.append('＆');// 全角＆
+                    break;*/
+                case '\\':
+                    sb.append('＼');// 全角斜线
+                    break;
+         /*       case '/':
+                    sb.append('／');// 全角斜线
+                    break;
+                case '#':
+                    sb.append('＃');// 全角井号
+                    break;
+                case '(':
+                    sb.append('（');// 全角(号
+                    break;
+                case ')':
+                    sb.append('）');// 全角)号
+                    break;*/
+                default:
+                    sb.append(c);
+                    break;
+            }
+        }
+        return sb.toString();
+	}
+    /**
+     * 定时重发失败的推送任务
+     * @param userInfo
+     * @param params
+     * @return
+     */
+    @Override
+    public String resendNoticeMsg(String userInfo, String params) {
+                Map map = new HashMap();
+                map.put("delflag",false);
+                List<SysNoticeMsgTemp> msgTemps = new ArrayList<> ();
+                try {
+                    msgTemps =   msgTempService.queryMsgTempList (map);
+                }catch (Exception e){
+
+                }
+           for(SysNoticeMsgTemp msgTemp:msgTemps){
+                if(Objects.equals (msgTemp.getPostType (),"httpClient")&&!msgTemp.getLocking ()){
+                      log.info ("消息任务重发httpClient"+msgTemp.getPostUrl ()+"  接收人信息="+msgTemp.getUserInfoJson ());
+                      SecurityUserBeanInfo securityUserBeanInfo =  JacksonUtils.fromJson (msgTemp.getUserInfoJson (),SecurityUserBeanInfo.class);
+					  String result=null;
+					try {
+//						 synchronized (msgTemp) {
+							 log.info ("消息任务重发锁定任务！httpClient"+msgTemp.getPostUrl ());
+							 msgTemp.setLocking (true);
+							 msgTempService.update (msgTemp);
+//						}
+					}catch (Exception ed2){
+						log.info ("消息任务重发锁定任务失败！httpClient"+msgTemp.getPostUrl ());
+						ed2.printStackTrace ();
+					}
+					boolean successFlag = false;
+					try {
+						   CloseableHttpClient httpClient = HttpClients.createDefault ();
+						   HttpPost httpPost0 = new HttpPost (innerLoginUrl);
+						   httpPost0.addHeader ("Content-Type", "application/json; charset=utf-8");
+						   httpPost0.addHeader ("User-Agent",
+								   "Mozilla/5.0 (Windows NT 6.1; WOW64; rv:50.0) Gecko/20100101 Firefox/50.0");
+						   Map loginMap = new HashMap();
+						   loginMap.put ("userInfoJson",msgTemp.getUserInfoJson ());
+						   StringEntity se0 = new StringEntity (JacksonUtils.toJson (loginMap), "utf-8");
+						   httpPost0.setEntity (se0);
+						   HttpResponse response0 = httpClient.execute (httpPost0);
+						   HttpEntity resEntity0 = response0.getEntity ();
+						   String rs = EntityUtils.toString (resEntity0, "utf-8");
+						   MessageResult messageResult = JacksonUtils.fromJson (rs, MessageResult.class);
+						   log.info ("消息任务重发锁定任务httpClient 模拟用户登陆 返回结果："+rs);
+						   if(messageResult.isSuccess ()){
+							   HttpPost httpPost = new HttpPost (msgTemp.getPostUrl ());
+						       httpPost.removeHeaders ("Cookie");
+							   httpPost.addHeader ("Cookie", String.valueOf (messageResult.getResult ()));
+							   httpPost.addHeader ("tendCode", securityUserBeanInfo.getTendCode ());
+							   httpPost.addHeader ("Content-Type", "application/json; charset=utf-8");
+							   httpPost.addHeader ("User-Agent",
+									   "Mozilla/5.0 (Windows NT 6.1; WOW64; rv:50.0) Gecko/20100101 Firefox/50.0");
+
+							   StringEntity se = new StringEntity (msgTemp.getPostParam (), "utf-8");
+							   httpPost.setEntity (se);
+							   HttpResponse response = httpClient.execute (httpPost);
+							   if (response != null) {
+								   HttpEntity resEntity = response.getEntity ();
+								   result = EntityUtils.toString (resEntity, "utf-8");
+								   Map resultMap = JacksonUtils.fromJson (result, Map.class);
+								   try {
+									   if (response.getStatusLine ().getStatusCode () == HttpStatus.SC_OK && Objects.equals (resultMap.get ("success"), true)) {
+										   successFlag = true;
+											   log.info ("消息任务重发成功！httpClient" + msgTemp.getPostUrl ());
+									   } else {
+										   successFlag = false;
+										   log.info ("消息任务重发【" + (msgTemp.getCount ()+1) + "次】失败！httpClient" + msgTemp.getPostUrl ());
+									   }
+								   } catch (Exception ed) {
+									   ed.printStackTrace ();
+									   successFlag = false;
+								   }
+								   log.info ("消息任务重发httpClient 结果result>>> result=" + result);
+							   }
+						   }
+						   } catch (ClientProtocolException e1) {
+								log.info("消息任务重发失败");
+							   e1.printStackTrace ();
+						   } catch (IOException e2) {
+							   e2.printStackTrace ();
+						   } finally {
+							   try {
+								   SysNoticeMsgTemp msgTempOld = msgTempService.getObjectById (msgTemp.getId ());
+								   msgTempOld.setCount (msgTempOld.getCount ()+1);
+								   msgTempOld.setLocking (false);
+								   msgTempOld.setSuccess (successFlag);
+								   msgTempService.update(msgTempOld);
+								   log.info ("消息任务解锁任务！httpClient"+JacksonUtils.toJson (msgTempOld));
+							   } catch (Exception ee) {
+								   log.info ("消息任务解锁任务失败！httpClient");
+							   }
+						   }
+
+
+                }else if(Objects.equals (msgTemp.getPostType (),"webService")){
+                    ISysNotifyTodoWebServiceService service = new ISysNotifyTodoWebServiceService();
+                    ISysNotifyTodoWebService iSysNotifyTodoWebService = service.getISysNotifyTodoWebServicePort();
+                    NotifyTodoAppResult result = null;
+                    try {
+
+                        if(Objects.equals (msgTemp.getWebServiceMethod (),"sendTodo")){
+                            NotifyTodoSendContext oaMsg = JacksonUtils.fromJson (msgTemp.getPostParam (),NotifyTodoSendContext.class);
+                             result = iSysNotifyTodoWebService.sendTodo(oaMsg);
+                            String operate = "DB".equals(msgTemp.getOpType()) ? "发送待办" : "发送待阅";
+                            FlowLogUtil.logSyncMsg("平台", "LLOA", operate, msgTemp.getLoginName (), oaMsg, result);
+                        }else if(Objects.equals (msgTemp.getWebServiceMethod (),"setTodoDone")){
+                            NotifyTodoRemoveContext oaMsg = new NotifyTodoRemoveContext();
+                             result = iSysNotifyTodoWebService.setTodoDone(oaMsg);
+                            FlowLogUtil.logSyncMsg("平台", "LLOA", "改变消息状态", msgTemp.getLoginName (), oaMsg, result);
+                        }else if(Objects.equals (msgTemp.getWebServiceMethod (),"deleteTodo")){
+                            NotifyTodoRemoveContext oaMsg = JacksonUtils.fromJson(msgTemp.getPostParam (),NotifyTodoRemoveContext.class);
+                             result = iSysNotifyTodoWebService.deleteTodo(oaMsg);
+                            FlowLogUtil.logSyncMsg("平台", "LLOA", "旧OA系统删除待办",msgTemp.getLoginName (), oaMsg, result);
+                        }
+                        if(result.getReturnState ()==0){
+                            try {
+                                msgTempService.deleteObjectById (msgTemp.getId ());
+                            }catch (Exception ed){
+                                ed.printStackTrace ();
+                            }
+                        }else{
+							try {
+								SysNoticeMsgTemp msgTempOld = msgTempService.getObjectById (msgTemp.getId ());
+								msgTempOld.setCount (msgTempOld.getCount ()+1);
+								msgTempService.update(msgTempOld);
+							}catch (Exception ed2){
+								ed2.printStackTrace ();
+							}
+						}
+
+                    } catch (com.xinleju.platform.flow.ws.msg.Exception_Exception ee) {
+                        log.error("给旧OA系统发送待办失败：" + ee);
+                    }
+                }
+            };
+        return null;
+    }
+
+	@Override
+	public String updateStatusOfNoticeMsgBatch(String userJson, String paramater) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   if(StringUtils.isNotBlank(paramater)){
+					Map<String, Object> map=JacksonUtils.fromJson(paramater, HashMap.class);
+					int result = msgService.updateStatusOfNoticeMsgBatch(map);
+					info.setResult("修改了"+result+"条消息");
+				    info.setSucess(true);
+				    info.setMsg("修改消息的状态操作成功!");
+				}
+			} catch (Exception e) {
+			 log.error("修改消息的状态操作失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("修改消息的状态操作失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deletePseudoBatchAndRecord(String userJson, String deleteJsonList) {
+		 DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   if (StringUtils.isNotBlank(deleteJsonList)) {
+				   Map map=JacksonUtils.fromJson(deleteJsonList, HashMap.class);
+				   List<String> list=Arrays.asList(map.get("id").toString().split(","));
+				   msgService.deletePseudoBatchAndRecord(list);
+				   info.setSucess(true);
+				   info.setMsg("删除对象成功!");
+				}
+			} catch (Exception e) {
+			 log.error("删除对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public List<SysNoticeMsgDto> getMsgBussniessObjects(String userJson, String paramater) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String, Object> paramMap = JacksonUtils.fromJson(paramater, HashMap.class);
+			List<SysNoticeMsgDto> list =  msgService.getMsgBussniessObjects(paramMap);
+			return list;
+		} catch (Exception e) {
+			log.error("获取对象失败!"+e.getMessage());
+			throw new FlowException(e);
+		}
+	}
+}

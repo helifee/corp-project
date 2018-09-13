@@ -1,0 +1,1083 @@
+package com.jzy.hio.platform.login.controller;
+
+import java.io.IOException;
+import java.io.UnsupportedEncodingException;
+import java.security.Principal;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Base64;
+import java.util.Calendar;
+import java.util.Collections;
+import java.util.Date;
+import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.http.Consts;
+import org.apache.http.HttpEntity;
+import org.apache.http.NameValuePair;
+import org.apache.http.client.config.AuthSchemes;
+import org.apache.http.client.config.CookieSpecs;
+import org.apache.http.client.config.RequestConfig;
+import org.apache.http.client.entity.UrlEncodedFormEntity;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpDelete;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.protocol.HttpClientContext;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClientBuilder;
+import org.apache.http.message.BasicNameValuePair;
+import org.apache.http.util.EntityUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.security.crypto.password.NoOpPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.common.OAuth2AccessToken;
+import org.springframework.security.oauth2.provider.OAuth2Authentication;
+import org.springframework.security.oauth2.provider.token.store.redis.RedisTokenStore;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.controller.BaseController;
+import com.jzy.hio.config.SystemConfig;
+import com.jzy.hio.entity.UserInfo;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.feign.SysRoleFeignService;
+import com.jzy.hio.feign.SysUserFeignService;
+import com.jzy.hio.platform.constant.HuanXinContant;
+import com.jzy.hio.platform.constant.UserOrFriendConstant;
+import com.jzy.hio.platform.dto.userinfo.ImUserInfoDto;
+import com.jzy.hio.platform.friendinfo.service.FriendInfoService;
+import com.jzy.hio.platform.login.mapper.UserMapper;
+import com.jzy.hio.platform.login.util.HttpClientPool;
+import com.jzy.hio.platform.login.util.TokenUtil;
+import com.jzy.hio.platform.param.QRCodeParam;
+import com.jzy.hio.platform.tenduser.mode.TendUserInfoAppDto;
+import com.jzy.hio.platform.tenduser.service.TendUserInfoService;
+import com.jzy.hio.platform.userinfo.mode.LoginUserInfoDto;
+import com.jzy.hio.platform.userinfo.param.UserInfoParam;
+import com.jzy.hio.platform.userinfo.service.UserInfoService;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.springmvc.ApiResponse;
+import com.jzy.hio.sys.user.dto.UserInfoDto;
+import com.jzy.hio.utils.StringUtil;
+
+import redis.clients.jedis.JedisCluster;
+
+@RestController
+@RequestMapping("/")
+public class LoginController extends BaseController {
+
+    private Logger logger = LoggerFactory.getLogger(this.getClass());
+
+    private String loginUrl;
+
+    private String loginScope;
+
+    private String clientId;
+    private String clientSecret;
+    @Autowired
+    RedisTokenStore redisTokenStore;
+    @Autowired
+    private UserInfoService userInfoService;
+
+    @Autowired
+    private SysFeignService sysFeignService;
+    @Autowired
+    private SysRoleFeignService sysRoleFeignService;
+    @Autowired
+    private SysUserFeignService sysUserFeignService;
+    @Autowired
+    private FriendInfoService friendInfoService;
+    @Autowired
+    private UserMapper userMapper;
+    @Autowired
+    private TendUserInfoService tendUserInfoService;
+    @Autowired
+    private SystemConfig systemConfig;
+
+    public String getClientId() {
+        return clientId;
+    }
+
+    @Value("${myoauth2.clientId}")
+    public void setClientId(String clientId) {
+        this.clientId = clientId;
+    }
+
+    public String getClientSecret() {
+        return clientSecret;
+    }
+
+    @Value("${myoauth2.clientSecret}")
+    public void setClientSecret(String clientSecret) {
+        this.clientSecret = clientSecret;
+    }
+
+    public String getLoginUrl() {
+        return loginUrl;
+    }
+
+    @Value("${myoauth2.loginUrl}")
+    public void setLoginUrl(String loginUrl) {
+        this.loginUrl = loginUrl;
+    }
+
+    public String getLoginScope() {
+        return loginScope;
+    }
+
+    @Value("${myoauth2.scope}")
+    public void setLoginScope(String loginScope) {
+        this.loginScope = loginScope;
+    }
+
+    private static RequestConfig requestConfig = RequestConfig.custom().setConnectTimeout(20000).setSocketTimeout(6000).setConnectionRequestTimeout(6000)
+            .setCookieSpec(CookieSpecs.STANDARD_STRICT).setExpectContinueEnabled(true).setTargetPreferredAuthSchemes(Arrays.asList(AuthSchemes.NTLM, AuthSchemes.DIGEST))
+            .setProxyPreferredAuthSchemes(Arrays.asList(AuthSchemes.BASIC)).build();
+    private static HttpClientContext context = HttpClientContext.create();
+
+
+    /**
+     * pc端扫码登录
+     *
+     * @return
+     */
+    @RequestMapping(value = "/loginBeforeScan", method = RequestMethod.POST)
+    public ApiResponse loginBeforeScan(@RequestBody Map<String, String> p) {
+        ApiResponse apiResponse = new ApiResponse();
+        Gson gson = new GsonBuilder().create();
+        long startTime = new Date().getTime();
+        while (true) {
+            long waitTime = new Date().getTime();
+            String scanlogin = JedisUtil.get("scanlogin:" + p.get("uuid"));
+            if (StringUtil.isNotEmpty(scanlogin)) {
+                apiResponse = gson.fromJson(scanlogin, ApiResponse.class);
+                return apiResponse;
+            }
+
+            if (waitTime > startTime + 1000 * 30) {
+                apiResponse.setStatus(400);
+                apiResponse.setMessage("等待超时");
+                return apiResponse;
+            }
+        }
+    }
+
+    /**
+     * 扫码登录，获取生成二维码的uuid
+     *
+     * @return
+     */
+    @RequestMapping(value = "/scanUUID", method = RequestMethod.POST)
+    public ApiResponse loginScanGetUUID() {
+        ApiResponse apiResponse = new ApiResponse();
+        apiResponse.setResult(UUID.randomUUID());
+        apiResponse.setStatus(200);
+        return apiResponse;
+    }
+
+    /**
+     * 扫码
+     *
+     * @return
+     */
+    @RequestMapping(value = "/scan", method = RequestMethod.POST)
+    public ApiResponse loginExcuteScan(@RequestBody Map<String, String> p, Principal user, @RequestHeader(value = "User-Agent") String userAgent) throws Exception {
+        ApiResponse apiResponse = new ApiResponse();
+        Map<String, String> session = JedisUtil.fetchSession(user.getName());
+        if (session == null) {
+            apiResponse.setStatus(500);
+            apiResponse.setMessage("手机端未登录");
+            return apiResponse;
+        }
+        Gson gson = new GsonBuilder().create();
+        p.put("mobile", session.get("mobile").replace("_app", ""));
+        p.put("password", session.get("password"));
+        p.put("userAgent", userAgent);
+        apiResponse = this.loginExcute(p);
+        if (apiResponse.getStatus() == 200) {
+            JedisUtil.set("scanlogin:" + p.get("uuid"), gson.toJson(apiResponse, ApiResponse.class), Constants.half_one_day);
+        } else {
+            apiResponse.setStatus(400);
+        }
+        apiResponse.setResult(null);
+        return apiResponse;
+    }
+
+    /**
+     * token登录
+     *
+     * @return
+     */
+    @RequestMapping(value = "/loginToken", method = RequestMethod.POST)
+    public ApiResponse loginToken(Principal user, @RequestHeader(value = "User-Agent") String userAgent) throws Exception {
+        ApiResponse apiResponse = new ApiResponse();
+        Map<String, String> session = JedisUtil.fetchSession(user.getName());
+        if (session == null) {
+            apiResponse.setStatus(500);
+            apiResponse.setMessage("PC端未登录");
+            return apiResponse;
+        }
+        Gson gson = new GsonBuilder().create();
+        Map<String, String> p = new HashMap<String, String>();
+        p.put("mobile", session.get("mobile").replace("_app", "").replace("_pc",""));
+        p.put("password", session.get("password"));
+        p.put("userAgent", userAgent);
+        apiResponse = this.loginExcute(p);
+        Map<String,Object> tokenMap = new HashMap<>();
+        tokenMap = (Map<String,Object>)apiResponse.getResult();
+        logger.info("loginToken mobile is {},userAgent is {},new Token is {}",p.get("mobile"),userAgent,tokenMap.get("accessToken"));
+        /*Map m = new HashMap();
+        createMap(m, p, p.get("mobile"));
+        apiResponse.setStatus(200);
+        apiResponse.setMessage("登录成功！");
+        apiResponse.setResult(m);*/
+        return apiResponse;
+    }
+
+    @Autowired
+    private RedisConnectionFactory redisConnectionFactory;
+
+    /**
+     * 登录
+     *
+     * @param p
+     * @return
+     * @throws Exception
+     */
+    @RequestMapping(value = "/login", method = RequestMethod.POST, consumes = "application/json")
+    public ApiResponse login(@RequestBody Map<String, String> p, @RequestHeader(value = "User-Agent") String userAgent) throws Exception {
+        logger.info("login param{},userAgent is {}", p, userAgent);
+//        long allStart = new Date().getTime();
+        ApiResponse apiResponse = new ApiResponse();
+        Map m = new HashMap();
+        m.put("countOfErrorPassword", 0);
+        apiResponse.setResult(m);
+        if (StringUtils.isBlank(p.get("mobile"))) {
+            apiResponse.setStatus(2906);
+            apiResponse.setMessage("请输入手机号");
+            return apiResponse;
+        }
+//        long firstStart = new Date().getTime();
+        JedisCluster jedis = JedisUtil.getResource();
+        String mobile = p.get("mobile").toString();
+        userAgent = userAgent.toLowerCase();
+        if (userAgent.contains("android") || userAgent.contains("iphone")) {
+            mobile = mobile + "_app";
+            if (StringUtils.isBlank(p.get("deviceId"))) {
+                apiResponse.setStatus(2905);
+                apiResponse.setMessage("请携带设备号");
+                return apiResponse;
+            }
+        } else if (userAgent.contains("juzhouyuncc_pc")) {
+            mobile = mobile + "_pc";
+        }
+        if (StringUtils.isBlank(p.get("password"))) {
+            apiResponse.setStatus(2907);
+            apiResponse.setMessage("请输入密码");
+            return apiResponse;
+        }
+
+        if (!StringUtils.isBlank(p.get("pictureVilidateCode"))) {
+            String smsCode = jedis.get(Constants.pictureVilidateCode + mobile);
+            logger.info("smscode is {}, mobile is {}", smsCode, mobile);
+            if (smsCode == null) {
+                apiResponse.setStatus(40002);
+                apiResponse.setMessage("验证码失效，请刷新重试");
+                return apiResponse;
+            } else if (!p.get("pictureVilidateCode").toLowerCase().equals(smsCode.toLowerCase())) {
+                apiResponse.setStatus(40002);
+                apiResponse.setMessage("验证码输入错误");
+                m.put("rightCode",smsCode);
+//                apiResponse.setResult("rightCode "+smsCode);
+                return apiResponse;
+            }
+        }
+        if (!isEmpty(jedis.get(Constants.error_password_count + mobile))) {
+            int error_count = Integer.parseInt(jedis.get(Constants.error_password_count + mobile));
+            m.put("countOfErrorPassword", error_count);
+//            apiResponse.setResult(m);
+            if (error_count >= Constants.error_password_count_sum) {
+                if (StringUtils.isBlank(p.get("pictureVilidateCode"))) {
+                    apiResponse.setStatus(40001);
+                    apiResponse.setMessage("请输入图片验证码");
+                    return apiResponse;
+                }
+            }
+        }
+//        logger.info("firstStart:{}", new Date().getTime() - firstStart);
+//        long secondStart = new Date().getTime();
+
+        String password = p.get("password").toString();
+        Map<String, String> userinfoByMobile = userMapper.queryUserinfoByMobile(mobile, 1);
+
+        if (userinfoByMobile == null) {
+            apiResponse.setStatus(HioException.mobileNoRegister.getStatus());
+            apiResponse.setMessage(HioException.mobileNoRegister.getMessage());
+            return apiResponse;
+        }
+//        BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
+        PasswordEncoder encoder = NoOpPasswordEncoder.getInstance();
+        String oldPassword = userinfoByMobile.get("password");
+        if (!encoder.matches(password, oldPassword)) {
+            apiResponse.setStatus(40003);
+            apiResponse.setMessage("用户名或密码错误");
+            jedis.incrBy(Constants.error_password_count + mobile, Constants.increment);
+            jedis.expire(Constants.error_password_count + mobile, Constants.one_day);
+            int error_count = Integer.parseInt(jedis.get(Constants.error_password_count + mobile));
+            m.put("countOfErrorPassword", error_count);
+//            apiResponse.setResult(m);
+            return apiResponse;
+        }
+        jedis.del(Constants.error_password_count + mobile);
+//        logger.info("secondStart:{}", new Date().getTime() - secondStart);
+//        long thirdStart = new Date().getTime();
+        ExecutorService tokenPool = Executors.newSingleThreadExecutor();
+        final Enumeration<OAuth2AccessToken> tokenEnumeration = Collections.enumeration(redisTokenStore
+                .findTokensByClientIdAndUserName("hio_oauth", mobile));
+        tokenPool.submit(new Thread("tokenPool") {
+            @Override
+            public void run() {
+                Set<String> tokenSet = new HashSet();
+                Set<String> refreshTokenSet = new HashSet();
+                while (tokenEnumeration.hasMoreElements()) {
+                    OAuth2AccessToken e = tokenEnumeration.nextElement();
+                    tokenSet.add(e.getValue());
+                    refreshTokenSet.add(e.getRefreshToken().getValue());
+                }
+                List<String> tokenList = new ArrayList();
+                tokenList.addAll(tokenSet);
+                for (int i = 0; i < tokenList.size(); i++) {
+                    redisTokenStore.removeAccessToken(tokenList.get(i));
+                }
+            }
+        });
+        TokenUtil.delToken(mobile);
+//        logger.info("thirdStart:{}",new Date().getTime()-thirdStart);
+//        long startTime = new Date().getTime();
+        CloseableHttpClient httpClient = HttpClientPool.getHttpClient();//HttpClientBuilder.create().setDefaultRequestConfig(requestConfig).build();
+        HttpPost httpPost = new HttpPost(loginUrl);
+        List<NameValuePair> values = new ArrayList<NameValuePair>();
+        values.add(new BasicNameValuePair("grant_type", "password"));
+        values.add(new BasicNameValuePair("username", mobile));
+        values.add(new BasicNameValuePair("password", p.get("password").toString()));
+        values.add(new BasicNameValuePair("scope", loginScope));
+        UrlEncodedFormEntity entity = new UrlEncodedFormEntity(values, Consts.UTF_8);
+        httpPost.setEntity(entity);
+        httpPost.setHeader("authorization", "Basic " + Base64.getEncoder().encodeToString((clientId + ":" + clientSecret).getBytes("utf-8")));
+        CloseableHttpResponse response = null;
+        String body = "";
+        try {
+            response = httpClient.execute(httpPost, context);
+            HttpEntity httpEntity = response.getEntity();
+            if (httpEntity != null) {
+                try {
+                    body = EntityUtils.toString(httpEntity, Consts.UTF_8);
+                    EntityUtils.consume(httpEntity);
+                } catch (IOException e) {
+                    logger.error("{}, {}", e.getMessage(), p);
+                    apiResponse.setMessage("响应解析错误！");
+                    apiResponse.setStatus(400);
+                    return apiResponse;
+                }
+            }
+        } catch (IOException e) {
+            logger.error("{} {}", e.getMessage(), p);
+            apiResponse.setMessage("认证请求发送异常！");
+            apiResponse.setStatus(400);
+            return apiResponse;
+        } finally {
+            try {
+                response.close();
+//                httpClient.close();
+            } catch (Exception e) {
+                logger.error(e.getMessage());
+            }
+        }
+        logger.info("body is{}",body);
+//        logger.error("httpclientTime:" + (new Date().getTime() - startTime));
+        if (isEmpty(body)) {
+            apiResponse.setMessage("响应body体为空！");
+            apiResponse.setStatus(400);
+            return apiResponse;
+        }
+        long fourStart = new Date().getTime();
+        Gson gson = new GsonBuilder().create();
+        m = gson.fromJson(body, Map.class);
+        m.remove("expires_in");
+        m.remove("scope");
+        m.remove("Token Name");
+        if (m.get("token_type") != null && !m.get("token_type").toString().trim().equals("")) {
+            m.put("tokenType", "Bearer");
+            m.remove("token_type");
+        }
+        if (m.get("access_token") != null && !m.get("access_token").toString().trim().equals("")) {
+            m.put("accessToken", m.get("access_token"));
+            m.remove("access_token");
+        }
+        if (m.get("refresh_token") != null && !m.get("refresh_token").toString().trim().equals("")) {
+            m.put("refreshToken", m.get("refresh_token"));
+            m.remove("refresh_token");
+        }
+        logger.info("fourStart:" + (new Date().getTime() - fourStart));
+        if (response.getStatusLine().getStatusCode() == 200) {
+            long createSessionTime = new Date().getTime();
+
+            logger.info("loginSuccess param{},userAgent is {}", p, userAgent);
+            if (userAgent.contains("android") || userAgent.contains("iphone")) {
+                JedisUtil.set("deviceId:" + mobile, p.get("deviceId").toString());
+            }
+            createMap(m, p, mobile);
+            //pc端版本是否升级
+            if (userAgent.contains("juzhouyuncc_pc")){
+                String pcServerVersion = systemConfig.getPcVersion();
+                String pcVersion = p.get("pcVersion");
+                logger.info("pc客户端版本：{},服务器端版本：{}",pcVersion,pcServerVersion);
+
+                String[] v1 = pcVersion.split("\\.");
+                String[] v2 = pcServerVersion.split("\\.");
+                int pcUpgradeModel = 0;
+
+                int grayscale = systemConfig.getPcUpgradeGrayscale();
+                // 灰度发布
+                if(isEquals(1,grayscale)){
+                    String orgString = systemConfig.getPcUpgradeScope();
+                    if(isNotEmpty(orgString)){
+                        Map<String, Object> tendMap = json2map(m.get("userInfo") + "");
+                        Map<String, String> userInfoMap = userMapper.queryUserinfoByMobile(p.get("mobile").toString(), 1);
+                        String userId = userInfoMap.get("id") + "";
+                        List<TendUserInfoAppDto> tendList = friendInfoService.getTendUserList(userId);
+                        String usetTendIdStr = "";
+                        if(isNotEmpty(tendList)){
+                            for(TendUserInfoAppDto appDto : tendList){
+                                usetTendIdStr += appDto.getTendId() + ",";
+                            }
+                        }
+                        String[] orgArray = orgString.split(",");
+                        for(String orgId : orgArray){
+                            if(isNotEmpty(usetTendIdStr) && usetTendIdStr.contains(orgId)){
+                                if(StringUtil.isNotEmpty(pcVersion)){
+                                    for(int i=0; i<v1.length; i++){
+                                        if(Integer.valueOf(v1[i]) < Integer.valueOf(v2[i])){
+                                            pcUpgradeModel = systemConfig.getPcUpgradeModel();
+                                            break;
+                                        }
+                                    }
+                                    m.put("pcUpgradeModel",pcUpgradeModel);
+                                    m.put("pcUpgradeUrl",systemConfig.getPcUpgradeUrl()+"/"+pcServerVersion);
+                                }
+                            }
+                        }
+                    }
+                }else {
+                    for (int i = 0; i < v1.length; i++) {
+                        if (Integer.valueOf(v2[i]) - Integer.valueOf(v1[i]) == 0) {
+                            continue;
+                        }
+                        if (Integer.valueOf(v2[i]) - Integer.valueOf(v1[i]) < 0) {
+                            break;
+                        }
+                        if (Integer.valueOf(v2[i]) - Integer.valueOf(v1[i]) > 0) {
+                            pcUpgradeModel = systemConfig.getPcUpgradeModel();
+                            break;
+                        }
+                    }
+                    m.put("pcUpgradeModel", pcUpgradeModel);
+                    m.put("pcUpgradeUrl", systemConfig.getPcUpgradeUrl()+"/"+pcServerVersion);
+                }
+            }
+//            logger.info("createSessionTime" + (new Date().getTime() - createSessionTime));
+            apiResponse.setMessage("登录成功！");
+            apiResponse.setStatus(response.getStatusLine().getStatusCode());
+            apiResponse.setResult(m);
+        } else {
+            logger.error("loginFail param{},userAgent is {},responseBody is {}", p, userAgent, body);
+            apiResponse.setMessage("登录失败，认证服务器错误！");
+            apiResponse.setStatus(2903);
+        }
+//        logger.info("allTimeStartEnd:{}", new Date().getTime() - allStart);
+        return apiResponse;
+    }
+
+    public void createMap(Map m, Map p, String mobile) throws Exception {
+        /**
+         * 登录成功创建session
+         */
+        Gson gson = new GsonBuilder().create();
+        /*logger.info("用户手机号{}", p.get("mobile").toString());
+        Map<String, String> userInfoMap = userMapper.queryUserinfoByMobile(p.get("mobile").toString(), 1);
+        logger.info("用户信息{}", userInfoMap.toString());*/
+        String getUsermobile = mobile.replace("_app","");
+        getUsermobile = getUsermobile.replace("_pc","");
+        String uid = JedisUtil.fetchIndexMobile(UserOrFriendConstant.IM_USER_INFO, getUsermobile);
+        ImUserInfoDto userInfoBean = null;
+        if (StringUtils.isBlank(uid)) {
+            Map<String,Object> map = new HashMap<>();
+            map.put("mobile", getUsermobile);
+            map.put("state",1);
+            userInfoBean = userInfoService.getUserInfoByMap(map);
+            if (userInfoBean != null) {
+                JedisUtil.addIndexMobile(UserOrFriendConstant.IM_USER_INFO, userInfoBean.getMobile(), userInfoBean.getId());
+            }
+        } else {
+            String userJson = JedisUtil.fetchRow(UserOrFriendConstant.IM_USER_INFO, uid);
+            if (StringUtils.isBlank(userJson)) {
+                Map<String,Object> map = new HashMap<>();
+                map.put("id", uid);
+                userInfoBean = userInfoService.getUserInfoByMap(map);
+                if (userInfoBean != null) {
+                    UserInfo userInfo = new UserInfo();
+                    BeanUtils.copyProperties(userInfoBean, userInfo);
+                    JedisUtil.addRow(userInfo);
+                }
+            } else {
+                userInfoBean = json2obj(userJson, ImUserInfoDto.class);
+            }
+        }
+        Map session = new HashMap();
+        String userId = userInfoBean.getId();
+        session.put("userIdIM", userId);
+        session.put("mobile", p.get("mobile").toString());
+        session.put("password", p.get("password").toString());
+        session.put("name", userInfoBean.getName() == null ? "" : userInfoBean.getName());
+        session.put("loginName", userInfoBean.getLoginName() == null ? "" : userInfoBean.getLoginName());
+
+            /*String tendId = "";
+            List<TendUserInfoAppDto> tendInfoResult = getTendUserList(userId);
+            for (TendUserInfoAppDto dto : tendInfoResult) {
+                if (isEquals(dto.getDefaultFlag(), UserOrFriendConstant.DEFAULT_COMP_YES))
+                    tendId = dto.getTendId();
+            }*/
+        JedisUtil.createSession(session, mobile);
+        Map userSession = JedisUtil.fetchSession(mobile);
+        if (userSession == null) {
+            throw new HioException("无session");
+        }
+        String userinfo = JedisUtil.fetchRow(UserOrFriendConstant.IM_USER_INFO, userSession.get(BaseConstants.SESSION_USERID_IM).toString());
+        String tendId = "";
+        long tendStartTime = new Date().getTime();
+        List<TendUserInfoAppDto> tendInfoResult = friendInfoService.getTendUserList(userId);
+        logger.info("tendStartTime:" + (new Date().getTime() - tendStartTime));
+        logger.info("获取租户列表成功{}", tendInfoResult.size());
+        for (TendUserInfoAppDto dto : tendInfoResult) {
+            if (isEquals(dto.getDefaultFlag(), UserOrFriendConstant.DEFAULT_COMP_YES)) {
+                tendId = dto.getTendId();
+                break;
+            }
+        }
+        if (StringUtils.isBlank(userinfo) || null == gson.fromJson(userinfo, Map.class).get("sid")
+                || StringUtils.isBlank(gson.fromJson(userinfo, Map.class).get("sid").toString())) {
+            UserInfo userInfo = getUserInfo(userSession.get("userIdIM").toString(), mobile);
+            logger.info("如果用户信息为空，查询用户信息{}", Base.obj2json(userInfo));
+            if (null != userInfo) {
+                if (isEmpty(userInfo.getResourceImgUrl()))
+                    userInfo.setResourceImgUrl("");
+                userinfo = Base.obj2json(userInfo);
+            }
+        } else {
+            Map u = json2map(userinfo);
+            UserInfo userInfo = getUserInfo(userSession.get("userIdIM").toString(), mobile);
+            if (Base.isEmpty(u.get("password")) || Base.isEmpty(u.get("resourceImgUrl"))) {
+
+                if (null != userInfo) {
+                    if (isEmpty(userInfo.getResourceImgUrl())) {
+                        u.put("resourceImgUrl", "");
+                    } else {
+                        u.put("resourceImgUrl", userInfo.getResourceImgUrl());
+                    }
+                    u.put("password", userInfo.getPassword());
+                }
+                logger.info("redis用户信息", u.toString());
+                logger.info("redis用户信息转换", obj2json(u));
+                userinfo = obj2json(u);
+            }
+        }
+        Map<String, Object> u = json2map(userinfo);
+        u.put("userIdIM", u.get("sid"));
+        // u.put("hxPassword", p.get("password").toString());
+        u.put("tendList", tendInfoResult);
+        u.remove("sid");// 前端用userIdIM字段、不用sid
+        u.remove("password");
+        u.put("defaultTendId", tendId);
+        m.put("userInfo", u);
+        m.put("appKey", HuanXinContant.app_key);
+        String statusId = UserOrFriendConstant.LOGOUT;
+        //如果是pc登录则在线状态为pc在线，如果app登录但是之前pc 已经登录，则在线状态也为pc在线，否则如果只是app登录pc不在线，则在线状态为app在线
+        //web端登录不修改在线状态
+        int flag = 0;
+        //如果是pc登录则在线状态为pc在线，如果app登录但是之前pc 已经登录，则在线状态也为pc在线，否则如果只是app登录pc不在线，则在线状态为app在线
+        if (!mobile.contains("_pc") && !mobile.contains("_app")) {
+            flag = 0;
+        } else if (mobile.contains("_pc") && isNotEmpty(userSession)) {
+            flag = 1;
+            statusId = UserOrFriendConstant.PC_LOGIN;
+        } else if (mobile.contains("_app") && isNotEmpty(JedisUtil.fetchSession(mobile.replace("_app", "_pc")))) {
+            flag = 1;
+            statusId = UserOrFriendConstant.PC_LOGIN;
+        } else if (mobile.contains("_app") && null != userSession) {
+            flag = 1;
+            statusId = UserOrFriendConstant.LOGIN;
+        }
+        if (1 == flag) {
+            final String loginStatus = statusId;
+            ExecutorService instationPool = Executors.newSingleThreadExecutor();
+            instationPool.submit(new Thread("friendInfoService-changeStatus") {
+                @Override
+                public void run() {
+                    try {
+                        friendInfoService.changeStatus(userId, loginStatus);
+                    } catch (Exception e) {
+                        // TODO Auto-generated catch block
+                        e.printStackTrace();
+                        logger.error("更改在线状态失败{}", e.getMessage());
+                    }
+                }
+            });
+
+        }
+    }
+
+    /**
+     * 执行登录具体操作
+     *
+     * @param p
+     * @return
+     */
+    private ApiResponse loginExcute(Map<String, String> p) throws Exception {
+        ApiResponse apiResponse = new ApiResponse();
+        Gson gson = new GsonBuilder().create();
+        Map m = new HashMap();
+        String mobile = p.get("mobile").toString();
+        String userAgent = p.get("userAgent").toString();
+        CloseableHttpClient httpClient = HttpClientBuilder.create().setDefaultRequestConfig(requestConfig).build();
+        HttpPost httpPost = new HttpPost(loginUrl);
+        List<NameValuePair> values = new ArrayList<>();
+        values.add(new BasicNameValuePair("grant_type", "password"));
+        values.add(new BasicNameValuePair("username", mobile));
+        values.add(new BasicNameValuePair("password", p.get("password").toString()));
+        values.add(new BasicNameValuePair("scope", loginScope));
+        UrlEncodedFormEntity entity = new UrlEncodedFormEntity(values, Consts.UTF_8);
+        httpPost.setEntity(entity);
+        CloseableHttpResponse response = null;
+        String body = "";
+        try {
+            httpPost.setHeader("authorization", "Basic " + Base64.getEncoder().encodeToString((clientId + ":" + clientSecret).getBytes("utf-8")));
+            response = httpClient.execute(httpPost, context);
+            HttpEntity httpEntity = response.getEntity();
+            if (httpEntity != null) {
+                body = EntityUtils.toString(httpEntity, Consts.UTF_8);
+            }
+            m = gson.fromJson(body, Map.class);
+            m.remove("expires_in");
+            m.remove("scope");
+            m.remove("Token Name");
+            if (m.get("token_type") != null && !m.get("token_type").toString().trim().equals("")) {
+                m.put("tokenType", "Bearer");
+                m.remove("token_type");
+            }
+            if (m.get("access_token") != null && !m.get("access_token").toString().trim().equals("")) {
+                m.put("accessToken", m.get("access_token"));
+                m.remove("access_token");
+            }
+            if (m.get("refresh_token") != null && !m.get("refresh_token").toString().trim().equals("")) {
+                m.put("refreshToken", m.get("refresh_token"));
+                m.remove("refresh_token");
+            }
+            EntityUtils.consume(httpEntity);
+        } catch (Exception e) {
+            logger.error("errorMessage is {},param is {}", gson.toJson(p), e.getMessage());
+            apiResponse.setStatus(500);
+            apiResponse.setMessage("服务器故障");
+            return apiResponse;
+        }
+        if (response.getStatusLine().getStatusCode() == 200) {
+            logger.info("loginSuccess param{},userAgent is {}", p, userAgent);
+            createMap(m, p, mobile);
+            // chc edit 20180418 end
+            apiResponse.setMessage("登录成功！");
+            apiResponse.setStatus(response.getStatusLine().getStatusCode());
+            apiResponse.setResult(m);
+        } else {
+            logger.error("loginFail param{},userAgent is {},responseBody is {}", p, userAgent, body);
+            apiResponse.setMessage("登录失败，用户名或密码错误！");
+            apiResponse.setStatus(2903);
+        }
+        return apiResponse;
+    }
+
+    public UserInfo getUserInfo(String id, String mobile) {
+        Map<String, Object> map = new HashMap<String, Object>();
+        map.put("id", id);
+//        map.put("mobile", mobile);
+        LoginUserInfoDto userInfoBean = userInfoService.getLoginUserInfoByMap(map);
+        UserInfo userInfo = new UserInfo();
+        if (userInfoBean != null) {
+            BeanUtils.copyProperties(userInfoBean, userInfo);
+            JedisUtil.addRow(userInfo);
+        }
+        return userInfo;
+    }
+
+
+    /**
+     * 切换租户
+     *
+     * @param
+     * @return
+     * @throws Exception
+     */
+    @RequestMapping(value = "/currentTenant", method = RequestMethod.POST)
+    public Object currentTenant(@RequestBody Map<String, String> p, Principal user) throws Exception {
+        ApiResponse<com.jzy.hio.sys.user.dto.UserInfoDto> apiResponse = new ApiResponse<>();
+        if (StringUtils.isBlank(p.get("tendid"))) {
+            apiResponse.setStatus(2908);
+            apiResponse.setMessage("请输入tendid");
+            return apiResponse;
+        }
+        String tendid = p.get("tendid").toString();
+        String mobile = user.getName();
+        Map session = JedisUtil.fetchSession(mobile);
+
+
+        String userIdIm = (String) session.get(BaseConstants.SESSION_USERID_IM);
+        session.put("current_tenant", tendid);
+        /*List<TendUserInfoAppDto> tendInfoResult = friendInfoService.getTendUserList(userIdIm);
+
+        //外部组织不需要过滤、可以进行切库
+//        for (TendUserInfoAppDto dto : tendInfoTarget) {
+//            if (isEquals(dto.getOuterLinkman(), UserOrFriendConstant.outerLinkman)) {
+//                tendInfoResult.add(dto);
+//            }
+//        }
+
+        if (isEmpty(tendInfoResult)) {
+            session.put("current_tenant", "");
+            apiResponse.setStatus(HioException.tendIdDoesNotExist.getStatus());
+            apiResponse.setMessage(HioException.tendIdDoesNotExist.getMessage());
+            return apiResponse;
+        } else if (obj2json(tendInfoResult).contains(tendid)) {
+            session.put("current_tenant", tendid);
+        } else {
+            for (TendUserInfoAppDto dto : tendInfoResult) {
+                if (isEquals(dto.getDefaultFlag(), UserOrFriendConstant.DEFAULT_COMP_YES)) {
+                    session.put("current_tenant", dto.getTendId());
+                    break;
+                }
+            }
+        }
+        if (isEmpty(session.get("current_tenant"))) {
+            apiResponse.setStatus(HioException.tendIdDoesNotExist.getStatus());
+            apiResponse.setMessage(HioException.tendIdDoesNotExist.getMessage());
+            return apiResponse;
+        }*/
+
+        // wt.coffee add
+        logger.info("currentTenant  tendid:{},userIdIm:{}", tendid, userIdIm);
+            // wt.coffee 2018-5-3 add
+        ApiFeignResponse<UserInfoDto> resp1 = sysUserFeignService.getUserInfo(tendid, userIdIm);
+        if (resp1.isSuccess()) {
+        	UserInfoDto userInfo = resp1.getResult();
+	    	String userIdOA = userInfo.getUserId();
+	    	session.put(BaseConstants.SESSION_USERID_OA, userIdOA);
+	        // 注意保存session-这行代码的位置
+	        JedisUtil.createSession(session, mobile);
+	        logger.info("currentTenant  tendid:{},userIdOA:{}", tendid, userIdOA);
+              //
+            apiResponse.setResult(userInfo);
+        } else {
+            logger.error("getUserInfo 失败 tendId: {}, userIdIm:{}", tendid, userIdIm);
+            return HioException.loginGetUserInfoFailed;
+        }
+        return apiResponse;
+    }
+
+    @RequestMapping(value = "/refreshAccessToken", method = RequestMethod.POST)
+    public ApiResponse refresh(@RequestBody Map<String, String> p) throws HioException {
+        Gson gson = new GsonBuilder().create();
+        logger.info("refreshAccessToken param is {}", gson.toJson(p));
+        ApiResponse apiResponse = new ApiResponse();
+        if (StringUtils.isBlank(p.get("deviceId"))) {
+            apiResponse.setStatus(2905);
+            apiResponse.setMessage("请携带deviceId");
+            return apiResponse;
+        }
+
+        if (StringUtils.isBlank(p.get("refreshToken"))) {
+            apiResponse.setStatus(2904);
+            apiResponse.setMessage("请输入refreshToken");
+            return apiResponse;
+        }
+        String refresh_token = p.get("refreshToken").toString();
+        OAuth2Authentication oAuth2Authentication = redisTokenStore.readAuthenticationForRefreshToken(refresh_token);
+        if (oAuth2Authentication == null) {
+            apiResponse.setStatus(2901);
+            apiResponse.setMessage("重新获取token失败，refreshToken无效,请重新输入用户名密码登录！");
+            return apiResponse;
+        }
+        String oauthName = oAuth2Authentication.getUserAuthentication().getName();
+        String deviceId = p.get("deviceId").toString();
+        String deviceIdCurrent = JedisUtil.get("deviceId:" + oauthName);
+        if (deviceIdCurrent != null && !deviceId.equals(deviceIdCurrent)) {
+            apiResponse.setStatus(2906);
+            apiResponse.setMessage("账号已在其他设备登录，请重新输入账号密码登录");
+            return apiResponse;
+        }
+
+        CloseableHttpClient httpClient = HttpClientBuilder.create().setDefaultRequestConfig(requestConfig).build();
+
+        HttpPost httpPost = new HttpPost(loginUrl);
+        List<NameValuePair> values = new ArrayList();
+        values.add(new BasicNameValuePair("grant_type", "refresh_token"));
+        // values.add(new BasicNameValuePair("username", "admin"));
+        // values.add(new BasicNameValuePair("password", "admin"));
+        values.add(new BasicNameValuePair("scope", loginScope));
+        values.add(new BasicNameValuePair("refresh_token", refresh_token));
+
+        UrlEncodedFormEntity entity = new UrlEncodedFormEntity(values, Consts.UTF_8);
+        httpPost.setEntity(entity);
+        try {
+            httpPost.setHeader("authorization", "Basic " + Base64.getEncoder().encodeToString((clientId + ":" + clientSecret).getBytes("utf-8")));
+        } catch (UnsupportedEncodingException e) {
+            throw new HioException(e.getMessage());
+        }
+        CloseableHttpResponse response = null;
+        String body = "";
+        try {
+            response = httpClient.execute(httpPost, context);
+            HttpEntity e = response.getEntity();
+
+            if (e != null) {
+                try {
+                    body = EntityUtils.toString(e, Consts.UTF_8);
+                    EntityUtils.consume(e);
+                } catch (IOException e1) {
+                    throw new HioException(e1.getMessage());
+                }
+
+            }
+        } catch (IOException e) {
+            throw new HioException(e.getMessage());
+        } finally {
+            try {
+                response.close();
+                httpClient.close();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+
+        Map m = gson.fromJson(body, Map.class);
+        if (200 != response.getStatusLine().getStatusCode()) {
+            apiResponse.setStatus(2901);
+            apiResponse.setMessage("重新获取token失败，refreshToken无效！");
+        } else {
+            m.remove("expires_in");
+            m.remove("scope");
+            if (m.get("token_type") != null && !m.get("token_type").toString().trim().equals("")) {
+                m.put("tokenType", "Bearer");
+                m.remove("token_type");
+            }
+            if (m.get("access_token") != null && !m.get("access_token").toString().trim().equals("")) {
+                m.put("accessToken", m.get("access_token"));
+                m.remove("access_token");
+            }
+            if (m.get("refresh_token") != null && !m.get("refresh_token").toString().trim().equals("")) {
+                m.put("refreshToken", m.get("refresh_token"));
+                m.remove("refresh_token");
+            }
+            if (m.get("error_description") != null && !m.get("error_description").toString().trim().equals("")) {
+                m.put("errorDescription", m.get("error_description"));
+                m.remove("error_description");
+                apiResponse.setMessage("重新获取token失败，refreshToken无效！");
+            } else {
+                apiResponse.setMessage("重新获取token成功！");
+            }
+            JedisUtil.set("deviceId:" + oauthName, deviceId);
+            JedisUtil.refreshSessionTime(oauthName);
+//            if(p.get("mobile_")!=null){
+//                createMap(m,p,p.get("mobile_").toString());
+//            }
+            apiResponse.setStatus(response.getStatusLine().getStatusCode());
+            apiResponse.setResult(m);
+        }
+        return apiResponse;
+    }
+
+    /**
+     * 退出登录
+     *
+     * @param
+     * @return
+     * @throws Exception
+     */
+    @RequestMapping(value = "/hioLogout", method = RequestMethod.POST)
+    public ApiResponse logout(@RequestHeader(value = "authorization") String authorization, Principal user) throws Exception {
+        logger.info("logout {}", user.getName());
+        ApiResponse apiResponse = new ApiResponse();
+        if (StringUtils.isBlank("authorization")) {
+            apiResponse.setStatus(2905);
+            apiResponse.setMessage("请携带header认证信息");
+            return apiResponse;
+        }
+
+        // chc add 20180418 start
+        logger.info("session获取登录用户id");
+        Base base = new Base();
+        String userIdIM = base.getUserIdIM();
+        logger.info("session获取登录用户id：" + userIdIM);
+        // chc edit 20180418 end
+        String access_token = authorization.replace("Bearer", "").trim();
+        CloseableHttpClient httpClient = HttpClientBuilder.create().setDefaultRequestConfig(requestConfig).build();
+
+        HttpDelete httpDelete = new HttpDelete(loginUrl + "?access_token=" + access_token);
+
+        httpDelete.setHeader("authorization", "Basic " + Base64.getEncoder().encodeToString((clientId + ":" + clientSecret).getBytes("utf-8")));
+        CloseableHttpResponse response = httpClient.execute(httpDelete, context);
+        HttpEntity e = response.getEntity();
+        String body = "";
+        if (e != null) {
+            body = EntityUtils.toString(e, Consts.UTF_8);
+        }
+        if (response.getStatusLine().getStatusCode() == 200) {
+            String mobile = user.getName();
+            JedisUtil.del("session:" + mobile);
+            String statusId = UserOrFriendConstant.LOGOUT;
+            Map userSession = JedisUtil.fetchSession(mobile);
+            //如果pc端退出，app端没有退出，在线状态为app在线
+            //web端不修改在线状态
+            int flag = 0;
+            if (mobile.contains("_pc") && isEmpty(userSession) && isNotEmpty(JedisUtil.fetchSession(mobile.replace("_pc", "_app")))) {
+                statusId = UserOrFriendConstant.LOGIN;
+                flag = 1;
+            }
+            //如果app端退出，pc端在线，在线状态为pc在线
+            else if (mobile.contains("_app") && isEmpty(userSession) && isNotEmpty(JedisUtil.fetchSession(mobile.replace("_app", "_pc")))) {
+                statusId = UserOrFriendConstant.PC_LOGIN;
+                flag = 1;
+            } else {
+                flag = 1;
+                statusId = UserOrFriendConstant.LOGOUT;
+            }
+            if (!mobile.contains("_pc") && !mobile.contains("_app")) {
+                flag = 0;
+            }
+            // chc add 20180418 start
+            // 更新缓存
+            if (1 == flag) {
+                friendInfoService.changeStatus(userIdIM, statusId);
+            }
+
+            // chc edit 20180418 end
+        }
+        apiResponse.setMessage(body);
+        apiResponse.setStatus(response.getStatusLine().getStatusCode());
+        return apiResponse;
+    }
+
+    /**
+     * 生成二维码需要的key  isRefresh 是否刷新，0：否，1：是
+     */
+    @PostMapping("/createQRCodeKey")
+    public ApiResponse<Object> createQRCodeKey(@RequestBody QRCodeParam param) {
+        ApiResponse<Object> res = new ApiResponse<Object>();
+        try {
+            String userId = getUserIdIM();
+            String key = "";
+            String qrkey = JedisUtil.fetchRow(UserOrFriendConstant.QR_CODE_USER_KEY, userId);
+            if (isEquals(param.getIsRefresh(), UserOrFriendConstant.QRCODEREFRESH_NO)) {
+                if (isEmpty(qrkey)) {
+                    key = Calendar.getInstance().getTimeInMillis() + "";
+                } else {
+                    key = qrkey;
+                }
+            } else {
+                //如果刷新 删除之前的值
+                if (isNotEmpty(qrkey)) {
+                    JedisUtil.delRow(UserOrFriendConstant.QR_CODE_KEY_USER, qrkey);
+                }
+                key = Calendar.getInstance().getTimeInMillis() + "";
+            }
+            Map<String, String> map = new HashMap<String, String>();
+            map.put(userId, key);
+            JedisUtil.addRowMap(UserOrFriendConstant.QR_CODE_USER_KEY, map);
+            Map<String, String> keymap = new HashMap<String, String>();
+            keymap.put(key, userId);
+            JedisUtil.addRowMap(UserOrFriendConstant.QR_CODE_KEY_USER, keymap);
+            res.setStatus(HioException.SUCCESS);
+            res.setMessage("获取二维码key成功！");
+            res.setResult(key);
+        } catch (Exception e) {
+            e.printStackTrace();
+            logger.error("获取二维码key失败！{}", e.getMessage());
+            res.setStatus(400);
+            res.setMessage("获取二维码key失败！");
+        }
+        return res;
+    }
+
+    /**
+     * 扫码
+     */
+    @PostMapping("/scanFriend")
+    public ApiResponse<Object> scanFriend(@RequestBody QRCodeParam param) {
+        ApiResponse<Object> res = new ApiResponse<Object>();
+        try {
+            String userId = "";
+            String key = param.getK();
+            String f = param.getF();
+            if (isEquals(f, UserOrFriendConstant.QRCODEFRIEND)) {
+                userId = JedisUtil.fetchRow(UserOrFriendConstant.QR_CODE_KEY_USER, key);
+                if (isNotEmpty(userId)) {
+                    UserInfoParam userParam = new UserInfoParam();
+                    userParam.setSid(userId);
+                    res = userInfoService.getSimpleDto(userParam);
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            logger.error("通过二维码获取用户信息失败！{}", e.getMessage());
+            res.setStatus(400);
+            res.setMessage("通过二维码获取用户信息失败！");
+        }
+        return res;
+    }
+
+    /**
+     * 扫一扫跳转官网
+     *
+     * @param request
+     * @param response
+     * @return
+     * @throws IOException
+     */
+    @RequestMapping(value = "/s", method = RequestMethod.GET)
+    public String index(HttpServletRequest request, HttpServletResponse response) throws IOException {
+        response.sendRedirect("https://juzhouyun.com");
+        return null;
+    }
+}

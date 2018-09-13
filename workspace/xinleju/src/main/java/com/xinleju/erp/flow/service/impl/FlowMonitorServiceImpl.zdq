@@ -1,0 +1,278 @@
+package com.xinleju.erp.flow.service.impl;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Set;
+
+import org.apache.commons.lang3.StringUtils;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.flow.bean.IdName;
+import com.xinleju.erp.flow.dao.impl.ParticipantDAO;
+import com.xinleju.erp.flow.frameapi.domain.User;
+import com.xinleju.erp.flow.models.Fi;
+import com.xinleju.erp.flow.models.FlowMonitor;
+import com.xinleju.erp.flow.models.FlowMonitorLog;
+import com.xinleju.erp.flow.models.Wi;
+import com.xinleju.erp.flow.service.FormFlowService;
+import com.xinleju.erp.flow.service.IFlowMonitorService;
+import com.xinleju.erp.flow.service.IFlowWarningTaskService;
+import com.xinleju.erp.flow.service.api.extend.BaseAPIService;
+import com.xinleju.erp.form.utils.DbType;
+import com.xinleju.erp.frame.models.PartyType;
+
+/**
+ * 流程监控
+ * @author zhengxj
+ *
+ */
+@Service
+public class FlowMonitorServiceImpl extends BaseService implements
+        IFlowMonitorService {
+    
+    /**
+     * 参与人DAO
+     */
+    @Autowired
+    private ParticipantDAO participantDAO;
+    
+    @Autowired
+    private BaseAPIService baseAPIService;
+    
+    @Autowired
+    IFlowWarningTaskService flowWarningTaskServiceImpl;
+    
+    @Autowired
+    private FormFlowService formFlowService;
+
+    @Override
+    public void saveFlowMonitor(FlowMonitor flowMonitor) {
+        getDao().save(flowMonitor);
+    }
+
+    @Override
+    public void startFlowMonitor(Integer monitorPoint, Long orgnId,
+            Long projectId, Long sRoleId, Long cRoleId, Long userId, String flCode, Long fiId) {
+        if (monitorPoint == null) {
+            return;
+        }
+        
+        // 该方法参数
+        String params = "monitorPoint=" + monitorPoint.toString() + ",";
+        String sql = "";
+        String orgnPrefix = null;
+        if (orgnId != null) {
+            orgnPrefix = IdName.ORGN_PREFIX + orgnId.toString();
+            sql += " REAL_BE_MONITORED LIKE '%" + orgnPrefix + "%' OR";
+            params += "orgnId=" + orgnId.toString() + ",";
+        }
+        String projectPrefix = null;
+        if (projectId != null) {
+            projectPrefix = IdName.BRANCH_PREFIX + projectId.toString();
+            sql += " REAL_BE_MONITORED LIKE '%" + projectPrefix + "%' OR";
+            params += "projectId=" + projectId.toString() + ",";
+        }
+        String sRolePrefix = null;
+        if (sRoleId != null) {
+            sRolePrefix = IdName.ROLE_PREFIX + sRoleId.toString();
+            sql += " REAL_BE_MONITORED LIKE '%" + sRolePrefix + "%' OR";
+            params += "sRoleId=" + sRoleId.toString() + ",";
+        }
+        String cRolePrefix = null;
+        if (cRoleId != null) {
+            cRolePrefix = IdName.ROLE_PREFIX + cRoleId.toString();
+            sql += " REAL_BE_MONITORED LIKE '%" + cRolePrefix + "%' OR";
+            params += "cRoleId=" + cRoleId.toString() + ",";
+        }
+        String userPrefix = null;
+        if (userId != null) {
+            userPrefix = IdName.USER_PREFIX + userId.toString();
+            sql += " REAL_BE_MONITORED LIKE '%" + userPrefix + "%' OR";
+            params += "userId=" + userId.toString() + ",";
+        }
+        
+        if (flCode != null) {
+            sql += " FLOW_TEMPS LIKE '%" + flCode+ "%' OR";
+            params += "flCode=" + flCode + ",";
+        }
+        
+        if (fiId != null) {
+            params += "fiId=" + fiId.toString() + ",";
+        }
+        
+        if (StringUtils.isNotBlank(sql)) {
+            sql = sql.substring(0, sql.length() - 3);
+        }
+        
+        
+        if (StringUtils.isBlank(sql)) {
+            return;
+        }
+        
+        List<User> userList = null;
+        DetachedCriteria dc = DetachedCriteria.forClass(FlowMonitor.class);
+        dc.add(Restrictions.like("monitorPoint", "%"+monitorPoint.intValue()+"%"));
+        dc.add(Restrictions.sqlRestriction("("+sql+")"));
+        dc.add(Restrictions.eq("useStatus", FlowMonitor.USER_STATUS_Y));
+        List<FlowMonitor> list = getDao().findByCriteria(dc);
+        
+        Set<Long> userIdSet = new HashSet<Long>(0);
+        
+        if (list != null && !list.isEmpty()) { // 获取符合条件的流程监控设置列表
+            for (FlowMonitor flowMonitor : list) {
+                if (monitorPoint.intValue() == FlowMonitor.MONITOR_POINT_FLOW_SUSPEND) { // 挂起
+                    userList = participantDAO.getPaticipantUsers(flowWarningTaskServiceImpl.transPEIds(flowMonitor.getSuspend()));
+                } else { // 流程发起、收到审批、审批完成、流程完成
+                    userList = participantDAO.getPaticipantUsers(flowWarningTaskServiceImpl.transPEIds(flowMonitor.getMonitor()));
+                }
+                for (User user : userList) { // 监控人过滤,去除重复
+                    userIdSet.add(user.getUserId());
+                }
+                /**
+                 * 生成流程监控日记
+                 */
+                getDao().save(new FlowMonitorLog(flowMonitor.getId(), fiId, params.substring(0, params.length() - 1), new Date()));
+            }
+            
+            /**
+             * 给监控人发待阅
+             */
+            StringBuffer userIdsBuff = new StringBuffer(0);
+            String userIds = null;
+            if (!userIdSet.isEmpty()) {
+                for (Iterator<Long> iter = userIdSet.iterator(); iter.hasNext();) {
+                    userIdsBuff.append(iter.next().toString() + ",");
+                }
+                if (userIdsBuff.toString().length() > 0) {
+                    userIds = userIdsBuff.toString().substring(0, userIdsBuff.toString().length()-1);
+                }
+                
+                formFlowService.chuanyueUsers(fiId, userIds);
+            }
+        }
+        
+    }
+    
+    /**
+     * 
+     */
+	@Override
+	public void flowMoitor(Integer monitorPoint, Long curFiId, Long curWiId) {
+		if (null != monitorPoint){
+			try {
+			List<Integer> fiMoitorPointList = new ArrayList<Integer>();
+			fiMoitorPointList.add(FlowMonitor.MONITOR_POINT_FLOW_START);
+			fiMoitorPointList.add(FlowMonitor.MONITOR_POINT_FLOW_SUSPEND);
+			fiMoitorPointList.add(FlowMonitor.MONITOR_POINT_FLOW_FINISH);
+			
+			List<Integer> wiMoitorPointList = new ArrayList<Integer>();
+			wiMoitorPointList.add(FlowMonitor.MONITOR_POINT_ACCEPT_SP);
+			wiMoitorPointList.add(FlowMonitor.MONITOR_POINT_SP_FINISH);
+			Object[] parametersArray = new Object[7];
+			if (fiMoitorPointList.contains(monitorPoint)){
+                parametersArray = this.getParametersArrayByFiId(curFiId);
+			} else if (wiMoitorPointList.contains(monitorPoint)){
+				parametersArray = this.getParametersArrayByWiId(curWiId);
+			}
+			this.startFlowMonitor((Integer)monitorPoint, (Long)parametersArray[0], (Long)parametersArray[1], (Long)parametersArray[2], (Long)parametersArray[3], (Long)parametersArray[4], (String)parametersArray[5], (Long)parametersArray[6]);
+			} catch (Exception e){
+				e.printStackTrace();
+			}
+		}
+	}
+    /**
+     * 组装参数
+     * @return
+     */
+	private Object[] getParametersArrayByFiId(Long curFiId){
+		Long orgnId = null;
+		Long projectId = null;
+		Long sRoleId = null;
+		Long cRoleId = null;
+		Long userId = null;
+		String flCode = null;
+		Long fiId = null;
+		if (null != curFiId){
+			Fi fi = getDao().getById(Fi.class, curFiId, "fl");
+			if (null != fi && null != fi.getFl()){
+				userId = fi.getStartUserId();
+				flCode = fi.getFl().getFlowCode();
+				fiId = fi.getId();
+				if (null != fi.getStartRoleId()){
+					orgnId = this.getObjectIdByPartId(fi.getStartRoleId(), PartyType.TYPE_DEPARTMENT);
+					projectId = this.getObjectIdByPartId(fi.getStartRoleId(), PartyType.TYPE_GROUP);
+					sRoleId = getDao().findLong("select parentId from Role where id = ?", fi.getStartRoleId());
+					cRoleId = this.getObjectIdByPartId(fi.getStartRoleId(), PartyType.TYPE_ROLE);
+				}
+			}
+		}
+		Object[] parametersArray = new Object[]{orgnId, projectId, sRoleId, cRoleId, userId, flCode, fiId};
+		return parametersArray;
+	}
+	
+    /**
+     * 组装参数
+     * @return
+     */
+	private Object[] getParametersArrayByWiId(Long curWiId){
+		Long orgnId = null;
+		Long projectId = null;
+		Long sRoleId = null;
+		Long cRoleId = null;
+		Long userId = null;
+		String flCode = null;
+		Long fiId = null;
+		if (null != curWiId){
+			Wi wi = getDao().getById(Wi.class, curWiId, "fl");
+			if (null != wi && null != wi.getFl()){
+				userId = wi.getParticipant();
+				flCode = wi.getFl().getFlowCode();
+				fiId = wi.getFiId();
+				if (StringUtils.isNotBlank(wi.getPrefix())){
+					orgnId = this.getObjectIdByPePrefix(wi.getPrefix(), PartyType.TYPE_DEPARTMENT);
+					projectId = this.getObjectIdByPePrefix(wi.getPrefix(), PartyType.TYPE_GROUP);
+					cRoleId = this.getObjectIdByPePrefix(wi.getPrefix(), PartyType.TYPE_ROLE);
+					if (null != cRoleId){
+						sRoleId = getDao().findLong("select parentId from Role where id = ?", cRoleId);
+					}
+				}
+			}
+		}
+		Object[] parametersArray = new Object[]{orgnId, projectId, sRoleId, cRoleId, userId, flCode, fiId};
+		return parametersArray;
+	}
+	
+	private Long getObjectIdByPartId(Long partId,String partType){
+		Long objectId = null;
+		if (null != partId && StringUtils.isNotBlank(partType)){
+			String sqlStr = "select max(c.id) from sm_party_entity c"
+				+ " inner join sm_party_type ct on c.party_type_id = ct.id"
+				+ " inner join ( select c.prefix from sm_party_entity c left join sm_party_type y on c.party_type_id=y.id where"
+				+ "  y.type= ? and  c.ref_id= ? ) "
+				+ " r on 1=1 where "+DbType.getType()+"locate(c.prefix, r.prefix)>0 and ct.type = ? ";
+			Object object = getDao().getFirstBySQL(sqlStr, partType, partId, PartyType.TYPE_ROLE);
+			objectId = null != object ? Long.valueOf(object.toString()) : null;
+		}
+		return objectId;
+	}
+	
+	private Long getObjectIdByPePrefix(String prefix,String partType){
+		Long objectId = null;
+		if (StringUtils.isNotBlank(prefix) && StringUtils.isNotBlank(partType)){
+			String sqlStr = "select max(c.id) from sm_party_entity c"
+				+ " inner join sm_party_type ct on c.party_type_id = ct.id"
+				+ " where ct.type = ?"
+				+ " and "+DbType.getType()+"locate("+DbType.getType()+"concat('-',c.id,'-'),"+DbType.getType()+"concat('-',?)) > 0";
+            Object object = getDao().getFirstBySQL(sqlStr, partType, prefix);
+            objectId = null != object ? Long.valueOf(object.toString()) : null;
+		}
+		return objectId;
+	}
+}

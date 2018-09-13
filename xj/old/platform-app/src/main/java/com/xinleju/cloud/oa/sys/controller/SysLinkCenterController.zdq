@@ -1,0 +1,691 @@
+package com.xinleju.cloud.oa.sys.controller;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.PrintWriter;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import javax.servlet.ServletException;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.servlet.http.Part;
+
+import com.xinleju.cloud.oa.util.CompressImgUtil;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseBody;
+import org.springframework.web.multipart.MultipartFile;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.base.utils.MessageInfo;
+import com.xinleju.platform.base.utils.MessageResult;
+import com.xinleju.platform.base.utils.PageBeanInfo;
+import com.xinleju.platform.base.utils.SecurityUserBeanInfo;
+import com.xinleju.cloud.oa.office.dto.OfficeOutDto;
+import com.xinleju.cloud.oa.sys.dto.SysCommonToolsDto;
+import com.xinleju.cloud.oa.sys.dto.SysLinkCenterDto;
+import com.xinleju.cloud.oa.sys.dto.service.SysLinkCenterDtoServiceCustomer;
+import com.xinleju.platform.tools.data.JacksonUtils;
+import com.xinleju.platform.uitls.LoginUtils;
+import org.springframework.web.multipart.MultipartHttpServletRequest;
+import org.springframework.web.multipart.commons.CommonsMultipartResolver;
+
+
+/**
+ * 链接中心表控制层
+ * @author admin
+ *
+ */
+@Controller
+@RequestMapping("/sys/sysLinkCenter")
+public class SysLinkCenterController {
+
+	private static Logger log = Logger.getLogger(SysLinkCenterController.class);
+	
+	@Autowired
+	private SysLinkCenterDtoServiceCustomer sysLinkCenterDtoServiceCustomer;
+	/**
+	 * 根据Id获取业务对象
+	 * 
+	 * @param id  业务对象主键
+	 * 
+	 * @return     业务对象
+	 */
+	@RequestMapping(value="/get/{id}",method=RequestMethod.GET)
+	public @ResponseBody MessageResult get(@PathVariable("id")  String id){
+		MessageResult result=new MessageResult();
+		try {
+			SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userJson = JacksonUtils.toJson(userBeanInfo);
+			String dubboResultInfo=sysLinkCenterDtoServiceCustomer.getObjectById(userJson, "{\"id\":\""+id+"\"}");
+			DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+			if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				SysLinkCenterDto sysLinkCenterDto=JacksonUtils.fromJson(resultInfo, SysLinkCenterDto.class);
+				result.setResult(sysLinkCenterDto);
+				result.setSuccess(MessageInfo.GETSUCCESS.isResult());
+				result.setMsg(MessageInfo.GETSUCCESS.getMsg());
+			}else{
+				result.setSuccess(MessageInfo.GETERROR.isResult());
+				result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+			}
+		} catch (Exception e) {
+			//e.printStackTrace();
+		    log.error("调用get方法:  【参数"+id+"】======"+"【"+e.getMessage()+"】");
+			result.setSuccess(MessageInfo.GETERROR.isResult());
+			result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+e.getMessage()+"】");
+		}
+		return result;
+	}
+	//查询二维码数据
+	@RequestMapping(value="/getQRcode",method=RequestMethod.GET)
+	public @ResponseBody MessageResult getQRcode(){
+		MessageResult result=new MessageResult();
+		try {
+			SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userJson = JacksonUtils.toJson(userBeanInfo);
+			String dubboResultInfo=sysLinkCenterDtoServiceCustomer.getQRcode(userJson);
+			DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+			if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				SysLinkCenterDto sysLinkCenterDto=JacksonUtils.fromJson(resultInfo, SysLinkCenterDto.class);
+				byte[] icon = sysLinkCenterDto.getIcon();
+				byte[] icon2 = icon;
+				if(icon!=null&&icon.length>32*1024){
+					icon2 = CompressImgUtil.compressImg2(icon,240,120);
+				}
+				sysLinkCenterDto.setIcon(icon2);
+				result.setResult(sysLinkCenterDto);
+				result.setSuccess(MessageInfo.GETSUCCESS.isResult());
+				result.setMsg(MessageInfo.GETSUCCESS.getMsg());
+			}else{
+				result.setSuccess(MessageInfo.GETERROR.isResult());
+				result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+			}
+		} catch (Exception e) {
+			//e.printStackTrace();
+			log.error("调用get方法:  ======"+"【"+e.getMessage()+"】");
+			result.setSuccess(MessageInfo.GETERROR.isResult());
+			result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+e.getMessage()+"】");
+		}
+		return result;
+	}
+	
+	
+	/**
+	 * 返回分页对象
+	 * @param paramater
+	 * @return
+	 */
+	@RequestMapping(value="/page",method={RequestMethod.POST}, consumes="application/json")
+	public @ResponseBody MessageResult page(@RequestBody Map<String,Object> map){
+		MessageResult result=new MessageResult();
+		String paramaterJson = JacksonUtils.toJson(map);
+		try {
+			SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userJson = JacksonUtils.toJson(userBeanInfo);
+		    String dubboResultInfo=sysLinkCenterDtoServiceCustomer.getPage(userJson, paramaterJson);
+		    DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+			if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				PageBeanInfo pageInfo=JacksonUtils.fromJson(resultInfo, PageBeanInfo.class);
+				result.setResult(pageInfo);
+				result.setSuccess(MessageInfo.GETSUCCESS.isResult());
+				result.setMsg(MessageInfo.GETSUCCESS.getMsg());
+			}else{
+				result.setSuccess(MessageInfo.GETERROR.isResult());
+				result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+			}
+		} catch (Exception e) {
+			//e.printStackTrace();
+		    log.error("调用page方法:  【参数"+paramaterJson+"】======"+"【"+e.getMessage()+"】");
+			result.setSuccess(MessageInfo.GETERROR.isResult());
+			result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+e.getMessage()+"】");
+		}
+		return result;
+	}
+	/**
+	 * 返回符合条件的列表
+	 * @param paramater
+	 * @return
+	 */
+	@RequestMapping(value="/queryList",method={RequestMethod.POST}, consumes="application/json")
+	public @ResponseBody MessageResult queryList(@RequestBody Map<String,Object> map){
+		MessageResult result=new MessageResult();
+		String paramaterJson = JacksonUtils.toJson(map);
+		try {
+			SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userJson = JacksonUtils.toJson(userBeanInfo);
+			String dubboResultInfo=sysLinkCenterDtoServiceCustomer.queryList(userJson, paramaterJson);
+		    DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+		    if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				List<SysLinkCenterDto> list=JacksonUtils.fromJson(resultInfo, ArrayList.class,SysLinkCenterDto.class);
+				result.setResult(list);
+				result.setSuccess(MessageInfo.GETSUCCESS.isResult());
+				result.setMsg(MessageInfo.GETSUCCESS.getMsg());
+		    }else{
+		    	result.setSuccess(MessageInfo.GETERROR.isResult());
+				result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+		    }
+			
+		} catch (Exception e) {
+			//e.printStackTrace();
+			log.error("调用queryList方法:  【参数"+paramaterJson+"】======"+"【"+e.getMessage()+"】");
+			result.setSuccess(MessageInfo.GETERROR.isResult());
+			result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+e.getMessage()+"】");
+		}
+		return result;
+	}
+
+
+	/**
+	 * 保存实体对象
+	 */
+/*	@RequestMapping(value="/save",method=RequestMethod.POST, consumes="application/json")
+	public @ResponseBody MessageResult save(@RequestBody SysLinkCenterDto t){
+		MessageResult result=new MessageResult();
+		try {
+			SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userJson = JacksonUtils.toJson(userBeanInfo);
+			String saveJson= JacksonUtils.toJson(t);
+			String dubboResultInfo=sysLinkCenterDtoServiceCustomer.save(userJson, saveJson);
+		    DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+		    if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				SysLinkCenterDto sysLinkCenterDto=JacksonUtils.fromJson(resultInfo, SysLinkCenterDto.class);
+				result.setResult(sysLinkCenterDto);
+				result.setSuccess(MessageInfo.SAVESUCCESS.isResult());
+				result.setMsg(dubboServiceResultInfo.getMsg());
+		    }else{
+		    	result.setSuccess(MessageInfo.SAVEERROR.isResult());
+				result.setMsg(dubboServiceResultInfo.getMsg());
+		    }
+		} catch (Exception e) {
+			try {
+				//e.printStackTrace();
+			    ObjectMapper mapper = new ObjectMapper();
+				String  paramJson = mapper.writeValueAsString(t);
+				log.error("调用save方法:  【参数"+paramJson+"】======"+"【"+e.getMessage()+"】");
+				result.setSuccess(MessageInfo.SAVEERROR.isResult());
+				result.setMsg(MessageInfo.SAVEERROR.getMsg()+"【"+e.getMessage()+"】");
+			} catch (JsonProcessingException e1) {
+				//e1.printStackTrace();
+			}
+			
+		}
+		return result;
+	}
+	*/
+	
+	@RequestMapping(value = "/save",method = RequestMethod.POST)
+	public void save(MultipartHttpServletRequest request, HttpServletResponse response) {
+		PrintWriter pw = null;
+		Boolean isReturn = false;
+		try {
+			response.setContentType("text/html;charset=UTF-8");
+			pw = response.getWriter();
+			MultipartFile uploadfile =  request.getFile("icon");
+			MessageResult result = new MessageResult();
+			SecurityUserBeanInfo userBeanInfo = LoginUtils
+					.getSecurityUserBeanInfo();
+			String userJson = JacksonUtils.toJson(userBeanInfo);
+			if(null!=uploadfile){
+				long length = uploadfile.getSize();
+				if(length>1*1024*1024){
+					result.setSuccess(false);
+					result.setMsg("图片尺寸不能大于1M");
+					pw.print(JacksonUtils.toJson(result));
+					pw.flush();
+					isReturn = true;
+				}
+			}
+			if(!isReturn) {
+				String id = request.getParameter("id");
+				String isDelPic = request.getParameter("isDelPic");
+				String name = request.getParameter("name");
+				String code = request.getParameter("code");
+				String url = request.getParameter("url");
+				String parentId = request.getParameter("parentId");
+
+				String parentName = request.getParameter("parentName");
+				String type = request.getParameter("type");
+				String state = request.getParameter("state");
+				String remark = request.getParameter("remark");
+
+				byte[] headpic = {};
+				if (null != uploadfile) {
+					InputStream is = uploadfile.getInputStream();
+					headpic = new byte[is.available()];
+					is.read(headpic);
+					is.close();
+				}
+
+				SysLinkCenterDto sysLinkCenterDto = new SysLinkCenterDto();
+				sysLinkCenterDto.setCode(code);
+				sysLinkCenterDto.setId(id);
+				sysLinkCenterDto.setName(name);
+				sysLinkCenterDto.setState(state);
+				sysLinkCenterDto.setParentId(parentId);
+				sysLinkCenterDto.setUrl(url);
+				sysLinkCenterDto.setType(type);
+				sysLinkCenterDto.setIcon(headpic);
+				sysLinkCenterDto.setRemark(remark);
+				sysLinkCenterDto.setDelflag(false);
+				sysLinkCenterDto.setParentName(parentName);
+				String saveJson = JacksonUtils.toJson(sysLinkCenterDto);
+				String dubboResultInfo = sysLinkCenterDtoServiceCustomer.save(
+						userJson, saveJson);
+				DubboServiceResultInfo dubboServiceResultInfo = JacksonUtils
+						.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+				if (dubboServiceResultInfo.isSucess()) {
+					String resultInfo = dubboServiceResultInfo.getResult();
+					SysLinkCenterDto sysLinkCenterDtoResult = JacksonUtils.fromJson(
+							resultInfo, SysLinkCenterDto.class);
+					result.setResult(sysLinkCenterDtoResult);
+					result.setSuccess(MessageInfo.SAVESUCCESS.isResult());
+					result.setMsg(MessageInfo.SAVESUCCESS.getMsg());
+				} else {
+					result.setSuccess(MessageInfo.SAVEERROR.isResult());
+					result.setMsg(dubboServiceResultInfo.getMsg());
+				}
+				pw.print(JacksonUtils.toJson(result));
+				pw.flush();
+			}
+		} catch (Exception ex) {
+			ex.printStackTrace();
+		}finally {
+			try {
+				pw.close();
+			} catch (Exception e){}
+		}
+	}
+	/**
+	 * 删除实体对象
+	 * @param t
+	 * @return
+	 */
+	@RequestMapping(value="/delete/{id}",method=RequestMethod.DELETE)
+	public @ResponseBody MessageResult delete(@PathVariable("id")  String id){
+		MessageResult result=new MessageResult();
+		try {
+			SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userJson = JacksonUtils.toJson(userBeanInfo);
+			String dubboResultInfo=sysLinkCenterDtoServiceCustomer.deleteObjectById(userJson, "{\"id\":\""+id+"\"}");
+			DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+			if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				SysLinkCenterDto sysLinkCenterDto=JacksonUtils.fromJson(resultInfo, SysLinkCenterDto.class);
+				result.setResult(sysLinkCenterDto);
+				result.setSuccess(MessageInfo.DELETESUCCESS.isResult());
+				result.setMsg(MessageInfo.DELETESUCCESS.getMsg());
+			}else{
+				result.setSuccess(MessageInfo.DELETEERROR.isResult());
+				result.setMsg(MessageInfo.DELETEERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+			}
+		} catch (Exception e) {
+			//e.printStackTrace();
+		    log.error("调用delete方法:  【参数"+id+"】======"+"【"+e.getMessage()+"】");
+			result.setSuccess(MessageInfo.DELETEERROR.isResult());
+			result.setMsg(MessageInfo.DELETEERROR.getMsg()+"【"+e.getMessage()+"】");
+		}
+		
+		return result;
+	}
+	
+	
+	/**
+	 * 删除实体对象
+	 * @param t
+	 * @return
+	 */
+	@RequestMapping(value="/deleteBatch/{ids}",method=RequestMethod.DELETE)
+	public @ResponseBody MessageResult deleteBatch(@PathVariable("ids")  String ids){
+		MessageResult result=new MessageResult();
+		try {
+			SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userJson = JacksonUtils.toJson(userBeanInfo);
+			String dubboResultInfo=sysLinkCenterDtoServiceCustomer.deleteAllObjectByIds(userJson, "{\"id\":\""+ids+"\"}");
+			DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+			if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				SysLinkCenterDto sysLinkCenterDto=JacksonUtils.fromJson(resultInfo, SysLinkCenterDto.class);
+				result.setResult(sysLinkCenterDto);
+				result.setSuccess(MessageInfo.DELETESUCCESS.isResult());
+				result.setMsg(MessageInfo.DELETESUCCESS.getMsg());
+			}else{
+				result.setSuccess(MessageInfo.DELETEERROR.isResult());
+				result.setMsg(MessageInfo.DELETEERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+			}
+		} catch (Exception e) {
+			//e.printStackTrace();
+		    log.error("调用delete方法:  【参数"+ids+"】======"+"【"+e.getMessage()+"】");
+			result.setSuccess(MessageInfo.DELETEERROR.isResult());
+			result.setMsg(MessageInfo.DELETEERROR.getMsg()+"【"+e.getMessage()+"】");
+		}
+		
+		return result;
+	}
+	
+	/**
+	 * 修改修改实体对象
+	 */
+/*	@RequestMapping(value="/update/{id}",method=RequestMethod.PUT,consumes="application/json")
+	public @ResponseBody MessageResult update(@PathVariable("id")  String id,   @RequestBody Map<String,Object> map){
+		MessageResult result=new MessageResult();
+		SysLinkCenterDto sysLinkCenterDto=null;
+		try {
+			SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userJson = JacksonUtils.toJson(userBeanInfo);
+			String dubboResultInfo=sysLinkCenterDtoServiceCustomer.getObjectById(userJson, "{\"id\":\""+id+"\"}");
+			DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+			if(dubboServiceResultInfo.isSucess()){
+				 String resultInfo= dubboServiceResultInfo.getResult();
+				 Map<String,Object> oldMap=JacksonUtils.fromJson(resultInfo, HashMap.class);
+				 String parentId = (String) map.get("parentId");
+				 if(parentId==null){
+					 oldMap.put("parentId", null);
+				 }
+				 oldMap.putAll(map);
+				 String updateJson= JacksonUtils.toJson(oldMap);
+				 String updateDubboResultInfo=sysLinkCenterDtoServiceCustomer.update(userJson, updateJson);
+				 DubboServiceResultInfo updateDubboServiceResultInfo= JacksonUtils.fromJson(updateDubboResultInfo, DubboServiceResultInfo.class);
+				 if(updateDubboServiceResultInfo.isSucess()){
+					 Integer i=JacksonUtils.fromJson(updateDubboServiceResultInfo.getResult(), Integer.class);
+					 result.setResult(i);
+					 result.setSuccess(MessageInfo.UPDATESUCCESS.isResult());
+					 result.setMsg(updateDubboServiceResultInfo.getMsg());
+				 }else{
+					 result.setSuccess(MessageInfo.UPDATEERROR.isResult());
+					 result.setMsg(updateDubboServiceResultInfo.getMsg());
+				 }
+			}else{
+				 result.setSuccess(MessageInfo.UPDATEERROR.isResult());
+				 result.setMsg("不存在更新的对象");
+			}
+		} catch (Exception e) {
+			try{
+			 //e.printStackTrace();
+			 ObjectMapper mapper = new ObjectMapper();
+			 String  paramJson = mapper.writeValueAsString(sysLinkCenterDto);
+			 log.error("调用update方法:  【参数"+id+","+paramJson+"】======"+"【"+e.getMessage()+"】");
+			 result.setSuccess(MessageInfo.UPDATEERROR.isResult());
+			 result.setMsg(MessageInfo.UPDATEERROR.getMsg()+"【"+e.getMessage()+"】");
+			}catch (JsonProcessingException e1) {
+				//e1.printStackTrace();
+			}
+			
+		}
+		return result;
+	}
+*/
+	@RequestMapping(value = "/update",method = RequestMethod.POST)
+	public void update(MultipartHttpServletRequest request, HttpServletResponse response) {
+		PrintWriter pw = null;
+		Boolean isReturn = false;
+		try {
+			response.setContentType("text/html;charset=UTF-8");
+			pw = response.getWriter();
+			MultipartFile uploadfile = request.getFile("icon");
+			MessageResult result = new MessageResult();
+			SecurityUserBeanInfo userBeanInfo = LoginUtils
+					.getSecurityUserBeanInfo();
+			String userJson = JacksonUtils.toJson(userBeanInfo);
+			if (null != uploadfile) {
+				long length = uploadfile.getSize();
+				if (length > 1 * 1024 * 1024) {
+					result.setSuccess(false);
+					result.setMsg("图片尺寸不能大于1M");
+					pw.print(JacksonUtils.toJson(result));
+					pw.flush();
+					isReturn = true;
+				}
+			}
+			if (!isReturn) {
+				String id = request.getParameter("id");
+				String dubboResultInfo = sysLinkCenterDtoServiceCustomer.getObjectById(userJson, "{\"id\":\"" + id + "\"}");
+				DubboServiceResultInfo dubboServiceResultInfo = JacksonUtils
+						.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+
+				if (dubboServiceResultInfo.isSucess()) {
+					String resultInfo = dubboServiceResultInfo.getResult();
+					SysLinkCenterDto sysLinkCenterDto = JacksonUtils.fromJson(resultInfo,
+							SysLinkCenterDto.class);
+					String name = request.getParameter("name");
+					String code = request.getParameter("code");
+					String url = request.getParameter("url");
+					String parentId = request.getParameter("parentId");
+					String parentName = request.getParameter("parentName");
+					String isDelPic = request.getParameter("isDelPic");
+					String state = request.getParameter("state");
+					String type = request.getParameter("type");
+					String remark = request.getParameter("remark");
+					sysLinkCenterDto.setCode(code);
+					sysLinkCenterDto.setId(id);
+					sysLinkCenterDto.setName(name);
+					sysLinkCenterDto.setState(state);
+					sysLinkCenterDto.setParentId(parentId);
+					sysLinkCenterDto.setRemark(remark);
+					sysLinkCenterDto.setType(type);
+					sysLinkCenterDto.setUrl(url);
+					sysLinkCenterDto.setDelflag(false);
+					sysLinkCenterDto.setParentName(parentName);
+					if (null != uploadfile) {
+						if(uploadfile.getSize()>0){
+							InputStream is = uploadfile.getInputStream();
+							byte[] headpic = new byte[is.available()];
+							is.read(headpic);
+							is.close();
+							sysLinkCenterDto.setIcon(headpic);
+						}
+					}else if("0".equals(isDelPic)){
+						sysLinkCenterDto.setIcon(null);
+					}
+					String updateJson = JacksonUtils.toJson(sysLinkCenterDto);
+					String updateDubboResultInfo = sysLinkCenterDtoServiceCustomer
+							.update(userJson, updateJson);
+					DubboServiceResultInfo updateDubboServiceResultInfo = JacksonUtils
+							.fromJson(updateDubboResultInfo,
+									DubboServiceResultInfo.class);
+					if (updateDubboServiceResultInfo.isSucess()) {
+						Integer i = JacksonUtils.fromJson(
+								updateDubboServiceResultInfo.getResult(),
+								Integer.class);
+						result.setResult(i);
+						result.setSuccess(MessageInfo.UPDATESUCCESS.isResult());
+						result.setMsg(MessageInfo.UPDATESUCCESS.getMsg());
+					} else {
+						result.setSuccess(MessageInfo.UPDATEERROR.isResult());
+						result.setMsg(updateDubboServiceResultInfo.getMsg());
+					}
+				} else {
+					result.setSuccess(MessageInfo.UPDATEERROR.isResult());
+					result.setMsg("不存在更新的对象");
+				}
+				pw.print(JacksonUtils.toJson(result));
+				pw.flush();
+			}
+		} catch(Exception e){
+			e.printStackTrace();
+		}finally{
+			try {
+				pw.close();
+			} catch (Exception e) {
+			}
+		}
+	}
+	/**
+	 * 伪删除实体对象
+	 * @param t
+	 * @return
+	 */
+	@RequestMapping(value="/deletePseudo/{id}",method=RequestMethod.DELETE)
+	public @ResponseBody MessageResult deletePseudo(@PathVariable("id")  String id){
+		MessageResult result=new MessageResult();
+		try {
+			SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userJson = JacksonUtils.toJson(userBeanInfo);
+			String dubboResultInfo=sysLinkCenterDtoServiceCustomer.deletePseudoObjectById(userJson, "{\"id\":\""+id+"\"}");
+			DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+			if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				SysLinkCenterDto sysLinkCenterDto=JacksonUtils.fromJson(resultInfo, SysLinkCenterDto.class);
+				result.setResult(sysLinkCenterDto);
+				result.setSuccess(MessageInfo.DELETESUCCESS.isResult());
+				result.setMsg(MessageInfo.DELETESUCCESS.getMsg());
+			}else{
+				result.setSuccess(MessageInfo.DELETEERROR.isResult());
+				result.setMsg(MessageInfo.DELETEERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+			}
+		} catch (Exception e) {
+			//e.printStackTrace();
+		    log.error("调用deletePseudo方法:  【参数"+id+"】======"+"【"+e.getMessage()+"】");
+			result.setSuccess(MessageInfo.DELETEERROR.isResult());
+			result.setMsg(MessageInfo.DELETEERROR.getMsg()+"【"+e.getMessage()+"】");
+		}
+		
+		return result;
+	}
+	
+	
+	/**
+	 * 伪删除实体对象
+	 * @param t
+	 * @return
+	 */
+	@RequestMapping(value="/deletePseudoBatch/{ids}",method=RequestMethod.DELETE)
+	public @ResponseBody MessageResult deletePseudoBatch(@PathVariable("ids")  String ids){
+		MessageResult result=new MessageResult();
+		try {
+			SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userJson = JacksonUtils.toJson(userBeanInfo);
+			String dubboResultInfo=sysLinkCenterDtoServiceCustomer.deletePseudoAllObjectByIds(userJson, "{\"id\":\""+ids+"\"}");
+			DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+			if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				SysLinkCenterDto sysLinkCenterDto=JacksonUtils.fromJson(resultInfo, SysLinkCenterDto.class);
+				result.setResult(sysLinkCenterDto);
+				result.setSuccess(MessageInfo.DELETESUCCESS.isResult());
+				result.setMsg(MessageInfo.DELETESUCCESS.getMsg());
+			}else{
+				result.setSuccess(MessageInfo.DELETEERROR.isResult());
+				result.setMsg(MessageInfo.DELETEERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+			}
+		} catch (Exception e) {
+			//e.printStackTrace();
+		    log.error("调用deletePseudoBatch方法:  【参数"+ids+"】======"+"【"+e.getMessage()+"】");
+			result.setSuccess(MessageInfo.DELETEERROR.isResult());
+			result.setMsg(MessageInfo.DELETEERROR.getMsg()+"【"+e.getMessage()+"】");
+		}
+		
+		return result;
+	}
+	
+	/**
+	 * 对排序(上移/下移)
+	 * @param t
+	 * @return
+	 */
+	@RequestMapping(value="/updateSort/{id}",method=RequestMethod.PUT,consumes="application/json")
+	public @ResponseBody MessageResult updateSort(@PathVariable("id")  String id,   @RequestBody Map<String,Object> map){
+		MessageResult result=new MessageResult();
+		try {
+			SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userJson = JacksonUtils.toJson(userBeanInfo);
+			String dubboResultInfo=sysLinkCenterDtoServiceCustomer.updateSort(userJson, "{\"id\":\""+id+"\"}",map);
+			DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+			if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				int i=JacksonUtils.fromJson(dubboServiceResultInfo.getResult(), Integer.class);
+				result.setResult(i);
+				result.setSuccess(MessageInfo.UPDATESORTSUCCESS.isResult());
+				result.setMsg(MessageInfo.UPDATESORTSUCCESS.getMsg());
+			}else{
+				result.setSuccess(MessageInfo.UPDATESORTERROR.isResult());
+				result.setMsg(MessageInfo.UPDATESORTERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+			}
+		} catch (Exception e) {
+			//e.printStackTrace();
+		    log.error("调用修改状态方法:  【参数"+id+"】======"+"【"+e.getMessage()+"】");
+			result.setSuccess(MessageInfo.UPDATESORTERROR.isResult());
+			result.setMsg(MessageInfo.UPDATESORTERROR.getMsg()+"【"+e.getMessage()+"】");
+		}
+		
+		return result;	
+	}
+	@RequestMapping(value="/updateStatus/{id}",method=RequestMethod.PUT,consumes="application/json")
+	public @ResponseBody MessageResult updateStatus(@PathVariable("id")  String id){
+		MessageResult result=new MessageResult();
+		try {
+			SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userJson = JacksonUtils.toJson(userBeanInfo);
+			String dubboResultInfo=sysLinkCenterDtoServiceCustomer.updateStatus(userJson, "{\"id\":\""+id+"\"}");
+			DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+			if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				int i=JacksonUtils.fromJson(dubboServiceResultInfo.getResult(), Integer.class);
+				result.setResult(i);
+				result.setSuccess(MessageInfo.UPDATESTATUSSUCCESS.isResult());
+				result.setMsg(MessageInfo.UPDATESTATUSSUCCESS.getMsg());
+			}else{
+				result.setSuccess(MessageInfo.UPDATESTATUSERROR.isResult());
+				result.setMsg(dubboServiceResultInfo.getMsg());
+			}
+		} catch (Exception e) {
+			//e.printStackTrace();
+		    log.error("调用修改状态方法:  【参数"+id+"】======"+"【"+e.getMessage()+"】");
+			result.setSuccess(MessageInfo.UPDATESTATUSERROR.isResult());
+			result.setMsg(MessageInfo.UPDATESTATUSERROR.getMsg()+"【"+e.getMessage()+"】");
+		}
+		
+		return result;
+	}
+	  /**
+	    * 分组查询
+	    */
+		/**
+		 * 返回符合条件的列表
+		 * @param paramater
+		 * @return
+		 */
+		@RequestMapping(value="/queryListGroup",method={RequestMethod.POST}, consumes="application/json")
+		public @ResponseBody MessageResult queryListGroup(@RequestBody Map<String,Object> map){
+			MessageResult result=new MessageResult();
+			String paramaterJson = JacksonUtils.toJson(map);
+			try {
+				SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+				String userJson = JacksonUtils.toJson(userBeanInfo);
+				String dubboResultInfo=sysLinkCenterDtoServiceCustomer.queryListGroup(userJson, paramaterJson);
+			    DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+			    if(dubboServiceResultInfo.isSucess()){
+					String resultInfo= dubboServiceResultInfo.getResult();
+					List<ArrayList> list=JacksonUtils.fromJson(resultInfo, ArrayList.class,ArrayList.class);
+					result.setResult(list);
+					result.setSuccess(MessageInfo.GETSUCCESS.isResult());
+					result.setMsg(MessageInfo.GETSUCCESS.getMsg());
+			    }else{
+			    	result.setSuccess(MessageInfo.GETERROR.isResult());
+					result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+			    }
+				
+			} catch (Exception e) {
+				//e.printStackTrace();
+				log.error("调用queryList方法:  【参数"+paramaterJson+"】======"+"【"+e.getMessage()+"】");
+				result.setSuccess(MessageInfo.GETERROR.isResult());
+				result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+e.getMessage()+"】");
+			}
+			return result;
+		}
+
+}

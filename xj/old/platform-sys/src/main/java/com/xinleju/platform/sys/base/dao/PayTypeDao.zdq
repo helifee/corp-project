@@ -1,0 +1,40 @@
+package com.xinleju.platform.sys.base.dao;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.dao.BaseDao;
+import com.xinleju.platform.sys.base.entity.PayType;
+
+/**
+ * @author admin
+ *
+ */
+
+public interface PayTypeDao extends BaseDao<String, PayType> {
+
+	/**
+	 * @return
+	 */
+	public List<PayType> payTypeParanetList(Map<String,Object> map);
+
+	/**
+	 * @param hmap
+	 * @return
+	 */
+	public Integer getPayTypeCountByCode(Map<String, Object> hmap);
+
+	/**
+	 * @return
+	 */
+	public List<PayType> queryListOrderBySort();
+
+	/**
+	 * @param parentId
+	 * @return
+	 */
+
+	
+	public List<Map<String,Object>> getAllPayType(Map<String, Object> param)throws Exception;
+
+}

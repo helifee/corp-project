@@ -1,0 +1,674 @@
+package com.xinleju.erp.flowengine.action;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.collections.map.LinkedMap;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+
+import com.xinleju.erp.base.app.bean.Page;
+import com.xinleju.erp.base.utils.CollectionUtils;
+import com.xinleju.erp.flow.flowutils.bean.PageBean;
+import com.xinleju.erp.flow.models.Ct;
+import com.xinleju.erp.flow.service.CtService;
+import com.xinleju.erp.flow.service.TodoFiService;
+import com.xinleju.erp.flow.service.api.ApiConstant;
+import com.xinleju.erp.flow.service.api.extend.BaseAPI;
+import com.xinleju.erp.flow.service.api.extend.dto.UserDTO;
+import com.xinleju.erp.flow.service.extend.dto.TodoFiDto;
+import com.xinleju.erp.flow.utils.LoginInfoUtils;
+import com.xinleju.erp.flowengine.dto.JsonResult;
+import com.xinleju.erp.flowengine.models.FlowInstance;
+import com.xinleju.erp.flowengine.models.FlowInstanceStep;
+import com.xinleju.erp.flowengine.models.FlowInstanceStepWork;
+import com.xinleju.erp.flowengine.models.FlowInstanceStepWorkTask;
+import com.xinleju.erp.flowengine.service.FlowInstanceCalculateFiService;
+import com.xinleju.erp.flowengine.service.FlowInstanceCalculateStepService;
+import com.xinleju.erp.flowengine.service.FlowInstanceManageCalculateFiService;
+import com.xinleju.erp.flowengine.service.FlowInstanceManagerService;
+import com.xinleju.erp.flowengine.service.FlowInstanceStepMobileService;
+import com.xinleju.erp.flowengine.service.FlowInstanceStepService;
+import com.xinleju.erp.flowengine.service.FlowInstanceStepWorkTaskExtendService;
+import com.xinleju.erp.flowengine.service.OpRelationService;
+import com.xinleju.erp.flowengine.utils.FlowInstanceStatus;
+import com.xinleju.erp.flowengine.utils.StepTypeStatus;
+import com.xinleju.erp.flowengine.utils.TaskTypeStatus;
+import com.xinleju.erp.flowengine.utils.WorkTypeStatus;
+import com.xinleju.erp.frame.dao.CompanyDao;
+import com.xinleju.erp.frame.models.Company;
+
+public class FlowInstanceManagerAction extends FlowInstanceBaseAction{
+	
+
+	/**
+	 * 
+	 */
+	private static final long serialVersionUID = 1L;
+	
+	private static final Logger logger = Logger.getLogger(FlowInstanceManagerAction.class);
+
+	private String tId;
+
+	private String userIds;
+	
+	private String workIds;
+	//添加环节，或者人员
+	private String workId;
+	private String approverUserId;
+	private String nodeType;
+	
+	
+	
+	private String tokenId;
+	
+    /**
+     * 是否显示更多
+     */
+    private Integer ifShowMore;
+	
+	private String fiId;
+	private String taskIds;
+
+    private TodoFiDto todoFiDto;
+    
+    @Autowired
+    private CtService ctService;
+    
+    @Autowired
+    private CompanyDao companyDao;
+    
+    @Autowired
+    private TodoFiService todoFiService;
+    
+    @Autowired
+    private FlowInstanceManageCalculateFiService flowInstanceManageCalculateFiService;
+	@Autowired
+	@Qualifier(ApiConstant.BEAN_CODE)
+	private BaseAPI baseAPI;
+	
+	@Autowired
+	private FlowInstanceCalculateFiService flowInstanceCalculateFiService;
+
+	@Autowired
+	private FlowInstanceCalculateStepService flowInstanceCalculateStepService;
+	
+	@Autowired
+	private FlowInstanceStepService flowInstanceStepService;
+	@Autowired
+	private OpRelationService opRelService;
+	@Autowired
+	private FlowInstanceStepWorkTaskExtendService flowInstanceStepWorkTaskExtendService;
+	
+	@Autowired
+	private FlowInstanceManagerService flowInstanceManagerService;
+	
+	@Autowired
+    private FlowInstanceStepMobileService flowInstanceStepMobileService;
+	
+	 /**
+     * 全部列表
+     */
+    @SuppressWarnings("unchecked")	
+    public String allFiList() {
+    	//流程状态
+        Map<Integer, String> fiStatusMap = new LinkedMap();
+        fiStatusMap.put(FlowInstanceStatus.STATUS_RUNNING, "运行");
+        fiStatusMap.put(FlowInstanceStatus.STATUS_COMPLETE, "结束");
+        fiStatusMap.put(FlowInstanceStatus.STATUS_OVERDUE, "作废");
+        fiStatusMap.put(FlowInstanceStatus.STATUS_BACK, "打回");
+        fiStatusMap.put(FlowInstanceStatus.STATUS_WITHDRAW, "撤回");
+        fiStatusMap.put(FlowInstanceStatus.STATUS_SUSPEND, "挂起");
+        request.setAttribute("fiStatusMap", fiStatusMap);
+        //任务类型
+        Map<String, String> todoTypeMap = new LinkedMap();
+        todoTypeMap.put(TodoFiDto.TODO_TYPE_DS + "", "待审");
+        todoTypeMap.put(TodoFiDto.TODO_TYPE_DS + "", "删除");
+        todoTypeMap.put(TodoFiDto.TODO_TYPE_DY + "", "待阅");
+        todoTypeMap.put(TodoFiDto.TODO_TYPE_YB + "", "已办");
+        todoTypeMap.put(TodoFiDto.TODO_TYPE_GR + "", "我的发起");
+        todoTypeMap.put(TodoFiDto.TODO_TYPE_SC + "", "收藏");
+        todoTypeMap.put(TodoFiDto.TODO_TYPE_SQ + "", "授权他人");
+        request.setAttribute("todoTypeMap", todoTypeMap);
+        String startUserIdLimitSql = "";
+        UserDTO userDto = LoginInfoUtils.getLoginInfo(request).getUserDTO();
+        Long userId = null != userDto && null != userDto.getId() ? userDto.getId() : 0L;
+        if ( "admin".equals(userDto.getLoginName().toLowerCase()) ) {
+        	userId = -1L;
+        }
+        
+        if (null != todoFiDto && StringUtils.isNotBlank(todoFiDto.getTodoType())){
+            if (todoFiDto.getTodoType().trim().equals(TodoFiDto.TODO_TYPE_GR + "")){
+            	if ( userId > 0 ) {
+            		startUserIdLimitSql = " fi.start_user_id = " + userId;
+            	}
+            	
+            } else if (todoFiDto.getTodoType().trim().equals(TodoFiDto.TODO_TYPE_DS + "") || todoFiDto.getTodoType().trim().equals(TodoFiDto.TODO_TYPE_YB + "") || todoFiDto.getTodoType().trim().equals(TodoFiDto.TODO_TYPE_YB + "")){
+            	redirect("Msg!index.do?msgDto.todoType=" + todoFiDto.getTodoType().trim());
+            }
+        }
+        page=flowInstanceManageCalculateFiService.getTodoFiPageBySql(todoFiDto, startUserIdLimitSql, userId, start, limit);
+       // page = todoFiService.getTodoFiPageBySql(todoFiDto, startUserIdLimitSql, userId, start, limit);
+        //机构
+        List<Company> companyList = companyDao.getAllCompany(false);
+        if (null == companyList){
+            companyList = new ArrayList<Company>();
+        }
+        request.setAttribute("companyMap", CollectionUtils.collectAsMap(companyList, "id"));
+        //流程目录
+        Long pctId = 0L;
+        Long ctId = 0L;
+        Long cctId = 0L;
+        //二级目录
+        if (null != todoFiDto && null != todoFiDto.getPctId()){
+            pctId = todoFiDto.getPctId();
+        }
+        
+        //三级目录
+        if (null != todoFiDto && null != todoFiDto.getCtId()){
+            pctId = getCommonService().findLong("select c.parentId from Ct c where c.id = ? ", todoFiDto.getCtId());
+            ctId = todoFiDto.getCtId();
+        }
+        if(null != todoFiDto && null != todoFiDto.getCctId()){
+            pctId = getCommonService().findLong("select p.parentId from Ct c inner join Ct p on p.id = c.parentId where c.id = ? ", todoFiDto.getCtId());
+            ctId = getCommonService().findLong("select c.parentId from Ct c where c.id = ? ", todoFiDto.getCtId());
+            cctId = todoFiDto.getCctId();
+        }
+        
+        if (null != todoFiDto){
+            todoFiDto.setPctId(pctId);
+            todoFiDto.setCtId(ctId);
+            todoFiDto.setCctId(cctId);
+        }
+        
+        //一级目录
+        List<Ct> ctList = ctService.getCtList(null, null);
+        request.setAttribute("pCtMap", CollectionUtils.collectAsMap(ctList, "id"));
+        //二级目录
+        if (null != pctId && pctId.longValue() > 0){
+            ctList = ctService.getCtList(pctId, null);
+        } else if (null != ctList && ctList.size() > 0){
+            ctList = ctService.getCtList(ctList.get(0).getId(), null);
+        } 
+        if (null == ctList) {
+            ctList = new ArrayList<Ct>();
+        }
+        request.setAttribute("ctMap", CollectionUtils.collectAsMap(ctList, "id"));
+        //三级目录
+        if (null != ctId && ctId.longValue() > 0){
+            ctList = ctService.getCtList(ctId, null);
+        } else if (null != ctList && ctList.size() > 0){
+            ctList = ctService.getCtList(ctList.get(0).getId(), null);
+        }
+        if (null == ctList) {
+            ctList = new ArrayList<Ct>();
+        }
+        request.setAttribute("cCtMap", CollectionUtils.collectAsMap(ctList, "id"));
+        return "allFiList";
+    }
+	
+	public void validateCbFlowInstanceStepWorkTask() {
+
+		if (StringUtils.isBlank(fiId)) {
+
+			this.addFieldError("taskIdEmptyError", "任务ID不能为空");
+		}
+		
+		if (StringUtils.isBlank(taskIds)) {
+
+			this.addFieldError("taskIdsEmptyError", "任务ID不能为空");
+		}
+	}
+	// 催办
+	public void cbFlowInstanceStepWorkTask() {
+		//查看流程是否运行如果不运行，则无法催办
+		FlowInstance flowInstance=flowInstanceCalculateFiService.getById(fiId);
+		if(FlowInstanceStatus.STATUS_RUNNING==flowInstance.getStatus()){
+			try {
+				flowInstanceStepService.saveToCb(flowInstance, taskIds);
+				renderJson(new JsonResult(true, StringUtils.EMPTY,"催办成功"));
+			} catch (Exception e) {
+				renderJson(new JsonResult(false, StringUtils.EMPTY,"催办失败"));
+			}
+		}else{
+			renderJson(new JsonResult(false, StringUtils.EMPTY,"流程已经结束，无法催办"));
+		}
+	}
+	
+	// 撤回流程
+	public void chFlowInstanceStepWorkTask() {
+		//查看流程是否运行如果不运行，则无法撤回
+		FlowInstance flowInstance=flowInstanceCalculateFiService.getById(fiId);
+		if(FlowInstanceStatus.STATUS_RUNNING==flowInstance.getStatus()){
+			try {
+				flowInstanceStepService.saveToCh(flowInstance);
+				renderJson(new JsonResult(true, StringUtils.EMPTY,"撤回成功"));
+			} catch (Exception e) {
+				renderJson(new JsonResult(false, StringUtils.EMPTY,"撤回失败"));
+			}
+		}else{
+			renderJson(new JsonResult(false, StringUtils.EMPTY,"流程已经结束，无法撤回"));
+		}
+	}
+	
+	public void validateCsFlowInstanceStepWorkTask() {
+
+		if (StringUtils.isBlank(fiId)) {
+
+			this.addFieldError("taskIdEmptyError", "任务ID不能为空");
+		}
+		
+		if (StringUtils.isBlank(userIds)) {
+
+			this.addFieldError("userIdsEmptyError", "任务ID不能为空");
+		}
+	}
+	// 传阅
+	public void csFlowInstanceStepWorkTask() {
+		try {
+			flowInstanceStepWorkTaskExtendService.saveFlowInstanceStepWorkTaskExtend(fiId, userIds, TaskTypeStatus.TaskType.CY.getCode());
+			renderJson(new JsonResult(true, StringUtils.EMPTY,"传阅成功"));
+		} catch (Exception e) {
+			logger.error("穿越失败",e);
+			renderJson(new JsonResult(false, StringUtils.EMPTY,"传阅失败"));
+		}
+	}
+	
+	/**
+	 * 补充遗漏
+	 */
+	public void additionalFlowInstanceStepWorkTask() {
+		try {
+			List<Map<String,Object>> list=flowInstanceStepMobileService.getAddtionalFlowInstance();
+			
+			if(list!=null && list.size()>0){
+				for(Map<String,Object>  map :list){
+					flowInstanceStepMobileService.saveMobileBizData(map.get("flowCode").toString(),map.get("bizId").toString() ,map.get("fiId").toString());
+				}
+			}
+			
+			
+			
+			renderJson(new JsonResult(true, StringUtils.EMPTY,"补录成功"));
+		} catch (Exception e) {
+			logger.error("穿越失败",e);
+			renderJson(new JsonResult(false, StringUtils.EMPTY,"补录失败"));
+		}
+	}
+	
+	// 跳过当前环节
+	public void jumpFlowInstanceStepWorkTask() {
+		FlowInstance flowInstance=flowInstanceCalculateFiService.getById(fiId);
+		if(FlowInstanceStatus.STATUS_RUNNING==flowInstance.getStatus()){
+			//获取当前任务[随机获取一条任务，执行通过]
+			try {
+				UserDTO currUser = LoginInfoUtils.getLoginInfo(request).getUserDTO();
+				flowInstanceStepService.jumpFlowInstanceStepWorkTask(fiId,currUser);
+				renderJson(new JsonResult(true, StringUtils.EMPTY, "跳过当前环节成功"));
+			} catch (Exception e) {
+				// TODO Auto-generated catch block
+				logger.error("跳过当前环节",e);
+				renderJson(new JsonResult(false, StringUtils.EMPTY,"跳过当前环节"));
+			}
+		}else{
+			renderJson(new JsonResult(false, StringUtils.EMPTY,"流程已经结束，没有节点跳过"));
+		}
+		
+	}
+	
+	// 替换当前审批人
+	public void replaceFlowInstanceStepWorkTask(){
+		try {
+			
+			String replaceUserId = getParameter("replaceUserId");
+			String replacedUserId = getParameter("replacedUserId");
+			if (StringUtils.isNotBlank(replacedUserId)) {
+				String[] ids = replacedUserId.split(",");
+				String userId = ids[0];
+				String taskId = ids[1];
+				FlowInstanceStepWorkTask flowInstanceStepWorkTask = flowInstanceCalculateStepService.getTaskById(taskId);
+				flowInstanceStepService.replaceTaskIdToUserId(flowInstanceStepWorkTask, userId, replaceUserId);
+				renderJson(new JsonResult(true, StringUtils.EMPTY, "替换成功"));
+			}else{
+				logger.error("被替换人【replacedUserId】为空");
+				renderJson(new JsonResult(false, StringUtils.EMPTY,"替换失败：被替换人不能为空"));
+			}
+			
+		} catch (Exception e) {
+			logger.error("替换失败",e);
+			renderJson(new JsonResult(false, StringUtils.EMPTY,"替换失败"));
+		}
+	}
+	
+	// 一键审结
+	public void conclusionFlowInstanceStepWorkTask() throws Exception{
+     try {
+    		// 当前用户登录信息
+ 		    UserDTO currUser = LoginInfoUtils.getLoginInfo(request).getUserDTO();
+			FlowInstance flowInstance = flowInstanceCalculateFiService.getById(fiId);
+			if (FlowInstanceStatus.STATUS_RUNNING == flowInstance.getStatus()) {
+				flowInstanceStepService.saveToKeyFinalized(flowInstance,currUser);
+			} else {
+				flowInstance.setStatus(FlowInstanceStatus.STATUS_COMPLETE);
+				flowInstanceManagerService.updateFlowInstance(flowInstance);
+			}
+		
+			request.setAttribute("bizUrl", getParameter("bizUrl"));
+			request.setAttribute("bizId", flowInstance.getBizId());
+			request.setAttribute("fiName", flowInstance.getFiName());
+			
+			renderJson(new JsonResult(true,"FlowInstanceApprove!detail.do?fiId=" + flowInstance.getGuid(), "审结成功"));
+			
+		} catch (Exception e) {
+			logger.error("审结失败",e);
+			renderJson(new JsonResult(true,StringUtils.EMPTY, "审结失败"));
+		}
+	}
+	
+	// 作废流程
+	public void overFlowInstanceStepWorkTask(UserDTO currUser){
+		try {
+			
+			FlowInstance flowInstance = flowInstanceCalculateFiService.getById(fiId);
+			if (FlowInstanceStatus.STATUS_RUNNING == flowInstance.getStatus()) {
+				flowInstanceStepService.saveToZF(flowInstance,currUser);
+			} else {
+				flowInstance.setCompleteUserId(currUser.getId());
+			     flowInstance.setCompleteUserLoginName(currUser.getLoginName());
+			     flowInstance.setCompleteUserName(currUser.getRealName());
+				flowInstance.setStatus(FlowInstanceStatus.STATUS_OVERDUE);
+				flowInstance.setCompleteTime(new Date());
+				flowInstanceManagerService.updateFlowInstance(flowInstance);
+			}
+			
+			request.setAttribute("bizUrl", getParameter("bizUrl"));
+			request.setAttribute("bizId", flowInstance.getBizId());
+			request.setAttribute("fiName", flowInstance.getFiName());
+			
+			renderJson(new JsonResult(true,"FlowInstanceApprove!detail.do?fiId=" + flowInstance.getGuid(), "作废成功"));
+			
+		} catch (Exception e) {
+			logger.error("作废失败",e);
+			renderJson(new JsonResult(true,StringUtils.EMPTY, "作废失败"));
+		}
+	}
+
+	//收回协办
+    public void recycleCoHost(){
+		
+    	if(StringUtils.isBlank(tId)){
+			logger.error("任务ID为空！");
+			return;
+		}
+		try {
+			
+			FlowInstanceStepWorkTask flowInstanceStepWorkTask = flowInstanceCalculateStepService.getTaskById(tId);
+			if (flowInstanceStepWorkTask == null) {
+				logger.error("任务ID=[" + tId + "]不存在记录");
+				return;
+			}
+			if (flowInstanceStepWorkTask.getStatus() != TaskTypeStatus.STATUS_RUNNING) {
+
+				logger.info("任务ID=" + tId + "的环节已完成");
+				renderJson(new JsonResult(true, "FlowInstanceApprove!detail.do?fiId="+ flowInstanceStepWorkTask.getFiId()));
+				return;
+			}
+			flowInstanceStepService.saveRecycleCoHost(flowInstanceStepWorkTask);
+			renderJson(new JsonResult(true, StringUtils.EMPTY, "收回协办成功"));
+			
+		} catch (Exception e) {
+			logger.error("收回协办成功",e);
+			renderJson(new JsonResult(true, StringUtils.EMPTY, "收回协办失败"));
+		}
+	}
+    
+    
+    /**
+     * 添加人员
+     */
+    public void addFlowApprovalPersonSave(){
+    	FlowInstance flowInstace = flowInstanceCalculateFiService.getById(fiId);
+    	
+    	try {
+ 	       if(StepTypeStatus.TempNode.equals(nodeType)){
+ 	    	  //需要判断是否正在运行的节点，如果节点正在运行，提示错误
+ 	    	  FlowInstanceStepWork fiWork = flowInstanceCalculateStepService.getFlowInstanceStepWorkByWorkId(workId);
+ 	   		  FlowInstanceStep step = flowInstanceCalculateStepService.getFlowInstanceStepBystepId(fiWork.getStepId());
+ 	   		 if(step.getStatus()==StepTypeStatus.STATUS_RUNNING){
+ 	   			renderJson(new JsonResult(true, StringUtils.EMPTY, "正在运行节点前不能添加环节！"));
+ 	   		 }
+			  flowInstanceStepService.addFlowApprovalPersonSave(workId, approverUserId, nodeType, flowInstace);
+ 	       }else{
+ 	    	  flowInstanceStepService.addFlowApprovalPersonSave(workId, approverUserId, nodeType, flowInstace);
+ 	       }
+ 	       
+ 	          renderJson(new JsonResult(true, StringUtils.EMPTY, "添加人员成功！"));
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+    	
+    	
+    }
+    
+    /**
+     * 催办
+     * @return
+     */
+    public String showCuiBan(){
+   
+    	StringBuilder sbErrorMsg = new StringBuilder();
+    	FlowInstance flowInstace = flowInstanceCalculateFiService.getById(fiId);
+    	
+    	if(flowInstace == null){
+    		sbErrorMsg.append("流程实例不存在！");
+    	}else if(flowInstace.getStatus() != FlowInstanceStatus.STATUS_RUNNING){
+    		sbErrorMsg.append("流程["+flowInstace.getFiName()+"]已完结！");
+		}
+    	
+    	if(StringUtils.isNotBlank(sbErrorMsg.toString())){
+    		request.setAttribute("errorMsg", sbErrorMsg.toString());
+    		return "showCuiBan";
+    	}
+    	
+    	List<FlowInstanceStep> lstFlowInstanceStep = flowInstanceCalculateStepService.getFlowInstanceStepByFiId(fiId,
+    															FlowInstanceStatus.STATUS_RUNNING);
+    	StringBuilder taskIds=new StringBuilder();
+    	List<FlowInstanceStep> steps=new ArrayList<FlowInstanceStep>();
+    	for(FlowInstanceStep flowInstanceStep :lstFlowInstanceStep){
+    		
+    		if(flowInstanceStep.getStatus() == StepTypeStatus.STATUS_RUNNING){
+	    		FlowInstanceStep step=new FlowInstanceStep();
+	    		step.setDisplayName(flowInstanceStep.getDisplayName());
+	    		List<FlowInstanceStepWork> works=new ArrayList<FlowInstanceStepWork>();
+	    		for(FlowInstanceStepWork flowInstanceStepWork : flowInstanceStep.getLstFlowInstanceStepWork()){
+	    			if(flowInstanceStepWork.getStatus() == WorkTypeStatus.STATUS_RUNNING){
+	    				FlowInstanceStepWork  work= new FlowInstanceStepWork();
+	    				
+	    				work.setParticipantPostName(flowInstanceStepWork.getParticipantPostName());
+		    			List<FlowInstanceStepWorkTask> flowInstanceStepWorkTasks=flowInstanceStepWork.getLstFlowInstanceStepWorkTask();
+		    			List<FlowInstanceStepWorkTask> tasks=new ArrayList<FlowInstanceStepWorkTask>();
+		    			for(FlowInstanceStepWorkTask flowInstanceStepWorkTask:flowInstanceStepWorkTasks){
+		    				FlowInstanceStepWorkTask task=new FlowInstanceStepWorkTask();
+		    				if(flowInstanceStepWorkTask.getStatus() == TaskTypeStatus.STATUS_RUNNING){
+		    					task.setParticipantUserName(flowInstanceStepWorkTask.getParticipantUserName());
+		    					tasks.add(task);
+		    					taskIds.append(flowInstanceStepWorkTask.getGuid()+",");
+		    				}
+		    				work.setLstFlowInstanceStepWorkTask(tasks);
+		    			}
+		    			works.add(work);
+	    			}
+	    		}
+	    		step.setLstFlowInstanceStepWork(works);
+	    		steps.add(step);
+    		}
+    	
+    	}
+    	
+    	if(taskIds.length() > 0){
+    		taskIds.deleteCharAt(taskIds.length() - 1);
+    	}
+    	
+    	request.setAttribute("taskIds", taskIds.toString());
+    	request.setAttribute("lstFlowInstanceStep", steps);
+    	
+        return "showCuiBan";
+    }
+    
+	public String forwardReplaceCurrentApproval() throws Exception {
+		return "replaceCurrentApproval";
+	}
+	
+	public String forwardAddCurrentApprovalPerson() throws Exception {
+		System.out.println(tokenId);
+		return "addCurrentApprovalPerson";
+	}
+
+	public String userList() throws Exception{
+		String name = getParameter("name");
+		Long orgnId = getParameterLong("orgnId");
+		List<FlowInstanceStep> lstFlowInstanceStep = flowInstanceCalculateStepService.getFlowInstanceStepByFiId(fiId,
+				FlowInstanceStatus.STATUS_RUNNING);
+
+		PageBean<UserDTO> pageBean = baseAPI.getUserList(orgnId, name, start,limit, true, null).getResult();
+		if (pageBean != null) {
+			page = new Page(start, limit, pageBean.getTotal(),pageBean.getItems());
+		}
+		
+		request.setAttribute("lstFlowInstanceStep",lstFlowInstanceStep);
+		request.setAttribute("orgnId",orgnId);
+		request.setAttribute("userIds", getParameter("userIds"));
+		return "userList";
+	}
+
+	public OpRelationService getOpRelService() {
+		return opRelService;
+	}
+
+	public void setOpRelService(OpRelationService opRelService) {
+		this.opRelService = opRelService;
+	}
+
+	public String getTId() {
+		return tId;
+	}
+
+	public void setTId(String tId) {
+		this.tId = tId;
+	}
+
+	public String getUserIds() {
+		return userIds;
+	}
+
+	public void setUserIds(String userIds) {
+		this.userIds = userIds;
+	}
+
+	public String getFiId() {
+		return fiId;
+	}
+
+	public void setFiId(String fiId) {
+		this.fiId = fiId;
+	}
+	public String getWorkIds() {
+		return workIds;
+	}
+
+	public void setWorkIds(String workIds) {
+		this.workIds = workIds;
+	}
+
+
+	public TodoFiDto getTodoFiDto() {
+		return todoFiDto;
+	}
+
+	public void setTodoFiDto(TodoFiDto todoFiDto) {
+		this.todoFiDto = todoFiDto;
+	}
+	
+
+	public String gettId() {
+		return tId;
+	}
+
+	public void settId(String tId) {
+		this.tId = tId;
+	}
+
+	/*public TodoFiDto getTodoFiDto() {
+		return todoFiDto;
+	}
+
+	public void setTodoFiDto(TodoFiDto todoFiDto) {
+		this.todoFiDto = todoFiDto;
+	}*/
+
+	public TodoFiService getTodoFiService() {
+		return todoFiService;
+	}
+
+	public void setTodoFiService(TodoFiService todoFiService) {
+		this.todoFiService = todoFiService;
+	}
+
+	public String getTaskIds() {
+		return taskIds;
+	}
+
+	public void setTaskIds(String taskIds) {
+		this.taskIds = taskIds;
+	}
+
+	public Integer getIfShowMore() {
+		return ifShowMore;
+	}
+
+	public void setIfShowMore(Integer ifShowMore) {
+		this.ifShowMore = ifShowMore;
+	}
+
+	public String getTokenId() {
+		return tokenId;
+	}
+
+	public void setTokenId(String tokenId) {
+		this.tokenId = tokenId;
+	}
+
+	public String getWorkId() {
+		return workId;
+	}
+
+	public void setWorkId(String workId) {
+		this.workId = workId;
+	}
+
+	public String getApproverUserId() {
+		return approverUserId;
+	}
+
+	public void setApproverUserId(String approverUserId) {
+		this.approverUserId = approverUserId;
+	}
+
+	public String getNodeType() {
+		return nodeType;
+	}
+
+	public void setNodeType(String nodeType) {
+		this.nodeType = nodeType;
+	}
+	
+	
+   
+	
+ 
+}

@@ -1,0 +1,158 @@
+package com.xinleju.erp.frame.dao;
+
+import java.lang.reflect.Array;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.erp.annotation.Children;
+import com.xinleju.erp.flow.dao.impl.BaseDAO;
+import com.xinleju.erp.frame.models.BaseEntity;
+import com.xinleju.erp.frame.models.ChildEntity;
+import com.xinleju.erp.frame.service.extend.dto.FiAggDTO;
+import com.xinleju.erp.frame.utils.CommonUtil;
+
+@Repository
+public class FiBusinessDao extends BaseDAO {
+
+	public String saveAggDTO(FiAggDTO aggDTO) {
+		BaseEntity parent = aggDTO.getParent();//业务对象信息
+		Collection<List<? extends ChildEntity>> children = aggDTO.getChildrenMap().values();//业务对象的字段信息
+		getDao().saveOrUpdate(parent);
+		Long pid = parent.getId();
+		for (List<? extends ChildEntity> list : children) {
+			saveChindren(list, pid);
+		}
+		return "success";
+	}
+
+	public String saveChindren(List<? extends ChildEntity> list, Long pid) {
+		List<ChildEntity> delList = new ArrayList<ChildEntity>();
+		List<ChildEntity> addOrUpdateList = new ArrayList<ChildEntity>();
+		if (list == null){
+			return "success";
+		}
+		for (ChildEntity entity : list) {
+			entity.setPid(pid);
+			String state = entity.getState();
+			if (entity.getId() == null || !BaseEntity.DELETE.equals(state)){
+				addOrUpdateList.add(entity);
+			}else if (entity.getId() != null && BaseEntity.DELETE.equals(state)){
+				delList.add(entity);
+			}
+		}
+		getDao().saveOrUpdateAll(addOrUpdateList);
+		getDao().deleteAll(delList);
+		return "success";
+	}
+
+	public FiAggDTO[] queryAggByIds(Class<? extends BaseEntity> clazz, Long[] ids){
+		Map<Long,FiAggDTO> map = new HashMap<Long,FiAggDTO>();
+		List<? extends BaseEntity> results = findByHQL(clazz,
+				"FROM " + clazz.getSimpleName() + " t WHERE t.id  "+ CommonUtil.transSQL(ids));
+		if (results == null || results.size() == 0)
+			return null;
+		for(BaseEntity baseEntity : results){
+			Long id = baseEntity.getId();
+			FiAggDTO aggDto = new FiAggDTO();
+			map.put(id, aggDto);
+			aggDto.setParent(baseEntity);
+		}
+		Children annChildren = clazz.getAnnotation(Children.class);
+		if (annChildren == null)
+			return map.values().toArray(new FiAggDTO[0]);
+		for (Class<? extends ChildEntity> childClazz : annChildren.name()) {
+			List<? extends ChildEntity> children = findByHQL(
+					childClazz,
+					"FROM " + childClazz.getSimpleName() + " t WHERE t.pid "+CommonUtil.transSQL(ids));
+			Map<Object,?> childMap = CommonUtil.toMultiMap(children, "pid");
+			for(Long id : ids){
+				@SuppressWarnings("unchecked")
+				List<? extends ChildEntity> childList =  (List<? extends ChildEntity>)childMap.get(id);
+				if(childList != null)
+					map.get(id).addChildren(childClazz,childList.toArray((ChildEntity[])Array.newInstance(childClazz, 0)));
+			}
+		}
+		return map.values().toArray(new FiAggDTO[0]);
+	}
+	
+	public FiAggDTO queryAggById(Class<? extends BaseEntity> clazz, Long id) {
+		FiAggDTO aggDTO = new FiAggDTO();
+		List<? extends BaseEntity> results = findByHQL(clazz,
+				"FROM " + clazz.getSimpleName() + " t WHERE t.id = ? ", id);
+		if (results == null || results.size() == 0)
+			return null;
+		BaseEntity entity = results.get(0);
+		if (entity != null)
+			aggDTO.setParent(entity);
+		Children annChildren = clazz.getAnnotation(Children.class);
+		if (annChildren == null)
+			return aggDTO;
+		for (Class<? extends ChildEntity> childClazz : annChildren.name()) {
+			List<? extends ChildEntity> children = findByHQL(
+					childClazz,
+					"FROM " + childClazz.getSimpleName() + " t WHERE t.pid = ?",
+					id);
+			aggDTO.addChildren(childClazz, children);
+		}
+		return aggDTO;
+	}
+
+	public <T extends BaseEntity> List<T> findByHQL(Class<T> clazz, String hql,
+			Object... arg) {
+		return getDao().findByHQL(clazz, hql, arg);
+	}
+
+	public void batchUpdateStatus(Class<? extends BaseEntity> clazz,
+			Long[] ids, Integer status) {
+		String inpart = CommonUtil.transSQL(ids);
+		StringBuffer update = new StringBuffer("UPDATE ");
+		update.append(clazz.getSimpleName())
+				.append(" t SET t.status = ? WHERE id ").append(inpart);
+		getDao().execute(update.toString(), status);
+	}
+
+	public void update(BaseEntity[] entitys, String[] fields) {
+		StringBuffer update = new StringBuffer("UPDATE TABLE t SET ");
+		String tablename = "TABLE";
+		for (String field : fields) {
+			update.append(" t.").append(field).append(" = ? ,");
+		}
+		update.delete(update.length() - 1, update.length());
+		update.append(" WHERE t.id = ?");
+		for (BaseEntity entity : entitys) {
+			if (entity == null)
+				continue;
+			List<Object> objs = new ArrayList<Object>();
+			for (String field : fields) {
+				objs.add(entity.getAttribute(field));
+			}
+			objs.add(entity.getId());
+			if (!tablename.equals(entity.getClass().getSimpleName()))
+				update.replace(7, 7 + tablename.length(), tablename = entity
+						.getClass().getSimpleName());
+			getDao().execute(update.toString(), objs);
+		}
+	}
+
+	public void delete(Class<? extends BaseEntity> clazz, Long[] idAry) {
+		Children childrenAnnotation = clazz.getAnnotation(Children.class);
+		getDao().delete(clazz, idAry);
+		if (childrenAnnotation == null)
+			return;
+		Class<? extends ChildEntity>[] clazzs = childrenAnnotation.name();
+		if (clazzs == null || clazzs.length == 0)
+			return;
+		for (Class<? extends ChildEntity> childClazz : clazzs)
+			delete(childClazz, "pid", idAry);
+	}
+
+	public void delete(Class<? extends BaseEntity> clazz, String field,
+			Object[] objs) {
+		getDao().delete(clazz, field, objs);
+	}
+}

@@ -1,0 +1,117 @@
+package com.xinleju.platform.flow.operation;
+
+import java.sql.Timestamp;
+import java.util.List;
+
+import org.apache.commons.collections.CollectionUtils;
+
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.flow.dto.ApprovalSubmitDto;
+import com.xinleju.platform.flow.enumeration.AutoPassType;
+import com.xinleju.platform.flow.enumeration.InstanceOperateType;
+import com.xinleju.platform.flow.enumeration.TaskStatus;
+import com.xinleju.platform.flow.model.ApproverUnit;
+import com.xinleju.platform.flow.model.InstanceUnit;
+import com.xinleju.platform.flow.model.TaskUnit;
+
+/**
+ * 转办操作: 责任转移，被转办人完全取代转办人
+ * 
+ * @author daoqi
+ *
+ */
+public class TransferOperation extends DefaultOperation implements Operation{
+	
+	TransferOperation() {
+		super(OperationType.TRANSFER);
+	}
+
+//	@Override
+//	public String action(InstanceUnit instanceUnit, ApprovalSubmitDto approvalDto)
+//			throws Exception {
+//		
+//		//1、设置当前位置
+//		setCurrentLocation(instanceUnit, approvalDto);
+//		
+//		//2、完成当前审批人
+//		complate(currentApprover, approvalDto);
+//		
+//		//3、插入转办人新行
+//		insertAfterCurrent(approvalDto);
+//		
+//		save(instanceUnit);
+//		
+//		//5、发送待办消息
+//		handleMessages(instanceUnit, approvalDto);
+//		
+//		//删除待办消息
+//		completeMessage(approvalDto.getMsgId());
+//		
+//		return "success";
+//	}
+//	
+	@Override
+	protected void operate(InstanceUnit instanceUnit, ApprovalSubmitDto approvalDto) throws Exception {
+		//1、完成当前审批人
+		complate(currentApprover, approvalDto);
+		
+		//3、跳过当前岗位中的竞争者
+		super.jumpOver();
+		
+		//2、插入转办人新行
+		insertAfterCurrent(approvalDto);
+		
+		//记录操作日志
+		service.getInstanceLogService().saveLogData(instanceUnit.getId(), currentAc.getAcId(),
+				currentApprover.getId(), currentApprover.getTask().getTaskId(), 
+				InstanceOperateType.TRANSFER.getValue(), currentApprover.getApproverId() + "," 
+				+ approvalDto.getTransferId(), null, null);
+	}
+	
+	private void insertAfterCurrent(ApprovalSubmitDto approvalDto) throws Exception {
+		ApproverUnit newApprover = new ApproverUnit();
+		newApprover.setId(IDGenerator.getUUID());
+		newApprover.setApproverId(approvalDto.getTransferId());
+		newApprover.setApproverName(approvalDto.getTransferName());
+		newApprover.setAcPostId(currentApprover.getAcPostId());
+		newApprover.setOwner(currentApprover.getOwner());
+		newApprover.setApproverSeq(currentApprover.getApproverSeq() + 1);
+		newApprover.setAutoPass(AutoPassType.NOT_PASS.getValue());
+		newApprover.setDbAction(1);
+		
+		TaskUnit task = new TaskUnit();
+		task.setTaskId(IDGenerator.getUUID());
+		task.setFromId(currentApprover.getApproverId());
+		task.setFromName(currentApprover.getApproverName());
+		newApprover.setTask(task);
+		
+		turnOn(newApprover);
+		
+		List<ApproverUnit> approvers = currentPost.getApprovers();
+		if(CollectionUtils.isEmpty(approvers)) {
+			return ;
+		}
+		int currentApproverIndex = currentApprover.getApproverSeq();
+		
+		//当前审批人以后序号+1
+		for(int i=currentApproverIndex; i<approvers.size(); i++){
+			ApproverUnit after = approvers.get(i);
+			int afterIndex = after.getApproverSeq();
+			after.setApproverSeq(afterIndex + 1);
+		}
+		approvers.add(currentApproverIndex, newApprover);
+	}
+
+	protected void complate(ApproverUnit approver, ApprovalSubmitDto approvalDto) {
+		TaskUnit task = approver.getTask();
+		task.setTaskStatus(TaskStatus.FINISHED.getValue());
+		task.setEndTime(new Timestamp(System.currentTimeMillis()));
+		task.setTaskResult(approvalDto.getOperationType());
+		
+		//XXX转办给YYY
+		String operationName = "【转办到：" + approvalDto.getTransferName() + "】";
+		task.setTaskResultName(approvalDto.getOperationName());
+		task.setTaskComments(operationName + "意见：" + approvalDto.getUserNote());
+	}	
+
+}

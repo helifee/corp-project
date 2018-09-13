@@ -1,0 +1,170 @@
+package com.jzy.hio.attachment.service.impl;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import javax.ws.rs.core.MediaType;
+
+import org.apache.commons.lang.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.jzy.hio.attachment.entity.Attachment;
+import com.jzy.hio.attachment.mapper.AttachmentDao;
+import com.jzy.hio.attachment.service.AttachmentService;
+import com.jzy.hio.attachment.service.AttachmentTempService;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.base.utils.AttachmentDto;
+import com.jzy.hio.base.utils.ConfigurationUtil;
+import com.jzy.hio.base.utils.FastDFSClient;
+import com.jzy.hio.base.utils.MessageInfo;
+import com.jzy.hio.base.utils.MessageResult;
+import com.jzy.hio.base.utils.Page;
+import com.jzy.hio.utils.HanziComparator;
+import com.jzy.hio.utils.SortUtil;
+import com.jzy.tools.data.JacksonUtils;
+
+/**
+ * 
+ * @author haoqp
+ * 
+ */
+@RestController
+@RequestMapping("/univ/attachmentServiceImpl")
+@Transactional
+@Service
+public class AttachmentServiceImpl extends  BaseServiceImpl<String,Attachment> implements AttachmentService{
+	
+	private static Logger log = LoggerFactory.getLogger(AttachmentServiceImpl.class);
+
+	@Autowired
+	private AttachmentDao attachmentDao;
+	
+	@Autowired
+	private AttachmentTempService attachmentTempService;
+	
+	@Override
+	public int save(Attachment attachment){
+		//this.attachmentTempDao.deleteObjectById(attachment.getId());
+		//return this.attachmentDao.save(attachment);
+		attachmentTempService.deleteObjectById(attachment.getId());
+		return super.save(attachment);
+	}
+
+	@Override
+	public int saveBatch(List<Attachment> list) {
+		List<String> ids = new ArrayList<>();
+		for (Attachment att : list) {
+			ids.add(att.getId());
+		}
+		//this.attachmentTempDao.deleteAllObjectByIds(ids);
+		//return this.attachmentDao.saveBatch(list);
+		attachmentTempService.deleteAllObjectByIds(ids);
+		return super.saveBatch(list);
+	}
+
+//	@Override
+//	public int deleteObjectById(String id) throws Exception {
+//		//this.attachmentTempDao.deleteObjectById(id);
+//		//this.attachmentDao.deleteObjectById(id);
+//		//return super.deleteObjectById(id);
+//		attachmentTempService.deleteObjectById(id);
+//		return super.deleteObjectById(id);
+//	}
+
+	@Override
+	public List<AttachmentDto> queryListByCategoryIds(List<String> ids) {
+		return attachmentDao.queryListByCategoryIds(ids);
+	}
+
+	@Override
+	public List<AttachmentDto> queryListWithCategoryName(Map<String, Object> paramater) throws Exception {
+		return attachmentDao.queryListWithCategoryName(AttachmentDto.class.getName() + "queryListWithCategoryName", paramater);
+	}
+
+	@Override
+	public Page getPageByCategoryIds(Map<String, Object> paramater, Integer start, Integer pageSize) throws Exception {
+		return attachmentDao.getPageByCategoryIds(paramater, start, pageSize);
+	}
+
+	@RequestMapping(value = "queryListByObject", method = RequestMethod.POST, consumes = MediaType.APPLICATION_JSON)
+	@Override
+	public List<AttachmentDto> queryListByObject(@RequestBody Map<String, Object> paramater) throws Exception {
+		List<AttachmentDto> list = attachmentDao.queryListByObject(paramater);
+		// 根据附件信息查询附件URL
+		FastDFSClient fdfsClient = new FastDFSClient();
+		String groupName;
+		String remoteFileName;
+		String tempUrl;
+		for (AttachmentDto dto : list) {
+			if (StringUtils.isNotEmpty(dto.getPath())) {
+				groupName = dto.getPath().substring(0, dto.getPath().indexOf('/'));
+				remoteFileName = dto.getPath().substring(dto.getPath().indexOf('/') + 1);
+				tempUrl = fdfsClient.getFileAddrIP(groupName, remoteFileName);
+				if (StringUtils.isNotEmpty(tempUrl)) {
+					dto.setUrl(StringUtils.join(new String[]{"http://", tempUrl, ":",ConfigurationUtil.getValue("fdfs.storage.http.port", "8888"),"/", dto.getPath()}));
+				}
+			}
+		}
+		return list;
+	}
+
+	@Override
+	public List<Attachment> queryFlowList(Map<String, Object> paramater) throws Exception {
+		return attachmentDao.queryFlowList(paramater);
+	}
+	
+	@Override
+	public String queryListByObject(String userInfo, String paramater) {
+		MessageResult result=new MessageResult();
+		try {
+			if (StringUtils.isNotBlank(paramater)) {
+				Map<String,Object> map = JacksonUtils.fromJson(paramater, HashMap.class);
+				List<AttachmentDto> list = attachmentDao.queryListByObject(map);
+
+				//先将字符串中的数组转换为指定长度??数字
+				for (AttachmentDto attachmentDto : list) {
+					String tempName = SortUtil.changeIntToSpecifyLength(attachmentDto.getName());
+					attachmentDto.setTempName(tempName);
+				}
+				//对转换后的数据进行排??
+				HanziComparator hanziComparator = new HanziComparator();
+				Collections.sort(list, hanziComparator);
+
+				result.setResult(JacksonUtils.toJson(list), "获取列表对象成功!");
+				result.setSuccess(true);
+			} else {
+				List<Attachment> list = super.queryList(null);
+				result.setResult(JacksonUtils.toJson(list), "获取列表对象成功!");
+				result.setSuccess(true);
+			}
+		} catch (Exception e) {
+			log.error("获取列表对象失败!" + e.getMessage());
+			result.setSuccess(MessageInfo.QUERYERROR.isResult());
+			result.setMsg(MessageInfo.QUERYERROR.getMsg()+"【"+e.getMessage()+"】");
+		}
+		return JacksonUtils.toJson(result);
+	}
+	
+	public Page getAttachmentByPage(Map<String, Object> map) {
+		Page page = new Page();
+		List<Attachment> list = attachmentDao.getAttachmentList(map);
+		Integer count = attachmentDao.getAttachmentCount(map);
+		page.setLimit((Integer) map.get("limit"));
+		page.setList(list);
+		page.setStart((Integer) map.get("start"));
+		page.setTotal(count);
+		return page;
+	}
+
+}

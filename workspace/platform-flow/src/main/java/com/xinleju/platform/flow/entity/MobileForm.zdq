@@ -1,0 +1,101 @@
+package com.xinleju.platform.flow.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Table(value="PT_FLOW_MOBILE_FORM",desc="手机表单数据")
+public class MobileForm extends BaseEntity{
+	
+		
+	@Column(value="instance_id",desc="流程实例ID")
+	private String instanceId;
+    
+  		
+	@Column(value="fl_id",desc="模板ID")
+	private String flId;
+    
+  		
+	@Column(value="business_object_id",desc="业务对象ID")
+	private String businessObjectId;
+    
+  		
+	@Column(value="business_id",desc="业务ID")
+	private String businessId;
+    
+  		
+	@Column(value="name",desc="表单字段名称")
+	private String name;
+    
+  		
+	@Column(value="value",desc="表单字段值")
+	private String value;
+    
+	
+	@Column(value="sort",desc="排序号")
+	private int sort;
+  		
+		
+	public String getInstanceId() {
+		return instanceId;
+	}
+	public void setInstanceId(String instanceId) {
+		this.instanceId = instanceId;
+	}
+    
+  		
+	public String getFlId() {
+		return flId;
+	}
+	public void setFlId(String flId) {
+		this.flId = flId;
+	}
+    
+  		
+	public String getBusinessObjectId() {
+		return businessObjectId;
+	}
+	public void setBusinessObjectId(String businessObjectId) {
+		this.businessObjectId = businessObjectId;
+	}
+    
+  		
+	public String getBusinessId() {
+		return businessId;
+	}
+	public void setBusinessId(String businessId) {
+		this.businessId = businessId;
+	}
+    
+  		
+	public String getName() {
+		return name;
+	}
+	public void setName(String name) {
+		this.name = name;
+	}
+    
+  		
+	public String getValue() {
+		return value;
+	}
+	public void setValue(String value) {
+		this.value = value;
+	}
+	public int getSort() {
+		return sort;
+	}
+	public void setSort(int sort) {
+		this.sort = sort;
+	}
+    
+  		
+	
+}

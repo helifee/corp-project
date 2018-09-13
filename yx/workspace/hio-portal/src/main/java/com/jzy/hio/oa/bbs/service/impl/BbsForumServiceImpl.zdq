@@ -1,0 +1,219 @@
+package com.jzy.hio.oa.bbs.service.impl;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import com.jzy.hio.oa.bbs.mapper.BbsForumDao;
+import com.jzy.hio.oa.bbs.mapper.BbsForumTypeDao;
+
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.oa.bbs.dto.BbsForumConvertDto;
+import com.jzy.hio.oa.bbs.dto.BbsForumDto;
+import com.jzy.hio.oa.bbs.dto.BbsForumHomePageDto;
+import com.jzy.hio.oa.bbs.entity.BbsForum ;
+import com.jzy.hio.oa.bbs.entity.BbsForumType;
+import com.jzy.hio.oa.bbs.service.BbsForumService;
+import com.jzy.tools.data.JacksonUtils;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.base.utils.MessageResult;
+import com.jzy.hio.base.utils.Page;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class BbsForumServiceImpl extends  BaseServiceImpl<String,BbsForum> implements BbsForumService{
+	
+
+	@Autowired
+	private BbsForumDao bbsForumDao;
+
+	@Autowired
+	private BbsForumTypeDao bbsForumTypeDao;
+
+	@Override
+	public Page getPageSort(Map map) {
+		// 分页显示
+		Page page=new Page();
+		// 获取分页list 数据
+		List<Map<String,Object>> list = bbsForumDao.getPageSort(map);
+		// 获取条件的总数据量
+		Integer count = bbsForumDao.getPageSortCount(map);
+		page.setLimit((Integer) map.get("limit") );
+		page.setList(list);
+		page.setStart((Integer) map.get("start"));
+		page.setTotal(count);
+		//封装成page对象 传到前台
+		return page;
+	}
+
+	@Override
+	public Integer isHasTopicByForumId(String id) {
+		return bbsForumDao.isHasTopicByForumId(id);
+	}
+	
+	public Map<String,String> getForumType(String id) {
+		Map<String,Object> map=new HashMap<String, Object>();
+		map.put("parentId", id);
+		List<BbsForumType> bbsForumTypeList = bbsForumTypeDao.queryBeanList(map);
+		Map<String,String> typeMap=new LinkedHashMap<String,String>();
+		if(bbsForumTypeList!=null&&!bbsForumTypeList.isEmpty()){
+			for(BbsForumType bbsForumType:bbsForumTypeList){
+				String name="";
+				if(!"".equals(name)){
+					name+="/";
+				}
+				name+=bbsForumType.getName();
+				getChildList(bbsForumType.getId(),typeMap,name);
+			}
+		}
+		return typeMap;
+	}
+
+	private void getChildList(String id, Map<String, String> typeMap, String name) {
+		Map<String,Object> map=new HashMap<String, Object>();
+		map.put("parentId", id);
+		List<BbsForumType> bbsForumTypeList = bbsForumTypeDao.queryBeanList(map);
+		if(bbsForumTypeList!=null&&!bbsForumTypeList.isEmpty()){
+			String pName="";
+			for (BbsForumType bbsForumType : bbsForumTypeList) {
+				pName=name;
+				if(!"".equals(pName)){
+					pName+="/";
+				}
+				pName+=bbsForumType.getName();
+				getChildList(bbsForumType.getId(),typeMap,pName);
+			}
+		}else{
+			typeMap.put(id,name);
+		}
+	}
+
+	@Override
+	public List queryHomepage(Map map) {
+		List<BbsForumHomePageDto> bbsForumHomePageDtoList=new ArrayList<BbsForumHomePageDto>();
+		//1.查询所有分类分级展示,形如
+		//f063946cdd144180b75f2ab42c25d4d1=新建版块类型一>新建版块类型1.4, 
+		//e9dddbc87292448ba1041af928605aa5=新建版块类型一>新建版块类型1.2>新建版块类型1.2.1>新建版块类型1.2.1.1, 
+		//aa36d938bf5d43318d3fa1dbe0cff395=新建版块类型一>新建版块类型1.1, 
+		//4c5484a3beef4b0dbe3549a82fbe4d90=新建版块类型一>新建版块类型1.3>新建版块类型1.3.1, 
+		//af14f38107cd4489a351930d2a621ddc=新建版块类型一>新建版块类型1.3>新建版块类型1.3.2
+		Map<String,String> typeMap=this.getForumType(null);
+		
+		//2.查询版块下主题数，回复数，最新发表信息
+		Map<String,BbsForumConvertDto> convertMap=this.summaryData();
+		
+		//3.查询版块信息
+		Map<String,List<BbsForum>> forumMap=this.forumData();
+		
+		//4.组装数据
+		for (Map.Entry<String, String> entry : typeMap.entrySet()) {  
+		    BbsForumHomePageDto bbsForumHomePageDto=new BbsForumHomePageDto();
+		    List<BbsForumDto> bbsForumDtoList=new ArrayList<BbsForumDto>();
+		    bbsForumHomePageDto.setForumTypeName(entry.getValue());
+		    
+		    List<BbsForum> forumList=forumMap.get(entry.getKey());
+		    if(forumList!=null && forumList.size()>0){
+		    	for(int i=0;i<forumList.size();i++){
+		    		BbsForum bbsForum=forumList.get(i);
+		    		BbsForumDto bbsForumDto=new BbsForumDto();
+		    		BeanUtils.copyProperties(bbsForum, bbsForumDto);
+		    		BbsForumConvertDto bbsForumConvertDto=convertMap.get(bbsForum.getId());
+		    		if(bbsForumConvertDto!=null){
+		    			bbsForumDto.setTitle(bbsForumConvertDto.getTitle());
+			    		bbsForumDto.setReplyNum(bbsForumConvertDto.getReplyNum());
+			    		bbsForumDto.setTopicNum(bbsForumConvertDto.getTopicNum());
+			    		bbsForumDto.setCreateTopicDate(bbsForumConvertDto.getCreateDate());
+			    		bbsForumDto.setCreateTopicPerson(bbsForumConvertDto.getCreatePersonName());
+			    		bbsForumDto.setTopicId(bbsForumConvertDto.getId());
+		    		}
+		    		bbsForumDtoList.add(bbsForumDto);
+		    	}
+		    	bbsForumHomePageDto.setForumList(bbsForumDtoList);
+		    }
+		    bbsForumHomePageDtoList.add(bbsForumHomePageDto);
+		} 
+		return bbsForumHomePageDtoList;
+	}
+
+	private Map<String, List<BbsForum>> forumData() {
+		Map<String, List<BbsForum>> resultMap=new HashMap<String, List<BbsForum>>();
+		List<BbsForum> bbsForumList=bbsForumDao.queryListSort();
+		
+		if(bbsForumList!=null && bbsForumList.size()>0){
+			for(int i=0;i<bbsForumList.size();i++){
+				BbsForum bbsForum=bbsForumList.get(i);
+				if(bbsForum.getTypeId()!=null){
+					if(resultMap.get(bbsForum.getTypeId())==null){
+						List<BbsForum> bbsForumDtoList=new ArrayList<BbsForum>();
+						bbsForumDtoList.add(bbsForum);
+						resultMap.put(bbsForum.getTypeId(), bbsForumDtoList);
+					}else{
+						List<BbsForum> list=resultMap.get(bbsForum.getTypeId());
+						list.add(bbsForum);
+						resultMap.put(bbsForum.getTypeId(), list);
+					}
+				}
+			}
+		}
+		return resultMap;
+	}
+
+	private Map<String, BbsForumConvertDto> summaryData() {
+		Map<String, BbsForumConvertDto> resutlMap=new HashMap<String, BbsForumConvertDto>();
+		List<BbsForumConvertDto> bbsForumConvertDtoList=bbsForumDao.getForumSummaryData();
+		if(bbsForumConvertDtoList!=null && bbsForumConvertDtoList.size()>0){
+			for(int i=0;i<bbsForumConvertDtoList.size();i++){
+				BbsForumConvertDto bbsForumConvertDto=bbsForumConvertDtoList.get(i);
+				resutlMap.put(bbsForumConvertDto.getForumId(), bbsForumConvertDto);
+			}
+		}
+		return resutlMap;
+	}
+
+	
+	@Override
+	public MessageResult isExistTopic(String ids) throws Exception{
+		MessageResult messageResult = new MessageResult();
+		BbsForumDto bbsForumDto = new BbsForumDto();
+		boolean flag=false;
+		Integer errorLine=0;
+		if (StringUtils.isNotBlank(ids)) {
+			List<String> idsList= Arrays.asList(ids.toString().split(","));
+			if(idsList!=null && idsList.size()>0){
+				for(int i=0;i<idsList.size();i++){
+					Integer result = this.isHasTopicByForumId(idsList.get(i));
+					if(result>0){
+						flag=true;
+						errorLine=i+1;
+						break;
+					}
+				}
+			}
+			if(flag){
+				bbsForumDto.setValidateRow(errorLine);
+				bbsForumDto.setHasInstance(flag);
+			}else{
+				bbsForumDto.setValidateRow(errorLine);
+				bbsForumDto.setHasInstance(flag);
+			}
+			messageResult.setResult(JacksonUtils.toJson(bbsForumDto), "删除对象成功!");
+		}else {
+			messageResult.setError("id不能为空");
+		}
+		return messageResult;
+	}
+	
+
+}

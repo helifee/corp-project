@@ -1,0 +1,9 @@
+package com.xinleju.platform.sys.base.dto.service;
+
+import com.xinleju.platform.base.dto.service.BaseDtoServiceCustomer;
+
+public interface BaseCorporationAccontDtoServiceCustomer extends BaseDtoServiceCustomer{
+
+	public String getAccontByCorporationId(String userinfo, String paramaterJson);
+
+}

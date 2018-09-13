@@ -1,0 +1,185 @@
+package com.xinleju.erp.form.service;
+
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
+import org.jsoup.select.Elements;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.form.models.FormCt;
+import com.xinleju.erp.form.models.FormData;
+import com.xinleju.erp.form.models.FormDefine;
+import com.xinleju.erp.form.utils.CheckBoxsParse;
+import com.xinleju.erp.form.utils.FormConstant;
+import com.xinleju.erp.form.utils.FormCtTreeBuildUtils;
+import com.xinleju.erp.form.utils.PluginParseContext;
+import com.xinleju.erp.form.utils.RadiosParse;
+import com.xinleju.erp.form.utils.SelectParse;
+import com.xinleju.erp.form.utils.TextAreaParse;
+import com.xinleju.erp.form.utils.TextParse;
+
+@Service
+@Transactional(readOnly = true)
+public class FormService extends BaseService {
+	
+	/**
+	 * 获得公告类别树
+	 * @param parentId
+	 * @param includeDisabled
+	 * @return
+	 */
+	public List<Map<String,Object>> getFormCtTree(Long parentId,boolean includeDisabled){
+		List<Map<String,Object>> result = new ArrayList<Map<String,Object>>();
+		if(parentId == null || parentId == 0L) {
+			StringBuffer hqlStringBuffer = new StringBuffer();
+			hqlStringBuffer.append("from FormCt fc where fc.parentId is null");
+			if(!includeDisabled) {
+				hqlStringBuffer.append(" and fc.status = " + FormCt.STATUS_ENABLE);
+			}
+			hqlStringBuffer.append(" order by fc.sort asc");
+			List<FormCt> formCts = getDao().findByHQL(FormCt.class, hqlStringBuffer.toString());
+			result.addAll(FormCtTreeBuildUtils.buildFormCtTree(formCts, includeDisabled));
+		}else {
+			StringBuffer hqlStringBuffer = new StringBuffer();
+			hqlStringBuffer.append("from FormCt fc where fc.parentId  = ?");
+			if(!includeDisabled) {
+				hqlStringBuffer.append(" and fc.status = " + FormCt.STATUS_ENABLE);
+			}
+			hqlStringBuffer.append(" order by fc.sort asc");
+			List<FormCt> formCts = getDao().findByHQL(FormCt.class, hqlStringBuffer.toString(), parentId);
+			result.addAll(FormCtTreeBuildUtils.buildFormCtTree(formCts, includeDisabled));
+		}
+		return result;
+	}
+
+	
+	/**
+	 * 查询子的目录数量
+	 * @param parentId
+	 * @param includeDisabled
+	 * @return
+	 */
+	public Long getChildFormCtCount(Long parentId, boolean includeDisabled) {
+		StringBuffer hqlStringBuffer = new StringBuffer();
+		hqlStringBuffer.append("select count(fc.id) from FormCt fc where fc.parentId = ?");
+		if(!includeDisabled) {
+			hqlStringBuffer.append(" and fc.status = " + FormCt.STATUS_ENABLE);
+		}
+		return getDao().findLong(hqlStringBuffer.toString(), parentId);
+	}
+	
+	
+	@Transactional
+	public void saveOrUpdate(FormCt formCt) {
+		getDao().saveOrUpdate(formCt);
+		//更新prefix
+		if(formCt.getParentId() == null){
+			formCt.setPrefix(formCt.getId()+"-");
+		}else{
+			FormCt parent = getDao().getById(FormCt.class, formCt.getParentId());
+			formCt.setPrefix(parent.getPrefix()+formCt.getId()+"-");
+		}
+	}
+
+
+	/**
+	 * 保存表单
+	 * @param formDefine
+	 */
+	@Transactional
+	public void saveForm(FormDefine formDefine) {
+		formDefine.setParseHtml(formDefine.getOriginalHtml());
+		getDao().saveOrUpdate(formDefine);
+		if(formDefine.getStatus() == FormDefine.STATUS_PUBLISH) {
+			setCurrentVersion(formDefine.getId());
+		}
+	}
+
+
+	/**
+	 * 设置为当前版本
+	 * @param id
+	 */
+	@Transactional
+	public void setCurrentVersion(Long id) {
+		FormDefine fd = getDao().getById(FormDefine.class, id);
+		if(fd != null) {
+			fd.setIsCurrent(FormDefine.INT_TRUE);
+			fd.setStatus(FormDefine.STATUS_PUBLISH);
+			getDao().execute("update FormDefine fd set fd.isCurrent = ? where fd.id<> ? and fd.code = ?",
+					FormDefine.INT_FALSE,
+					fd.getId(),fd.getCode());
+		}
+	}
+	
+	/**
+	 * 当前正在使用的表单
+	 * @param formCode
+	 * @return
+	 */
+	public FormDefine getCurrentFormByCode(String formCode) {
+		String hql = "from FormDefine fd where fd.code = ? and fd.isCurrent = ? order by fd.formVersion desc";
+		return getDao().findFirstByHQL(FormDefine.class, hql, formCode,FormDefine.INT_TRUE);
+	}
+
+
+	
+	/**
+	 * 保存表单数据
+	 * @param formData
+	 * @param parameterMap
+	 */
+	@Transactional
+	public void saveFormData(FormData formData, Map<String, String[]> parameterMap) {
+		String htmlData = formData.getDataHtml();
+		if(StringUtils.isNotBlank(htmlData)) {
+			Document doc = Jsoup.parse(htmlData);
+			PluginParseContext pc = new PluginParseContext(new TextParse());
+			//解析单行文本框
+			Elements textEls = doc.select("input[plugins="+FormConstant.TYPE_TEXT+"]");
+			//填充数据
+			pc.fillData(textEls, parameterMap);
+			
+			//解析多行文本框
+			Elements textAreaEls = doc.select("textarea[plugins="+FormConstant.TYPE_TEXTAREA+"]");
+			//切换多行文本框策略
+			pc.setPluginParse(new TextAreaParse());
+			//填充数据
+			pc.fillData(textAreaEls, parameterMap);
+			
+			//解析下拉框
+			Elements selectEls = doc.select("select[plugins="+FormConstant.TYPE_SELECT+"]");
+			//切换下拉策略
+			pc.setPluginParse(new SelectParse());
+			//填充数据
+			pc.fillData(selectEls, parameterMap);
+			
+			//解析单选
+			Elements radiosEls = doc.select("span[plugins="+FormConstant.TYPE_RADIOS+"]");
+			//切换单选策略
+			pc.setPluginParse(new RadiosParse());
+			//填充数据
+			pc.fillData(radiosEls, parameterMap);
+			
+			//解析多选
+			Elements checkboxsEls = doc.select("span[plugins="+FormConstant.TYPE_CHECKBOXS+"]");
+			//切换多选策略
+			pc.setPluginParse(new CheckBoxsParse());
+			//填充数据
+			pc.fillData(checkboxsEls, parameterMap);
+			
+			
+			formData.setDataHtml(doc.body().html());
+		}
+		getDao().saveOrUpdate(formData);
+	}
+
+}

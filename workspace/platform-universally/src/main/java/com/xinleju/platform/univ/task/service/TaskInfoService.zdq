@@ -1,0 +1,34 @@
+package com.xinleju.platform.univ.task.service;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.univ.task.entity.TaskInfo;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface TaskInfoService extends  BaseService <String,TaskInfo>{
+
+	String getDatabaseKey(String tendId) throws Exception;
+
+	/**
+	 * 暂停、恢复任务操作
+	 * @param list 任务ID列表
+	 * @param map 操作
+	 * @return
+	 * @throws Exception 
+	 */
+	int updateTaskState(List<String> list, Map<String, Object> map) throws Exception;
+
+	/**
+	 * 立即执行任务操作
+	 * @param list
+	 * @return
+	 */
+	int executeNow(List<String> list) throws Exception;
+}

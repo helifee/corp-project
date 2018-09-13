@@ -1,0 +1,49 @@
+package com.xinleju.platform.finance.service.impl;
+
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.finance.dao.AccountSetCompanyDao;
+import com.xinleju.platform.finance.entity.AccountSetCompany;
+import com.xinleju.platform.finance.service.AccountSetCompanyService;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class AccountSetCompanyServiceImpl extends  BaseServiceImpl<String,AccountSetCompany> implements AccountSetCompanyService{
+	
+
+	@Autowired
+	private AccountSetCompanyDao accountSetCompanyDao;
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.finance.service.AccountSetCompanyService#getaccountSetCompanypage(java.util.Map)
+	 */
+	@Override
+	public Page getaccountSetCompanypage(Map map) throws Exception {
+		 Page page =new Page();
+		 List<AccountSetCompany> list=accountSetCompanyDao.getAccountSetCompanypage(map);
+		 Integer total=accountSetCompanyDao.getAccountSetCompanyTotal(map);
+		 page.setLimit((Integer) map.get("limit"));
+		 page.setStart((Integer) map.get("start"));
+		 page.setTotal(total);
+		 page.setList(list);
+		 return page;
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.finance.service.AccountSetCompanyService#deletePseudoObjectAll(java.lang.String)
+	 */
+
+
+
+}

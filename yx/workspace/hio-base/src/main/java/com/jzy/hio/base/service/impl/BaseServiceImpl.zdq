@@ -1,0 +1,439 @@
+package com.jzy.hio.base.service.impl;
+
+import java.io.Serializable;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.collections.MapUtils;
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.github.pagehelper.PageHelper;
+import com.github.pagehelper.PageInfo;
+import com.jzy.hio.base.dao.BaseMapper;
+import com.jzy.hio.base.service.BaseService;
+import com.jzy.hio.base.utils.IDGenerator;
+import com.jzy.hio.base.utils.Page;
+import com.jzy.hio.base.utils.PageColumnParse;
+
+import tk.mybatis.mapper.entity.Condition;
+import tk.mybatis.mapper.entity.Example;
+import tk.mybatis.mapper.entity.Example.Criteria;
+
+@Service
+public abstract class BaseServiceImpl<K extends Serializable, T> implements BaseService<K, T> {
+
+	@Autowired
+	protected BaseMapper<T> baseMapper;
+
+	public int save(T paramT) {
+		return baseMapper.insert(paramT);
+	}
+
+	public int saveBatch(List<T> objectList) {
+
+		for (T t : objectList) {
+			Method declaredMethod = getDeclaredMethod(t, "setId", String.class);
+			try {
+				declaredMethod.invoke(t, IDGenerator.getUUID());
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+		}
+
+		int result = baseMapper.insertList(objectList);
+		return result;
+	}
+
+	public int updateBatch(List<T> objectList) {
+		int result = 0;
+		if (objectList != null && objectList.size() > 0) {
+			for (T object : objectList) {
+				result = result + baseMapper.updateByPrimaryKeySelective(object);
+			}
+		}
+		return result;
+	}
+
+	public int update(T object) {
+		return baseMapper.updateByPrimaryKeySelective(object);
+	}
+
+	public int deleteObjectById(K id) {
+
+		return baseMapper.deleteByPrimaryKey(id);
+	}
+
+	public int deleteAllObjectByIds(List<K> ids) {
+		int result = 0;
+		if (ids != null && ids.size() > 0) {
+			for (K id : ids) {
+				result = result + baseMapper.deleteByPrimaryKey(id);
+			}
+		}
+		return result;
+	}
+
+	public T getObjectById(K id) {
+		// throw new HioException(SysErrorEnum.parameterError.getErrorCode());
+		return baseMapper.selectByPrimaryKey(id);
+	}
+
+	public List<T> queryList(T paramater) {
+		return baseMapper.select(paramater);
+	}
+
+	/**
+	 * 之前的逻辑有问题<br>
+	 * coffee 重写逻辑 2018年1月24日上午10:56:50
+	 */
+	public List<T> queryListByExample(Map<String, Object> paramater) {
+		Object limit = paramater.get("limit");
+		// limit 如果是负值、表示查询全部
+		if (limit != null && Integer.valueOf(limit + "") > 0) {
+			Object start = paramater.get("start");
+			if (start == null) {
+				start = 0;
+			}
+			PageHelper.startPage(Integer.valueOf(start + ""), Integer.valueOf(limit + ""), true);
+		}
+		return baseMapper.selectByExample(map2example(paramater));
+	}
+
+	protected Example map2example(Map<String, Object> paramater) {
+		Class<?> tClass = (Class<?>) ((ParameterizedType) getClass().getGenericSuperclass()).getActualTypeArguments()[1];
+		// 组装查询
+		Example example = new Example(tClass);
+		Criteria criteria = example.createCriteria();
+		String orderBy = null;
+		for (String key : paramater.keySet()) {
+			Object value = paramater.get(key);
+			// 排序条件
+			if ("orderBy".equalsIgnoreCase(key)) {
+				orderBy = String.valueOf(value);
+			} else {
+				// 查询条件
+				if (isField(tClass, key)) {
+					// 第一个参数是 Entity的Field名
+					criteria.andEqualTo(key, value);
+				}
+			}
+		}
+		if (orderBy != null) {
+			example.setOrderByClause(orderBy);
+		}
+		return example;
+	}
+
+	protected boolean isField(Class<?> clazz, String fieldName) {
+		try {
+			clazz.getDeclaredField(fieldName);
+			return true;
+		} catch (NoSuchFieldException | SecurityException e) {
+			try {
+				clazz.getSuperclass().getDeclaredField(fieldName);
+				return true;
+			} catch (NoSuchFieldException | SecurityException e1) {
+				// ignore
+			}
+		}
+		return false;
+	}
+
+	public Page getPage(Map<String, Object> paramater, Integer start, Integer pageSize) {
+		// return baseMapper.getPage(paramater, start, pageSize);
+		return null;
+	}
+	//
+	// public Page getPage(Map<String, Object> paramater, Integer start, Integer
+	// pageSize, String sort) {
+	// return baseMapper.getPage(paramater, start, pageSize, sort);
+	// }
+	//
+
+	@SuppressWarnings("unchecked")
+	public int deletePseudoObjectById(K id) {
+
+		return baseMapper.updateByPrimaryKeySelective((T) getNewInstance(id));
+	}
+
+	private Object getNewInstance(K id) {
+
+		Type type = this.getClass().getGenericSuperclass();
+		ParameterizedType p = (ParameterizedType) type;
+		Class c = (Class) p.getActualTypeArguments()[1];
+		Object newInstance = null;
+		try {
+			newInstance = c.newInstance();
+		} catch (InstantiationException e) {
+			e.printStackTrace();
+		} catch (IllegalAccessException e) {
+			e.printStackTrace();
+		}
+		Method method = getDeclaredMethod(newInstance, "setId", String.class);
+
+		Method method1 = getDeclaredMethod(newInstance, "setDelflag", Boolean.class);
+		Boolean delflag = true;
+		try {
+			method.invoke(newInstance, id);
+			method1.invoke(newInstance, delflag);
+		} catch (IllegalAccessException e) {
+			e.printStackTrace();
+		} catch (IllegalArgumentException e) {
+			e.printStackTrace();
+		} catch (InvocationTargetException e) {
+			e.printStackTrace();
+		}
+		return newInstance;
+	}
+
+	/**
+	 * @param object
+	 *            : 子类对象
+	 * @param methodName
+	 *            : 父类中的方法名
+	 * @param parameterTypes
+	 *            : 父类中的方法参数类型
+	 * @return 父类中的方法对象
+	 */
+	public static Method getDeclaredMethod(Object object, String methodName, Class<?>... parameterTypes) {
+		Method method = null;
+
+		Class<?> clazz = object.getClass().getSuperclass();
+		try {
+			method = clazz.getDeclaredMethod(methodName, parameterTypes);
+			method.setAccessible(true);
+		} catch (NoSuchMethodException e) {
+			e.printStackTrace();
+		} catch (SecurityException e) {
+			e.printStackTrace();
+		}
+
+		/*
+		 * for(Class<?> clazz = object.getClass() ; clazz != Object.class ; clazz = clazz.getSuperclass()) { try { clazz = clazz.getSuperclass(); method =
+		 * clazz.getDeclaredMethod(methodName, parameterTypes) ; return method ; } catch (Exception e) {
+		 *
+		 * } }
+		 */
+
+		return method;
+	}
+
+	public int deletePseudoAllObjectByIds(List<K> ids) {
+		int result = 0;
+		if (ids.size() > 0)
+			for (K k : ids) {
+				int deletePseudoObjectById = this.deletePseudoObjectById(k);
+				result += deletePseudoObjectById;
+			}
+
+		return result;
+	}
+
+	public Page getPage(Map<String, Object> paramMap) {
+		boolean containsKey = paramMap.containsKey("delflag");
+		if (containsKey) {
+			Map<String, Object> map = new HashMap<>();
+			boolean booleanValue = MapUtils.getBooleanValue(paramMap, "delflag");
+			map.put("delflag", booleanValue == true ? 1 : 0);
+			boolean columnskey = paramMap.containsKey("columns");
+			List<Map<String, Object>> list = null;
+			if (columnskey) {
+				list = (List<Map<String, Object>>) paramMap.get("columns");
+			} else {
+				list = new ArrayList<>();
+			}
+			list.add(map);
+			paramMap.put("columns", list);
+		}
+
+		Type type = this.getClass().getGenericSuperclass();
+		ParameterizedType p = (ParameterizedType) type;
+		Class c = (Class) p.getActualTypeArguments()[1];
+		// 获取类中的字段
+		Map<String, String> classColmnMap = PageColumnParse.getClassColumnMap(c);
+		int startPage = 1;
+		int limit = 0;
+		Integer page = MapUtils.getInteger(paramMap, "start");
+		if (page != null) {
+			startPage = page;
+		}
+		Page currentpage = new Page();
+		Integer pageLimit = MapUtils.getInteger(paramMap, "limit");
+		if (pageLimit != null) {
+			limit = pageLimit;
+		} else {
+			limit = currentpage.getLimit();
+		}
+
+		Condition condition = new Condition(c);
+		StringBuilder sqlAppend = new StringBuilder();
+		/**
+		 * 精确字段sql拼接
+		 */
+		Object columns = paramMap.get("columns");
+		if (columns != null) {
+			List<Map<String, Object>> list = (List<Map<String, Object>>) columns;
+			if (list.size() > 0) {
+				Map<String, Object> map = new HashMap<>();
+				for (Map<String, Object> obj : list) {
+					map.putAll(obj);
+				}
+				Iterator<String> iterator2 = map.keySet().iterator();
+				while (iterator2.hasNext()) {
+					Iterator<String> iterator = classColmnMap.keySet().iterator();
+					String column = iterator2.next();
+					while (iterator.hasNext()) {
+						String key = (String) iterator.next();
+						if (column.equalsIgnoreCase(key)) {
+							if (sqlAppend.length() > 0) {
+								sqlAppend.append(" and " + classColmnMap.get(key) + " = '" + map.get(column) + "' ");
+							} else {
+								sqlAppend.append(" " + classColmnMap.get(key) + " = '" + map.get(column) + "' ");
+							}
+							break;
+						}
+					}
+				}
+			}
+
+		}
+		/**
+		 * 模糊字段sql拼接
+		 */
+		Object fuzzys = paramMap.get("fuzzys");
+		if (fuzzys != null) {
+			List<Map<String, Object>> list = (List<Map<String, Object>>) fuzzys;
+			if (list.size() > 0) {
+				Map<String, Object> map = new HashMap<>();
+				for (Map<String, Object> obj : list) {
+					map.putAll(obj);
+				}
+
+				Iterator<String> iterator2 = map.keySet().iterator();
+				while (iterator2.hasNext()) {
+					Iterator<String> iterator = classColmnMap.keySet().iterator();
+					String column = iterator2.next();
+					while (iterator.hasNext()) {
+						String key = (String) iterator.next();
+						if (column.equalsIgnoreCase(key)) {
+							if (sqlAppend.length() > 0) {
+								sqlAppend.append(" and " + classColmnMap.get(key) + " like '%" + map.get(column) + "%' ");
+							} else {
+								sqlAppend.append(" " + classColmnMap.get(key) + " like '%" + map.get(column) + "%' ");
+							}
+							break;
+						}
+					}
+				}
+			}
+		}
+		/**
+		 * 排序sql 拼接
+		 */
+		StringBuilder sp = new StringBuilder();
+		Object orderby = paramMap.get("orderby");
+		if (orderby != null) {
+			List<Map<String, Object>> list = (List<Map<String, Object>>) orderby;
+			if (list.size() > 0) {
+				Map<String, Object> map = new HashMap<>();
+				for (Map<String, Object> obj : list) {
+					map.putAll(obj);
+				}
+
+				Iterator<String> iterator2 = map.keySet().iterator();
+				while (iterator2.hasNext()) {
+					String column = iterator2.next();
+					Iterator<String> iterator = classColmnMap.keySet().iterator();
+					while (iterator.hasNext()) {
+						String key = (String) iterator.next();
+						if (column.equalsIgnoreCase(key)) {
+							sp = new StringBuilder(appendOrderBy(classColmnMap.get(key), map.get(column).toString(), sp.toString()));
+							break;
+						}
+					}
+				}
+			}
+		}
+		Object groupBy = paramMap.get("groupby");
+		/*
+		 * if(groupBy != null) { // StringBuilder groupBySql = new StringBuilder(); List<String> groupbyName = (List<String>) groupBy; if(groupbyName.size()>0 &&
+		 * CollectionUtils.isNotEmpty(groupbyName)) { sqlAppend.append("group by"); } for (String name : groupbyName) { Iterator<String> iterator =
+		 * classColmnMap.keySet().iterator(); while (iterator.hasNext()) { String key = (String) iterator.next(); if(name.equalsIgnoreCase(key)) {
+		 * sqlAppend.append(" "+classColmnMap.get(key)+" "); break; } } } }
+		 */
+		/**
+		 * 加入精确查询 和模糊查询
+		 */
+		if (!StringUtils.isEmpty(sqlAppend.toString())) {
+			condition.createCriteria().andCondition(sqlAppend.toString());
+		}
+		/**
+		 * 加入order By
+		 */
+		String sql = sp.toString();
+		if (!StringUtils.isEmpty(sql)) {
+			condition.setOrderByClause(sql);
+		}
+
+		PageHelper.startPage(startPage == 0 ? 0 : ((startPage - 1) * limit), limit, true);
+		List<T> selectByExample = baseMapper.selectByExample(condition);
+		PageInfo<T> pageInfo = new PageInfo<T>(selectByExample);
+		Page resultPage = getResultPage(pageInfo);
+		return resultPage;
+	}
+
+	/*
+	 * private BaseMapper<T> mapper;
+	 *
+	 * public BaseMapper<T> baseMapper { return mapper; }
+	 *
+	 * public void setMapper(BaseMapper<T> mapper) { this.mapper = mapper; }
+	 */
+	public Page getResultPage(PageInfo<T> currentPage) {
+		List<T> list = currentPage.getList();
+		// 共多少条
+		long total = currentPage.getTotal();
+		// 当前位置
+		int pageNum = currentPage.getPageNum();
+		Page resultPage = new Page();
+		resultPage.setStart(pageNum);
+		resultPage.setLimit(currentPage.getPageSize());
+		resultPage.setTotal(Integer.parseInt(String.valueOf(total)));
+		resultPage.setList(list);
+		return resultPage;
+	}
+
+	/**
+	 * 分页 排序
+	 *
+	 * @param sort
+	 * @param val
+	 * @param currentSql
+	 * @return
+	 */
+	public String appendOrderBy(String sort, String val, String currentSql) {
+		int indexOf = currentSql.indexOf(val);
+		if (indexOf != -1) {
+			StringBuilder sql1 = new StringBuilder(currentSql);
+			sql1.insert(indexOf, "," + sort + " ");
+			currentSql = sql1.toString();
+		} else {
+			if (currentSql.length() > 0) {
+
+				currentSql += " ," + sort + " " + val;
+			} else {
+				currentSql += " " + sort + " " + val;
+			}
+		}
+		return currentSql;
+	}
+}

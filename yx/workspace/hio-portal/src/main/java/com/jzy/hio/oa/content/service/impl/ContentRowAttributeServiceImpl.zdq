@@ -1,0 +1,239 @@
+package com.jzy.hio.oa.content.service.impl;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.base.utils.DubboServiceResultInfo;
+import com.jzy.hio.base.utils.Page;
+import com.jzy.hio.oa.content.entity.ContentRowAttribute;
+import com.jzy.hio.oa.content.mapper.ContentRowAttributeDao;
+import com.jzy.hio.oa.content.service.ContentRowAttributeService;
+import com.jzy.hio.oa.util.SortUtil;
+import com.jzy.tools.data.JacksonUtils;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class ContentRowAttributeServiceImpl extends  BaseServiceImpl<String,ContentRowAttribute> implements ContentRowAttributeService{
+	
+
+	@Autowired
+	private ContentRowAttributeDao contentRowAttributeDao;
+
+	@Override
+	public int deleteContentRowAttributeByContentTypeId(String contentTypeId) {
+		int result = 0;
+		Map<String, Object> map= new HashMap<String, Object>();
+		map.put("contentTypeId", contentTypeId);
+		List<ContentRowAttribute> contentRowAttributeList = contentRowAttributeDao.selectByExample(map);
+		if(contentRowAttributeList.size() >0){
+			List<String> list = new ArrayList<String>();
+			for (ContentRowAttribute contentRowAttribute : contentRowAttributeList) {
+				list.add(contentRowAttribute.getId());
+			}
+//			result = contentRowAttributeDao.deleteAllObjectByIds(list);
+			try {
+				result = deleteAllObjectByIds(list);
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+		}
+		return result;
+	}
+
+	@Override
+	public int saveAndUpdateContentRowAttribute(ContentRowAttribute content,String flag) {
+		//首先查询出该大类下面的数据属性
+		Map<String, Object> map= new HashMap<String, Object>();
+		map.put("contentTypeId", content.getContentTypeId());
+		List<ContentRowAttribute> contentRowAttributeList = contentRowAttributeDao.selectByExample(map);
+		//定义批量更新的系统属性
+		List<ContentRowAttribute> updateList = new ArrayList<ContentRowAttribute>();
+		
+		//取到数据属性列表中  显示顺序最大的数字
+		SortUtil.sortList(contentRowAttributeList, "sortDesc", true);
+		//此时updateList已经排序，集合中第一个bean就是显示顺序最大的哪个
+		int maxSortDesc = 0;
+		ContentRowAttribute contentRowAttributeMax = contentRowAttributeList.get(0);
+		maxSortDesc = contentRowAttributeMax.getSortNum();
+		if("add".equals(flag)){
+			contentRowAttributeDao.insert(content);
+		}else{
+			contentRowAttributeDao.updateByPrimaryKeySelective(content);
+		}
+		//如果新插入的数据属性在系统属性之间，则整体往后移
+		if(content.getSortNum() <= maxSortDesc){
+			for (ContentRowAttribute contentRowAttribute : contentRowAttributeList) {
+				if(contentRowAttribute.getSortNum() >= content.getSortNum()){
+					contentRowAttribute.setSortNum(contentRowAttribute.getSortNum());
+					updateList.add(contentRowAttribute);
+				}
+			}
+			//然后对批量对系统属性进行更新
+//			contentRowAttributeDao.updateBatch(updateList);
+			try {
+				updateBatch(updateList);
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+		}
+		return updateList.size();
+	}
+
+	@Override
+	public int deleteBatchAttribute(String ids, Map paramater) {
+		int deleteResult = 0;
+		if(!"".equals(ids)){
+			 String[] idArray = ids.split(",");
+			 List<String> idslist = new ArrayList<String>();
+			 Collections.addAll(idslist,idArray);
+//			 deleteResult = contentRowAttributeDao.deleteAllObjectByIds(idslist);
+			 try {
+				deleteResult = deleteAllObjectByIds(idslist);
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+		}
+	   
+		return deleteResult;
+	}
+
+	@Override
+	public Page getContentRowAttributeByPage(Map map) throws Exception {
+		/*Page page=new Page();
+		List<ContentRowAttribute> list = contentRowAttributeDao.getContentRowAttributePage(map);
+		Integer count = contentRowAttributeDao.getContentRowAttributeCount(map);
+		page.setLimit((Integer) map.get("limit") );
+		page.setList(list);
+		page.setStart((Integer) map.get("start"));
+		page.setTotal(count);*/
+		Page page = this.contentRowAttributeDao.queryObjectsByPage(map);
+		return page;
+		
+	}
+
+	@Override
+	public List<ContentRowAttribute> querySearchAttrList(Map<String, Object> map) {
+
+		return contentRowAttributeDao.querySearchAttrList(map);
+	}
+
+	@Override
+	public int updateAttrSort(Map<String, Object> map) throws Exception{
+		int count = 0;
+		//获取ID
+		String id = (String) map.get("id");
+		//获取排序类型
+		String sortType = (String) map.get("sortType");
+		ContentRowAttribute contentRowAttribute = this.getObjectById(id);
+		String contentTypeId = contentRowAttribute.getContentTypeId();
+		Integer sortNum = contentRowAttribute.getSortNum();
+		Map<String,Object> paramMap = new HashMap<String,Object>();
+		paramMap.put("contentTypeId",contentTypeId);
+		if ("UP".equals(sortType)) {
+			paramMap.put("sortNum",sortNum-1);
+
+			//
+			List<ContentRowAttribute> prevList = this.contentRowAttributeDao.selectByExample(paramMap);
+			for (ContentRowAttribute contentRowAttr : prevList) {
+				Boolean extendedField = contentRowAttr.getIsExtendedField();
+				if(!extendedField){
+					throw new Exception("前一个属性为系统内置，不能上移！");
+				}
+				contentRowAttr.setSortNum(sortNum);
+				count += this.contentRowAttributeDao.updateByPrimaryKeySelective(contentRowAttr);
+			}
+
+			contentRowAttribute.setSortNum(sortNum-1);
+			count += this.contentRowAttributeDao.updateByPrimaryKeySelective(contentRowAttribute);
+		} else if ("DOWN".equals(sortType)) {
+			paramMap.put("sortNum",sortNum+1);
+
+			//
+			List<ContentRowAttribute> nextList = this.contentRowAttributeDao.selectByExample(paramMap);
+			if (nextList == null || nextList.size() == 0) {
+				throw new Exception("已经排到最末位置！");
+			}
+
+			for (ContentRowAttribute contentRowAttr : nextList) {
+				contentRowAttr.setSortNum(sortNum);
+				count += this.contentRowAttributeDao.updateByPrimaryKeySelective(contentRowAttr);
+			}
+
+
+			contentRowAttribute.setSortNum(sortNum+1);
+			count += this.contentRowAttributeDao.updateByPrimaryKeySelective(contentRowAttribute);
+		}
+		return count;
+	}
+
+	@Override
+	public int save(ContentRowAttribute object) {
+		Map<String,Object> paramMap = new HashMap<String, Object>();
+		paramMap.put("limit",1);
+		paramMap.put("start",0);
+		paramMap.put("sortFields","{\"sortNum\":\"desc\"}");
+		Page page = this.contentRowAttributeDao.queryObjectsByPage(paramMap);
+		List<ContentRowAttribute> list = page.getList();
+		ContentRowAttribute maxContentRowAttr = list.get(0);
+
+
+		object.setSortNum(maxContentRowAttr.getSortNum()+1);
+		return this.contentRowAttributeDao.insert(object);
+	}
+
+	@Override
+	public List<ContentRowAttribute> queryContentRowAttributeList(String contentTypeId) {
+		Map<String, Object> map= new HashMap<String, Object>();
+		map.put("contentTypeId", contentTypeId);
+		List<ContentRowAttribute> contentRowAttributeList = contentRowAttributeDao.selectByExample(map);
+        return contentRowAttributeList;
+	}
+
+	@Override
+	public List<ContentRowAttribute> queryContentRowQueryAttributeList(String contentTypeId) {
+		Map<String, Object> map= new HashMap<String, Object>();
+		map.put("contentTypeId", contentTypeId);
+		List<ContentRowAttribute> contentRowAttributeList = this.querySearchAttrList(map);
+		return contentRowAttributeList;
+	}
+
+	@Override
+	public int updateBatchAttribute(Map<String, Object> map) throws Exception {
+		 // TODO Auto-generated method stub
+        DubboServiceResultInfo info = new DubboServiceResultInfo();
+        int updateResult = 0;
+        List<ContentRowAttribute> contentRowAttributelist = new ArrayList<ContentRowAttribute>();
+        List<Map<String, Object>> list = (List<Map<String, Object>>) map.get("attrList");
+        for (Map<String, Object> updateMap : list) {
+                String id = (String) updateMap.get("id");
+                ContentRowAttribute contentRowAttribute = contentRowAttributeDao.selectByPrimaryKey(id);
+                Map<String, Object> oldMap = JacksonUtils.fromJson(JacksonUtils.toJson(contentRowAttribute), Map.class);
+                oldMap.putAll(updateMap);
+                ContentRowAttribute updateAttr = JacksonUtils.fromJson(JacksonUtils.toJson(oldMap), ContentRowAttribute.class);
+                contentRowAttributelist.add(updateAttr);
+         }
+         if (contentRowAttributelist.size() > 0) {
+                updateResult = updateBatch(contentRowAttributelist);
+         }
+         return updateResult;
+           
+	}
+	
+	
+	
+	
+	
+}

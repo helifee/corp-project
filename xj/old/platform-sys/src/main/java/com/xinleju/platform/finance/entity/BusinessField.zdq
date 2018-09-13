@@ -1,0 +1,125 @@
+package com.xinleju.platform.finance.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Table(value="PT_FI_BUSINESS_FIELD",desc="业务对象的注册字段")
+public class BusinessField extends BaseEntity{
+	
+		
+	@Column(value="code",desc="数据项编码")
+	private String code;
+    
+  		
+	@Column(value="name",desc="数据项名称")
+	private String name;
+    
+  		
+	@Column(value="type",desc="数据类型")
+	private String type;
+    
+  		
+	@Column(value="parent_id",desc="数据项上级")
+	private String parentId;
+    
+  		
+	@Column(value="biz_object_id",desc="业务对象id")
+	private String bizObjectId;
+    
+  		
+	@Column(value="is_query",desc="是否查询")
+	private String isQuery;
+    
+  		
+	@Column(value="display",desc="是否显示")
+	private String display;
+    
+  		
+	@Column(value="url_type_flag",desc="是否url类型标识")
+	private String urlTypeFlag;
+    
+	@Column(value="sort",desc="排序号")
+	private Integer sort;
+  		
+		
+	public String getCode() {
+		return code;
+	}
+	public void setCode(String code) {
+		this.code = code;
+	}
+    
+  		
+	public String getName() {
+		return name;
+	}
+	public void setName(String name) {
+		this.name = name;
+	}
+    
+  		
+	public String getType() {
+		return type;
+	}
+	public void setType(String type) {
+		this.type = type;
+	}
+    
+  		
+	public String getParentId() {
+		return parentId;
+	}
+	public void setParentId(String parentId) {
+		this.parentId = parentId;
+	}
+    
+  		
+	public String getBizObjectId() {
+		return bizObjectId;
+	}
+	public void setBizObjectId(String bizObjectId) {
+		this.bizObjectId = bizObjectId;
+	}
+    
+  		
+	public String getIsQuery() {
+		return isQuery;
+	}
+	public void setIsQuery(String isQuery) {
+		this.isQuery = isQuery;
+	}
+    
+  		
+	public String getDisplay() {
+		return display;
+	}
+	public void setDisplay(String display) {
+		this.display = display;
+	}
+    
+  		
+	public String getUrlTypeFlag() {
+		return urlTypeFlag;
+	}
+	public void setUrlTypeFlag(String urlTypeFlag) {
+		this.urlTypeFlag = urlTypeFlag;
+	}
+	
+	public Integer getSort() {
+		return sort;
+	}
+	public void setSort(Integer sort) {
+		this.sort = sort;
+	}
+    
+  		
+	
+}

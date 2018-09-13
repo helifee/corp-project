@@ -1,0 +1,13 @@
+package com.xinleju.platform.univ.attachment.dto.service;
+
+import com.xinleju.platform.base.dto.service.BaseDtoServiceCustomer;
+
+public interface AttachmentTempDtoServiceCustomer extends BaseDtoServiceCustomer{
+	/**
+	 * 保存临时文件列表
+	 * @param userInfo
+	 * @param saveJsonList
+	 * @return
+	 */
+	 String saveFileUpload(String userInfo, String saveJsonList);
+}

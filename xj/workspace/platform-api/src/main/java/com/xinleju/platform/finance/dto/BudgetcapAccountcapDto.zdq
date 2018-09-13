@@ -1,0 +1,54 @@
+package com.xinleju.platform.finance.dto;
+
+import com.xinleju.platform.base.dto.BaseDto;
+
+
+
+
+
+/**
+ * @author admin
+ * 
+ *
+ */
+public class BudgetcapAccountcapDto extends BaseDto{
+
+		
+	//预算（成本）科目名称
+	private String name;
+    
+  		
+	//预算（成本）科目编号
+	private String code;
+    
+  		
+	//现金流量id
+	private String cashFlowId;
+    
+  		
+		
+	public String getName() {
+		return name;
+	}
+	public void setName(String name) {
+		this.name = name;
+	}
+    
+  		
+	public String getCode() {
+		return code;
+	}
+	public void setCode(String code) {
+		this.code = code;
+	}
+    
+  		
+	public String getCashFlowId() {
+		return cashFlowId;
+	}
+	public void setCashFlowId(String cashFlowId) {
+		this.cashFlowId = cashFlowId;
+	}
+    
+  		
+}

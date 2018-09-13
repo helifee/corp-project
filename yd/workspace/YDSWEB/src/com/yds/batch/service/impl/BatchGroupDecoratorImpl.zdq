@@ -1,0 +1,297 @@
+/*
+ * @(#)BatchGroupDecoratorImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 批处理系统
+ */
+
+package com.yds.batch.service.impl;
+
+import java.text.SimpleDateFormat;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.List;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.springframework.beans.factory.config.BeanDefinition;
+import org.springframework.context.annotation.Scope;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.yds.batch.bean.BatchGroup;
+import com.yds.batch.bean.BatchJob;
+import com.yds.batch.dao.BatchGroupDao;
+import com.yds.batch.dao.BatchJobDao;
+import com.yds.batch.service.BatchConstants;
+import com.yds.batch.service.BatchGroupDecorator;
+import com.yds.batch.service.BatchJobExecutor;
+
+/**
+ * @see BatchGroupDecorator
+ */
+@Scope(BeanDefinition.SCOPE_PROTOTYPE)
+@Service("batchGroupDecorator")
+public class BatchGroupDecoratorImpl implements BatchGroupDecorator {
+	
+	private static final Log LOG = LogFactory.getLog(BatchGroupDecoratorImpl.class);
+	
+	/** 任务执行类. */
+	private BatchJobExecutor batchJobExecutor;
+	
+	private BatchGroupDao batchGroupDao;
+	private BatchJobDao batchJobDao;
+	
+	/** 任务组. */
+	private BatchGroup jobGroup;
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Transactional(propagation = Propagation.REQUIRES_NEW, timeout = 60)
+	@Override
+	public void updateExecStart() {
+				
+		// 当日日期
+		Date dateNow = new Date();
+		// 设置任务组执行状态为执行中
+		jobGroup.setExecStatus(BatchConstants.EXEC_STATUS.PROCESSING.value());
+		
+		// 设置是第几次执行
+		jobGroup.setExecCnt(jobGroup.getExecCnt() + 1);
+		
+		// 设置执行时间
+		jobGroup.setLastExecDt(dateNow);
+		// 循环执行,设置下次执行时间
+		if (BatchConstants.FREQ.CYCLES.value().equals(jobGroup.getExecFreq())) {
+			
+			// 当前时间加上循环间隔
+            Calendar cal = Calendar.getInstance();
+			cal.setTime(dateNow);
+			cal.add(Calendar.MINUTE, jobGroup.getExecInterval());
+			
+			try {
+				jobGroup.setExecDate(cal.getTime());
+				jobGroup.setExecTime(String.format("%02d", cal.get(Calendar.HOUR_OF_DAY)) + ":" + String.format("%02d", cal.get(Calendar.MINUTE)));
+			} catch (Exception pe) {
+				LOG.error("", pe);
+			}
+		}
+				
+		// 更新任务组信息
+		batchGroupDao.updateExecInfo(jobGroup);			
+
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public String executeJobGroup() {
+
+		// 执行结果
+		String execInfo = BatchConstants.EXEC_STATUS.NORMALEND.value();;
+		
+		try {
+			
+			// 得到任务列表
+			List<BatchJob> batchJobs = batchJobDao.getGroupJobs(jobGroup.getGroupId());
+			int errorFlg = 0;
+			for (BatchJob job : batchJobs) {	
+				
+				// 设置任务的组的执行次数
+				job.setGroupExecCnt(jobGroup.getExecCnt());
+				
+				if(1 == batchJobExecutor.executeJob(job) && 0 == errorFlg ){
+					errorFlg = 1;
+				}
+			}
+			if(1 == errorFlg){
+				throw new Exception();
+			}
+		} catch (Throwable e) {
+			
+			execInfo = BatchConstants.EXEC_STATUS.ERROREND.value();
+			
+		} 
+
+		return execInfo;
+		
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Transactional(propagation = Propagation.REQUIRES_NEW, timeout = 60)
+	@Override
+	public void updateExecEnd(String execInfo) {
+		
+		// 执行频度为指定日期执行或即时执行
+		if (BatchConstants.FREQ.APPOINT.value().equals(jobGroup.getExecFreq()) 
+				|| BatchConstants.FREQ.NOW.value().equals(jobGroup.getExecFreq())) {
+			
+			// 用执行结果信息设置任务组执行状态
+			jobGroup.setExecStatus(execInfo);
+			
+		} else {
+			
+			// 设置任务组执行状态为等待执行
+			jobGroup.setExecStatus(BatchConstants.EXEC_STATUS.WAITING.value());
+		}
+				
+		// 更新任务组信息
+		batchGroupDao.updateExecInfo(jobGroup);
+		
+		// 设置执行结果
+		jobGroup.setExecStatus(execInfo);
+		
+		// 插入执行历史
+		batchGroupDao.insertExecHis(jobGroup);		
+
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public boolean isValid() {
+		
+		// 得到任务组执行频度
+		String execFreq = jobGroup.getExecFreq();
+		
+		// 即时执行
+		if (BatchConstants.FREQ.NOW.value().equals(execFreq)) {
+			return true;
+		}
+
+		
+		// 得到当前日期和时间
+		/** 时间格式. */
+	    SimpleDateFormat minuteFormat = new SimpleDateFormat(BatchConstants.MINUTE_FORMAT);
+		Date dateNow = new Date();
+		String dateTimeNow = minuteFormat.format(dateNow);
+
+		// 得到任务组的执行日期和时间
+		Date execDate = jobGroup.getExecDate();
+		String execTime = jobGroup.getExecTime();
+
+		// 得到任务组生效日期和失效日期
+		Date planStratDt = jobGroup.getPlanStartDt();
+		Date planEndDt = jobGroup.getPlanEndDt();
+
+		// 当前日期小于生效日期,任务组不可用
+		if (planStratDt != null && dateNow.compareTo(planStratDt) < 0) {
+			return false;
+		}
+
+		// 当前日期大于失效日期,任务组不可用
+		if (planEndDt != null && dateNow.compareTo(planEndDt) > 0) {
+			return false;
+		}
+		
+		//TODO
+		// 循环执行
+		if (BatchConstants.FREQ.CYCLES.value().equals(execFreq)) {
+
+			// 超过或到达执行时间
+			if (execDate == null || execTime == null || dateNow.compareTo(execDate) > 0) {
+				return true;
+			}
+
+			if (dateNow.compareTo(execDate) == 0 && dateTimeNow.compareTo(execTime) >= 0) {
+				return true;
+			}
+		}
+
+		// 到达执行时间
+		if (execTime != null && dateTimeNow.compareTo(execTime) >= 0) {
+			
+			// 指定时间执行
+			if (BatchConstants.FREQ.APPOINT.value().equals(execFreq)) {
+				
+				// 到达指定日期
+				if (dateNow.compareTo(execDate) == 0) {
+					return true;
+				}
+
+			}
+			
+			// 得到上次执行时间
+			Date lastExecDt = jobGroup.getLastExecDt();
+			SimpleDateFormat dayFormat = new SimpleDateFormat("yyyy-MM-dd");
+			
+			// 如果上次执行时间为空或不是今天
+			if (lastExecDt == null || dayFormat.format(lastExecDt).compareTo(dayFormat.format(dateNow)) != 0) {
+				
+			    Calendar cal = Calendar.getInstance();
+				cal.setTime(dateNow);
+		
+				if (BatchConstants.FREQ.PER_DAY.value().equals(execFreq)) {
+					
+					// 每日执行
+					return true;
+					
+				} else if (BatchConstants.FREQ.PER_WEEK.value().equals(execFreq)) {
+					
+					// 每周执行
+					if (cal.get(Calendar.DAY_OF_WEEK) == jobGroup.getExecDay()) {
+						return true;
+					}
+					
+				} else if (BatchConstants.FREQ.PER_MONTH.value().equals(execFreq)) {
+					
+					// 每月执行
+					if (cal.get(Calendar.DAY_OF_MONTH) == jobGroup.getExecDay()) {
+						return true;
+					}
+					
+				} else if (BatchConstants.FREQ.MONTH_END.value().equals(execFreq)) {
+					
+					// 月末执行
+					if (cal.getActualMaximum(Calendar.DAY_OF_MONTH) == cal.get(Calendar.DAY_OF_MONTH)) {
+						return true;
+					}
+					
+				} else if (BatchConstants.FREQ.YEAR_END.value().equals(execFreq)) {
+					
+					// 年末执行
+					if (cal.getActualMaximum(Calendar.DAY_OF_YEAR) == cal.get(Calendar.DAY_OF_YEAR)) {
+						return true;
+					}
+					
+				}
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * @param batchGroupDao the batchGroupDao to set
+	 */
+	public void setBatchGroupDao(BatchGroupDao batchGroupDao) {
+		this.batchGroupDao = batchGroupDao;
+	}
+
+	/**
+	 * @param batchJobExecutor the batchJobExecutor to set
+	 */
+	public void setBatchJobExecutor(BatchJobExecutor batchJobExecutor) {
+		this.batchJobExecutor = batchJobExecutor;
+	}
+
+	/**
+	 * @param batchJobDao the batchJobDao to set
+	 */
+	public void setBatchJobDao(BatchJobDao batchJobDao) {
+		this.batchJobDao = batchJobDao;
+	}
+
+	@Override
+	public void setJobGroup(BatchGroup jobGroup) {
+		this.jobGroup = jobGroup;
+	}
+
+}

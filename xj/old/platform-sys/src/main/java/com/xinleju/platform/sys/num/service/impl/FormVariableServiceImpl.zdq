@@ -1,0 +1,82 @@
+package com.xinleju.platform.sys.num.service.impl;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.sys.num.dao.FormVariableDao;
+import com.xinleju.platform.sys.num.entity.FormVariable;
+import com.xinleju.platform.sys.num.service.FormVariableService;
+import com.xinleju.platform.sys.num.utils.DataType;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+/**
+ * @author ly
+ * 
+ * 
+ */
+
+@Service
+public class FormVariableServiceImpl extends  BaseServiceImpl<String,FormVariable> implements FormVariableService{
+	
+
+	@Autowired
+	private FormVariableDao formVariableDao;
+
+	@Override
+	public Page getFormVariableByPage(Map<String, Object> map) throws Exception {
+		Page page=new Page();
+		List<Map<String,Object>> list = formVariableDao.getFormVariableData(map);
+		Integer count = formVariableDao.getFormVariableDataCount(map);
+		page.setLimit((Integer) map.get("limit") );
+		page.setList(list);
+		page.setStart((Integer) map.get("start"));
+		page.setTotal(count);
+		return page;
+	}
+
+	@Override
+	public void saveAllFormVariable(List<Map<String, Object>> formVariableList)throws Exception {
+		Map<String,Object> map = new HashMap<String,Object>();
+		if(formVariableList.size()>0){
+			map.put("billId", formVariableList.get(0).get("billId"));
+			List<FormVariable> entityList = formVariableDao.queryList(map);
+			if(entityList.size()==0){
+				for(int i=0;i<formVariableList.size();i++){
+					if(DataType.DATA_ADD.getCode()==formVariableList.get(i).get("dataType")){
+						formVariableDao.save(JacksonUtils.fromJson(JacksonUtils.toJson(formVariableList.get(i)), FormVariable.class));//新增RulerList对象
+					}
+				}
+			}else{
+				for(int i=0;i<formVariableList.size();i++){
+					if(DataType.DATA_ADD.getCode()==formVariableList.get(i).get("dataType")){
+						formVariableDao.save(JacksonUtils.fromJson(JacksonUtils.toJson(formVariableList.get(i)),FormVariable.class));//新增方法
+					}else if(DataType.DATA_UPDATE.getCode()==formVariableList.get(i).get("dataType")){
+						//匹配数据库已存在对象
+						for(int j=0;j<entityList.size();j++){
+							if(entityList.get(j).getId().equals(formVariableList.get(i).get("id"))){
+								@SuppressWarnings("unchecked")
+								Map<String,Object> newMap = JacksonUtils.fromJson(JacksonUtils.toJson(formVariableList.get(i)), HashMap.class);
+								@SuppressWarnings("unchecked")
+								Map<String,Object> oldMap = JacksonUtils.fromJson(JacksonUtils.toJson(entityList.get(j)), HashMap.class);
+								oldMap.putAll(newMap);
+								formVariableDao.update(JacksonUtils.fromJson(JacksonUtils.toJson(oldMap), FormVariable.class));//修改方法
+							}
+						}
+					}else if(DataType.DATA_DELETE.getCode()==formVariableList.get(i).get("dataType")){
+						formVariableDao.deleteObjectById((String)formVariableList.get(i).get("id"));//伪删除方法
+					}
+				}
+			}
+		}
+		
+	}
+	
+
+}

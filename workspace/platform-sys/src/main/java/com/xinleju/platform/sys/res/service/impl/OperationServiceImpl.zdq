@@ -1,0 +1,151 @@
+package com.xinleju.platform.sys.res.service.impl;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.sys.res.dao.OperationDao;
+import com.xinleju.platform.sys.res.dto.DataNodeDto;
+import com.xinleju.platform.sys.res.dto.OperationDto;
+import com.xinleju.platform.sys.res.entity.Operation;
+import com.xinleju.platform.sys.res.entity.Resource;
+import com.xinleju.platform.sys.res.service.AppSystemService;
+import com.xinleju.platform.sys.res.service.OperationService;
+import com.xinleju.platform.sys.res.service.ResourceService;
+import com.xinleju.platform.sys.res.utils.InvalidCustomException;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class OperationServiceImpl extends  BaseServiceImpl<String,Operation> implements OperationService{
+	
+
+	@Autowired
+	private OperationDao operationDao;
+	@Autowired
+	private AppSystemService appSystemService;
+	@Autowired
+	private ResourceService resourceService;
+	
+
+	/**
+	 * 根据资源id获取功能操作点(查询菜单下的一级按钮)
+	 * @param map(资源ID)
+	 * @return
+	 */
+	@Override
+	public List<DataNodeDto> queryOperationListRootByResourceId(Map<String, Object> paramater)  throws Exception{
+		return operationDao.queryOperationListRootByResourceId(paramater);
+	}
+	
+	/**
+	 * 根据资源id获取所有按钮
+	 * @param map(资源ID)
+	 * @return
+	 */
+	@Override
+	public List<DataNodeDto> queryOperationListAllByResourceId(Map<String, Object> paramater)  throws Exception{
+		return operationDao.queryOperationListAllByResourceId(paramater);
+	}
+	
+	@Override
+	public List<OperationDto> queryListByCondition(Map<String, Object> map) throws Exception{
+		return operationDao.queryListByCondition(map);
+	}
+	/**
+	 * 校验编码重复
+	 * @param map 参数
+	 * @return
+	 * @throws Exception
+	 */
+	public Integer getCodeCount(Map<String, Object> map) throws Exception{
+		return operationDao.getCodeCount(map);
+	}
+	
+	/**
+	 * 修改按钮，并维护全路径
+	 * @param map 参数
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	@Transactional(readOnly=false,rollbackFor=Exception.class)
+	public Integer updateButton(Operation operation) throws Exception{
+		int result=0;
+		try {
+			//排序或名称修改，维护全路径
+			Operation opeOld=getObjectById(operation.getId());
+			if(opeOld==null){
+				throw new InvalidCustomException("不存在此菜单");
+			}
+			boolean flag=false;
+			//修改按钮名称，维护全路径
+			/*if(!opeOld.getName().equals(operation.getName())){
+				operation.setPrefixName(prefixName+"/"+operation.getName());
+				map.put("prefixIdOld", opeOld.getPrefixId());
+				map.put("prefixNameOld", opeOld.getPrefixName()+"/");
+				map.put("prefixNameNew", resource.getPrefixName()+"/");
+				map.put("menuFlag", true);
+				flag=true;
+			}*/
+			Map<String, Object> map=new HashMap<String,Object>();
+			//修改上级菜单，维护全路径
+			if(operation.getParentId()!=null&& StringUtils.isNotBlank(operation.getParentId())){
+				String parentId=operation.getParentId();
+				Operation opeP=getObjectById(parentId);
+				operation.setPrefixId(opeP.getPrefixId()+"/"+operation.getId());
+				operation.setPrefixName(opeP.getPrefixName()+"/"+operation.getName());
+				operation.setPrefixSort(opeP.getPrefixSort()+"-"+String.format("C%05d", operation.getSort()));
+				map.put("prefixIdOld", opeOld.getPrefixId());
+				map.put("prefixIdNew", operation.getPrefixId());
+				map.put("prefixNameOld", opeOld.getPrefixName()+"/");
+				map.put("prefixNameNew", operation.getPrefixName()+"/");
+				map.put("prefixSortOld", opeOld.getPrefixSort());
+				map.put("prefixSortNew", operation.getPrefixSort());
+				map.put("menuFlag", true);
+				flag=true;
+			}else if(operation.getParentId()==null || StringUtils.isBlank(operation.getParentId()) ){
+				String menuId=operation.getResourceId();
+				Resource res=resourceService.getObjectById(menuId);
+				operation.setPrefixId(res.getPrefixId()+"/"+operation.getId());
+				operation.setPrefixName(res.getPrefixName()+"/"+operation.getName());
+				operation.setPrefixSort(res.getPrefixSort()+"-"+String.format("C%05d", operation.getSort()));
+				map.put("prefixIdOld", opeOld.getPrefixId());
+				map.put("prefixIdNew", operation.getPrefixId());
+				map.put("prefixNameOld", opeOld.getPrefixName()+"/");
+				map.put("prefixNameNew", operation.getPrefixName()+"/");
+				map.put("prefixSortOld", opeOld.getPrefixSort());
+				map.put("prefixSortNew", operation.getPrefixSort());
+				map.put("menuFlag", true);
+				flag=true;
+			}
+			if(flag){
+				appSystemService.updateAllPreFix(map);
+			}
+			result = update(operation);
+		} catch (Exception e) {
+			throw e;
+		}
+		return result;
+	}
+	
+	/**
+	 * 判断菜单是否存在下级按钮
+	 * @param map 参数
+	 * @return
+	 * @throws Exception
+	 */
+	public Integer selectSonNum(Map<String,Object> map) throws Exception{
+		return operationDao.selectSonNum(map);
+	}
+}

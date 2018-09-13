@@ -1,0 +1,499 @@
+/*
+ * @(#)Yb7011ServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东计算机社内网
+ *    SubSystem: 人员管理
+ */
+package com.yds.att.service.impl;
+
+
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.yds.att.bean.AttCorrect;
+import com.yds.att.bean.AttExamin;
+import com.yds.att.bean.AttInfo;
+import com.yds.att.bean.AttOvertime;
+import com.yds.att.bean.Ye7011BeanB;
+import com.yds.att.bean.Ye7011BeanC;
+import com.yds.att.bean.OrgInfo;
+import com.yds.att.bean.Ye7011BeanA;
+import com.yds.att.common.service.AttInfoService;
+import com.yds.att.common.service.OrgRelationService;
+import com.yds.att.dao.Ye0030Dao;
+import com.yds.att.dao.Ye0060Dao;
+import com.yds.att.dao.Ye7011Dao;
+import com.yds.att.service.AttConstants;
+import com.yds.att.service.Ye0030Service;
+import com.yds.att.service.Ye7011Service;
+import com.yds.att.service.AttConstants.AppCategory;
+import com.yds.att.service.AttConstants.AppStatus;
+import com.yds.common.bean.ComIoData;
+import com.yds.common.bean.EmpOrgInfo;
+import com.yds.util.service.DateUtil;
+import com.yds.ws.service.HandleService;
+
+
+/**
+ * @see com.yds.att.service.Ye7011Service
+ */
+@Service("ye7011Service")
+public class Ye7011ServiceImpl implements Ye7011Service {
+	
+	
+	private Ye7011Dao ye7011Dao;
+	private List<Ye7011BeanA> overtimeList;
+	private List<Ye7011BeanB> leakList;
+	private List<Ye7011BeanC> attInfoList;
+	private Ye0060Dao ye0060Dao;
+	private OrgRelationService orgRelationService;
+	private Ye0030Service ye0030Service;
+	private Ye0030Dao ye0030Dao;
+	private AttInfoService attInfoService;
+	private HandleService ye8010Service;
+	private static final Log LOG = LogFactory.getLog(Ye7011ServiceImpl.class);
+	private static final String NULL_TIME = "00:00:00";
+	private static final String NULL_STR = "NULL";
+	private static final String yyyyMMddhhmmFormat="yyyy-MM-dd HH:mm";
+	private static final String ZERO_TIME = "000000";
+	/** 移行开始时间 */
+	private static final String START_DATE = "2010-01-01";
+	/** 是否删除旧数据 */
+	private static final boolean DELETE_FLG = true;
+	/** 移行模式 */
+	private static final long runType = RunType.ATT_INFO.value()
+			| RunType.OVERTIME.value() | RunType.LEAK.value()
+			| RunType.REST.value();
+//	private static final long runType =  RunType.OVERTIME.value() | RunType.LEAK.value()
+	;
+	/**
+	 * 移行模式
+	 * @author zhaodong
+	 *
+	 */
+	private static enum RunType {
+		/** 考勤信息表(打卡)*/
+		ATT_INFO(0x0001),
+		
+		/** 加班 */
+		OVERTIME(0x0002),
+		
+		/**考勤更正 */
+		LEAK(0x0004),
+		
+		/** 请假*/
+		REST(0x0010);
+		
+		private long value;
+
+		RunType(long value) {
+			this.value = value;
+		}
+		public long value() {
+            return this.value;
+        }
+
+	}
+	
+
+
+	@Override
+	@Transactional(propagation = Propagation.REQUIRES_NEW, timeout = 60)
+	public void getOldData() {
+		
+		// 考勤信息
+		if ((RunType.ATT_INFO.value() & runType) != 0L) {
+			attInfoList = ye7011Dao.getOldAttInfoList(START_DATE);
+		}
+		
+		// 加班
+		if ((RunType.OVERTIME.value() & runType) != 0L) {
+			overtimeList = ye7011Dao.getOldOvertimeList();
+		}
+		
+		//漏考(考勤更正)
+		if ((RunType.LEAK.value() & runType) != 0L) {
+			leakList = ye7011Dao.getLeakList();
+			setOldLeakList();
+		
+		}
+		
+	}
+	
+	/**
+	 * 处理漏考不整合数据(不整合的数据再读取)
+	 */
+	private void setOldLeakList(){
+
+		for (Ye7011BeanB leakData : leakList){
+			// 上班时间或者下班时间有一个为空，则从考勤信息表中尝试取出对应数据
+			if(null==leakData.getBeginTime() || NULL_TIME.equals(leakData.getBeginTime())
+					|| null==leakData.getEndTime() || NULL_TIME.equals(leakData.getEndTime())){
+				Ye7011BeanC ye7011BeanC = new Ye7011BeanC();
+				ye7011BeanC.setYear(leakData.getYear());
+				ye7011BeanC.setMonth(leakData.getMonth());
+				ye7011BeanC.setDay(leakData.getDay());
+				ye7011BeanC.setEmpId(leakData.getEmpId());
+				Ye7011BeanC wrkMgrs = ye7011Dao.getWrkMgrs(ye7011BeanC);
+				if (null == leakData.getBeginTime()
+						|| NULL_TIME.equals(leakData.getBeginTime())) {
+					String time;
+					if (null != wrkMgrs && null != wrkMgrs.getBeginTime()
+							&& !ZERO_TIME.equals(wrkMgrs.getBeginTime())) {
+						time = wrkMgrs.getBeginTime();
+						leakData.setBeginTime(time.substring(0, 2)+":"+time.substring(2, 4)+":"+time.substring(4, 6));
+					}
+					if (null != wrkMgrs && null != wrkMgrs.getEndTime()
+							&& !ZERO_TIME.equals(wrkMgrs.getEndTime())) {
+						time = wrkMgrs.getEndTime();
+						leakData.setEndTime(time.substring(0, 2)+":"+time.substring(2, 4)+":"+time.substring(4, 6));
+					}
+				}
+			}
+		}
+		
+		
+	}
+
+	@Override
+	@Transactional(propagation = Propagation.REQUIRES_NEW, timeout = 60)
+	public void newDBOperation() throws Exception {
+		
+		//考勤信息（打卡）
+		if ((RunType.ATT_INFO.value() & runType) != 0L) {
+			setAttInfo();
+		}
+
+		// 加班
+		if ((RunType.OVERTIME.value() & runType) != 0L) {
+			setOvertimeData();
+		}
+		
+		//漏考
+		if ((RunType.LEAK.value() & runType) != 0L) {
+			setLeakData();
+		}
+	}
+	
+	/**
+	 * 考勤信息导入
+	 * @throws Exception
+	 */
+	private void setAttInfo() throws Exception{
+		
+		List<ComIoData> ioDataList = new ArrayList<ComIoData>();
+		for (Ye7011BeanC attInfo : attInfoList) {
+			if (null != attInfo.getBeginTime()
+					&& !ZERO_TIME.equals(attInfo.getBeginTime())
+					&& !NULL_STR.equals(attInfo.getBeginTime())
+					&& !"".equals(attInfo.getBeginTime())) {
+				ComIoData comIoData = new ComIoData();
+				comIoData.setEmpId(attInfo.getEmpId());
+				StringBuffer date = new StringBuffer(attInfo.getYear());
+				date.append("-").append(attInfo.getMonth()).append("-").append(attInfo.getDay());
+				date.append(" ").append(attInfo.getBeginTime().substring(0, 2)).append(":");
+				date.append(attInfo.getBeginTime().substring(2, 4)).append(":");
+				date.append(attInfo.getBeginTime().substring(4, 6));
+				comIoData.setIoTime(DateUtil.parse(date.toString()));
+				ioDataList.add(comIoData);
+			}
+			if (null != attInfo.getEndTime()
+					&& !ZERO_TIME.equals(attInfo.getEndTime())
+					&& !NULL_STR.equals(attInfo.getEndTime())
+					&& !"".equals(attInfo.getEndTime())) {
+				ComIoData comIoData = new ComIoData();
+				comIoData.setEmpId(attInfo.getEmpId());
+				StringBuffer date = new StringBuffer(attInfo.getYear());
+				date.append("-").append(attInfo.getMonth()).append("-").append(attInfo.getDay());
+				date.append(" ").append(attInfo.getEndTime().substring(0, 2)).append(":");
+				date.append(attInfo.getEndTime().substring(2, 4)).append(":");
+				date.append(attInfo.getEndTime().substring(4, 6));
+				comIoData.setIoTime(DateUtil.parse(date.toString()));
+				ioDataList.add(comIoData);
+			}
+			
+		}
+		ye8010Service.handle(ioDataList);
+	}
+	
+	/**
+	 * 加班数据导入
+	 */
+	private void setOvertimeData(){
+		// 组织ID<->项目ID关系取得
+		List<EmpOrgInfo> orgList = ye7011Dao.getOrgList();
+		Map<String,EmpOrgInfo> orgMap = new HashMap<String,EmpOrgInfo>();
+		Map<String,String> cacheMap = new HashMap<String,String>();
+		for (EmpOrgInfo orginfo : orgList){
+			orgMap.put(orginfo.getOrgSnm(), orginfo);
+		}
+		
+		for (Ye7011BeanA overtimeBean : overtimeList){
+			AttOvertime attOvertime = new AttOvertime();
+			attOvertime.setYear(String.valueOf(DateUtil.getYear(overtimeBean.getOvertimeDate())));
+			String month = String.valueOf(DateUtil.getMonth(overtimeBean.getOvertimeDate()));
+			if (month.length() == 1) {
+				month = "0" + month;
+			}
+			attOvertime.setMonth(month);
+			String day = String.valueOf(DateUtil.getDay(overtimeBean.getOvertimeDate()));
+			if (day.length() == 1) {
+				day = "0" + day;
+			}
+			attOvertime.setDay(day);
+			EmpOrgInfo orginfo = orgMap.get(overtimeBean.getPrjId());
+			if (null!=orginfo){
+				attOvertime.setPrjId(orginfo.getOrgId());
+				attOvertime.setDpmId(orginfo.getOrgDesc());
+//			if (attOvertime.getPrjId()!=null){
+//				OrgInfo dept = orgRelationService.getParentOrgBy(attOvertime.getPrjId());
+//				if (null != dept) {
+//					attOvertime.setDpmId(dept.getOrgId());
+//				} else {
+//					attOvertime.setDpmId("");
+//				}
+			} else {
+				attOvertime.setPrjId("");
+				attOvertime.setDpmId("");
+			}
+			attOvertime.setAppStartTime(DateUtil.parse(overtimeBean.getOvertimeDate()+" "+overtimeBean.getBeginTime()));
+			attOvertime.setAppEndTime(DateUtil.parse(overtimeBean.getOvertimeDate()+" " +overtimeBean.getEndTime()));
+			if (null != overtimeBean.getComment()) {
+				attOvertime.setOvertimeComment(overtimeBean.getComment());
+			} else {
+				attOvertime.setOvertimeComment("");
+			}
+			if (Integer.parseInt(overtimeBean.getBeginTime().substring(0, 2)) > 16
+					|| Integer.parseInt(overtimeBean.getEndTime().substring(0, 2)) < 6) {
+				attOvertime.setBenefitFlag(AttConstants.BenefitFlagEnum.FOR_MONEY.value());
+			} else {
+				attOvertime.setBenefitFlag(AttConstants.BenefitFlagEnum.FOR_DAY.value());
+			}
+			
+			attOvertime.setEmpId(overtimeBean.getEmpId());
+			
+			attOvertime.setStateFlag(AttConstants.AppStatus.PENDING.value());
+			attOvertime.setRatifyId("");
+			attOvertime.setUpdateUser(attOvertime.getEmpId());
+			attOvertime.setUpdateTime(new Date());
+			String key = overtimeBean.getEmpId()+ overtimeBean.getOvertimeDate();
+			if (null == cacheMap.get(key)) {
+				ye0060Dao.insertApplyEmp(attOvertime);
+				cacheMap.put(key, "");
+			}
+		}		
+	}
+
+	/**
+	 * 漏考数据导入
+	 * @throws Exception 
+	 */
+	private void setLeakData() throws Exception{
+		String pk = "";
+		long countPk=0;
+		for(Ye7011BeanB leakData : leakList){
+			String month = leakData.getMonth();
+			String orgId = null;
+			List<String> orgIds = new ArrayList<String>();
+			if (month.length() == 1) {
+				month = "0" + month;
+			}
+			String day = leakData.getDay();
+			if (day.length() == 1) {
+				day = "0" + day;
+			}
+			//计算采番号
+			String newpk = new StringBuffer(leakData.getYear()).append(month)
+					.append(day).toString();
+			if (newpk.equals(pk)) {
+				countPk++;
+			} else {
+				countPk = 1;
+				pk = newpk;
+			}
+			Date date = DateUtil.parse(newpk);
+			//取得考勤更正审批流程（直属组织ID和审批过程）
+			System.out.println(leakData.getEmpId()+date);
+			List<List<OrgInfo>> flowList = orgRelationService.getFlowForAtt(leakData.getEmpId(),date);
+			//非法数据
+			if (null==flowList || flowList.size()==0){
+				LOG.error("no flowlist:" + leakData.getEmpId() + leakData.getYear() + month + day);
+				continue;
+			}
+			if(null==leakData.getBeginTime() || NULL_TIME.equals(leakData.getBeginTime())
+					|| null==leakData.getEndTime() || NULL_TIME.equals(leakData.getEndTime())){
+				LOG.error("BeginTime or EndTime is null:" + leakData.getEmpId() + leakData.getYear() + month + day);
+				continue;
+			}
+			
+			if (flowList.size() == 1) {
+				orgId = flowList.get(0).get(0).getOrgId();
+				for (OrgInfo orginfo : flowList.get(0)){
+					orgIds.add(orginfo.getOrgId());
+				}
+				if (!flowList.get(0).get(0).getOrgMnger().equals(leakData.getLeaderId())){
+					LOG.warn("考勤人发生变化: " + leakData.getEmpId() + leakData.getYear() + month + day );
+				}
+				
+			}else{
+				for (List<OrgInfo> eachflow : flowList){
+					if (eachflow.get(0).getOrgMnger().equals(leakData.getLeaderId())){
+						orgId = eachflow.get(0).getOrgId();
+						for (OrgInfo orginfo : eachflow){
+							orgIds.add(orginfo.getOrgId());
+						}
+						break;
+					}
+					
+				}
+				// 考勤人与当时所在组织均不相符的情况，取得第一个可用的组织作为审批流程
+				if (null == orgId){
+					orgId = flowList.get(0).get(0).getOrgId();
+					for (OrgInfo orginfo : flowList.get(0)){
+						orgIds.add(orginfo.getOrgId());
+					}
+					LOG.warn("考勤人发生变化: " + leakData.getEmpId() + leakData.getYear() + month + day );
+				}
+			}
+			
+			//以下参照Ye0030ServiceImpl.insertAttCorrect
+			AttInfo attInfo = new AttInfo();
+			attInfo.setEmpId(leakData.getEmpId());
+			attInfo.setYear(leakData.getYear());
+			attInfo.setMonth(month);
+			attInfo.setDay(day);
+			attInfoService.updateAttInfo(leakData.getEmpId(),date);
+			
+			attInfo = ye0030Service.getAttInfoByPk(attInfo);
+
+			String appId;
+			
+			//采番
+			String seq = "0000" + countPk;
+			String seqNo = seq.substring(seq.length()-4);
+			StringBuffer sb = new StringBuffer(AppCategory.ATT_CORRECT.value());
+			appId = sb.append(newpk).append(seqNo).toString();
+
+
+			AttCorrect attCorrect = new AttCorrect();
+			
+			attCorrect.setAppId(appId);
+			attCorrect.setAppEmpId(leakData.getEmpId());
+			attCorrect.setOrgId(orgId);
+			attCorrect.setYear(attInfo.getYear());
+			attCorrect.setMonth(attInfo.getMonth());
+			attCorrect.setDay(attInfo.getDay());
+			if (attInfo.getRstartTime() != null) {
+				attCorrect.setBefStartTime(DateUtil.dateToString(attInfo.getRstartTime(), yyyyMMddhhmmFormat));
+			} else {
+				attCorrect.setBefStartTime("0000-00-00 00:00:00");
+			}
+			
+			if (attInfo.getRendTime() != null) {
+				attCorrect.setBefEndTime(DateUtil.dateToString(attInfo.getRendTime(), yyyyMMddhhmmFormat));
+			} else {
+				attCorrect.setBefEndTime("0000-00-00 00:00:00");
+			}
+			
+			attCorrect.setAftStartTime(leakData.getYear() + "-" + month + "-" + day + " " + leakData.getBeginTime());
+
+			attCorrect.setAftEndTime(leakData.getYear() + "-" + month + "-" + day + " " + leakData.getEndTime());
+			if (null == leakData.getReason()) {
+				attCorrect.setCorrectReason("");
+			} else {
+				attCorrect.setCorrectReason(leakData.getReason());
+			}
+			
+			attCorrect.setAppStatus(AppStatus.PENDING.value());
+			
+			attCorrect.setUpdateUser(leakData.getEmpId());
+			
+			
+			ye0030Dao.insertAttCorrect(attCorrect);
+			
+			attInfo.setAttStatusCor(AppStatus.PENDING.value());
+			attInfo.setAppIdCor(appId);
+			ye0030Dao.updateAttInfo(attInfo);
+			
+			
+			AttExamin attExamin = null;
+
+
+			//插入审批过程表
+			for (int i = 0; i < orgIds.size(); i++) {
+				attExamin = new AttExamin();
+				attExamin.setAppId(appId);
+				attExamin.setExaAppOrder(i + 1);
+				attExamin.setExaAppEnd(orgIds.size());
+				attExamin.setExaOrganizationId(orgIds.get(i));
+
+				ye0030Dao.insertAttExamin(attExamin);
+				
+			}
+			
+			
+			
+		}
+		
+	}
+	/**
+	 * @param ye7011Dao the ye7011Dao to set
+	 */
+	public void setYe7011Dao(Ye7011Dao ye7011Dao) {
+		this.ye7011Dao = ye7011Dao;
+	}
+
+	/**
+	 * @param ye0060Dao the ye0060Dao to set
+	 */
+	public void setYe0060Dao(Ye0060Dao ye0060Dao) {
+		this.ye0060Dao = ye0060Dao;
+	}
+
+	/**
+	 * @param orgRelationService the orgRelationService to set
+	 */
+	public void setOrgRelationService(OrgRelationService orgRelationService) {
+		this.orgRelationService = orgRelationService;
+	}
+
+	/**
+	 * @param ye0030Service the ye0030Service to set
+	 */
+	public void setYe0030Service(Ye0030Service ye0030Service) {
+		this.ye0030Service = ye0030Service;
+	}
+
+	/**
+	 * @param ye0030Dao the ye0030Dao to set
+	 */
+	public void setYe0030Dao(Ye0030Dao ye0030Dao) {
+		this.ye0030Dao = ye0030Dao;
+	}
+
+	/**
+	 * @param attInfoService the attInfoService to set
+	 */
+	public void setAttInfoService(AttInfoService attInfoService) {
+		this.attInfoService = attInfoService;
+	}
+
+	/**
+	 * @param ye8010Service the ye8010Service to set
+	 */
+	public void setYe8010Service(HandleService ye8010Service) {
+		this.ye8010Service = ye8010Service;
+	}
+
+}

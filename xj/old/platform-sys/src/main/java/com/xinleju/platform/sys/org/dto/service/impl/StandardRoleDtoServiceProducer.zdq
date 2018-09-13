@@ -1,0 +1,372 @@
+package com.xinleju.platform.sys.org.dto.service.impl;
+
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.sys.org.dto.RoleNodeDto;
+import com.xinleju.platform.sys.org.dto.service.StandardRoleDtoServiceCustomer;
+import com.xinleju.platform.sys.org.entity.Orgnazation;
+import com.xinleju.platform.sys.org.entity.Post;
+import com.xinleju.platform.sys.org.entity.RoleCatalog;
+import com.xinleju.platform.sys.org.entity.RoleUser;
+import com.xinleju.platform.sys.org.entity.StandardRole;
+import com.xinleju.platform.sys.org.service.PostService;
+import com.xinleju.platform.sys.org.service.RoleCatalogService;
+import com.xinleju.platform.sys.org.service.RoleUserService;
+import com.xinleju.platform.sys.org.service.StandardRoleService;
+import com.xinleju.platform.sys.res.utils.InvalidCustomException;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+/**
+ * @author admin
+ * 
+ *
+ */
+ 
+public class StandardRoleDtoServiceProducer implements StandardRoleDtoServiceCustomer{
+	private static Logger log = Logger.getLogger(StandardRoleDtoServiceProducer.class);
+	@Autowired
+	private StandardRoleService standardRoleService;
+	
+	@Autowired
+	private RoleCatalogService roleCatalogService;
+	
+	@Autowired
+	private PostService postService;
+	
+	@Autowired
+	private RoleUserService roleUserService;
+
+	public String save(String userInfo, String saveJson){
+		// TODO Auto-generated method stub
+	   DubboServiceResultInfo info=new DubboServiceResultInfo();
+	   try {
+		   StandardRole standardRole=JacksonUtils.fromJson(saveJson, StandardRole.class);
+		   StandardRole fa = standardRoleService.getObjectById(standardRole.getCatalogId());
+		   standardRole.setPrefixId(fa.getPrefixId()+"/"+standardRole.getId());
+		   standardRole.setPrefixName(fa.getPrefixName()+"/"+standardRole.getName());
+		   saveJson = JacksonUtils.toJson(standardRole);
+		   saveJson=saveJson.replaceAll("\\\\", "\\\\\\\\");
+		   saveJson=saveJson.replaceAll("\\'", "\\\\\\\\\'");
+		   standardRole=JacksonUtils.fromJson(saveJson, StandardRole.class);
+		   standardRoleService.save(standardRole);
+		   info.setResult(JacksonUtils.toJson(standardRole));
+		   info.setSucess(true);
+		   info.setMsg("保存对象成功!");
+		} catch (Exception e) {
+		 log.error("保存对象失败!"+e.getMessage());
+		 info.setSucess(false);
+		 info.setMsg("保存对象失败!");
+		 info.setExceptionMsg(e.getMessage());
+		}
+	   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String saveBatch(String userInfo, String saveJsonList)
+			 {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public String updateBatch(String userInfo, String updateJsonList)
+			 {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public String update(String userInfo, String updateJson)  {
+		// TODO Auto-generated method stub
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   StandardRole standardRole=JacksonUtils.fromJson(updateJson, StandardRole.class);
+			   StandardRole standardRoleOld=standardRoleService.getObjectById(standardRole.getId());
+			   Map<String,Object> map = new HashMap<String,Object>();
+			   map.put("delflag", "0");
+
+			   //如果状态没有改变不更改下级
+			   if(!standardRole.getStatus().equals(standardRoleOld.getStatus())){
+				   //启用角色，并启用其上级目录
+				   if(standardRole.getStatus().equals("1")){//启用角色，并启用其上级目录
+					   String prefixId=standardRoleOld.getPrefixId();
+					   String orgIds[]=prefixId.split("/");
+					   map.put("roleIds", orgIds);
+					   roleCatalogService.unLockRole(map);
+				   }
+			   }
+			   //如果名称或者上级目录进行更改了，同时要更改全路径
+			   if(standardRoleOld.getCatalogId().equals(standardRole.getCatalogId()) || standardRoleOld.getName().equals(standardRole.getName())){
+				   RoleCatalog parentRoleCatalog =  roleCatalogService.getObjectById(standardRole.getCatalogId());
+				   standardRole.setPrefixId(parentRoleCatalog.getPrefixId()+"/"+standardRole.getId());
+				   standardRole.setPrefixName(parentRoleCatalog.getPrefixName()+"/"+standardRole.getName());
+				   standardRole.setPrefixSort(parentRoleCatalog.getPrefixSort()+"-"+String.format("B%05d", standardRole.getSort()));
+			   }
+			   //检查是否重名
+			   Map mapcon = new HashMap<>();
+			   mapcon.put("pId", standardRole.getCatalogId());
+			   mapcon.put("name", standardRole.getName());
+			   mapcon.put("type", "role");
+			   mapcon.put("id", standardRole.getId());
+					   
+			   Integer c=roleCatalogService.checkName(mapcon);
+				if(c>0){
+					throw new InvalidCustomException("名称已存在，不可重复");
+				}
+			   int result=   standardRoleService.update(standardRole);
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("更新对象成功!");
+		   } catch (Exception e) {
+			   log.error("更新对象失败!"+e.getMessage());
+			   info.setSucess(false);
+			   info.setMsg("更新对象失败!");
+			   info.setExceptionMsg(e.getMessage());
+		   }
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deleteObjectById(String userInfo, String deleteJson)
+	{
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   StandardRole standardRole=JacksonUtils.fromJson(deleteJson, StandardRole.class);
+			   //以下删除内容替换到伪删除当中了
+			   //查询角色下有没有岗位，如果有不让删除
+			   Map<String,Object> map = new HashMap<String,Object>();
+			   map.put("roleId", standardRole.getId());
+			   map.put("delflag", "0");
+			   List<Post> listPost = postService.queryList(map);
+			   //查询虚拟角色下有没有用户，如果有不让删除
+			   Map<String,Object> mapRoleUser = new HashMap<String,Object>();
+			   mapRoleUser.put("roleId", standardRole.getId());
+			   mapRoleUser.put("delflag", "0");
+			   List<RoleUser> listRoleUser = roleUserService.queryList(mapRoleUser);
+			   
+			   if(null!=listPost && listPost.size()>0){
+				   info.setResult("角色下有岗位，不能进行删除");
+				   info.setSucess(false);
+				   info.setMsg("角色下有岗位，不能进行删除");
+			   }else if(null!=listRoleUser && listRoleUser.size()>0){
+				   info.setResult("虚拟角色有人员，不能进行删除");
+				   info.setSucess(false);
+				   info.setMsg("虚拟角色有人员，不能进行删除");
+			   }else{
+				   int result= standardRoleService.deleteObjectById(standardRole.getId());
+				   info.setResult(JacksonUtils.toJson(result));
+				   info.setSucess(true);
+				   info.setMsg("删除对象成功!"); 
+			   }
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deleteAllObjectByIds(String userInfo, String deleteJsonList)
+   {
+		// TODO Auto-generated method stub
+		 DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   if (StringUtils.isNotBlank(deleteJsonList)) {
+				   Map map=JacksonUtils.fromJson(deleteJsonList, HashMap.class);
+				   List<String> list=Arrays.asList(map.get("id").toString().split(","));
+				   int result= standardRoleService.deleteAllObjectByIds(list);
+				   info.setResult(JacksonUtils.toJson(result));
+				   info.setSucess(true);
+				   info.setMsg("删除对象成功!");
+				}
+			} catch (Exception e) {
+			 log.error("删除对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getObjectById(String userInfo, String getJson)
+	 {
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			StandardRole standardRole=JacksonUtils.fromJson(getJson, StandardRole.class);
+			StandardRole	result = standardRoleService.getObjectById(standardRole.getId());
+			info.setResult(JacksonUtils.toJson(result));
+		    info.setSucess(true);
+		    info.setMsg("获取对象成功!");
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getPage(String userInfo, String paramater) {
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map map=JacksonUtils.fromJson(paramater, HashMap.class);
+				Page page=standardRoleService.getPage(map, (Integer)map.get("start"),  (Integer)map.get("limit"));
+				info.setResult(JacksonUtils.toJson(page));
+			    info.setSucess(true);
+			    info.setMsg("获取分页对象成功!");
+			}else{
+				Page page=standardRoleService.getPage(new HashMap(), null, null);
+				info.setResult(JacksonUtils.toJson(page));
+			    info.setSucess(true);
+			    info.setMsg("获取分页对象成功!");
+			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取分页对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取分页对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String queryList(String userInfo, String paramater){
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map map=JacksonUtils.fromJson(paramater, HashMap.class);
+				List list=standardRoleService.queryList(map);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}else{
+				List list=standardRoleService.queryList(null);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取列表对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取列表对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getCount(String userInfo, String paramater)  {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public String queryRoleListByOrgId(String userInfo, String paramater){
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map map = JacksonUtils.fromJson(paramater, HashMap.class);
+				List<RoleNodeDto> list=standardRoleService.queryRoleListByOrgId(map);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}else{
+				List list=standardRoleService.queryRoleListByOrgId(null);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取列表对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取列表对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	@Override
+	public String deletePseudoObjectById(String userInfo, String deleteJson)
+	{
+		// TODO Auto-generated method stub
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   StandardRole standardRole=JacksonUtils.fromJson(deleteJson, StandardRole.class);
+			   //查询角色下有没有岗位，如果有不让删除
+			   Map<String,Object> map = new HashMap<String,Object>();
+			   map.put("roleId", standardRole.getId());
+			   map.put("delflag", "0");
+			   List<Post> listPost = postService.queryList(map);
+			   //查询虚拟角色下有没有用户，如果有不让删除
+			   Map<String,Object> mapRoleUser = new HashMap<String,Object>();
+			   mapRoleUser.put("roleId", standardRole.getId());
+			   mapRoleUser.put("delflag", "0");
+			   List<RoleUser> listRoleUser = roleUserService.queryList(mapRoleUser);
+			   
+			   if(null!=listPost && listPost.size()>0){
+				   info.setResult("标准岗位被引用，不能进行删除");
+				   info.setSucess(false);
+				   info.setMsg("标准岗位被引用，不能进行删除");
+			   }else if(null!=listRoleUser && listRoleUser.size()>0){
+				   info.setResult("角色被引用，不能进行删除");
+				   info.setSucess(false);
+				   info.setMsg("角色被引用，不能进行删除");
+			   }else{
+				   int result= standardRoleService.deletePseudoObjectById(standardRole.getId());
+				   info.setResult(JacksonUtils.toJson(result));
+				   info.setSucess(true);
+				   info.setMsg("删除对象成功!");
+			   }
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deletePseudoAllObjectByIds(String userInfo, String deleteJsonList)
+   {
+		// TODO Auto-generated method stub
+		 DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   if (StringUtils.isNotBlank(deleteJsonList)) {
+				   Map map=JacksonUtils.fromJson(deleteJsonList, HashMap.class);
+				   List<String> list=Arrays.asList(map.get("id").toString().split(","));
+				   int result= standardRoleService.deletePseudoAllObjectByIds(list);
+				   info.setResult(JacksonUtils.toJson(result));
+				   info.setSucess(true);
+				   info.setMsg("删除对象成功!");
+				}
+			} catch (Exception e) {
+			 log.error("删除对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+}

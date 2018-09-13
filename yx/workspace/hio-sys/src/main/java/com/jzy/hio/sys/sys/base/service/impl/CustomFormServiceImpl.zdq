@@ -1,0 +1,1792 @@
+package com.jzy.hio.sys.sys.base.service.impl;
+
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.sql.Timestamp;
+import java.text.Format;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.log4j.Logger;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataAccessException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.google.common.collect.Maps;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.base.utils.DateUtil;
+import com.jzy.hio.base.utils.DubboServiceResultInfo;
+import com.jzy.hio.base.utils.IDGenerator;
+import com.jzy.hio.base.utils.LoginUtils;
+import com.jzy.hio.base.utils.MessageInfo;
+import com.jzy.hio.base.utils.MessageResult;
+import com.jzy.hio.base.utils.Page;
+import com.jzy.hio.base.utils.ResponseModel;
+import com.jzy.hio.base.utils.SecurityUserDto;
+import com.jzy.hio.feign.FlowFeignService;
+import com.jzy.hio.sys.sys.base.dto.BusinessObjectDto;
+import com.jzy.hio.sys.sys.base.dto.BusinessObjectVariableDto;
+import com.jzy.hio.sys.sys.base.dto.CustomFormDto;
+import com.jzy.hio.sys.sys.base.dto.CustomFormMobileConvert;
+import com.jzy.hio.sys.sys.base.dto.GeneralPaymentDTO;
+import com.jzy.hio.sys.sys.base.entity.CustomForm;
+import com.jzy.hio.sys.sys.base.entity.CustomFormGroup;
+import com.jzy.hio.sys.sys.base.entity.CustomFormInstance;
+import com.jzy.hio.sys.sys.base.entity.CustomFormVersionHistory;
+import com.jzy.hio.sys.sys.base.mapper.CustomFormDao;
+import com.jzy.hio.sys.sys.base.mapper.CustomFormGroupDao;
+import com.jzy.hio.sys.sys.base.mapper.CustomFormInstanceDao;
+import com.jzy.hio.sys.sys.base.mapper.CustomFormVersionHistoryDao;
+import com.jzy.hio.sys.sys.base.service.CustomFormGroupService;
+import com.jzy.hio.sys.sys.base.service.CustomFormInstanceService;
+import com.jzy.hio.sys.sys.base.service.CustomFormService;
+import com.jzy.hio.sys.sys.num.service.RulerSubService;
+import com.jzy.hio.sys.sys.org.dto.OrgnazationDto;
+import com.jzy.hio.sys.sys.org.service.OrgnazationService;
+import com.jzy.hio.sys.sys.res.dto.OperationDto;
+import com.jzy.hio.sys.sys.res.dto.ResourceDto;
+import com.jzy.hio.sys.sys.res.entity.AppSystem;
+import com.jzy.hio.sys.sys.res.entity.Operation;
+import com.jzy.hio.sys.sys.res.entity.Resource;
+import com.jzy.hio.sys.sys.res.service.AppSystemService;
+import com.jzy.hio.sys.sys.res.service.DataItemService;
+import com.jzy.hio.sys.sys.res.service.OperationService;
+import com.jzy.hio.sys.sys.res.service.ResourceService;
+import com.jzy.hio.sys.utils.DateUtils;
+import com.jzy.tools.data.JacksonUtils;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+@RestController
+@RequestMapping("sys/customFormServiceImpl")
+@Service
+public class CustomFormServiceImpl extends BaseServiceImpl<String, CustomForm> implements CustomFormService {
+
+	@Autowired
+	private CustomFormDao				customFormDao;
+
+	@Autowired
+	private CustomFormVersionHistoryDao	customFormVersionHistoryDao;
+
+	@Autowired
+	private CustomFormGroupDao			customFormGroupDao;
+
+	@Autowired
+	private CustomFormInstanceDao		customFormInstanceDao;
+
+	@Autowired
+	private CustomFormGroupService		customFormGroupService;
+
+	// @Autowired // TODO flow模块 接口待抽---
+	// private BusinessObjectDtoServiceCustomer businessObjectDtoServiceCustomer;
+	//
+	// @Autowired // TODO flow模块 接口待抽---
+	// private BusinessObjectVariableDtoServiceCustomer
+	// businessObjectVariableDtoServiceCustomer;
+
+	@Autowired
+	private FlowFeignService flowFeignService;
+	
+//	@Autowired
+//	private RestTemplate				restTemplate;
+	// EntryDtoServiceCustomer entryDtoServiceCustomer=(EntryDtoServiceCustomer)
+	// SpringContextUtils.getBeanByClass(EntryDtoServiceCustomer.class);
+
+	@Autowired
+	private DataItemService				dataItemService;
+
+	@Autowired
+	private AppSystemService			appSystemService;
+
+	@Autowired
+	private ResourceService				resourceService;
+
+	@Autowired
+	private OperationService			operationService;
+
+	@Autowired
+	private OrgnazationService			orgnazationService;
+
+	@Autowired
+	private CustomFormInstanceService	customFormInstanceService;
+
+	@Autowired
+	private RulerSubService				rulerSubService;
+
+	private static final String			UNIT		= "万仟佰拾亿仟佰拾万仟佰拾元角分";
+	private static final String			DIGIT		= "零壹贰叁肆伍陆柒捌玖";
+	private static final double			MAX_VALUE	= 9999999999999.99D;
+
+	private static Logger				log			= Logger.getLogger(CustomFormServiceImpl.class);
+
+	@Override
+	public Integer queryMaxSort(String parentId) {
+		return customFormDao.queryMaxSort(parentId);
+	}
+
+	@Override
+	public Integer validateIsExist(CustomForm customForm, String type) {
+		Integer count = 0;
+		if("code".equals(type)){
+			count = customFormDao.validateIsExistCode(customForm);
+		}else if("name".equals(type)){
+			count = customFormDao.validateIsExistName(customForm);
+		}
+		return count;
+	}
+
+	@Override
+	public MessageResult validateBeforeSave(CustomFormDto t) {
+		String saveJson = JacksonUtils.toJson(t);
+		CustomFormDto customFormDtoVal = this.validateIsExist(saveJson);
+		try {
+			if (customFormDtoVal.isCodeExist() || customFormDtoVal.isNameExist()) {
+				return ResponseModel.getResult(MessageInfo.GETSUCCESS, customFormDtoVal, "编码或名称重复！");
+			} else {
+				CustomForm customForm = JacksonUtils.fromJson(saveJson, CustomForm.class);
+				if (customForm != null && customForm.getDataItemControl() == 2) {
+					customForm.setDataItemId("CustomFormSearchAuthority");
+				}
+				String entryUrl = "/platform-app/sysManager/customFormInstance/customFormInstance_list.html?id="
+						+ customForm.getId();
+				Integer maxSort = queryMaxSort(customForm.getParentId());
+				customForm.setSort(maxSort == null ? 1L : Long.valueOf(maxSort + 1));
+				// customForm.setFlowPathName(entryUrl);
+				if (customForm.getIsInner() == 2) {
+					customForm.setUrl(entryUrl);
+				}
+				if (1 != customForm.getIsInner()) {
+					customForm.setResourceId(IDGenerator.getUUID());
+				}
+				customForm.setDelflag(false);
+				customFormDao.insert(customForm);
+
+				// 自定义表单，外部连接推送菜单
+				if (1 != customForm.getIsInner()) {
+					this.registerMenu(customForm);
+				}
+				// String entryJson;
+				// try {
+				// EntryDto entryDto=new EntryDto();
+				// entryDto.setId(customForm.getId());
+				// entryDto.setCode(customForm.getCode());
+				// entryDto.setName(customForm.getName());
+				// entryDto.setStatus(1);
+				// entryDto.setDelflag(false);
+				// entryDto.setIsInner(0);
+				// entryDto.setParentId(customForm.getParentId());
+				// entryDto.setUrl(entryUrl);
+				// entryJson = JacksonUtils.toJson(entryDto);
+				//
+				// entryDtoServiceCustomer.saveEntryAndAuthor(userInfo,entryJson);
+				// } catch (Exception e) {
+				// }
+
+				BeanUtils.copyProperties(customForm, customFormDtoVal);
+				return ResponseModel.getResult(MessageInfo.SAVESUCCESS, customFormDtoVal, "保存成功！");
+			}
+		} catch (DataAccessException e) {
+			log.error(e);
+			return ResponseModel.getResult(MessageInfo.SAVEERROR, "保存失败！");
+		}
+	}
+
+	/**
+	 * @Description:推送菜单
+	 * @author:zhangfangzhi
+	 * @date 2017年7月12日 下午3:05:51
+	 * @version V1.0
+	 */
+	private int registerMenu(CustomForm customForm) {
+		int resultNum = 0;
+		try {
+			ResourceDto oldResourceDto = null;
+			Map map = Maps.newHashMap();
+			map.put("delflag", false);
+			map.put("id", customForm.getResourceId());
+			List<ResourceDto> list = resourceService.queryListByCondition(map);
+			if (list != null && !list.isEmpty()) {
+				oldResourceDto = list.get(0);
+			}
+			Map<String, Object> resourceMap = new HashMap<String, Object>();
+			resourceMap.put("id", customForm.getResourceId());// 编码
+			resourceMap.put("code", customForm.getCode() + "_MENU");// 菜单编码
+			resourceMap.put("name", customForm.getName());// 菜单名称
+			resourceMap.put("url", customForm.getUrl());// 菜单url
+			resourceMap.put("appId", "9d6cba61c4b24a5699c339a49471a0e7");// 应用Id
+			CustomFormGroup customFormGroupParent = customFormGroupDao.selectByPrimaryKey(customForm.getParentId());
+			resourceMap.put("parentId", customFormGroupParent.getResourceId());// 上级菜单ID
+			resourceMap.put("status", 1);// 状态
+			resourceMap.put("sort", customForm.getSort());// 排序
+			resourceMap.put("openmode", 0);// 打开方式
+			resourceMap.put("remark", "");// 说明
+			resourceMap.put("isoutmenu", 0);// 是否外部链接
+			if (oldResourceDto != null) {
+				Map<String, Object> oldMenuMap = JacksonUtils.fromJson(JacksonUtils.toJson(oldResourceDto),
+						HashMap.class);
+				oldMenuMap.putAll(resourceMap);
+				Resource resource = JacksonUtils.fromJson(JacksonUtils.toJson(oldMenuMap), Resource.class);
+				resultNum = resourceService.updateBean(resource);
+			} else {
+				Resource resource = JacksonUtils.fromJson(JacksonUtils.toJson(resourceMap), Resource.class);
+				resultNum = resourceService.saveBean(resource);
+			}
+		} catch (Exception e) {
+			log.error(e);
+		}
+		// 为新注册的菜单注册一个查询按钮
+		Map<String, Object> operationMap = new HashMap<String, Object>();
+		operationMap.put("name", "查询");
+		operationMap.put("code", customForm.getCode() + "_QUERY");
+		operationMap.put("appId", "9d6cba61c4b24a5699c339a49471a0e7");
+		operationMap.put("resourceId", customForm.getResourceId());
+		operationMap.put("type", "1");
+		registOperation(operationMap);
+		if (resultNum == 0) {
+			throw new RuntimeException("菜单注册失败！");
+		}
+		return resultNum;
+	}
+
+	/**
+	 * 向系统中动态注册操作按钮
+	 * 
+	 * @param operationMap
+	 * @return
+	 * @throws Exception
+	 */
+	private int registOperation(Map<String, Object> operationMap) {
+		OperationDto operationDto = null;
+		int registerOperationResult = 0;
+		try {
+			List<OperationDto> list = operationService.queryListByCondition(operationMap);
+			if (list != null && !list.isEmpty()) {
+				operationDto = list.get(0);
+			}
+			if (operationDto != null) {
+				Map oldoperationResultMap = JacksonUtils.fromJson(JacksonUtils.toJson(operationDto), HashMap.class);
+				oldoperationResultMap.putAll(operationMap);
+				Operation operation = JacksonUtils.fromJson(JacksonUtils.toJson(oldoperationResultMap),
+						Operation.class);
+				registerOperationResult = operationService.updateBean(operation);
+			} else {
+				operationMap.put("id", IDGenerator.getUUID());
+				Operation operation = JacksonUtils.fromJson(JacksonUtils.toJson(operationMap), Operation.class);
+				registerOperationResult = operationService.saveBean(operation);
+			}
+		} catch (Exception e) {
+			log.error(e);
+		}
+
+		if (registerOperationResult == 0) {
+			throw new RuntimeException("按钮注册失败！");
+		}
+		return registerOperationResult;
+	}
+
+	private CustomFormDto validateIsExist(String saveJson) {
+		CustomForm customForm = JacksonUtils.fromJson(saveJson, CustomForm.class);
+		Integer isExistCode = customFormDao.validateIsExistCode(customForm);
+		Integer isExistName = customFormDao.validateIsExistName(customForm);
+		CustomFormDto customFormDto = new CustomFormDto();
+		if (isExistCode != null && isExistCode > 0) {
+			customFormDto.setCodeExist(true);
+		}
+		if (isExistName != null && isExistName > 0) {
+			customFormDto.setNameExist(true);
+		}
+		return customFormDto;
+	}
+
+	@Override
+	public MessageResult validateBeforeUpdate(String id, Map map) {
+		CustomForm oldCustomForm = this.customFormDao.selectByPrimaryKey(id);
+		if (oldCustomForm == null) {
+			return ResponseModel.getResult(MessageInfo.UPDATEERROR, "不存在更新的对象！");
+		}
+		Map oldMap = JacksonUtils.fromJson(JacksonUtils.toJson(oldCustomForm), Map.class);
+		oldMap.putAll(map);
+		String updateJson = JacksonUtils.toJson(oldMap);
+		CustomFormDto customFormDtoVal = this.validateIsExist(updateJson);
+		try {
+			if (customFormDtoVal.isCodeExist() || customFormDtoVal.isNameExist()) {
+				return ResponseModel.getResult(MessageInfo.UPDATESUCCESS, customFormDtoVal, "编码或名称重复！");
+			} else {
+				CustomForm customForm = JacksonUtils.fromJson(updateJson, CustomForm.class);
+//				if (customForm.getIsInner() == 0 || customForm.getIsInner() == 2) {
+//					// 外部资源,自定义表单需要清空资源
+//					customForm.setResourceId(null);
+//					customForm.setResourceName(null);
+//				}
+				String entryUrl = "/platform-app/sysManager/customFormInstance/customFormInstance_list.html?id="
+						+ customForm.getId();
+				if (customForm.getIsInner() == 2) {
+					customForm.setUrl(entryUrl);
+				}
+				int result = customFormDao.updateByPrimaryKey(customForm);
+
+				// Map<String,Object> map=new HashMap<String,Object>();
+				// map.put("name", customForm.getName());
+				// map.put("code", customForm.getCode());
+				// map.put("parentId", customForm.getParentId());
+				// String dubboResultInfo=entryDtoServiceCustomer.getObjectById(userInfo,
+				// "{\"id\":\""+customForm.getId()+"\"}");
+				// DubboServiceResultInfo dubboServiceResultInfo=
+				// JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+				// if(dubboServiceResultInfo.isSucess()){
+				// String resultInfo= dubboServiceResultInfo.getResult();
+				// Map<String,Object> oldMap=JacksonUtils.fromJson(resultInfo, HashMap.class);
+				// oldMap.putAll(map);
+				// String updateJsonEntry= JacksonUtils.toJson(oldMap);
+				// entryDtoServiceCustomer.saveEntryAndAuthor(userInfo,updateJsonEntry);
+				// }
+
+				// 自定义表单，外部连接推送菜单
+				if (1 != customForm.getIsInner()) {
+					this.registerMenu(customForm);
+				}
+				BeanUtils.copyProperties(customForm, customFormDtoVal);
+				return ResponseModel.getResult(MessageInfo.UPDATESUCCESS, customFormDtoVal, "更新对象成功!");
+			}
+		} catch (Exception e) {
+			// e.printStackTrace();
+			log.error(e);
+			return ResponseModel.getResult(MessageInfo.UPDATEERROR, "保存失败!");
+		}
+	}
+
+	@Override
+	public String getTemplateTree(String userInfo, String paramaterJson) {
+		// String result=flDtoServiceCustomer.queryList(userInfo, paramaterJson);
+		// DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(result,
+		// DubboServiceResultInfo.class);
+		// if(dubboServiceResultInfo.isSucess()){
+		// String resultInfo= dubboServiceResultInfo.getResult();
+		// List<FlDto> list=JacksonUtils.fromJson(resultInfo,
+		// ArrayList.class,FlDto.class);
+		//
+		//
+		// }
+		return "";
+	}
+
+	@Override
+	public Page getPageSort(Map map) {
+		// 分页显示
+		Page page = new Page();
+		// 获取分页list 数据
+		List<Map<String, Object>> list = customFormDao.getPageSort(map);
+		// 获取条件的总数据量
+		Integer count = customFormDao.getPageSortCount(map);
+		page.setLimit((Integer) map.get("limit"));
+		page.setList(list);
+		page.setStart((Integer) map.get("start"));
+		page.setTotal(count);
+		// 封装成page对象 传到前台
+		return page;
+	}
+
+	@Override
+	public int deleteCustomFormById(String id) {
+		int result = 0;
+		// result=customFormDao.deletePseudoObjectById(id);
+		try {
+			result = this.deleteButtonAndResourceById(id);
+
+			// TODO flow模块 接口待抽---
+			// businessObjectDtoServiceCustomer.deletePseudoObjectById(userInfo,
+			// "{\"id\":\"" + id + "\"}");
+			flowFeignService.deletePseudoObjectById(id);
+		} catch (Exception e) {
+			log.error("删除对象失败!" + e.getMessage());
+		}
+		return result;
+	}
+
+	/**
+	 * @Description:删除按钮、菜单、表单
+	 * @author:zhangfangzhi
+	 * @date 2017年7月12日 下午4:55:10
+	 * @version V1.0
+	 * @throws Exception
+	 */
+	private int deleteButtonAndResourceById(String id) throws Exception {
+		CustomForm customForm = customFormDao.selectByPrimaryKey(id);
+		if (1 != customForm.getIsInner()) {// 为外部链接
+			// 先删除注册的按钮，如果按钮删除不成功则此数据无法删除
+			Map<String, Object> pMap = new HashMap<String, Object>();
+			pMap.put("resourceId", customForm.getResourceId());
+			List<OperationDto> list = operationService.queryListByCondition(pMap);
+			/*
+			 * String operationResult = operationDtoServiceCustomer.queryList(userInfo,
+			 * JacksonUtils.toJson(pMap)); Map<String, Object> operationResultMap =
+			 * JacksonUtils.fromJson(operationResult, HashMap.class);
+			 * 
+			 * String oldoperationStr = (String) operationResultMap.get("result");
+			 * List<Map<String, Object>> list = JacksonUtils.fromJson(oldoperationStr,
+			 * ArrayList.class, HashMap.class)
+			 */;
+			// Map<String, Object> oldoperationResultMap = null;//
+			OperationDto operationDto = null;
+			/*
+			 * if (list != null && list.size() > 0) { oldoperationResultMap = list.get(0); }
+			 */
+
+			/*
+			 * String delOperationResult = null; if (oldoperationResultMap != null) {
+			 * delOperationResult =
+			 * operationDtoServiceCustomer.deletePseudoObjectById(userInfo, "{\"id\":\"" +
+			 * oldoperationResultMap.get("id") + "\"}"); }
+			 */
+
+			if (list != null && !list.isEmpty()) {
+				operationDto = list.get(0);
+			}
+			if (operationDto != null) {
+				MessageResult deleteResult = operationService.deletePseudoBeanById(operationDto.getId());
+				if (!deleteResult.isSuccess()) {
+					throw new Exception("按钮删除失败！");
+				}
+			}
+
+			/*
+			 * if (delOperationResult != null) { DubboServiceResultInfo
+			 * delOperationResultInfo = JacksonUtils.fromJson(delOperationResult,
+			 * DubboServiceResultInfo.class); if (!delOperationResultInfo.isSucess()) {
+			 * throw new Exception("按钮删除失败！"); } }
+			 */
+
+			// 再删除注册的菜单，如果菜单删除不成功则此数据无法删除
+			/*
+			 * String menuResult = resourceDtoServiceCustomer.getObjectById(userInfo,
+			 * "{\"id\":\"" + customForm.getResourceId() + "\"}"); DubboServiceResultInfo
+			 * menuResultInfo = JacksonUtils.fromJson(menuResult,
+			 * DubboServiceResultInfo.class); if (!menuResultInfo.isSucess()) { throw new
+			 * Exception("数据删除失败！"); }
+			 */
+
+			Resource resource = resourceService.getObjectById(customForm.getResourceId());
+			if (resource == null) {
+				throw new Exception("数据删除失败！");
+			}
+			MessageResult delResult = resourceService.deletePseudoBeanById(customForm.getResourceId());
+			if (!delResult.isSuccess()) {
+				throw new Exception("菜单删除失败！下级菜单被引用，不可删除！");
+			}
+			/*
+			 * String menuObj = menuResultInfo.getResult(); Map<String, Object> menuMap =
+			 * JacksonUtils.fromJson(menuObj, HashMap.class); String delMenuResult = null;
+			 * if (menuMap != null) { delMenuResult =
+			 * resourceDtoServiceCustomer.deletePseudoObjectById(userInfo, "{\"id\":\"" +
+			 * customForm.getResourceId() + "\"}"); } if (delMenuResult != null) {
+			 * DubboServiceResultInfo delMenuResultInfo =
+			 * JacksonUtils.fromJson(delMenuResult, DubboServiceResultInfo.class); if
+			 * (!delMenuResultInfo.isSucess()) { throw new Exception("菜单删除失败！"); } }
+			 */
+		}
+		return this.deletePseudoObjectById(id);
+	}
+
+	@Override
+	public MessageResult validateBeforeCopy(CustomFormDto t) {
+		String copyJson = JacksonUtils.toJson(t);
+		CustomFormDto customFormDtoVal = this.validateIsExist(copyJson);
+		try {
+			if (customFormDtoVal.isCodeExist() || customFormDtoVal.isNameExist()) {
+				return ResponseModel.getResult(MessageInfo.SAVESUCCESS, customFormDtoVal, "编码或名称重复！");
+			} else {
+				// 复制模板
+				CustomForm customFormSource = JacksonUtils.fromJson(copyJson, CustomForm.class);
+				CustomForm customFormTarget = new CustomForm();
+				BeanUtils.copyProperties(customFormSource, customFormTarget);
+				customFormTarget.setId(IDGenerator.getUUID());
+				customFormTarget.setCopySourceId(customFormSource.getCopySourceId());
+				customFormTarget.setCode(customFormSource.getCode());
+				customFormTarget.setName(customFormSource.getName());
+				customFormTarget.setStatus(customFormSource.getStatus());
+				customFormTarget.setIsInner(customFormSource.getIsInner());
+				String entryUrl = "/platform-app/sysManager/customFormInstance/customFormInstance_list.html?id="
+						+ customFormTarget.getId();
+				Integer maxSort = queryMaxSort(customFormSource.getParentId());
+				customFormTarget.setSort(maxSort == null ? 1L : Long.valueOf(maxSort + 1));
+				// customFormTarget.setFlowPathName(entryUrl);
+				customFormTarget.setUrl(entryUrl);
+				customFormTarget.setDelflag(false);
+				customFormTarget.setParentId(customFormSource.getParentId());
+				customFormTarget.setParentName(customFormSource.getParentName());
+				customFormSource = customFormDao.selectByPrimaryKey(customFormSource.getCopySourceId());
+				customFormTarget.setFormFormatJson(customFormSource.getFormFormatJson());
+				customFormTarget.setFormFormatHtml(customFormSource.getFormFormatHtml());
+				customFormTarget.setFormShowColumn(customFormSource.getFormShowColumn());
+				customFormTarget.setFormSearchKey(customFormSource.getFormSearchKey());
+				customFormTarget.setFormSearchSeniorKey(customFormSource.getFormSearchSeniorKey());
+				customFormTarget.setFlowVariable(customFormSource.getFlowVariable());
+				customFormTarget.setIsComplete("0");
+				customFormTarget.setResourceId(IDGenerator.getUUID());
+				customFormTarget.setDataItemId(customFormSource.getDataItemId());
+				customFormTarget.setDataItemControl(customFormSource.getDataItemControl());
+				customFormDao.insert(customFormTarget);
+
+				// 自定义表单推送菜单
+				this.registerMenu(customFormTarget);
+
+				// 快速入口推送
+				// String entryJson;
+				// try {
+				// EntryDto entryDto=new EntryDto();
+				// entryDto.setId(customFormTarget.getId());
+				// entryDto.setCode(customFormTarget.getCode());
+				// entryDto.setName(customFormTarget.getName());
+				// entryDto.setStatus(1);
+				// entryDto.setDelflag(false);
+				// entryDto.setIsInner(0);
+				// entryDto.setParentId(customFormTarget.getParentId());
+				// entryDto.setUrl(entryUrl);
+				// entryJson = JacksonUtils.toJson(entryDto);
+				//
+				// entryDtoServiceCustomer.saveEntryAndAuthor(userInfo, entryJson);
+				// } catch (Exception e) {
+				// }
+
+				BeanUtils.copyProperties(customFormSource, customFormDtoVal);
+				return ResponseModel.getResult(MessageInfo.SAVESUCCESS, customFormDtoVal, "保存数据成功!");
+			}
+		} catch (Exception e) {
+			// e.printStackTrace();
+			log.error(e);
+			return ResponseModel.getResult(MessageInfo.SAVEERROR, "保存数据失败!");
+		}
+	}
+
+	@Override
+	public MessageResult getTemplateById(String id, String cfVid) {
+		CustomFormDto customFormDto = new CustomFormDto();
+		try {
+			String customFormId = id;
+			String customFormVersionId = cfVid;
+			if (id != null && customFormId != null) {
+
+				CustomForm result = customFormDao.selectByPrimaryKey(customFormId);
+				if (customFormVersionId != null && !"customFormRelease".equals(customFormVersionId)) {
+					CustomFormVersionHistory customFormVersionHistory = customFormVersionHistoryDao
+							.selectByPrimaryKey(customFormVersionId);
+					BeanUtils.copyProperties(customFormVersionHistory, result);
+				}
+
+				CustomFormGroup customFormGroup = customFormGroupDao.selectByPrimaryKey(result.getParentId());
+
+				String pCode = this.getCustomFormGroup(customFormGroup, "code");
+				String pName = this.getCustomFormGroup(customFormGroup, "name");
+				BeanUtils.copyProperties(result, customFormDto);
+				Integer flag = customFormDao.isHasInstance(result.getId());
+				if (flag != null && flag > 0) {
+					customFormDto.setHasInstance(false);
+				} else {
+					customFormDto.setHasInstance(false);
+				}
+				customFormDto.setParentCode(pCode);
+				customFormDto.setParentName(pName);
+				return ResponseModel.getResult(MessageInfo.CREATESUCCESS, customFormDto);
+			} else {
+				return ResponseModel.getResult(MessageInfo.GETERROR, "缺少必要参数!");
+			}
+		} catch (Exception e) {
+			log.error(e);
+			return ResponseModel.getResult(MessageInfo.GETERROR, "查询数据失败!");
+		}
+	}
+
+	private String getCustomFormGroup(CustomFormGroup customFormGroup, String type) {
+		String result = "@@";
+		if (customFormGroup != null) {
+			CustomFormGroup customFormGroupParent = customFormGroupDao
+					.selectByPrimaryKey(customFormGroup.getParentId());
+			if ("code".equals(type)) {
+				if (customFormGroupParent != null) {
+					return customFormGroupParent.getCode() + "@@" + customFormGroup.getCode();
+				} else {
+					return "@@" + customFormGroup.getCode();
+				}
+			} else if ("name".equals(type)) {
+				if (customFormGroupParent != null) {
+					return customFormGroupParent.getName() + "@@" + customFormGroup.getName();
+				} else {
+					return "@@" + customFormGroup.getName();
+				}
+			}
+		} else {
+			return result;
+		}
+		return result;
+	}
+
+	@Override
+	public Integer isHasInstanceByFormId(String customFormId) {
+		return customFormDao.isHasInstance(customFormId);
+	}
+
+	@Override
+	@Transactional(readOnly = false, rollbackFor = Exception.class)
+	public MessageResult saveGenerateData(String saveJson) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+			Map<String, Object> idMaps = this.getIdMaps();
+			CustomForm customForm = JacksonUtils.fromJson(saveJson, CustomForm.class);
+			CustomForm customFormPre = customFormDao.selectByPrimaryKey(customForm.getId());
+			List<BusinessObjectVariableDto> varList = this.getVariableList(customFormPre.getId());
+			if (customForm.getName() != null && !"".equals(customForm.getName())) {
+				String[] rowStrs = customForm.getName().split(";");
+				for (int i = 0; i < rowStrs.length; i++) {
+
+					String[] customFormStrs = rowStrs[i].split(",");
+					if (idMaps == null || idMaps.get(customFormStrs[0]) == null) {
+						continue;
+					}
+					CustomFormGroup customFormGroup = (CustomFormGroup) idMaps.get(customFormStrs[0]);
+					CustomForm customFormNew = new CustomForm();
+
+					BeanUtils.copyProperties(customFormPre, customFormNew);
+
+					customFormNew.setId(IDGenerator.getUUID());
+					customFormNew.setCode(customFormStrs[2]);
+					customFormNew.setName(customFormStrs[1]);
+					customFormNew.setParentId(customFormGroup.getId());
+					customFormNew.setParentName(customFormGroup.getName());
+					String entryUrl = "/platform-app/sysManager/customFormInstance/customFormInstance_list.html?id="
+							+ customFormNew.getId();
+					// customFormNew.setFlowPathName(entryUrl);
+					customFormNew.setUrl(entryUrl);
+					customFormNew.setDelflag(false);
+					customFormNew.setCreateCompanyName("FundCustomFormGenerateData");
+					if (customFormStrs.length > 3) {
+						customFormNew.setCreateCompanyId(customFormStrs[3]);
+					}
+					customFormNew.setCopySourceId(customFormPre.getId());
+					customFormNew.setSort(10000L + i);
+					// customFormNew.setIsComplete("0");
+					customFormNew.setResourceId(IDGenerator.getUUID());
+					customFormDao.insert(customFormNew);
+
+					// 生成业务对象
+					BusinessObjectDto businessObjectDto = this.generateBusinessObject(customFormNew, varList);
+					// TODO flow模块 接口待抽---
+//					 businessObjectDtoServiceCustomer.saveObjectAndVariableData(userInfo,
+//					 JacksonUtils.toJson(businessObjectDto));
+					 flowFeignService.saveBusinessObjectVariable(JacksonUtils.toJson(businessObjectDto));
+					// 注册菜单
+					this.registerMenu(customFormNew);
+
+					// 资金数据迁移处理
+					if (customFormStrs.length > 3) {
+						toDealFund(customFormStrs[3], customFormNew, customForm.getCode());
+					}
+				}
+				info.setSucess(true);
+				info.setMsg("保存成功！");
+			}
+			return null;
+		} catch (Exception e) {
+			log.error(e);
+			return ResponseModel.getResult(MessageInfo.SAVEERROR, "数据保存失败！");
+		}
+	}
+
+	// @Override
+	// public String saveGenerateData(String userInfo, String saveJson) {
+	// DubboServiceResultInfo info=new DubboServiceResultInfo();
+	// try {
+	// CustomForm customForm=JacksonUtils.fromJson(saveJson, CustomForm.class);
+	// CustomForm customFormPre=customFormDao.getObjectById(customForm.getId());
+	// List<BusinessObjectVariableDto> varList=this.getVariableList(userInfo,
+	// customFormPre.getId());
+	//
+	// Map<String,Object> paramMap = new HashMap<String,Object>();
+	// paramMap.put("delflag", false);
+	// List<CustomForm> list=customFormDao.queryList(paramMap);
+	//
+	// if(list!=null && list.size()>0){
+	// for(int i=0;i<list.size();i++){
+	// CustomForm customFormDb=list.get(i);
+	// //生成业务对象
+	// BusinessObjectDto
+	// businessObjectDto=this.generateBusinessObject(customFormDb,varList);
+	// businessObjectDtoServiceCustomer.saveObjectAndVariableData(userInfo,
+	// JacksonUtils.toJson(businessObjectDto));
+	// }
+	// }
+	// } catch (DataAccessException e) {
+	// //e.printStackTrace();
+	// info.setSucess(false);
+	// info.setMsg("保存失败!");
+	// info.setExceptionMsg(e.getMessage());
+	// }
+	// return JacksonUtils.toJson(info);
+	// }
+
+	private void toDealFund(String fkbdId, CustomForm customFormNew, String instanceId) throws Exception {
+		CustomFormInstance customFormInstanceTemplate = customFormInstanceDao.selectByPrimaryKey(instanceId);
+		Map<String, Object> paramMap = new HashMap<String, Object>();
+		paramMap.put("fkbdId", fkbdId);
+		List<GeneralPaymentDTO> generalPaymentDTOList = customFormDao.queryGeneralPaymentByFkbdId(paramMap);
+		if (generalPaymentDTOList != null && generalPaymentDTOList.size() > 0) {
+			List<CustomFormInstance> customFormInstanceList = new ArrayList<CustomFormInstance>();
+			for (int s = 0; s < generalPaymentDTOList.size(); s++) {
+				GeneralPaymentDTO generalPaymentDTO = generalPaymentDTOList.get(s);
+				CustomFormInstance customFormInstance = new CustomFormInstance();
+				customFormInstance.setId(generalPaymentDTO.getId());
+				customFormInstance.setConcurrencyVersion(0);
+				customFormInstance.setCreateDate(
+						new Timestamp(DateUtil.parse(generalPaymentDTO.getDappludate(), "yyyy-MM-dd").getTime()));
+				customFormInstance.setCreatePersonName(generalPaymentDTO.getVapplicant());
+				customFormInstance.setCustomFormId(customFormNew.getId());
+				customFormInstance.setDelflag(false);
+				customFormInstance.setFormFlowVariableValue(dealFlowVariable(generalPaymentDTO));
+				customFormInstance.setFormMobileValueJson(dealMobileData(generalPaymentDTO, customFormNew));
+				customFormInstance.setFormSearchKey(dealSearchData(generalPaymentDTO));
+				customFormInstance.setFormSearchSeniorValue(dealSearchData(generalPaymentDTO));
+				customFormInstance.setFormValueJson(
+						dealFormValueJson(generalPaymentDTO, customFormInstanceTemplate, customFormNew));
+				customFormInstance.setInstanceId(generalPaymentDTO.getInstanceId());
+				customFormInstance.setOperateCompanyId(generalPaymentDTO.getCorpid());
+				customFormInstance.setOperateCompanyName(generalPaymentDTO.getCorpname());
+				customFormInstance.setOperateDepartmentId(generalPaymentDTO.getVapplydepartid().toString());
+				customFormInstance.setOperateDepartmentName(generalPaymentDTO.getVapplydepart().toString());
+				customFormInstance.setOperateQiId(generalPaymentDTO.getProjectid());
+				customFormInstance.setOperateQiName(generalPaymentDTO.getVprojectname());
+				OrgnazationDto orgnazationDto = null;
+				Map<String, Object> map = new HashMap<String, Object>();
+				map.put("id", generalPaymentDTO.getProjectid());
+				orgnazationDto = orgnazationService.getOrgById(map);
+				if (orgnazationDto != null) {
+					customFormInstance.setOperateProjectId(orgnazationDto.getId());
+					customFormInstance.setOperateProjectName(orgnazationDto.getName());
+				}
+				customFormInstance.setPayformid(generalPaymentDTO.getPayformid());
+				customFormInstance.setStatus(generalPaymentDTO.getVapprovestatus());
+				// customFormInstance.setTendId(tendId);
+				customFormInstanceList.add(customFormInstance);
+			}
+			customFormInstanceService.saveBatch(customFormInstanceList);
+		}
+	}
+
+	/**
+	 * @Description:查询数据处理
+	 * @author:zhangfangzhi
+	 * @date 2017年12月4日 上午10:25:51
+	 * @version V1.0
+	 * @param generalPaymentDTO
+	 */
+	private String dealSearchData(GeneralPaymentDTO generalPaymentDTO) {
+		String vtheme = "cmp_fundPayment_theme_v1:" + generalPaymentDTO.getVtheme() + ":cmp_fundPayment_theme_v1";
+		String operateDate = "cmp_fundPayment_operateDate_v1:" + generalPaymentDTO.getDappludate()
+				+ ":cmp_fundPayment_operateDate_v1";
+		String importDate = "cmp_fundPayment_importDate_v1:" + generalPaymentDTO.getDimportdate()
+				+ ":cmp_fundPayment_importDate_v1";
+		String payDate = "cmp_fundPayment_payDate_v1:" + generalPaymentDTO.getDpaydate()
+				+ ":cmp_fundPayment_payDate_v1";
+		return vtheme + "," + operateDate + "," + importDate + "," + payDate;
+	}
+
+	/**
+	 * @Description:手机端数据处理
+	 * @author:zhangfangzhi
+	 * @date 2017年12月4日 上午10:23:35
+	 * @version V1.0
+	 * @param generalPaymentDTO
+	 * @param customFormNew
+	 */
+	private String dealMobileData(GeneralPaymentDTO generalPaymentDTO, CustomForm customFormNew) {
+		List<CustomFormMobileConvert> customFormMobileConvertList = new ArrayList<CustomFormMobileConvert>();
+		CustomFormMobileConvert customFormMobileConvert = new CustomFormMobileConvert();
+		customFormMobileConvert.setName("主题");
+		customFormMobileConvert.setType("TextInput");
+		customFormMobileConvert.setValue(generalPaymentDTO.getVtheme() == null ? "" : generalPaymentDTO.getVtheme());
+		customFormMobileConvertList.add(customFormMobileConvert);
+
+		customFormMobileConvert = new CustomFormMobileConvert();
+		customFormMobileConvert.setName("单据编号");
+		customFormMobileConvert.setType("FormNumber");
+		customFormMobileConvert
+				.setValue(generalPaymentDTO.getVapplynum() == null ? "" : generalPaymentDTO.getVapplynum());
+		customFormMobileConvertList.add(customFormMobileConvert);
+
+		customFormMobileConvert = new CustomFormMobileConvert();
+		customFormMobileConvert.setName("业务类型");
+		customFormMobileConvert.setType("TextInput");
+		customFormMobileConvert.setValue(getBusinessTypeName(customFormNew.getBusinessType()));
+		customFormMobileConvertList.add(customFormMobileConvert);
+
+		customFormMobileConvert = new CustomFormMobileConvert();
+		customFormMobileConvert.setName("经办人");
+		customFormMobileConvert.setType("Operator");
+		customFormMobileConvert
+				.setValue(generalPaymentDTO.getVapplicant() == null ? "" : generalPaymentDTO.getVapplicant());
+		customFormMobileConvertList.add(customFormMobileConvert);
+
+		customFormMobileConvert = new CustomFormMobileConvert();
+		customFormMobileConvert.setName("经办日期");
+		customFormMobileConvert.setType("DateInput");
+		customFormMobileConvert
+				.setValue(generalPaymentDTO.getDappludate() == null ? "" : generalPaymentDTO.getDappludate());
+		customFormMobileConvertList.add(customFormMobileConvert);
+
+		customFormMobileConvert = new CustomFormMobileConvert();
+		customFormMobileConvert.setName("经办部门");
+		customFormMobileConvert.setType("OperateDepartment");
+		customFormMobileConvert
+				.setValue(generalPaymentDTO.getVapplydepart() == null ? "" : generalPaymentDTO.getVapplydepart());
+		customFormMobileConvertList.add(customFormMobileConvert);
+
+		customFormMobileConvert = new CustomFormMobileConvert();
+		customFormMobileConvert.setName("经办公司");
+		customFormMobileConvert.setType("OperateCompany");
+		customFormMobileConvert
+				.setValue(generalPaymentDTO.getCorpname() == null ? "" : generalPaymentDTO.getCorpname());
+		customFormMobileConvertList.add(customFormMobileConvert);
+
+		customFormMobileConvert = new CustomFormMobileConvert();
+		customFormMobileConvert.setName("经办分期");
+		customFormMobileConvert.setType("OperateQi");
+		customFormMobileConvert
+				.setValue(generalPaymentDTO.getVprojectname() == null ? "" : generalPaymentDTO.getVprojectname());
+		customFormMobileConvertList.add(customFormMobileConvert);
+
+		customFormMobileConvert = new CustomFormMobileConvert();
+		customFormMobileConvert.setName("经办项目");
+		customFormMobileConvert.setType("OperateProject");
+		customFormMobileConvert.setValue("");
+		customFormMobileConvertList.add(customFormMobileConvert);
+
+		customFormMobileConvert = new CustomFormMobileConvert();
+		customFormMobileConvert.setName("付款单位");
+		customFormMobileConvert.setType("LegalPerson");
+		customFormMobileConvert
+				.setValue(generalPaymentDTO.getVpayunit() == null ? "" : generalPaymentDTO.getVpayunit());
+		customFormMobileConvertList.add(customFormMobileConvert);
+
+		customFormMobileConvert = new CustomFormMobileConvert();
+		customFormMobileConvert.setName("付款对象类型");
+		customFormMobileConvert.setType("SingleSelect");
+		customFormMobileConvert.setValue("1".equals(generalPaymentDTO.getVfkdxtype()) ? "公对公" : "公对私");
+		customFormMobileConvertList.add(customFormMobileConvert);
+
+		customFormMobileConvert = new CustomFormMobileConvert();
+		customFormMobileConvert.setName("收款银行");
+		customFormMobileConvert.setType("TextInput");
+		customFormMobileConvert.setValue(generalPaymentDTO.getVskbank() == null ? "" : generalPaymentDTO.getVskbank());
+		customFormMobileConvertList.add(customFormMobileConvert);
+
+		customFormMobileConvert = new CustomFormMobileConvert();
+		customFormMobileConvert.setName("收款单位");
+		customFormMobileConvert.setType("TextInput");
+		customFormMobileConvert.setValue(generalPaymentDTO.getVskunit() == null ? "" : generalPaymentDTO.getVskunit());
+		customFormMobileConvertList.add(customFormMobileConvert);
+
+		customFormMobileConvert = new CustomFormMobileConvert();
+		customFormMobileConvert.setName("收款账户名称");
+		customFormMobileConvert.setType("TextInput");
+		customFormMobileConvert.setValue(generalPaymentDTO.getVskunit() == null ? "" : generalPaymentDTO.getVskunit());
+		customFormMobileConvertList.add(customFormMobileConvert);
+
+		customFormMobileConvert = new CustomFormMobileConvert();
+		customFormMobileConvert.setName("收款银行账号");
+		customFormMobileConvert.setType("TextInput");
+		customFormMobileConvert
+				.setValue(generalPaymentDTO.getVskbanknum() == null ? "" : generalPaymentDTO.getVskbanknum());
+		customFormMobileConvertList.add(customFormMobileConvert);
+
+		customFormMobileConvert = new CustomFormMobileConvert();
+		customFormMobileConvert.setName("收款行所在省");
+		customFormMobileConvert.setType("TextInput");
+		customFormMobileConvert.setValue("");
+		customFormMobileConvertList.add(customFormMobileConvert);
+
+		customFormMobileConvert = new CustomFormMobileConvert();
+		customFormMobileConvert.setName("收款行所在市");
+		customFormMobileConvert.setType("TextInput");
+		customFormMobileConvert.setValue("");
+		customFormMobileConvertList.add(customFormMobileConvert);
+
+		customFormMobileConvert = new CustomFormMobileConvert();
+		customFormMobileConvert.setName("收款行机构号");
+		customFormMobileConvert.setType("TextInput");
+		customFormMobileConvert.setValue("");
+		customFormMobileConvertList.add(customFormMobileConvert);
+
+		customFormMobileConvert = new CustomFormMobileConvert();
+		customFormMobileConvert.setName("收款行联行号");
+		customFormMobileConvert.setType("TextInput");
+		customFormMobileConvert.setValue("");
+		customFormMobileConvertList.add(customFormMobileConvert);
+
+		customFormMobileConvert = new CustomFormMobileConvert();
+		customFormMobileConvert.setName("收款行CNAPS号");
+		customFormMobileConvert.setType("TextInput");
+		customFormMobileConvert.setValue("");
+		customFormMobileConvertList.add(customFormMobileConvert);
+
+		customFormMobileConvert = new CustomFormMobileConvert();
+		customFormMobileConvert.setName("支付方式");
+		customFormMobileConvert.setType("TextInput");
+		customFormMobileConvert
+				.setValue(generalPaymentDTO.getVpaymethod() == null ? "" : generalPaymentDTO.getVpaymethod());
+		customFormMobileConvertList.add(customFormMobileConvert);
+
+		customFormMobileConvert = new CustomFormMobileConvert();
+		customFormMobileConvert.setName("申请金额");
+		customFormMobileConvert.setType("TextInput");
+		customFormMobileConvert.setValue(
+				generalPaymentDTO.getNpaymentmny() == null ? "" : generalPaymentDTO.getNpaymentmny().toString());
+		customFormMobileConvertList.add(customFormMobileConvert);
+
+		customFormMobileConvert = new CustomFormMobileConvert();
+		customFormMobileConvert.setName("大写金额");
+		customFormMobileConvert.setType("TextInput");
+		customFormMobileConvert
+				.setValue(generalPaymentDTO.getNpaymentmny() == null ? "" : change(generalPaymentDTO.getNpaymentmny()));
+		customFormMobileConvertList.add(customFormMobileConvert);
+
+		customFormMobileConvert = new CustomFormMobileConvert();
+		customFormMobileConvert.setName("调拨类型");
+		customFormMobileConvert.setType("SingleSelect");
+		customFormMobileConvert.setValue(generalPaymentDTO.getVdbtype() == null ? "" : generalPaymentDTO.getVdbtype());
+		customFormMobileConvertList.add(customFormMobileConvert);
+
+		customFormMobileConvert = new CustomFormMobileConvert();
+		customFormMobileConvert.setName("业务部门");
+		customFormMobileConvert.setType("SingleSelect");
+		customFormMobileConvert.setValue(generalPaymentDTO.getVcwdept() == null ? "" : generalPaymentDTO.getVcwdept());
+		customFormMobileConvertList.add(customFormMobileConvert);
+
+		customFormMobileConvert = new CustomFormMobileConvert();
+		customFormMobileConvert.setName("说明");
+		customFormMobileConvert.setType("TextAreaForm");
+		if (generalPaymentDTO.getVpaymentmemo() != null) {
+			if (generalPaymentDTO.getVpaymentmemo().contains("\n")) {
+				customFormMobileConvert.setValue(generalPaymentDTO.getVpaymentmemo().replace("\n", "<br/>"));
+			} else {
+				customFormMobileConvert.setValue(generalPaymentDTO.getVpaymentmemo());
+			}
+		} else {
+			customFormMobileConvert.setValue("");
+		}
+		customFormMobileConvertList.add(customFormMobileConvert);
+
+		return JacksonUtils.toJson(customFormMobileConvertList);
+	}
+
+	/**
+	 * @Description:流程变量处理
+	 * @author:zhangfangzhi
+	 * @date 2017年12月4日 上午10:22:05
+	 * @version V1.0
+	 * @param gpDTO
+	 */
+	private String dealFlowVariable(GeneralPaymentDTO gpDTO) {
+		java.text.NumberFormat nf = java.text.NumberFormat.getInstance();
+		Map<String, Object> map = new HashMap<String, Object>();
+		// map.put("付款单位", gpDTO.getVpayunit());
+		// map.put("申请金额",nf.format(gpDTO.getNpaymentmny()==null?0.00d:gpDTO.getNpaymentmny()));
+		// map.put("主题", gpDTO.getVtheme());
+		// map.put("调拨类型", gpDTO.getVdbtype());
+		map.put("cmp_fundPayment_theme_v1", gpDTO.getVtheme());
+		map.put("cmp_fundPayment_napplymny_v1",
+				nf.format(gpDTO.getNpaymentmny() == null ? 0.00d : gpDTO.getNpaymentmny()));
+		map.put("cmp_fundPayment_allocationtype_v1", gpDTO.getVdbtype());
+		map.put("cmp_fundPayment_payorgname_v1", gpDTO.getVpayunit());
+		map.put("cmp_fundPayment_vcwdept_v1", gpDTO.getVcwdept());
+		return JacksonUtils.toJson(map);
+	}
+
+	public static String change(double v) {
+		if (v < 0 || v > MAX_VALUE) {
+			return "参数非法!";
+		}
+		long l = Math.round(v * 100);
+		if (l == 0) {
+			return "零元整";
+		}
+		String strValue = l + "";
+		// i用来控制数
+		int i = 0;
+		// j用来控制单位
+		int j = UNIT.length() - strValue.length();
+		String rs = "";
+		boolean isZero = false;
+		for (; i < strValue.length(); i++, j++) {
+			char ch = strValue.charAt(i);
+			if (ch == '0') {
+				isZero = true;
+				if (UNIT.charAt(j) == '亿' || UNIT.charAt(j) == '万' || UNIT.charAt(j) == '元') {
+					rs = rs + UNIT.charAt(j);
+					isZero = false;
+				}
+			} else {
+				if (isZero) {
+					rs = rs + "零";
+					isZero = false;
+				}
+				rs = rs + DIGIT.charAt(ch - '0') + UNIT.charAt(j);
+			}
+		}
+		if (!rs.endsWith("分")) {
+			rs = rs + "整";
+		}
+		rs = rs.replaceAll("亿万", "亿");
+		return rs;
+	}
+
+	/**
+	 * @Description:将字段值转换为JSON值
+	 * @author:zhangfangzhi
+	 * @date 2017年12月4日 上午10:01:53
+	 * @version V1.0
+	 */
+	private String dealFormValueJson(GeneralPaymentDTO generalPaymentDTO, CustomFormInstance customFormInstanceTemplate,
+			CustomForm customFormNew) {
+		Map<String, Map<String, Object>> resultFormJsonMap = JacksonUtils
+				.fromJson(customFormInstanceTemplate.getFormValueJson(), HashMap.class);
+		if (resultFormJsonMap != null && resultFormJsonMap.size() > 0) {
+			for (Map<String, Object> reMap : resultFormJsonMap.values()) {
+				String cmpName = (String) reMap.get("rewriteFlag");
+				String cmpNameOper = (String) reMap.get("cmpName");
+				reMap.put("cmpValue", "");
+				reMap.put("cmpValueShowName", "");
+				if ("vtheme".equals(cmpName)) {// 主题
+					reMap.put("cmpValue", generalPaymentDTO.getVtheme() == null ? "" : generalPaymentDTO.getVtheme());
+					reMap.put("cmpValueShowName",
+							generalPaymentDTO.getVtheme() == null ? "" : generalPaymentDTO.getVtheme());
+				} else if ("vbusinesscode".equals(cmpName)) {// 单据编号
+					reMap.put("cmpValue",
+							generalPaymentDTO.getVapplynum() == null ? "" : generalPaymentDTO.getVapplynum());
+					reMap.put("cmpValueShowName",
+							generalPaymentDTO.getVapplynum() == null ? "" : generalPaymentDTO.getVapplynum());
+				} else if ("vbusinesstype".equals(cmpName)) {// 业务类型
+					reMap.put("cmpValue", getBusinessTypeName(customFormNew.getBusinessType()));
+					reMap.put("cmpValueShowName", getBusinessTypeName(customFormNew.getBusinessType()));
+				} else if ("dapplydate".equals(cmpName)) {// 经办日期
+					reMap.put("cmpValue",
+							generalPaymentDTO.getDappludate() == null ? "" : generalPaymentDTO.getDappludate());
+					reMap.put("cmpValueShowName",
+							generalPaymentDTO.getDappludate() == null ? "" : generalPaymentDTO.getDappludate());
+				} else if ("payorgname".equals(cmpName)) {// 付款单位
+					reMap.put("cmpValue",
+							generalPaymentDTO.getVpayunitcode() == null ? "" : generalPaymentDTO.getVpayunitcode());
+					reMap.put("cmpValueShowName",
+							generalPaymentDTO.getVpayunit() == null ? "" : generalPaymentDTO.getVpayunit());
+				} else if ("bankpaytype".equals(cmpName)) {// 付款对象类型
+					reMap.put("cmpValue",
+							generalPaymentDTO.getVfkdxtype() == null ? "" : generalPaymentDTO.getVfkdxtype());
+					reMap.put("cmpValueShowName", "1".equals(generalPaymentDTO.getVfkdxtype()) ? "公对公" : "公对私");
+				} else if ("recbankname".equals(cmpName)) {// 收款银行
+					reMap.put("cmpValue", generalPaymentDTO.getVskbank() == null ? "" : generalPaymentDTO.getVskbank());
+					reMap.put("cmpValueShowName",
+							generalPaymentDTO.getVskbank() == null ? "" : generalPaymentDTO.getVskbank());
+				} else if ("recorgname".equals(cmpName)) {// 收款单位名称
+					reMap.put("cmpValue", generalPaymentDTO.getVskunit() == null ? "" : generalPaymentDTO.getVskunit());
+					reMap.put("cmpValueShowName",
+							generalPaymentDTO.getVskunit() == null ? "" : generalPaymentDTO.getVskunit());
+				} else if ("recaccountname".equals(cmpName)) {// 收款账户名称
+					reMap.put("cmpValue", generalPaymentDTO.getVskunit() == null ? "" : generalPaymentDTO.getVskunit());
+					reMap.put("cmpValueShowName",
+							generalPaymentDTO.getVskunit() == null ? "" : generalPaymentDTO.getVskunit());
+				} else if ("recaccountno".equals(cmpName)) {// 收款银行账号
+					reMap.put("cmpValue",
+							generalPaymentDTO.getVskbanknum() == null ? "" : generalPaymentDTO.getVskbanknum());
+					reMap.put("cmpValueShowName",
+							generalPaymentDTO.getVskbanknum() == null ? "" : generalPaymentDTO.getVskbanknum());
+				} else if ("paymenttype".equals(cmpName)) {// 支付方式
+					reMap.put("cmpValue", jiesuancovert(generalPaymentDTO.getVpaymethod()));
+					reMap.put("cmpValueShowName",
+							generalPaymentDTO.getVpaymethod() == null ? "" : generalPaymentDTO.getVpaymethod());
+				} else if ("napplymny".equals(cmpName)) {// 申请金额
+					reMap.put("cmpValue",
+							generalPaymentDTO.getNpaymentmny() == null ? "" : generalPaymentDTO.getNpaymentmny());
+					reMap.put("cmpValueShowName",
+							generalPaymentDTO.getNpaymentmny() == null ? "" : generalPaymentDTO.getNpaymentmny());
+				} else if ("napplymny_cny".equals(cmpName)) {// 大写金额
+					reMap.put("cmpValue", generalPaymentDTO.getNpaymentmny() == null ? ""
+							: change(generalPaymentDTO.getNpaymentmny()));
+					reMap.put("cmpValueShowName", generalPaymentDTO.getNpaymentmny() == null ? ""
+							: change(generalPaymentDTO.getNpaymentmny()));
+				} else if ("allocationtype".equals(cmpName)) {// 调拨类型
+					reMap.put("cmpValue", generalPaymentDTO.getVdbtype() == null ? "" : generalPaymentDTO.getVdbtype());
+					reMap.put("cmpValueShowName",
+							generalPaymentDTO.getVdbtype() == null ? "" : generalPaymentDTO.getVdbtype());
+				} else if ("vcwdept".equals(cmpName)) {// 业务部门
+					reMap.put("cmpValue", generalPaymentDTO.getVcwdept() == null ? "" : generalPaymentDTO.getVcwdept());
+					reMap.put("cmpValueShowName",
+							generalPaymentDTO.getVcwdept() == null ? "" : generalPaymentDTO.getVcwdept());
+				} else if ("paymentmemo".equals(cmpName)) {// 说明
+					if (generalPaymentDTO.getVpaymentmemo() != null) {
+						if (generalPaymentDTO.getVpaymentmemo().contains("\n")) {
+							reMap.put("cmpValue", generalPaymentDTO.getVpaymentmemo().replace("\n", "<br/>"));
+							reMap.put("cmpValueShowName", generalPaymentDTO.getVpaymentmemo().replace("\n", "<br/>"));
+						} else {
+							reMap.put("cmpValue", generalPaymentDTO.getVpaymentmemo());
+							reMap.put("cmpValueShowName", generalPaymentDTO.getVpaymentmemo());
+						}
+					}
+				} else if ("importstatus".equals(cmpName)) {// 导入状态
+					reMap.put("cmpValue",
+							generalPaymentDTO.getImportstatus() == null ? "" : generalPaymentDTO.getImportstatus());
+					reMap.put("cmpValueShowName",
+							generalPaymentDTO.getImportstatus() == null ? "" : generalPaymentDTO.getImportstatus());
+				} else if ("dimportdate".equals(cmpName)) {// 导入日期
+					reMap.put("cmpValue",
+							generalPaymentDTO.getDimportdate() == null ? "" : generalPaymentDTO.getDimportdate());
+					reMap.put("cmpValueShowName",
+							generalPaymentDTO.getDimportdate() == null ? "" : generalPaymentDTO.getDimportdate());
+				} else if ("paystatus".equals(cmpName)) {// 支付状态
+					reMap.put("cmpValue",
+							generalPaymentDTO.getPaystatus() == null ? "" : generalPaymentDTO.getPaystatus());
+					reMap.put("cmpValueShowName",
+							generalPaymentDTO.getPaystatus() == null ? "" : generalPaymentDTO.getPaystatus());
+				} else if ("paybankname".equals(cmpName)) {// 付款银行（资金回写属性）
+					reMap.put("cmpValue",
+							generalPaymentDTO.getPaybankname() == null ? "" : generalPaymentDTO.getPaybankname());
+					reMap.put("cmpValueShowName",
+							generalPaymentDTO.getPaybankname() == null ? "" : generalPaymentDTO.getPaybankname());
+				} else if ("payaccountcode".equals(cmpName)) {// 付款银行账号（资金回写属性）
+					reMap.put("cmpValue",
+							generalPaymentDTO.getPayaccountcode() == null ? "" : generalPaymentDTO.getPayaccountcode());
+					reMap.put("cmpValueShowName",
+							generalPaymentDTO.getPayaccountcode() == null ? "" : generalPaymentDTO.getPayaccountcode());
+				} else if ("dpaydate".equals(cmpName)) {// 付款日期
+					reMap.put("cmpValue",
+							generalPaymentDTO.getDpaydate() == null ? "" : generalPaymentDTO.getDpaydate());
+					reMap.put("cmpValueShowName",
+							generalPaymentDTO.getDpaydate() == null ? "" : generalPaymentDTO.getDpaydate());
+				} else if ("npaymny".equals(cmpName)) {// 付款金额（资金回写属性）
+					reMap.put("cmpValue", generalPaymentDTO.getNpaymny() == null ? "" : generalPaymentDTO.getNpaymny());
+					reMap.put("cmpValueShowName",
+							generalPaymentDTO.getNpaymny() == null ? "" : generalPaymentDTO.getNpaymny());
+				}
+
+				if ("Operator".equals(cmpNameOper)) {// 经办人
+					reMap.put("cmpValue",
+							generalPaymentDTO.getVapplicant() == null ? "" : generalPaymentDTO.getVapplicant());
+					reMap.put("cmpValueShowName",
+							generalPaymentDTO.getVapplicant() == null ? "" : generalPaymentDTO.getVapplicant());
+				} else if ("OperateDepartment".equals(cmpNameOper)) {// 经办部门
+					reMap.put("cmpValueIds", "");
+					reMap.put("cmpValue",
+							generalPaymentDTO.getVapplydepart() == null ? "" : generalPaymentDTO.getVapplydepart());
+					reMap.put("cmpValueIds",
+							generalPaymentDTO.getVapplydepartid() == null ? "" : generalPaymentDTO.getVapplydepartid());
+					reMap.put("cmpValueShowName",
+							generalPaymentDTO.getVapplydepart() == null ? "" : generalPaymentDTO.getVapplydepart());
+				} else if ("OperateCompany".equals(cmpNameOper)) {// 经办公司
+					reMap.put("cmpValue",
+							generalPaymentDTO.getCorpname() == null ? "" : generalPaymentDTO.getCorpname());
+					reMap.put("cmpValueShowName",
+							generalPaymentDTO.getCorpname() == null ? "" : generalPaymentDTO.getCorpname());
+				} else if ("OperateQi".equals(cmpNameOper)) {// 经办分期
+					reMap.put("cmpValue",
+							generalPaymentDTO.getVprojectname() == null ? "" : generalPaymentDTO.getVprojectname());
+					reMap.put("cmpValueShowName",
+							generalPaymentDTO.getVprojectname() == null ? "" : generalPaymentDTO.getVprojectname());
+				}
+
+			}
+		}
+		return JacksonUtils.toJson(resultFormJsonMap);
+	}
+
+	/**
+	 * 结算方式转换
+	 * 
+	 * @param type
+	 * @return
+	 */
+	private String jiesuancovert(String type) {
+		if (type == null || "".equals(type)) {
+			return "";
+		}
+		if ("电汇".equals(type)) {
+			return "1";
+		} else if ("现金".equals(type)) {
+			return "2";
+		} else if ("支票".equals(type)) {
+			return "3";
+		} else if ("代扣代缴".equals(type)) {
+			return "4";
+		} else {
+			return "1";
+		}
+	}
+
+	/**
+	 * @Description:业务种类
+	 * @author:zhangfangzhi
+	 * @date 2017年11月21日 下午2:22:46
+	 * @version V1.0
+	 */
+	private String getBusinessTypeName(String cellvalue) {
+		if ("1".equals(cellvalue)) {
+			return "外部结算-有无合同付款";
+		} else if ("2".equals(cellvalue)) {
+			return "外部结算-退工程保证金";
+		} else if ("3".equals(cellvalue)) {
+			return "外部结算-销售类退款";
+		} else if ("4".equals(cellvalue)) {
+			return "外部结算-报销(含工资)";
+		} else if ("5".equals(cellvalue)) {
+			return "外部借款";
+		} else if ("6".equals(cellvalue)) {
+			return "员工结算-报销";
+		} else if ("7".equals(cellvalue)) {
+			return "员工结算-借款";
+		} else if ("8".equals(cellvalue)) {
+			return "资金调拨";
+		} else if ("9".equals(cellvalue)) {
+			return "退质保金";
+		} else {
+			return "";
+		}
+	}
+
+	private BusinessObjectDto generateBusinessObject(CustomForm customFormNew,
+			List<BusinessObjectVariableDto> varList) {
+		String hostAddress = "192.168.3.134";
+		// String onlineAddress = "oa.xyre.com";
+
+		try {
+			InetAddress address = InetAddress.getLocalHost();
+			hostAddress = address.getHostAddress();
+		} catch (UnknownHostException e) {
+			e.printStackTrace();
+		}
+		BusinessObjectDto businessObjectDto = new BusinessObjectDto();
+		businessObjectDto.setId(customFormNew.getId());
+		businessObjectDto.setAppCode("OA");
+		businessObjectDto.setApproveClass(
+				"http://" + hostAddress + ":8080/platform-app/sys/base/customFormInstance/getVariable");
+		businessObjectDto.setBusidataClass(
+				"http://" + hostAddress + ":8080/platform-app/sys/base/customFormInstance/updateStatus");
+		businessObjectDto.setCallbackClass(
+				"http://" + hostAddress + ":8080/platform-app/sys/base/customFormInstance/updateStatus");
+		businessObjectDto.setCallbackMethod("getVariable");
+		businessObjectDto.setCode(customFormNew.getCode());
+		businessObjectDto.setDelflag(false);
+		businessObjectDto.setName(customFormNew.getName());
+
+		CustomFormGroup customFormGroup = customFormGroupDao.selectByPrimaryKey(customFormNew.getParentId());
+		businessObjectDto.setParentName(this.getCustomFormGroup(customFormGroup, "name"));
+		businessObjectDto.setParentCode(this.getCustomFormGroup(customFormGroup, "code"));
+
+		businessObjectDto.setPcUrl("http://" + hostAddress
+				+ ":8080/platform-app/sysManager/customFormInstance/customFormInstance_flow.html");
+
+		businessObjectDto.setVariableList(varList);
+		return businessObjectDto;
+	}
+
+	private List<BusinessObjectVariableDto> getVariableList(String preId) {
+		Map map = new HashMap();
+		map.put("businessObjectId", preId);
+		map.put("delflag", false);
+		String paramaterJson = JacksonUtils.toJson(map);
+		// TODO flow模块 接口待抽---
+		// BusinessObjectVariable businessObjectVariable = new BusinessObjectVariable();
+		// String dubboResultInfo =
+		// businessObjectVariableDtoServiceCustomer.queryList(userInfo, paramaterJson);
+		String dubboResultInfo=flowFeignService.queryList(map);
+		DubboServiceResultInfo dubboServiceResultInfo = JacksonUtils.fromJson(dubboResultInfo,
+				DubboServiceResultInfo.class);
+		if (dubboServiceResultInfo.isSucess()) {
+			String resultInfo = dubboServiceResultInfo.getResult();
+			List<BusinessObjectVariableDto> list = JacksonUtils.fromJson(resultInfo, ArrayList.class,
+					BusinessObjectVariableDto.class);
+			List<BusinessObjectVariableDto> cmpList = new ArrayList<BusinessObjectVariableDto>();
+			String codeArray[] = { "flow_business_company_id", "flow_business_dept_id", "flow_business_project_id",
+					"flow_business_project_branch_id", "business_object_id", "start_user_id",
+					"flow_business_company_name", "flow_business_dept_name", "flow_business_project_name",
+					"flow_business_project_branch_name", "business_object_name", "start_user_name", };
+			List<String> defaultVariable = Arrays.asList(codeArray);
+			if (list != null && list.size() > 0) {
+				for (int i = 0; i < list.size(); i++) {
+					BusinessObjectVariableDto businessObjectVariableDto = list.get(i);
+					if (businessObjectVariableDto != null
+							&& !defaultVariable.contains(businessObjectVariableDto.getCode())) {
+						BusinessObjectVariableDto businessObjectVariableDtoNew = new BusinessObjectVariableDto();
+						businessObjectVariableDtoNew.setName(businessObjectVariableDto.getName());
+						businessObjectVariableDtoNew.setCode(businessObjectVariableDto.getCode());
+						businessObjectVariableDtoNew.setDelflag(false);
+						businessObjectVariableDtoNew.setType(businessObjectVariableDto.getType());
+						businessObjectVariableDtoNew.setForFinance(false);
+						businessObjectVariableDtoNew.setForFlowBranch(true);
+						cmpList.add(businessObjectVariableDtoNew);
+					}
+				}
+			}
+			return cmpList;
+		}
+		return null;
+	}
+
+	private Map<String, Object> getIdMaps() {
+		Map<String, Object> resultMap = new HashMap<String, Object>();
+		CustomFormGroup cfg = new CustomFormGroup();
+		cfg.setDelflag(false);
+		List<CustomFormGroup> list = customFormGroupDao.select(cfg);
+		if (list != null && list.size() > 0) {
+			for (int i = 0; i < list.size(); i++) {
+				CustomFormGroup customFormGroup = list.get(i);
+				resultMap.put(customFormGroup.getCode(), customFormGroup);
+			}
+		}
+		return resultMap;
+	}
+
+	@Override
+	public MessageResult getFormNumber(String id) {
+		CustomForm customForm = customFormDao.selectByPrimaryKey(id);
+		try {
+			String finalStr = "";
+			if (customForm != null && customForm.getParentId() != null) {
+				CustomFormGroup customFormGroup = customFormGroupDao.selectByPrimaryKey(customForm.getParentId());
+				if (customFormGroup != null && customFormGroup.getCode() != null) {
+					finalStr += customFormGroup.getCode();
+					finalStr += "-";
+					finalStr += customForm.getCode();
+					finalStr += "-";
+					Map<String, Object> map = new HashMap<String, Object>();
+					map.put("code", "customFormRuler");
+					map.put("status", "1");
+					map.put("delflag", 0);
+					String resultInfo = rulerSubService.getBillNumber(map);
+					finalStr += resultInfo;
+					return ResponseModel.getResult(MessageInfo.GETSUCCESS, finalStr, "获取编号成功!");
+
+					// Integer currentNumber=customFormInstanceDao.queryCurrentNumber();
+					// String numberStr="";
+					// if(currentNumber!=null){
+					// currentNumber++;
+					// numberStr=String.valueOf(currentNumber);
+					// if(numberStr.length()<=4){
+					// numberStr=numberToStr(currentNumber);
+					// }
+					// String dateStr=getDayStr();
+					// finalStr+=dateStr;
+					// finalStr+="-";
+					// finalStr+=numberStr;
+					// }
+				} else {
+					return ResponseModel.getResult(MessageInfo.GETERROR, "查询数据失败!");
+				}
+			}
+			return ResponseModel.getResult(MessageInfo.GETERROR, "查询数据失败!");
+		} catch (Exception e) {
+			// e.printStackTrace();
+			log.error(e);
+			return ResponseModel.getResult(MessageInfo.GETERROR, "查询数据失败!");
+		}
+	}
+
+	private String getDayStr() {
+		Format format = new SimpleDateFormat("yyyyMMdd");
+		return format.format(new Date());
+	}
+
+	private String numberToStr(int currentNumber) {
+		String number = String.valueOf(currentNumber);
+		String formatStr = "0000000000";
+		return formatStr.substring(0, 4 - number.length()) + number;
+	}
+
+	@RequestMapping("queryListForQuickEntry")
+	@Override
+	public List queryListForQuickEntry(Map map) {
+		return customFormDao.queryListForQuickEntry(map);
+	}
+
+	@Override
+	public int updateSort(CustomForm object, Map<String, Object> map) {
+		String sortType = String.valueOf(map.get("sortType"));
+		Long sort1 = object.getSort();
+		String parentId = object.getParentId();
+		map.clear();
+		map.put("parentId", parentId);
+		List<CustomForm> rulerList = customFormDao.queryListForQuickEntry(map);
+		if ("1".equals(sortType)) {
+			for (int i = 0; i < rulerList.size(); i++) {
+				Long sort2 = rulerList.get(i).getSort();
+				if (sort2.longValue() == sort1.longValue() && i != 0) {
+					Long sort3 = rulerList.get(i - 1).getSort();
+					rulerList.get(i - 1).setSort(sort2);
+					rulerList.get(i).setSort(sort3);
+					customFormDao.updateSort(rulerList.get(i - 1));
+					customFormDao.updateSort(rulerList.get(i));
+					break;
+				}
+			}
+		} else if ("2".equals(sortType)) {
+			for (int i = 0; i < rulerList.size(); i++) {
+				Long sort2 = rulerList.get(i).getSort();
+				if (sort2.longValue() == sort1.longValue() && i != rulerList.size() - 1) {
+					Long sort3 = rulerList.get(i + 1).getSort();
+					rulerList.get(i + 1).setSort(sort2);
+					rulerList.get(i).setSort(sort3);
+					customFormDao.updateSort(rulerList.get(i + 1));
+					customFormDao.updateSort(rulerList.get(i));
+					break;
+				}
+			}
+		}
+		return 1;
+	}
+
+	/**
+	 * 1
+	 */
+	@Override
+	public MessageResult updateForPublish(String id, Map map) {
+		SecurityUserDto securityUserDto = LoginUtils.getSecurityUserBeanInfo().getSecurityUserDto();
+		int result = 0;
+		Integer isTemplateChange = (Integer) map.get("isTemplateChange");
+		try {
+			CustomForm oldCustomForm = customFormDao.selectByPrimaryKey(id);
+			if (oldCustomForm == null) {
+				return ResponseModel.getResult(MessageInfo.UPDATEERROR, "不存在更新对象！");
+			}
+			Map oldMap = JacksonUtils.fromJson(JacksonUtils.toJson(oldCustomForm), Map.class);
+			oldMap.putAll(map);
+			CustomForm customForm = JacksonUtils.fromJson(JacksonUtils.toJson(oldMap), CustomForm.class);
+			// 当isTemplateChange==1时，说明模板只是修改属性没有修改布局，这个时候不生成新的版本
+			if (isTemplateChange != null && "1".equals(isTemplateChange)) {
+				// 1.复制当前未保存的模板存入历史模板
+				String curTemplateUuid = IDGenerator.getUUID();
+				CustomForm customFormHis = customFormDao.selectByPrimaryKey(customForm.getId());
+				CustomFormVersionHistory customFormVersionHistory = new CustomFormVersionHistory();
+				BeanUtils.copyProperties(customFormHis, customFormVersionHistory);
+				customFormVersionHistory.setId(curTemplateUuid);
+				customFormVersionHistory.setCustomFormId(customForm.getId());// 当前历史版本从属于哪个表单
+				CustomFormVersionHistory customFormVersionHistoryMax = customFormDao
+						.queryCustomFormVersionHistoryMax(customForm.getId());
+				if (customFormVersionHistoryMax != null && customFormVersionHistoryMax.getVersionName() != null) {
+					String currentNum = customFormVersionHistoryMax.getVersionName()
+							.substring(customFormVersionHistoryMax.getVersionName().lastIndexOf("-") + 1);
+					currentNum = numberToStr(Integer.valueOf(currentNum) + 1);
+					customFormVersionHistory
+							.setVersionName(customForm.getCode() + DateUtils.getDate() + "-" + currentNum);
+				} else {
+					customFormVersionHistory.setVersionName(customForm.getCode() + DateUtils.getDate() + "-" + "0001");
+				}
+				customFormVersionHistory.setVersionCreateDate(new Timestamp(System.currentTimeMillis()));
+				customFormVersionHistory.setVersionCreatePersonId(securityUserDto.getId());
+				customFormVersionHistory.setVersionCreatePersonName(securityUserDto.getRealName());
+				result = customFormVersionHistoryDao.insert(customFormVersionHistory);
+				// 2.修改历史模板与实例的关系
+				Map<String, Object> paramMap = new HashMap<String, Object>();
+				paramMap.put("templateId", customForm.getId());
+				paramMap.put("templateHisId", curTemplateUuid);
+				customFormInstanceDao.updateInstanceToHisTemplate(paramMap);
+			}
+			// 3.保存最新的模板
+			result = customFormDao.updateByPrimaryKey(customForm);
+			return ResponseModel.getResult(MessageInfo.UPDATESUCCESS, result);
+		} catch (Exception e) {
+			log.error(e);
+			return ResponseModel.getResult(MessageInfo.UPDATEERROR, "更新数据失败！");
+		}
+	}
+
+//	public static void main(String[] args) {
+//		Double d = null;
+//		System.out.println(change(d));
+//	}
+
+	@Override
+	@Transactional(readOnly = false, rollbackFor = Exception.class)
+	public MessageResult saveGenerateDataEx(String saveJson) {
+		try {
+			Map<String, Object> idMaps = this.getIdMaps();
+			CustomForm customForm = JacksonUtils.fromJson(saveJson, CustomForm.class);
+			CustomForm customFormPre = customFormDao.selectByPrimaryKey(customForm.getId());
+			List<BusinessObjectVariableDto> varList = this.getVariableList(customFormPre.getId());
+			if (customForm.getName() != null && !"".equals(customForm.getName())) {
+				String[] rowStrs = customForm.getName().split(";");
+				for (int i = 0; i < rowStrs.length; i++) {
+
+					String[] customFormStrs = rowStrs[i].split(",");
+					if (idMaps == null || idMaps.get(customFormStrs[0]) == null) {
+						continue;
+					}
+					CustomFormGroup customFormGroup = (CustomFormGroup) idMaps.get(customFormStrs[0]);
+					CustomForm customFormNew = new CustomForm();
+
+					BeanUtils.copyProperties(customFormPre, customFormNew);
+
+					customFormNew.setId(IDGenerator.getUUID());
+					customFormNew.setCode(customFormStrs[2]);
+					customFormNew.setName(customFormStrs[1]);
+					customFormNew.setParentId(customFormGroup.getId());
+					customFormNew.setParentName(customFormGroup.getName());
+					String entryUrl = "/platform-app/sysManager/customFormInstance/customFormInstance_list.html?id="
+							+ customFormNew.getId();
+					customFormNew.setUrl(entryUrl);
+					customFormNew.setDelflag(false);
+					customFormNew.setCreateCompanyName("FundCustomFormGenerateData");
+					if (customFormStrs.length > 3) {
+						customFormNew.setCreateCompanyId(customFormStrs[3]);
+					}
+					customFormNew.setCopySourceId(customFormPre.getId());
+					customFormNew.setSort(20000L + i);
+					customFormNew.setResourceId(IDGenerator.getUUID());
+					customFormDao.insert(customFormNew);
+
+					// 生成业务对象
+					BusinessObjectDto businessObjectDto = this.generateBusinessObject(customFormNew, varList);
+					// TODO flow模块 接口待抽---
+//					 businessObjectDtoServiceCustomer.saveObjectAndVariableData(userInfo,
+//					 JacksonUtils.toJson(businessObjectDto));
+					flowFeignService.saveBusinessObjectVariable(JacksonUtils.toJson(businessObjectDto));
+					// 注册菜单
+					this.registerMenu(customFormNew);
+
+					// 资金数据迁移处理
+					// if(customFormStrs.length>3){
+					// toDealFund(customFormStrs[3],customFormNew,userInfo,customForm.getCode());
+					// }
+
+				}
+				return ResponseModel.getResult(MessageInfo.SAVESUCCESS, "保存成功！");
+			} else {
+				return ResponseModel.getResult(MessageInfo.SAVEERROR, "缺少参数！");
+			}
+		} catch (DataAccessException e) {
+			log.error(e);
+			return ResponseModel.getResult(MessageInfo.SAVEERROR, "保存失败！");
+		}
+	}
+
+	@Override
+	@Transactional(readOnly = false, rollbackFor = Exception.class)
+	public MessageResult saveGenerateDataExInstance(String saveJson) {
+		try {
+			CustomForm customForm = JacksonUtils.fromJson(saveJson, CustomForm.class);
+			List<CustomForm> customFormList = customFormDao.queryListByEx();
+			if (customFormList != null && customFormList.size() > 0) {
+				for (int i = 0; i < customFormList.size(); i++) {
+					CustomForm customFormEx = customFormList.get(i);
+					// 资金数据迁移处理
+					toDealFund(customFormEx.getCreateCompanyId(), customFormEx, customForm.getCode());
+				}
+			}
+			return ResponseModel.getResult(MessageInfo.SAVESUCCESS, "保存成功！");
+		} catch (Exception e) {
+			log.error(e);
+			return ResponseModel.getResult(MessageInfo.SAVEERROR, "保存失败！");
+		}
+	}
+
+	@Override
+	public MessageResult getBeanById(String id) {
+		try {
+			CustomForm result = this.customFormDao.selectByPrimaryKey(id);
+			CustomFormDto customFormDto = new CustomFormDto();
+			CustomFormGroup customFormGroup = customFormGroupService.getObjectById(result.getParentId());
+			CustomFormGroup customFormGroupOne = null;
+			if (customFormGroup != null) {
+				customFormGroupOne = customFormGroupService.getObjectById(customFormGroup.getParentId());
+			}
+			BeanUtils.copyProperties(result, customFormDto);
+			customFormDto.setLevelOneName(customFormGroupOne != null ? customFormGroupOne.getName() : "");
+			customFormDto.setUserType(LoginUtils.getSecurityUserBeanInfo().getSecurityUserDto().getType());
+			return ResponseModel.getResult(MessageInfo.CREATESUCCESS, customFormDto, "查询数据成功！");
+		} catch (Exception e) {
+			log.error(e);
+			return ResponseModel.getResult(MessageInfo.CREATERROR, "查询数据失败！");
+		}
+	}
+
+	@Override
+	public MessageResult getBeanByIdForUpdate(String id) {
+		try {
+			CustomForm result = this.getObjectById(id);
+			AppSystem appSystemParam = new AppSystem();
+			appSystemParam.setCode("OA");
+			appSystemParam.setDelflag(false);
+			List<AppSystem> resultList = appSystemService.queryList(appSystemParam);
+			String dataItemStr = "";
+			if (resultList != null && resultList.size() > 0) {
+				AppSystem appSystem = resultList.get(0);
+				Map paramMap = Maps.newHashMap();
+				paramMap.put("appId", appSystem.getId());
+				List<Map<String, Object>> reList = dataItemService.queryDataItemAndPointList(paramMap);
+				dataItemStr = this.getDataItem(reList, result.getDataItemId());
+			}
+			CustomFormDto customFormDto = new CustomFormDto();
+			BeanUtils.copyProperties(result, customFormDto);
+			customFormDto.setDataItem(dataItemStr);
+			return ResponseModel.getResult(MessageInfo.CREATESUCCESS, customFormDto);
+		} catch (Exception e) {
+			log.error(e);
+			return ResponseModel.getResult(MessageInfo.CREATERROR, "查询数据失败！");
+		}
+	}
+
+	private String getDataItem(List<Map<String, Object>> reList, String item) {
+		String str = "";
+		for (int i = 0; i < reList.size(); i++) {
+			Map<String, Object> map = reList.get(i);
+			if (map.get("itemCode") != null && map.get("itemCode").equals(item)) {
+				str += "<option selected = 'selected' value='" + map.get("itemCode") + "'>" + map.get("itemName")
+						+ "</option>";
+			} else {
+				str += "<option value='" + map.get("itemCode") + "'>" + map.get("itemName") + "</option>";
+			}
+		}
+		return str;
+	}
+
+	@Override
+	public MessageResult deleteBeanById(String id) {
+		try {
+			int deleteResult = this.customFormDao.deleteByPrimaryKey(id);
+			if (deleteResult == 1) {
+				return ResponseModel.getResult(MessageInfo.DELETESUCCESS, deleteResult);
+			} else {
+				return ResponseModel.getResult(MessageInfo.DELETEERROR, "删除数据失败！");
+			}
+		} catch (Exception e) {
+			log.error(e);
+			return ResponseModel.getResult(MessageInfo.DELETEERROR, "删除数据失败！");
+		}
+	}
+
+	@Override
+	public MessageResult deleteAllBeanByIds(String ids) {
+		try {
+			int deleteResult = this.deleteAllObjectByIds(Arrays.asList(ids.split(",")));
+			if (deleteResult > 0) {
+				return ResponseModel.getResult(MessageInfo.DELETESUCCESS, deleteResult);
+			} else {
+				return ResponseModel.getResult(MessageInfo.DELETEERROR, "删除数据失败！");
+			}
+		} catch (Exception e) {
+			log.error(e);
+			return ResponseModel.getResult(MessageInfo.DELETEERROR, "删除数据失败！");
+		}
+	}
+
+	@Override
+	public MessageResult updateBean(String id, Map<String, Object> map) {
+		try {
+			CustomForm oldCustomForm = this.customFormDao.selectByPrimaryKey(id);
+			if (oldCustomForm == null) {
+				return ResponseModel.getResult(MessageInfo.UPDATEERROR, "不存在更新对象！");
+			}
+			Map oldMap = JacksonUtils.fromJson(JacksonUtils.toJson(oldCustomForm), Map.class);
+			oldMap.putAll(map);
+			CustomForm customForm = JacksonUtils.fromJson(JacksonUtils.toJson(oldMap), CustomForm.class);
+			int updateResult = this.customFormDao.updateByPrimaryKey(customForm);
+			if (updateResult == 1) {
+				return ResponseModel.getResult(MessageInfo.UPDATESUCCESS, updateResult);
+			} else {
+				return ResponseModel.getResult(MessageInfo.UPDATEERROR, updateResult);
+			}
+		} catch (Exception e) {
+			log.error(e);
+			return ResponseModel.getResult(MessageInfo.UPDATEERROR, "修改数据失败！");
+		}
+	}
+
+	@Override
+	public MessageResult deletePseudoBeanById(String id) {
+		try {
+			int deleteResult = this.deleteCustomFormById(id);
+			if (deleteResult == 1) {
+				return ResponseModel.getResult(MessageInfo.DELETESUCCESS, deleteResult);
+			} else {
+				return ResponseModel.getResult(MessageInfo.DELETEERROR, "删除数据失败！");
+			}
+		} catch (Exception e) {
+			log.error(e);
+			return ResponseModel.getResult(MessageInfo.DELETEERROR, "删除数据失败！");
+		}
+	}
+
+	@Override
+	public MessageResult deletePseudoAllBeanByIds(String ids) {
+		try {
+			int deleteResult = 0;
+			List<String> list = Arrays.asList(ids.split(","));
+			if (list != null && list.size() > 0) {
+				for (int i = 0; i < list.size(); i++) {
+					deleteResult += this.deleteCustomFormById(list.get(i));
+				}
+			}
+			if (deleteResult > 0) {
+				return ResponseModel.getResult(MessageInfo.DELETESUCCESS, deleteResult);
+			} else {
+				return ResponseModel.getResult(MessageInfo.DELETEERROR, "删除数据失败！");
+			}
+		} catch (Exception e) {
+			log.error(e);
+			return ResponseModel.getResult(MessageInfo.DELETEERROR, "删除数据失败！");
+		}
+	}
+
+	@Override
+	public MessageResult getCount(String ids) {
+		try {
+			CustomFormDto customFormDto = new CustomFormDto();
+			boolean flag = false;
+			Integer errorLine = 0;
+			List<String> idsList = Arrays.asList(ids.split(","));
+			if (idsList != null && idsList.size() > 0) {
+				for (int i = 0; i < idsList.size(); i++) {
+					Integer result = this.isHasInstanceByFormId(idsList.get(i));
+					if (result > 0) {
+						flag = true;
+						errorLine = i + 1;
+						break;
+					}
+				}
+			}
+			if (flag) {
+				customFormDto.setValidateRow(errorLine);
+				customFormDto.setHasInstance(flag);
+			} else {
+				customFormDto.setValidateRow(errorLine);
+				customFormDto.setHasInstance(flag);
+			}
+			return ResponseModel.getResult(MessageInfo.CREATESUCCESS, customFormDto, "查询数据成功！");
+		} catch (Exception e) {
+			log.error(e);
+			return ResponseModel.getResult(MessageInfo.GETERROR, "查询数据失败！");
+		}
+	}
+
+	@Override
+	public MessageResult enableOrDisable(CustomFormDto t) {
+		try {
+			CustomForm customForm = this.customFormDao.selectByPrimaryKey(t.getId());
+			if (customForm == null) {
+				return ResponseModel.getResult(MessageInfo.UPDATEERROR, "不存在更新对象!");
+			} else {
+				customForm.setStatus(t.getStatus());
+				int updateResult = this.customFormDao.updateByPrimaryKey(customForm);
+				return ResponseModel.getResult(MessageInfo.UPDATESUCCESS, updateResult);
+			}
+		} catch (Exception e) {
+			log.error(e);
+			return ResponseModel.getResult(MessageInfo.UPDATEERROR, "修改数据失败!");
+		}
+	}
+}

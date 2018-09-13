@@ -1,0 +1,380 @@
+package com.xinleju.platform.sys.num.service.impl;
+
+import java.sql.Timestamp;
+import java.text.SimpleDateFormat;
+import java.util.Arrays;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.sys.num.dao.RulerSubDao;
+import com.xinleju.platform.sys.num.entity.Bill;
+import com.xinleju.platform.sys.num.entity.Ruler;
+import com.xinleju.platform.sys.num.entity.RulerSub;
+import com.xinleju.platform.sys.num.service.BillService;
+import com.xinleju.platform.sys.num.service.RulerService;
+import com.xinleju.platform.sys.num.service.RulerSubService;
+import com.xinleju.platform.sys.num.utils.OutType;
+import com.xinleju.platform.sys.num.utils.RulerType;
+
+/**
+ * @author ly
+ * 
+ * 
+ */
+
+@Service
+public class RulerSubServiceImpl extends BaseServiceImpl<String, RulerSub>
+		implements RulerSubService {
+
+	@Autowired
+	private RulerSubDao rulerSubDao;
+	@Autowired
+	private BillService billService;
+	@Autowired
+	private RulerService rulerService;
+
+	@Override
+	public String getBeanIdByBillId(Map<String, Object> rulerSubMap)
+			throws Exception {
+		StringBuffer sb = new StringBuffer();
+		List<Bill> billList = billService.queryList(rulerSubMap);
+		if (billList.size() == 0) {
+			return "";
+		}
+		String connector = billList.get(0).getConnector();
+		List<Ruler> ruleListByBillId = rulerService
+				.getRuleListByBillId(billList.get(0).getId());
+		if (ruleListByBillId != null && ruleListByBillId.size() > 0) {
+			for (Ruler ruler : ruleListByBillId) {
+				if (OutType.RulerOut.getCode().equals(ruler.getIsOut())) {
+					if (RulerType.ADDREDUCESERIAL.getCode().equals(ruler.getType())) {
+						String rulerId = ruler.getId();
+						Integer stepLength = ruler.getStepLength();
+						RulerSub rulerSub = rulerSubDao.getCurrentByRulerId(rulerId);
+						if (rulerSub != null) {
+							String currentSerial = rulerSub.getCurrentSerial();
+							Integer number = Integer.parseInt(currentSerial);
+							if (stepLength != 0) {
+								if (ruler.getMaxSerial() < number&& stepLength > 0) {// 自增的时候超出最大值归零
+									number = new Integer(new Long(ruler.getInitSerial()).intValue());
+									// 数字前补0
+									sb.append(String.format("%0"+ String.valueOf(ruler.getMaxSerial()).length() + "d",number));
+								} else if (ruler.getMaxSerial() > number&& stepLength < 0) {// 自减的时候小于最小值归零
+									number = new Integer(new Long(
+											ruler.getInitSerial()).intValue());
+									// 数字前补0
+									sb.append(String.format("%0"+ String.valueOf(ruler.getInitSerial()).length() + "d",number));
+								} else {
+									number += stepLength;
+									// 数字前补0
+									if (ruler.getMaxSerial() < ruler.getInitSerial()) {
+										sb.append(String.format("%0"+ String.valueOf(ruler.getInitSerial()).length() + "d",number));
+									} else {
+										sb.append(String.format("%0"+ String.valueOf(ruler.getMaxSerial()).length() + "d",number));
+									}
+								}
+								rulerSub.setCurrentSerial(String.valueOf(number));
+							} else if (stepLength == 0) {
+								sb.append(String.format("%0"+ String.valueOf(ruler.getMaxSerial()).length() + "d",number));
+							}
+						} else {
+							Long initSerial = ruler.getInitSerial();
+							// 数字前补0
+							if (ruler.getMaxSerial() < ruler.getInitSerial()) {
+								sb.append(String.format("%0"+ String.valueOf(ruler.getInitSerial()).length() + "d",initSerial));
+							} else {
+								sb.append(String.format("%0"+ String.valueOf(ruler.getMaxSerial()).length() + "d",initSerial));
+							}
+						}
+
+					}else if (RulerType.DATESERIALNUMBER.getCode().equals(ruler.getType())) {
+						SimpleDateFormat df = new SimpleDateFormat("yyyyMMdd");//设置日期格式
+						String newDate = df.format(new Date());//返回指定格式的当前日期
+
+						String rulerId = ruler.getId();
+						Integer numberLength = Integer.parseInt(ruler.getSerialNumberLength());//流水位数
+						Integer  serialNumberType = Integer.parseInt(ruler.getSerialNumberType());//流水类型
+						String  connectorSymbol = ruler.getConnectorSymbol();//连接符
+
+						sb.append(newDate);
+						sb.append(connectorSymbol);
+						Boolean bl = false;
+						if(numberLength!=0){
+							RulerSub rulerSub = rulerSubDao.getCurrentByRulerId(rulerId);
+							if (rulerSub != null) {
+								String currentSerial = rulerSub.getCurrentSerial();
+								if(null!=currentSerial){
+									String oldDate = currentSerial.substring(0, 8);
+									if((oldDate.substring(0, serialNumberType)).equals(newDate.substring(0, serialNumberType))){
+										Integer serialNumber = Integer.parseInt(currentSerial.substring((newDate.length()+connectorSymbol.length()),currentSerial.length()));
+										serialNumber++;
+										if(String.valueOf(serialNumber).length()<numberLength){
+											sb.append(String.format("%0"+ numberLength + "d",serialNumber));
+										}else{
+											sb.append(String.valueOf(serialNumber));
+										}
+									}else{
+										sb.append(String.format("%0"+ numberLength + "d",1));
+									}
+								}else{
+									bl = true;
+								}
+							} else {
+								bl = true;
+							}
+							if(bl){
+								sb.append(String.format("%0"+ numberLength + "d",1));
+							}
+						}
+
+					} else if (RulerType.ENUMSERIAL.getCode().equals(
+							ruler.getType())) {
+						String serialLibrary = ruler.getSerialLibrary();
+						String[] split = serialLibrary.split(",");
+
+						RulerSub rulerSub = rulerSubDao
+								.getCurrentByRulerId(ruler.getId());
+						String CurrentEnum = null;
+						if (rulerSub != null) {
+							CurrentEnum = rulerSub.getCurrentSerial();
+							Integer stepLength = ruler.getStepLength();
+							int index = Arrays.binarySearch(split, CurrentEnum);
+							if ((index + stepLength) > split.length) {// 枚举超出角标回归原点
+								CurrentEnum = ruler.getInitVar();
+								sb.append(CurrentEnum);
+							} else {
+								CurrentEnum = split[index + stepLength];
+								sb.append(CurrentEnum);
+							}
+						} else {
+							CurrentEnum = split[Integer.parseInt(ruler
+									.getInitVar())];
+							sb.append(CurrentEnum);
+						}
+					} else if (RulerType.FIXEDSERIAL.getCode().equals(
+							ruler.getType())) {
+						sb.append(ruler.getCode());// 字符类型默认的就是code
+					} else if (RulerType.DATESERIAL.getCode().equals(
+							ruler.getType())) {// 时间类型 按时间格式化 拼接时间
+						String dateFormat = ruler.getDateFormat();
+						Date currentTime = new Date();
+						String dateString = null;
+						if("time".equals(dateFormat)){
+							dateString = String.valueOf(System.currentTimeMillis());
+						}else{
+							SimpleDateFormat formatter = new SimpleDateFormat(
+									dateFormat);
+							dateString = formatter.format(currentTime);
+						}
+						sb.append(dateString);
+					} else if (RulerType.USERINFOSERIAL.getCode().equals(
+							ruler.getType())) {
+						sb.append(ruler.getCode());
+					}
+					sb.append(connector);
+				} else {
+					continue;
+				}
+			}
+			return sb.substring(0, sb.length() - connector.length());
+		}else{
+			return sb.toString();
+		}
+	}
+
+	@Override
+	public StringBuffer saveAndRulerData(Map<String, Object> rulerSubMap)
+			throws Exception {
+		List<Bill> billList = billService.queryList(rulerSubMap);
+		if (billList.size() == 0) {
+			return new StringBuffer();
+		}
+		List<Ruler> ruleListByBillId = rulerService
+				.getRuleListByBillId(billList.get(0).getId());
+		StringBuffer sb = new StringBuffer();
+		for (Ruler ruler : ruleListByBillId) {
+			if (RulerType.ADDREDUCESERIAL.getCode().equals(ruler.getType())) {
+				String rulerId = ruler.getId();
+				Integer stepLength = ruler.getStepLength();
+				RulerSub rulerSub = rulerSubDao.getCurrentByRulerId(rulerId);
+				RulerSub newSub = new RulerSub();
+				newSub.setId(IDGenerator.getUUID());
+				newSub.setRulerId(rulerId);
+				if (rulerSub != null) {
+					Integer number = Integer.parseInt(rulerSub
+							.getCurrentSerial());
+					if (stepLength != 0) {
+						number += stepLength;
+						if (ruler.getMaxSerial() < number && stepLength > 0) {// 自增的时候超出最大值归零
+							number = new Integer(
+									new Long(ruler.getInitSerial()).intValue());
+							newSub.setCurrentSerial(String.valueOf(number));
+						} else if (ruler.getMaxSerial() > number
+								&& stepLength < 0) {// 自减的时候小于最小值归零
+							number = new Integer(
+									new Long(ruler.getInitSerial()).intValue());
+							newSub.setCurrentSerial(String.valueOf(number));
+						} else {
+							newSub.setCurrentSerial(String.valueOf(number));
+						}
+						newSub.setCreateDate(new Timestamp(new Date().getTime()));
+						newSub.setUpdateDate(new Timestamp(new Date().getTime()));
+						rulerSubDao.save(newSub);
+						sb.append(number);
+					} else {
+						continue;
+					}
+
+				} else {
+					Long initSerial = ruler.getInitSerial();
+					newSub.setCurrentSerial(String.valueOf(initSerial));
+					newSub.setCreateDate(new Timestamp(new Date().getTime()));
+					newSub.setUpdateDate(new Timestamp(new Date().getTime()));
+					rulerSubDao.save(newSub);
+					sb.append(initSerial);
+				}
+			}else if (RulerType.DATESERIALNUMBER.getCode().equals(ruler.getType())) {
+				SimpleDateFormat df = new SimpleDateFormat("yyyyMMdd");//设置日期格式
+				String newDate = df.format(new Date());//返回指定格式的当前日期
+
+				String rulerId = ruler.getId();
+				Integer numberLength = Integer.parseInt(ruler.getSerialNumberLength());//流水位数
+				Integer  serialNumberType = Integer.parseInt(ruler.getSerialNumberType());//流水类型
+				String  connectorSymbol = ruler.getConnectorSymbol().replace("\\", "\\\\");//连接符
+				
+				String currentSerial= null;
+				Boolean bl = false;
+				
+				RulerSub rulerSub = rulerSubDao.getCurrentByRulerId(rulerId);
+				RulerSub newSub = new RulerSub();
+				newSub.setId(IDGenerator.getUUID());
+				newSub.setRulerId(rulerId);
+				if(numberLength<=0){
+					currentSerial = newDate+connectorSymbol;
+					newSub.setCurrentSerial(currentSerial);
+					newSub.setCreateDate(new Timestamp(new Date().getTime()));
+					newSub.setUpdateDate(new Timestamp(new Date().getTime()));
+					rulerSubDao.save(newSub);
+					sb.append(currentSerial);
+					continue;
+				}
+				if (rulerSub != null) {
+					currentSerial = rulerSub.getCurrentSerial();
+					if(null!=currentSerial){
+						if(currentSerial.length()!=(newDate.length()+connectorSymbol.length()+numberLength)){
+							bl = true;
+						}else{
+							String oldDate = currentSerial.substring(0, 8);
+							if((oldDate.substring(0, serialNumberType)).equals(newDate.substring(0, serialNumberType))){
+								Integer serialNumber = Integer.parseInt(currentSerial.substring((newDate.length()+connectorSymbol.length()),currentSerial.length()));
+								serialNumber++;
+								if(String.valueOf(serialNumber).length()<numberLength){
+									currentSerial = String.format("%0"+ numberLength + "d",serialNumber);
+								}else{
+									currentSerial = String.valueOf(serialNumber);
+								}
+							}else{
+								currentSerial = String.format("%0"+ numberLength + "d",0);
+							}
+							currentSerial = newDate+connectorSymbol+currentSerial;
+							newSub.setCurrentSerial(currentSerial);
+							newSub.setCreateDate(new Timestamp(new Date().getTime()));
+							newSub.setUpdateDate(new Timestamp(new Date().getTime()));
+							rulerSubDao.save(newSub);
+							sb.append(currentSerial);
+						}
+					}else{
+						bl = true;
+					}
+				} else {
+					bl = true;
+				}
+				if(bl){
+					currentSerial = newDate+connectorSymbol+String.format("%0"+ numberLength + "d",0);
+					newSub.setCurrentSerial(currentSerial);
+					newSub.setCreateDate(new Timestamp(new Date().getTime()));
+					newSub.setUpdateDate(new Timestamp(new Date().getTime()));
+					rulerSubDao.save(newSub);
+					sb.append(currentSerial);
+				}
+			} else if (RulerType.ENUMSERIAL.getCode().equals(ruler.getType())) {
+				RulerSub rulerSub = rulerSubDao.getCurrentByRulerId(ruler
+						.getId());
+				String CurrentEnum = rulerSub.getCurrentSerial();
+				RulerSub newSub = new RulerSub();
+				newSub.setId(IDGenerator.getUUID());
+				newSub.setRulerId(ruler.getId());
+				String serialLibrary = ruler.getSerialLibrary();
+				Integer stepLength = ruler.getStepLength();
+				String[] split = serialLibrary.split(",");
+				if (StringUtils.isEmpty(CurrentEnum)) {
+					newSub.setCurrentSerial(ruler.getInitVar());
+					newSub.setCreateDate(new Timestamp(new Date().getTime()));
+					newSub.setUpdateDate(new Timestamp(new Date().getTime()));
+					sb.append(ruler.getInitVar());
+					rulerSubDao.save(newSub);
+				} else {
+					int index = Arrays.binarySearch(split, CurrentEnum);
+					if ((index + stepLength) > split.length) {// 枚举超出角标回归原点
+						newSub.setCurrentSerial(ruler.getInitVar());
+						newSub.setCreateDate(new Timestamp(new Date().getTime()));
+						newSub.setUpdateDate(new Timestamp(new Date().getTime()));
+						sb.append(ruler.getInitVar());
+						rulerSubDao.save(newSub);
+					} else {
+						CurrentEnum = split[index + stepLength];
+						newSub.setCurrentSerial(CurrentEnum);
+						newSub.setCreateDate(new Timestamp(new Date().getTime()));
+						newSub.setUpdateDate(new Timestamp(new Date().getTime()));
+						sb.append(CurrentEnum);
+						rulerSubDao.save(newSub);
+					}
+				}
+
+			} else if (RulerType.FIXEDSERIAL.getCode().equals(ruler.getType())) {
+				sb.append(ruler.getCode());// 字符类型默认的就是code
+			} else if (RulerType.DATESERIAL.getCode().equals(ruler.getType())) {// 时间类型
+																				// 按时间格式化
+																				// 拼接时间
+				String dateFormat = ruler.getDateFormat();
+				Date currentTime = new Date();
+				SimpleDateFormat formatter = new SimpleDateFormat(dateFormat);
+				String dateString = formatter.format(currentTime);
+				sb.append(dateString);
+			} else if (RulerType.FORMSERIAL.getCode().equals(ruler.getType())) {
+				String returnCode = null;
+				String code = ruler.getCode();
+				String[] split = code.split("_");
+				for (int i = 0; i < split.length; i++) {
+					String newCodeValue = (String) rulerSubMap.get(i);
+					if (newCodeValue != null && newCodeValue.length() > 0) {
+						if (i == split.length - 1) {
+							returnCode += newCodeValue;
+						} else {
+							returnCode += newCodeValue + "_";
+						}
+					}
+				}
+				sb.append(returnCode);
+			}
+
+		}
+		return sb;
+
+	}
+
+	@Override
+	public String saveBillNumberAndgetBillNumber(Map<String, Object> map)
+			throws Exception {
+		saveAndRulerData(map);
+		return getBeanIdByBillId(map);
+	}
+
+}

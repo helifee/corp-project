@@ -1,0 +1,26 @@
+package com.xinleju.platform.sys.res.service.impl;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.sys.res.dao.DataPointPermissionValDao;
+import com.xinleju.platform.sys.res.entity.DataPointPermissionVal;
+import com.xinleju.platform.sys.res.service.DataPointPermissionValService;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class DataPointPermissionValServiceImpl extends  BaseServiceImpl<String,DataPointPermissionVal> implements DataPointPermissionValService{
+	
+
+	@Autowired
+	private DataPointPermissionValDao dataPointPermissionValDao;
+	
+
+}

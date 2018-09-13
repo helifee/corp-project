@@ -1,0 +1,647 @@
+package com.jzy.hio.sys.sys.res.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import com.jzy.hio.sys.sys.res.entity.DataPoint;
+import com.jzy.hio.sys.sys.res.entity.DataPointPermissionVal;
+import com.jzy.hio.sys.sys.res.mapper.DataPermissionDao;
+import com.jzy.hio.sys.sys.res.mapper.DataPointPermissionValDao;
+import com.jzy.hio.sys.sys.res.service.DataPointPermissionValService;
+import com.jzy.hio.sys.sys.res.service.DataPointService;
+import com.jzy.hio.sys.sys.res.utils.InvalidCustomException;
+import com.jzy.tools.data.JacksonUtils;
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.base.utils.IDGenerator;
+import com.jzy.hio.sys.sys.org.dto.PostDto;
+import com.jzy.hio.sys.sys.org.dto.StandardRoleDto;
+import com.jzy.hio.sys.sys.org.dto.UserDto;
+import com.jzy.hio.sys.sys.org.service.PostService;
+import com.jzy.hio.sys.sys.org.service.StandardRoleService;
+import com.jzy.hio.sys.sys.org.service.UserService;
+import com.jzy.hio.sys.sys.res.entity.DataPermission;
+import com.jzy.hio.sys.sys.res.service.DataPermissionService;
+
+/**
+ * @author admin
+ */
+
+@Service
+public class DataPermissionServiceImpl extends BaseServiceImpl<String, DataPermission>
+        implements DataPermissionService {
+
+    @Autowired
+    private DataPermissionDao dataPermissionDao;
+    @Autowired
+    private DataPointPermissionValDao dataPointPermissionValDao;
+    @Autowired
+    private DataPointService dataPointService;
+    @Autowired
+    private DataPermissionService dataPermissionService;
+
+    @Autowired
+    private StandardRoleService standardRoleService;
+
+    @Autowired
+    private DataPointPermissionValService dataPointPermissionValService;
+    @Autowired
+    private UserService userService;
+    @Autowired
+    private PostService postService;
+
+    /**
+     * 保存数据授权和授权值
+     *
+     * @param param
+     * @return
+     * @throws Exception
+     */
+    @Override
+    @Transactional(readOnly = false, rollbackFor = Exception.class)
+    public void saveDataAuthAndVal(Map<String, Object> param) throws Exception {
+        // 控制点List
+        List<Map<String, Object>> dataPmsList = (ArrayList) param.get("dataPmsList");
+        List<Map<String, Object>> dataValList = new ArrayList<Map<String, Object>>();
+        String valArr[] = null;// 授权值
+        String dataPmsId = null;// 生成授权记录ID
+        for (int i = 0; i < dataPmsList.size(); i++) {
+            Map<String, Object> dataPms = dataPmsList.get(i);
+            dataPmsId = IDGenerator.getUUID();// 生成授权记录ID
+            dataPms.put("dataPmsId", dataPmsId);
+            if (dataPms.containsKey("valIds") && StringUtils.isNotBlank(dataPms.get("valIds").toString())) {
+                valArr = dataPms.get("valIds").toString().split(",");
+                for (String val : valArr) {
+                    Map<String, Object> dataVal = new HashMap<String, Object>();
+                    dataVal.put("valId", IDGenerator.getUUID());// 生成授权值记录ID
+                    dataVal.put("dataPmsId", dataPmsId);
+                    dataVal.put("val", val);
+                    dataValList.add(dataVal);
+                }
+            }
+        }
+        // 删除旧授权数据
+        dataPermissionDao.delDataAuth(param);
+        // 保存数据授权
+        dataPermissionDao.saveDataAuth(param);
+        if (dataValList.size() > 0) {
+            param.put("dataValList", dataValList);
+            // 保存数据授权值
+            dataPointPermissionValDao.saveDataAuthVal(param);
+        }
+    }
+
+    /**
+     * 保存数据授权和授权值(角色到数据)
+     *
+     * @param param
+     * @return
+     * @throws Exception
+     */
+    @Override
+    @Transactional(readOnly = false, rollbackFor = Exception.class)
+    public void saveDataAuthRoleToData(Map<String, Object> param) throws Exception {
+
+        Map savePointData = (HashMap) param.get("savePointData");
+        Map saveData = (HashMap) param.get("saveData");
+        Map<String, Object> dataParam = new HashMap<String, Object>();
+        Map<String, Object> mapCon = new HashMap<String, Object>();
+        mapCon.put("sidx", "id");
+        mapCon.put("sord", "desc");
+        // 根据条件查询出来授权数据
+        List<DataPermission> listDataPermission = this.queryListByExample(mapCon);
+
+        // 要新增的角色到控制点的授权数据
+        List<Map<String, Object>> dataPermissionList = new ArrayList<Map<String, Object>>();
+
+        // 要删除的角色到控制点的授权数据
+        List<Map<String, Object>> deldataPermissionList = new ArrayList<Map<String, Object>>();
+
+        // 要新增的指定引用的数据
+        List<Map<String, Object>> dataValList = new ArrayList<Map<String, Object>>();
+        // 要删除的指定引用的数据
+        List<Map<String, Object>> deldataValList = new ArrayList<Map<String, Object>>();
+        if (savePointData != null) {
+            List<String> listDeleteIds = new ArrayList<String>();
+            Set<String> set = savePointData.keySet();
+            for (String key : set) {
+                String[] keyIds = key.split("#");
+                String roleId = keyIds[1];
+                String pointId = keyIds[0];
+                if (!pointId.equals("operationId")) {
+                    if ("1".equals(savePointData.get(key))) {
+                        Map<String, Object> dataP = new HashMap<String, Object>();
+                        String dataPermissionId = IDGenerator.getUUID();
+                        dataP.put("id", dataPermissionId);// 生成授权值记录ID
+                        dataP.put("roleId", roleId);
+                        dataP.put("pointId", pointId);
+                        dataPermissionList.add(dataP);
+                        Set<String> setSaveData = saveData.keySet();
+                        for (String saveDataKey : setSaveData) {
+                            // 6fbd2eb96cde4bb699e4e481b3bf8ce7/2cfbc9da84fe4a5189168c75350d8a37
+                            // #890aadd5a36d465b9d545fccc934b5ca
+                            // #2cfbc9da84fe4a5189168c75350d8a37
+                            // #RESOURCE=1,
+                            String[] saveDataKeyIds = saveDataKey.split("#");
+                            String importRoleId = saveDataKeyIds[1];
+                            String val = saveDataKeyIds[2];
+                            if (importRoleId.equals(roleId)) {
+                                if ("1".equals(saveData.get(saveDataKey))) {
+                                    Map<String, Object> dataVal = new HashMap<String, Object>();
+                                    dataVal.put("valId", IDGenerator.getUUID());// 生成授权值记录ID
+                                    dataVal.put("dataPmsId", dataPermissionId);
+                                    dataVal.put("val", val);
+                                    dataValList.add(dataVal);
+                                }
+                            }
+                        }
+                    } else if ("0".equals(savePointData.get(key))) {
+                        Map<String, Object> deldataP = new HashMap<String, Object>();
+                        deldataP.put("roleId", roleId);
+                        deldataP.put("pointId", pointId);
+                        deldataPermissionList.add(deldataP);
+                        String delDataPermissionId = "";
+                        for (DataPermission dp : listDataPermission) {
+                            if (dp.getRoleId().equals(roleId) && dp.getDataPointId().equals(pointId)) {
+                                delDataPermissionId = dp.getId();
+                                break;
+                            }
+                        }
+
+                        Set<String> setSaveData = saveData.keySet();
+                        for (String saveDataKey : setSaveData) {
+                            String[] saveDataKeyIds = saveDataKey.split("#");
+                            String importRoleId = saveDataKeyIds[1];
+                            String val = saveDataKeyIds[2];
+                            if (importRoleId.equals(roleId)) {
+                                if ("0".equals(saveData.get(saveDataKey))) {
+                                    Map<String, Object> deldataVal = new HashMap<String, Object>();
+                                    deldataVal.put("dataPmsId", delDataPermissionId);
+                                    deldataVal.put("val", val);
+                                    deldataValList.add(deldataVal);
+                                }
+                            }
+                        }
+                    } else if ("2".equals(savePointData.get(key))) {
+                        String delDataPermissionId = "";
+                        for (DataPermission dp : listDataPermission) {
+                            if (dp.getRoleId().equals(roleId) && dp.getDataPointId().equals(pointId)) {
+                                delDataPermissionId = dp.getId();
+                                break;
+                            }
+                        }
+
+                        Set<String> setSaveData = saveData.keySet();
+                        for (String saveDataKey : setSaveData) {
+                            String[] saveDataKeyIds = saveDataKey.split("#");
+                            String importRoleId = saveDataKeyIds[1];
+                            String val = saveDataKeyIds[2];
+                            if (importRoleId.equals(roleId)) {
+                                if ("1".equals(saveData.get(saveDataKey))) {
+                                    Map<String, Object> dataVal = new HashMap<String, Object>();
+                                    dataVal.put("valId", IDGenerator.getUUID());// 生成授权值记录ID
+                                    dataVal.put("dataPmsId", delDataPermissionId);
+                                    dataVal.put("val", val);
+                                    dataValList.add(dataVal);
+                                } else if ("0".equals(saveData.get(saveDataKey))) {
+                                    Map<String, Object> deldataVal = new HashMap<String, Object>();
+                                    deldataVal.put("dataPmsId", delDataPermissionId);
+                                    deldataVal.put("val", val);
+                                    deldataValList.add(deldataVal);
+                                }
+                            }
+                        }
+                    }
+                }
+
+            }
+            dataParam.put("dataPermissionList", dataPermissionList);
+            dataParam.put("deldataPermissionList", deldataPermissionList);
+            dataParam.put("dataValList", dataValList);
+            dataParam.put("deldataValList", deldataValList);
+
+            if (dataPermissionList.size() > 0) {
+                // 保存授权数据
+                dataPermissionDao.saveDataAuthRoleToData(dataParam);
+            }
+            if (deldataPermissionList.size() > 0) {
+                // 删除授权数据
+                dataPermissionDao.delDataAuthRoleToData(dataParam);
+            }
+            if (dataValList.size() > 0) {
+                // 保存指定数据授权值
+                dataPointPermissionValDao.saveDataAuthVal(dataParam);
+            }
+            if (deldataValList.size() > 0) {
+                // 删除指定数据授权值
+                dataPointPermissionValDao.delDataAuthVal(dataParam);
+            }
+        }
+    }
+
+    /**
+     * 根据（控制项Id和角色Ids）查询已授权数据
+     *
+     * @param map
+     * @return
+     */
+    @Override
+    public Map<String, Object> queryAuthDataByitemIdAndroleIds(Map<String, Object> map) throws Exception {
+        String itemId = (String) map.get("itemId");
+        String roleIds = (String) map.get("roleIds");
+        if ("".equals(itemId)) {
+            return null;
+        } else {
+            String[] roleIdsList = roleIds.split(",");
+            Map<String, Object> mapCon = new HashMap<String, Object>();
+            mapCon.put("itemId", itemId);
+            mapCon.put("roleIds", roleIdsList);
+            List<Map<String, Object>> listDataPermission = dataPermissionDao.queryDataPermission(mapCon);
+
+            List<Map<String, Object>> listDataPointPermission = dataPermissionDao.queryDataPointPermission(mapCon);
+            Map<String, Object> returnMap = new HashMap<String, Object>();
+            returnMap.put("listDataPermission", listDataPermission);
+            returnMap.put("listDataPointPermission", listDataPointPermission);
+
+            return returnMap;
+        }
+
+    }
+
+    /**
+     * 根据（控制项Id和控制点Id或者指定数据ID（类型判断如果类型是dataPoint是控制点ID））查询已授权数据
+     *
+     * @param map
+     * @return
+     */
+    @Override
+    public Map<String, Object> queryAuthDataByitemIdAndPointId(Map<String, Object> map) throws Exception {
+        String itemId = (String) map.get("itemId");
+        String ids = map.get("ids").toString();
+        String type = (String) map.get("type");
+        Map<String, Object> mapCon = new HashMap<String, Object>();
+        mapCon.put("itemId", itemId);
+        if (!ids.equals("")) {
+            mapCon.put("ids", ids);
+        }
+        List<Map<String, Object>> listDataPermission = new ArrayList<Map<String, Object>>();
+        List<Map<String, Object>> listDataPointPermission = new ArrayList<Map<String, Object>>();
+        if (type.equals("dataPoint")) {
+            listDataPermission = dataPermissionDao.queryDataPermissionByPointId(mapCon);
+
+        } else {
+            listDataPermission = dataPermissionDao.queryDataPermissionByPointId(mapCon);
+            listDataPointPermission = dataPermissionDao.queryDataPointPermissionByvalId(mapCon);
+        }
+        Map<String, Object> returnMap = new HashMap<String, Object>();
+        returnMap.put("listDataPermission", listDataPermission);
+        returnMap.put("listDataPointPermission", listDataPointPermission);
+        return returnMap;
+    }
+
+    /**
+     * 保存数据授权和授权值（数据到角色）
+     *
+     * @param param
+     * @return
+     * @throws Exception
+     */
+    @Override
+    @Transactional(readOnly = false, rollbackFor = Exception.class)
+    public void saveDataAuthDataToRole(Map<String, Object> param) throws Exception {
+        // 控制点List
+        List<Map<String, Object>> dataPmsList = (ArrayList) param.get("dataPmsList");
+        List<Map<String, Object>> dataValList = new ArrayList<Map<String, Object>>();
+        String valArr[] = null;// 授权值
+        String dataPmsId = null;// 生成授权记录ID
+        for (int i = 0; i < dataPmsList.size(); i++) {
+            Map<String, Object> dataPms = dataPmsList.get(i);
+            dataPmsId = IDGenerator.getUUID();// 生成授权记录ID
+            dataPms.put("dataPmsId", dataPmsId);
+            if (dataPms.containsKey("valIds") && StringUtils.isNotBlank(dataPms.get("valIds").toString())) {
+                valArr = dataPms.get("valIds").toString().split(",");
+                for (String val : valArr) {
+                    Map<String, Object> dataVal = new HashMap<String, Object>();
+                    dataVal.put("valId", IDGenerator.getUUID());// 生成授权值记录ID
+                    dataVal.put("dataPmsId", dataPmsId);
+                    dataVal.put("val", val);
+                    dataValList.add(dataVal);
+                }
+            }
+        }
+        // 删除旧授权数据
+        dataPermissionDao.delDataAuth(param);
+        // 保存数据授权
+        dataPermissionDao.saveDataAuth(param);
+        if (dataValList.size() > 0) {
+            param.put("dataValList", dataValList);
+            // 保存数据授权值
+            dataPointPermissionValDao.saveDataAuthVal(param);
+        }
+    }
+
+    @Override
+    public List<Map<String, Object>> getDataPointAuthByUserLoginNameAndAppCodeAndItemCode(Map<String, Object> map)
+            throws Exception {
+        UserDto userDto = userService.selectUserInfoById(map);
+
+        Map<String, Object> mapcon = new HashMap<String, Object>();
+        mapcon.put("userId", userDto.getId());
+        // 获取用户的角色
+        List<StandardRoleDto> standardRoleDtoList = standardRoleService.queryRoleListByUserId(mapcon);
+
+        // 获取用户的通用角色
+        List<StandardRoleDto> currencyRoleDtoList = standardRoleService.queryCurrencyRoleListByUserId(mapcon);
+
+        // 获取用户的岗位
+        List<PostDto> postDtoList = postService.queryAuthPostListByUserId(mapcon);
+        // 用户的ID，用户标准岗位ID，用户角色ID，用户的岗位ID
+        List<String> list = new ArrayList<String>();
+        // 用户的标准岗位ID
+        if (null != standardRoleDtoList && standardRoleDtoList.size() > 0) {
+            for (StandardRoleDto srDto : standardRoleDtoList) {
+                list.add(srDto.getId());
+            }
+        }
+        // 用户的通用角色ID
+        if (null != currencyRoleDtoList && currencyRoleDtoList.size() > 0) {
+            for (StandardRoleDto srDto : currencyRoleDtoList) {
+                list.add(srDto.getId());
+            }
+        }
+        // 用户的岗位ID
+        if (null != postDtoList && postDtoList.size() > 0) {
+            for (PostDto srDto : postDtoList) {
+                list.add(srDto.getId());
+            }
+        }
+        // 当前用户的ID
+        list.add(userDto.getId());
+
+        // 设置当前授权对象的所有ID
+        map.put("ids", list);
+        List<Map<String, Object>> listReturn = dataPermissionDao
+                .getDataPointAuthByUserLoginNameAndAppCodeAndItemCode(map);
+        return listReturn;
+    }
+
+    @Override
+    public List<Map<String, Object>> getDataPointValAuthByDataPermissionId(Map<String, Object> map) throws Exception {
+        List<Map<String, Object>> listReturn = dataPermissionDao.getDataPointValAuthByDataPermissionId(map);
+        return listReturn;
+    }
+
+    @Override
+    public void saveBatchDataImport(Map<String, Object> map) throws Exception {
+        if (null == map.get("importObjectId") || "".equals((String) map.get("importObjectId"))) {
+            throw new InvalidCustomException("需要更改的对象为空");
+        }
+
+        if (null == map.get("objectids") || "".equals((String) map.get("objectids"))) {
+            throw new InvalidCustomException("需要引入的对象为空");
+        }
+        String objectids = (String) map.get("objectids");
+        String importObjectId = (String) map.get("importObjectId");
+
+
+        String[] importObjectIdList = importObjectId.split(",");
+
+        for (String imObjectId : importObjectIdList) {
+
+            Map<String, Object> mapImObjectId = new HashMap<String, Object>();
+            mapImObjectId.put("imObjectId", imObjectId);
+            //删除当前对象现有的所有控制点授权以及对应的val值
+            List<String> listDataPermissionIds = queryAuthDataIdByobjectIds(mapImObjectId);
+            List<String> listDataPointPermissionIds = queryAuthDataValIdByobjectIds(mapImObjectId);
+            if (listDataPermissionIds.size() > 0) {
+                deleteAllObjectByIds(listDataPermissionIds);
+            }
+            if (listDataPointPermissionIds.size() > 0) {
+                deleteAllObjectByIds(listDataPointPermissionIds);
+            }
+            mapImObjectId.put("imObjectId", objectids);
+            //保存引入对象的控制点授权和对应的val
+            List<Map<String, Object>> savelistData = queryAuthDataByobjectIds(mapImObjectId);
+
+            for (Map<String, Object> m : savelistData) {
+                DataPermission dataPermission = new DataPermission();
+                String dataPermissionId = IDGenerator.getUUID();
+                dataPermission.setId(dataPermissionId);
+                dataPermission.setRoleId(imObjectId);
+                dataPermission.setDataPointId((String) m.get("data_point_id"));
+                Map<String, Object> mapImdataPermissionId = new HashMap<String, Object>();
+                mapImdataPermissionId.put("imdataPermissionId", (String) m.get("id"));
+                List<Map<String, Object>> savelistValData = queryAuthValDataBydataPermissionId(mapImdataPermissionId);
+                for (Map<String, Object> mVal : savelistValData) {
+                    DataPointPermissionVal dataPointPermissionVal = new DataPointPermissionVal();
+                    dataPointPermissionVal.setId(IDGenerator.getUUID());
+                    dataPointPermissionVal.setDataPermissionId(dataPermissionId);
+                    dataPointPermissionVal.setVal((String) mVal.get("val"));
+                    dataPointPermissionValService.save(dataPointPermissionVal);
+                }
+                save(dataPermission);
+            }
+        }
+    }
+
+    @Override
+    public void saveBatchDataToObjectBytypeAndItemId(Map<String, Object> map) throws Exception {
+        if (map != null) {
+            Map mapAuthData = (HashMap) map.get("saveData");
+            String type = (String) map.get("type");
+            String dataItemId = (String) map.get("dataItemId");
+            String pointIdOrVal = map.get("id").toString();
+            Map<String, Object> mapCon = new HashMap<String, Object>();
+            mapCon.put("itemId", dataItemId);
+            mapCon.put("ids", "");
+            mapCon.put("type", type);
+            //根据控制项ID查询出已经配置的对象(控制点或者指定val传递为空查询出来当前控制项所有的配置，有新的添加，要删除原先配置的控制点)
+            Map<String, Object> resultMap = queryAuthDataByitemIdAndPointId(mapCon);
+            List<Map<String, Object>> listDataPermission = (List<Map<String, Object>>) resultMap.get("listDataPermission");
+            List<Map<String, Object>> listDataPointPermission = (List<Map<String, Object>>) resultMap.get("listDataPointPermission");
+
+
+            //保存的数据为对象Id绑定控制点，
+            if (type.equals("dataPoint")) {
+                if (mapAuthData != null) {
+                    //删除的Id数据
+                    List<String> listDataPermissionIds = new ArrayList<String>();
+                    Set<String> set = mapAuthData.keySet();
+                    for (String key : set) {
+                        String[] keyIds = key.split("#");
+                        String[] roleIds = keyIds[0].split("/");
+                        String roleId = roleIds[roleIds.length - 1];
+                        String operationId = keyIds[1];
+                        if (!operationId.equals("operationId")) {
+                            if ("1".equals(mapAuthData.get(key))) {
+                                DataPermission dataPermission = new DataPermission();
+                                dataPermission.setId(IDGenerator.getUUID());
+                                dataPermission.setRoleId(roleId);
+                                dataPermission.setDataPointId(operationId);
+                                //如果原有数据有已保存的控制点，要进行删除
+                                //例：roleid:本部门，新增数据为roleid:本公司，要删除掉本部门
+                                for (int i = 0; i < listDataPermission.size(); i++) {
+                                    Map<String, Object> dataMap = listDataPermission.get(i);
+                                    if (((String) dataMap.get("role_id")).equals(roleId)) {
+                                        listDataPermissionIds.add(((String) dataMap.get("id")));
+                                    }
+                                }
+                                save(dataPermission);
+                            } else {
+                                for (int i = 0; i < listDataPermission.size(); i++) {
+                                    Map<String, Object> dataMap = listDataPermission.get(i);
+                                    if (((String) dataMap.get("role_id")).equals(roleId) && ((String) dataMap.get("data_point_id")).equals(operationId)) {
+                                        listDataPermissionIds.add(((String) dataMap.get("id")));
+                                    }
+                                }
+                            }
+                        }
+
+                    }
+                    if (listDataPermissionIds.size() > 0) {
+                        deleteAllObjectByIds(listDataPermissionIds);
+                    }
+                }
+            } else {
+                //根据控制项ID查询出来控制点Id
+                //要类型是指定数据的那个控制点Id
+                Map<String, Object> mapgetDataItemId = new HashMap<String, Object>();
+                mapgetDataItemId.put("itemId", dataItemId);
+                List<DataPoint> list = dataPointService.queryDataPointByPram(mapgetDataItemId);
+                String dataPointId = "";
+                for (DataPoint dp : list) {
+                    if (dp.getType().equals("2")) {
+                        dataPointId = dp.getId();
+                    }
+                }
+                //保存的数据为对象Id绑定指定val数据
+                if (mapAuthData != null) {
+                    //删除的控制点Id数据
+                    List<String> listDataPermissionIds = new ArrayList<String>();
+                    //删除的指定数据val数据
+                    List<String> listDataPointPermissionIds = new ArrayList<String>();
+                    Set<String> set = mapAuthData.keySet();
+                    for (String key : set) {
+                        String[] keyIds = key.split("#");
+                        String[] roleIds = keyIds[0].split("/");
+                        String roleId = roleIds[roleIds.length - 1];
+                        String operationId = keyIds[1];
+                        if (!operationId.equals("operationId")) {
+                            if ("1".equals(mapAuthData.get(key))) {
+                                String dataPermissionId = "";
+                                boolean isexistDataPoint = false;
+                                for (int i = 0; i < listDataPermission.size(); i++) {
+                                    Map<String, Object> dataMap = listDataPermission.get(i);
+                                    if (((String) dataMap.get("role_id")).equals(roleId)) {
+                                        String dataPointType = (String) dataMap.get("type");
+                                        //如果控制点不是指定类型，要进行删除，如果是，要保留控制点ID
+                                        if (dataPointType.equals("2")) {
+                                            isexistDataPoint = true;
+                                            dataPermissionId = (String) dataMap.get("id");
+                                        } else {
+                                            listDataPermissionIds.add(((String) dataMap.get("id")));
+                                        }
+                                    }
+                                }
+                                //isexistDataPoint为true，说明有原先的指定控制点Id，直接进行保存即可，如果没有，要先保存指定类型控制点和角色的绑定
+                                if (isexistDataPoint) {
+                                    DataPointPermissionVal dataPointPermissionVal = new DataPointPermissionVal();
+                                    dataPointPermissionVal.setId(IDGenerator.getUUID());
+                                    dataPointPermissionVal.setDataPermissionId(dataPermissionId);
+                                    dataPointPermissionVal.setVal(operationId);
+                                    dataPointPermissionValService.save(dataPointPermissionVal);
+                                } else {
+                                    DataPermission dataPermission = new DataPermission();
+                                    dataPermissionId = IDGenerator.getUUID();
+                                    dataPermission.setId(dataPermissionId);
+                                    dataPermission.setRoleId(roleId);
+                                    dataPermission.setDataPointId(dataPointId);
+                                    dataPermissionService.save(dataPermission);
+                                    DataPointPermissionVal dataPointPermissionVal = new DataPointPermissionVal();
+                                    dataPointPermissionVal.setId(IDGenerator.getUUID());
+                                    dataPointPermissionVal.setDataPermissionId(dataPermissionId);
+                                    dataPointPermissionVal.setVal(operationId);
+                                    dataPointPermissionValService.save(dataPointPermissionVal);
+                                }
+//									dataPermissionService.save(dataPermission);
+                            } else {
+                                for (int i = 0; i < listDataPointPermission.size(); i++) {
+                                    Map<String, Object> dataMap = listDataPointPermission.get(i);
+                                    if (((String) dataMap.get("role_id")).equals(roleId) && ((String) dataMap.get("val")).equals(operationId)) {
+                                        listDataPointPermissionIds.add(((String) dataMap.get("id")));
+                                    }
+                                }
+                            }
+                        }
+
+                    }
+                    if (listDataPermissionIds.size() > 0) {
+                        dataPermissionService.deleteAllObjectByIds(listDataPermissionIds);
+                    }
+
+                    if (listDataPointPermissionIds.size() > 0) {
+                        dataPointPermissionValService.deleteAllObjectByIds(listDataPointPermissionIds);
+                    }
+                }
+
+            }
+        }
+    }
+
+    /**
+     * 根据对象Id获取已授权控制点的主键ID（为了删除）
+     *
+     * @param map
+     * @return
+     */
+    @Override
+    public List<String> queryAuthDataIdByobjectIds(Map<String, Object> map) throws Exception {
+        List<String> listReturn = dataPermissionDao.queryAuthDataIdByobjectIds(map);
+        return listReturn;
+    }
+
+    /**
+     * 根据对象Id获取已授权控制点val的主键ID（为了删除）
+     *
+     * @param map
+     * @return
+     */
+    @Override
+    public List<String> queryAuthDataValIdByobjectIds(Map<String, Object> map) throws Exception {
+        List<String> listReturn = dataPermissionDao.queryAuthDataValIdByobjectIds(map);
+        return listReturn;
+    }
+
+    /**
+     * 根据对象Id获取已授权数据
+     *
+     * @param map
+     * @return
+     */
+    @Override
+    public List<Map<String, Object>> queryAuthDataByobjectIds(Map<String, Object> map) throws Exception {
+        List<Map<String, Object>> listReturn = dataPermissionDao.queryAuthDataByobjectIds(map);
+        return listReturn;
+    }
+
+    /**
+     * 根据已授权的主键ID获取已授权val数据
+     *
+     * @param map
+     * @return
+     */
+    @Override
+    public List<Map<String, Object>> queryAuthValDataBydataPermissionId(Map<String, Object> map) throws
+            Exception {
+        List<Map<String, Object>> listReturn = dataPermissionDao.queryAuthValDataBydataPermissionId(map);
+        return listReturn;
+    }
+
+}

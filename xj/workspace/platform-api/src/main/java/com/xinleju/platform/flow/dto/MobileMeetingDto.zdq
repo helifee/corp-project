@@ -1,0 +1,43 @@
+package com.xinleju.platform.flow.dto;
+
+import java.sql.Timestamp;
+
+import com.xinleju.platform.base.dto.BaseDto;
+
+/**
+ * @author admin
+ * 
+ *
+ */
+public class MobileMeetingDto extends BaseDto{
+	
+	private String title;//标题
+	private String userName;//发起人姓名,用于列表展示时使用
+	private Timestamp meetingDate;//会议时间用于列表展示时使用
+	private String mobileUrl;
+	
+	public String getTitle() {
+		return title;
+	}
+	public void setTitle(String title) {
+		this.title = title;
+	}
+	public String getUserName() {
+		return userName;
+	}
+	public void setUserName(String userName) {
+		this.userName = userName;
+	}
+	public Timestamp getMeetingDate() {
+		return meetingDate;
+	}
+	public void setMeetingDate(Timestamp meetingDate) {
+		this.meetingDate = meetingDate;
+	}
+	public String getMobileUrl() {
+		return mobileUrl;
+	}
+	public void setMobileUrl(String mobileUrl) {
+		this.mobileUrl = mobileUrl;
+	}
+}

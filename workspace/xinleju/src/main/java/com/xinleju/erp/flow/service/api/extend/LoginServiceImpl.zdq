@@ -1,0 +1,101 @@
+package com.xinleju.erp.flow.service.api.extend;
+
+import java.net.HttpCookie;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.http.NameValuePair;
+import org.apache.http.message.BasicNameValuePair;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.erp.flow.service.api.extend.dto.LoginResult;
+import com.xinleju.erp.frame.dao.AppDao;
+import com.xinleju.erp.frame.filter.CASLoginResult;
+import com.xinleju.erp.frame.filter.HtmlParser;
+import com.xinleju.erp.frame.filter.HttpForwardProxy;
+import com.xinleju.erp.frame.models.LogRecord;
+
+@Service
+public class LoginServiceImpl implements LoginService{
+	
+	private static Logger log = Logger.getLogger(LoginServiceImpl.class);
+	
+	@Value("#{appProperties['casServerUrl']}")
+	private String casServerUrl;
+	@Autowired
+	private AppDao appDao;
+	
+	public LoginResult login (String username,String password){
+		
+		LoginResult lr = new LoginResult();
+		
+		LogRecord logr=new LogRecord();//日志记录对象 
+		logr.setCreateDate(new Date());
+		logr.setCreateUserId(0L);
+		logr.setModuleCode("PT");
+		logr.setSign("1");
+		logr.setFuncName("用户登录");
+		logr.setType(1L);
+		logr.setUrl("LoginServiceImpl.login()");
+		
+		log.info("casServerUrl : " + casServerUrl);
+		log.info("username : " + username);
+		log.info("password : " + password);
+		
+		if(casServerUrl == null || casServerUrl.trim().length() == 0) {
+			lr.setResult(LoginResult.ERROR);
+			lr.setMessage("认证服务器地址错误！casServerUrl is null");
+			logr.setLogInfo("casServerUrl : " + casServerUrl+"username : " + username+"password : " + password);
+			logr.setErrorMsg(lr.getMessage());
+			appDao.saveLogRecord(logr);
+			return lr;
+		}
+		
+		HttpForwardProxy proxy = new HttpForwardProxy();
+		HtmlParser parser = new HtmlParser();
+		
+		String html = proxy.get(appDao.getAppByCode("PT").getDepUrl(), null);
+		
+		Map<String, String> postArgs = parser.parseCasPostRequestArg(html);
+		
+		String action = postArgs.get("action");
+		
+		List<NameValuePair> formParams = new ArrayList<NameValuePair>();
+		formParams.add(new BasicNameValuePair("username", username));
+		formParams.add(new BasicNameValuePair("password", password));
+		
+		formParams.add(new BasicNameValuePair("lt", postArgs.get("lt")));
+		formParams.add(new BasicNameValuePair("_eventId", postArgs.get("_eventId")));
+		if(postArgs.get("execution") != null) {
+			formParams.add(new BasicNameValuePair("execution", postArgs.get("execution")));
+		}
+		
+		CASLoginResult result = proxy.casLogin(casServerUrl + action, formParams);
+		
+		if(result == null) {
+			lr.setResult(LoginResult.ERROR);
+			lr.setMessage("用户名或密码错误");
+		}else {
+			lr.setResult(LoginResult.SUCCESS);
+			lr.setMessage("登录成功");
+	        System.out.println("cookies:=="+result.getCookies());
+			for (HttpCookie c : result.getCookies()) {
+				if("CASTGC".equals(c.getName())) {
+					lr.setToken(c.getName() + ":" + c.getValue());
+					break;
+				}
+			}
+		}
+		logr.setLogInfo("casServerUrl : " + casServerUrl+"username : " + username+"password : " + password);
+		logr.setReturnMsg(lr.getMessage());
+		appDao.saveLogRecord(logr);
+		
+		return lr;
+	}
+
+}

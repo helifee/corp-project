@@ -1,0 +1,66 @@
+package com.xinleju.platform.sys.base.dto;
+
+import com.xinleju.platform.base.dto.BaseDto;
+
+
+
+
+
+/**
+ * @author admin
+ * 
+ *
+ */
+public class SettlementTradesDto extends BaseDto{
+
+		
+	//结算方式名称
+	private String name;
+    
+  		
+	//结算方式编码
+	private String code;
+    
+  		
+	//状态
+	private String status;
+    
+  		
+	//备注
+	private String remark;
+    
+  		
+		
+	public String getName() {
+		return name;
+	}
+	public void setName(String name) {
+		this.name = name;
+	}
+    
+  		
+	public String getCode() {
+		return code;
+	}
+	public void setCode(String code) {
+		this.code = code;
+	}
+    
+  		
+	public String getStatus() {
+		return status;
+	}
+	public void setStatus(String status) {
+		this.status = status;
+	}
+    
+  		
+	public String getRemark() {
+		return remark;
+	}
+	public void setRemark(String remark) {
+		this.remark = remark;
+	}
+    
+  		
+}

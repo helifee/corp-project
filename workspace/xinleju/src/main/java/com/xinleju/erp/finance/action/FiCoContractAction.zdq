@@ -1,0 +1,236 @@
+package com.xinleju.erp.finance.action;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.MatchMode;
+import org.hibernate.criterion.Order;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+
+import com.xinleju.erp.base.app.action.BaseAction;
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.utils.JsonUtils;
+import com.xinleju.erp.co.voucher.service.SyncFinaCoData;
+import com.xinleju.erp.finance.models.FiCoContract;
+import com.xinleju.erp.finance.models.FiSysinfo;
+import com.xinleju.erp.finance.service.FiCoContractService;
+import com.xinleju.erp.finance.service.FiSysInfoService;
+import com.xinleju.erp.finance.utils.NCSendData;
+import com.xinleju.erp.finance.utils.NCXMlParse;
+import com.xinleju.erp.flow.service.api.extend.BaseAPI;
+import com.xinleju.erp.flow.service.api.extend.OrgnService;
+import com.xinleju.erp.flow.service.api.extend.dto.CompanyDTO;
+import com.xinleju.erp.frame.utils.DataGridJson;
+import com.xinleju.erp.sm.extend.dto.FinaData;
+
+/**
+ * 合同信息
+ * @author chc
+ */
+public class FiCoContractAction extends BaseAction {
+	private static final Log log = LogFactory.getLog(FiCoContractAction.class);
+	
+	@Autowired
+	private FiCoContractService fiCoContractService;
+	private FiCoContract fiCoContract;
+	@Autowired
+    @Qualifier("orgnServiceProvider")
+    private OrgnService orgnService;
+	@Autowired
+	private FiSysInfoService fiSysInfoService;
+	/**
+	 * 业务对象注册页面
+	 * 
+	 * @return
+	 */
+	public String list() {
+		List<CompanyDTO> companys = orgnService.getCompanyListAll().getResult();
+		if(companys != null && companys.size()>0){
+		String accountSetsjson = JsonUtils.toJSONString(companys);
+		request.setAttribute("accountSetsjson", accountSetsjson);
+		}else{
+			request.setAttribute("accountSetsjson", "[]");
+		}
+		return "list";
+	}
+	
+	/**
+	 * 页面对象列表页面加载业务对象列表(ajax)
+	 */
+	public void loadlist(){
+		Long companyId = getParameterLong("companyId");
+		String keyword = request.getParameter("keyword");
+		DetachedCriteria dc = DetachedCriteria.forClass(FiCoContract.class);
+		if (null != companyId) {
+			dc.add(Restrictions.eq("companyId", companyId));
+		}
+		if (StringUtils.isNotBlank(keyword)) {
+			dc.add(Restrictions.or(Restrictions.like("code", keyword,MatchMode.ANYWHERE).ignoreCase(),   
+                    Restrictions.like("name", keyword,MatchMode.ANYWHERE).ignoreCase()));
+		}
+		dc.addOrder(Order.desc("id"));
+		limit = getParameterInt("rows");
+		start = (getParameterInt("page") - 1)*limit;
+		
+		page = getCommonService().findPage(dc, start, limit);
+		
+		String json = new DataGridJson(page).toJsonString();
+		renderJson(json);
+	}
+
+	public void newFiCoContract() {
+		Map<String, Object> result = new HashMap<String, Object>();
+		Long companyId = getParameterLong("companyId");
+		try {
+			List<FiCoContract> ficolist = new ArrayList<FiCoContract>();
+			SyncFinaCoData syncFinaCoData =  (SyncFinaCoData) App.getBean("syncFinaCoData");
+			Map<Long,List<Map<String,Object>>> returnmap = syncFinaCoData.findContract(companyId);
+			List<Map<String,Object>> list = returnmap.get(companyId);
+			List<Long> finaSuccessList = new ArrayList<Long>();
+			List<Long> finaErrorList = new ArrayList<Long>();
+			FinaData finaData = new FinaData();
+			for(int i=0;i<list.size();i++){
+				FiCoContract fico = new FiCoContract();
+				Map<String,Object> map = list.get(i);
+				fico.setCode(String.valueOf(map.get("code")));
+				fico.setName(String.valueOf(map.get("name")));
+				fico.setNcCode(String.valueOf(map.get("code")));
+				fico.setCoid(Long.valueOf(map.get("id")+""));
+				fico.setCompanyId(companyId);
+				fico.setSendStatus(1L);
+				ficolist.add(fico);
+				try{
+					fiCoContractService.saveOrUpdate(fico);
+					finaSuccessList.add(Long.valueOf(map.get("id")+""));
+				}catch (Exception e){
+					finaErrorList.add(Long.valueOf(map.get("id")+""));
+					e.printStackTrace();
+				}
+				finaData.put("success", finaSuccessList);
+				finaData.put("error", finaErrorList);
+			}
+			syncFinaCoData.updateContractFiType(finaData);
+//			fiCoContractService.saveOrUpdate(ficolist);
+			result.put("success", true);
+			renderHtml(JsonUtils.toJSONString(result));
+		} catch (Exception e) {
+			result.put("success", false);
+			result.put("msg", e.getMessage());
+			renderHtml(JsonUtils.toJSONString(result));
+			e.printStackTrace();
+		}
+	}
+	
+	/**
+	 * 业务对象编辑页面
+	 * 
+	 * @return
+	 */
+	@SuppressWarnings("unchecked")
+	public String edit() throws Exception {
+		try {
+			Long id = getParameterLong("id");
+			if (id != null) {
+				fiCoContract = this.fiCoContractService.getFiCoContractById(id);
+			}
+		} catch (Exception e) {
+			log.error("",e);
+			throw e;
+		}
+		return "edit";
+	}
+
+	/**
+	 * 保存业务对象
+	 */
+	public void save() throws Exception {
+		Map<String, Object> result = new HashMap<String, Object>();
+		try {
+			fiCoContractService.saveOrUpdate(fiCoContract);
+			result.put("success", true);
+			result.put("msg", "操作成功");
+			renderJson(result);
+		} catch (Exception e) {
+			result.put("success", false);
+			result.put("msg", e.getMessage());
+			renderJson(result);			
+		}
+	}
+	
+	/**
+	 * 推送到nc
+	 */
+	//@SuppressWarnings("unchecked")
+	public void sendFiCoContract() {
+		Long companyId = getParameterLong("companyId");
+		List<FiCoContract> list = fiCoContractService.getFiCoContract(companyId,null,null,0L);
+		FiSysinfo sysinfo = fiSysInfoService.getAllFiSysinfo().get(0);
+		int flag = 2;
+		String xmlFile = "";
+		// NC系统返回的xml字符串
+		String res = null;
+		try {
+			String webUrl = sysinfo.getWebUrl();
+			String url = webUrl + "?account=02&receiver=0001" ;
+			for(FiCoContract dto : list){
+				xmlFile = fiCoContractService.createSyncXml2NC(dto);
+				if (xmlFile != null && !xmlFile.trim().equals("") && !url.trim().equals("") && url != null) {
+					res = NCSendData.getPostResponse(url, xmlFile);
+				}
+//				System.out.println("NC返回的信息===="+res);
+				if (null != res) {
+					if (NCXMlParse.XmlErrorCode(res) >= 0) {
+						dto.setNcCode(dto.getCode());
+						dto.setSendStatus(1L);// 输出成功
+						dto.setSendDate(new Date());
+						flag = 1;
+					} else {
+						String errorinfo = NCXMlParse.XmlErrorInfo(res);
+						Integer errCode = NCXMlParse.XmlErrorCode(res);
+						dto.setSendStatus(2L);//  输出失败
+						dto.setSendDate(new Date());
+						String error = "错误代码：" + errCode.toString() + " 错误内容："+ errorinfo;
+						dto.setErrmsg(error);
+						flag = 2;
+					}
+					//saveFile1(res);
+				} else {
+					flag = 0;
+					dto.setSendStatus(0L);// 未输出
+					dto.setSendDate(new Date());
+					dto.setErrmsg("生成xml文件失败，未输出！");
+				}
+				fiCoContractService.saveOrUpdate(dto);
+			}
+			renderJson("{\"success\":\"true\",\"msg\":\"推送成功\"}");
+		}catch (Exception e) {
+			flag = 2;
+			e.printStackTrace();
+			renderJson("{\"success\":\"fasle\",\"msg\":\"推送失败\"}");
+		}
+	}
+
+	/**
+	 * @return the fiCoContract
+	 */
+	public FiCoContract getFiCoContract() {
+		return fiCoContract;
+	}
+
+	/**
+	 * @param fiCoContract the fiCoContract to set
+	 */
+	public void setFiCoContract(FiCoContract fiCoContract) {
+		this.fiCoContract = fiCoContract;
+	}
+	
+}

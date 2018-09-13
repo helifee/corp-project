@@ -1,0 +1,191 @@
+package com.xinleju.platform.sysmanager;
+
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.flow.dao.InstanceDao;
+import com.xinleju.platform.flow.service.InstanceService;
+import org.apache.commons.codec.digest.DigestUtils;
+import org.apache.http.HttpEntity;
+import org.apache.http.HttpResponse;
+import org.apache.http.client.ClientProtocolException;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.entity.StringEntity;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.util.EntityUtils;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.support.ClassPathXmlApplicationContext;
+
+import com.xinleju.platform.base.datasource.DataSourceContextHolder;
+import com.xinleju.platform.sys.org.entity.User;
+import com.xinleju.platform.sys.org.service.UserService;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+
+
+public class SysTest {
+   
+	public  void load(){
+//		 
+//	        try {
+//	        	 ApplicationContext ctx = new  ClassPathXmlApplicationContext(new String[]{"applicationContext.xml","dubbo-producer.xml"});
+//				//为保证服务一直开着，利用输入流的阻塞来模拟
+//				System.in.read();
+//			} catch (IOException e) {
+//				// TODO Auto-generated catch block
+//				e.printStackTrace();
+//			} 
+
+
+	}
+
+	public static  void main(String[] args){
+//		fixNotice();//修复费用系统流程表单状态
+//		updatePwdAll();//修改密码
+//		updatePwdByOrg("f0455fef3f37487c86c42a70eddd0418");
+//		002af6e7569c41ab9503f981baf6a1b4	长沙公司 106 2--
+//		089ec80e135746dca9464e30e72c70f0	荥阳公司 67--
+//		100b4788c3724a74a5e54bb72b7e1b07	昆山公司 66 --
+//		11a087f9d24a479fad8cd0d4ca1d9901	天津公司 32 --
+//		15f1d73002604ceda2624ec1c21fe0c7	徐州公司 31 --
+//		23269f0612b240b2956c080d49446a15	成都公司 50 1 --
+//		2da6bac180f346c18091a14daf2097e3	郑州管城公司 67 1 --
+//		38d00ced8aca4a4f82c2e0f0de16f25a	西安公司 75 --
+//		541706d9a1974177ab143c6198fdea82	青岛公司 27 --
+//		58f125b3b6a64231953896849bd3ea0f	济南公司 105 --
+//		593e145bf1f2402cbc6e35c7ea958fd0	合肥公司 0 -- 
+//		628140a1c8c44f4d98574aa7b0a2ead5	烟台公司 0 --
+//		6db154e52c2f4d1d88e8d986ba6dbba4	三亚公司 36 --
+//		8c447bab6cbd4fe8ad965a989ae57ff5	鑫苑总部 218 25 --
+//		a8002f6cfe864abaa5c2dc092d69ee7d	苏州公司 32 --
+//		cecb0adfe25c46b1a9f9dd3be607e21c	上海公司 16 --
+//		d6d90eb61f8a4a4fab67742dc90ced0a	广州公司 0 --
+//		d6eea8f3f1ca45a192f2fbb76eee5d82	珠海公司 32 --
+//		d7f986b0a4b84ff0a6e3148b090ddf4d	郑州金水公司 8 1 --
+//		e118a5d745b44ced891cabd16f2f9bd0	北京公司 29 --
+//		f0455fef3f37487c86c42a70eddd0418	郑州二七公司 232 --
+
+	}
+	
+//	public static void updatePwdByOrg(String orgId){
+//		//修改数据用户登陆密码
+//		try {
+//		ApplicationContext ctx = new  ClassPathXmlApplicationContext(new String[]{"applicationContext.xml","applicationContext-old.xml","dubbo-producer.xml","dubbo-old-producer.xml","dubbo-customer.xml"});
+//		//为保证服务一直开着，利用输入流的阻塞来模拟
+//		UserService userService =  (UserService)ctx.getBean("userServiceImpl");
+//		DataSourceContextHolder.clearDataSourceType ();
+//		DataSourceContextHolder.setDataSourceType ("test_test009");
+//		DataSourceContextHolder.getDataSourceType ();
+//
+//		Map<String, Object> map = new HashMap<String, Object>();
+//		
+//		map.put("orgId", orgId);
+//		List<User> userList = userService.queryListUpdatePwdUserByOrgId(map);
+//		List<User> updateUserList = new ArrayList<User>();
+//		List<User> noSameUserList = new ArrayList<User>();
+//		List<String> noSameIdList = new ArrayList<String>();
+//		
+//		userList.stream ().forEach (e->{
+//			String oldPassword = e.getPassword ();
+//			System.out.println ("oldPasword=="+oldPassword);
+//			String oldnewPassword = DigestUtils.md5Hex("XINJUKEJI"+"xinyuan2017!"+e.getLoginName ());
+//			if(oldPassword.equals(oldnewPassword)){
+//				String newPassword = DigestUtils.md5Hex("XINJUKEJI"+"xinyuan2018!"+e.getLoginName ());
+//				e.setPassword (newPassword);
+//				System.out.println ("newPassword=="+newPassword);
+//				updateUserList.add(e);
+//			}else{
+//				noSameUserList.add(e);
+//				noSameIdList.add(e.getId());
+//			}
+//		});
+//		userService.updateBatch (updateUserList);
+//		System.out.println("要修改的：：：数量："+updateUserList.size()+"---"+JacksonUtils.toJson(updateUserList));
+//		System.out.println("密码更改过的：：：数量："+noSameUserList.size()+"---"+JacksonUtils.toJson(noSameUserList));
+//		System.in.read();
+//	} catch (Exception e) {
+//		// TODO Auto-generated catch block
+//		e.printStackTrace();
+//	}
+//	}
+	
+	public static void updatePwdAll(){
+		//修改数据用户登陆密码
+		try {
+		ApplicationContext ctx = new  ClassPathXmlApplicationContext(new String[]{"applicationContext.xml","applicationContext-old.xml","dubbo-producer.xml","dubbo-old-producer.xml","dubbo-customer.xml"});
+		//为保证服务一直开着，利用输入流的阻塞来模拟
+		UserService userService =  (UserService)ctx.getBean("userServiceImpl");
+		DataSourceContextHolder.clearDataSourceType ();
+		DataSourceContextHolder.setDataSourceType ("test_test009");
+		DataSourceContextHolder.getDataSourceType ();
+
+//		Map<String, Object> map = new HashMap<String, Object>();
+//		
+//		map.put("loginName", "admin");
+//		
+//		List<User> userList = userService.queryList (map);
+		List<User> userList = userService.queryList (null);
+//		List<User> userList = userService.queryListOutWuye(null);
+		userList.stream ().forEach (e->{
+			String oldPassword = e.getPassword ();
+
+			System.out.println ("oldPasword=="+oldPassword);
+			String newPassword = DigestUtils.md5Hex("XINJUKEJI"+"111111"+e.getLoginName ());
+			e.setPassword (newPassword);
+			System.out.println ("newPassword=="+newPassword);
+		});
+//		userService.updateBatch (userList);
+		System.in.read();
+	} catch (Exception e) {
+		// TODO Auto-generated catch block
+		e.printStackTrace();
+	}
+	}
+
+
+	public static void fixNotice(){
+	/*	ApplicationContext ctx = new  ClassPathXmlApplicationContext(new String[]{"applicationContext.xml","applicationContext-old.xml","dubbo-producer.xml","dubbo-old-producer.xml","dubbo-customer.xml"});
+		//为保证服务一直开着，利用输入流的阻塞来模拟
+		DataSourceContextHolder.clearDataSourceType ();
+		DataSourceContextHolder.setDataSourceType ("test_test009");
+		DataSourceContextHolder.getDataSourceType ();
+		InstanceDao instanceDao =  (InstanceDao)ctx.getBean("instanceDaoImpl");
+		List<Map> list = instanceDao.selectFeeFlowInstance(null);
+		String url = "http://192.168.0.111:8081/ex/common/ex_flow!updateSendFiAiStatus.do";
+		for(Map map:list) {
+			Map<String, String> params = new HashMap<String, String>();
+			params.put("businessId", String.valueOf(map.get("businessId")));
+			params.put("businessObjectCode", String.valueOf(map.get("businessObjectCode")));
+			params.put("status", String.valueOf(map.get("status")));
+			params.put("instanceId", String.valueOf(map.get("id")));
+			params.put("flCode", String.valueOf(map.get("flCode")));
+			String result=null;
+			CloseableHttpClient httpClient= HttpClients.createDefault();
+			HttpPost httpPost = new HttpPost(url);
+			httpPost.addHeader("Content-Type", "application/json; charset=utf-8");
+			httpPost.addHeader("User-Agent",
+					"Mozilla/5.0 (Windows NT 6.1; WOW64; rv:50.0) Gecko/20100101 Firefox/50.0");
+			StringEntity se = new StringEntity(JacksonUtils.toJson(params), "utf-8");
+			httpPost.setEntity(se);
+			try {
+				HttpResponse response = httpClient.execute(httpPost);
+				if (response != null) {
+					HttpEntity resEntity = response.getEntity();
+					if (resEntity != null) {
+						result = EntityUtils.toString(resEntity, "utf-8");
+						System.out.println(result);
+					}
+				}
+			} catch (ClientProtocolException e) {
+				e.printStackTrace();
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		};*/
+	}
+}

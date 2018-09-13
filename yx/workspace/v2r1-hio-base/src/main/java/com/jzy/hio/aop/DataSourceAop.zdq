@@ -1,0 +1,205 @@
+package com.jzy.hio.aop;
+
+import java.lang.reflect.Parameter;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+
+import javax.servlet.http.HttpServletRequest;
+
+import org.aspectj.lang.JoinPoint;
+import org.aspectj.lang.ProceedingJoinPoint;
+import org.aspectj.lang.annotation.Around;
+import org.aspectj.lang.annotation.Aspect;
+import org.aspectj.lang.annotation.Before;
+import org.aspectj.lang.annotation.Pointcut;
+import org.aspectj.lang.reflect.MethodSignature;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
+import org.springframework.jdbc.datasource.lookup.AbstractRoutingDataSource;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+
+import com.jzy.hio.annotation.DataSource;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.database.DataSourceContextHolder;
+import com.jzy.hio.utils.OrderValue;
+
+/**
+ * spring的事务aop与数据源切换aop的关系<br/>
+ *
+ * <pre>
+ * 假设  @Pointcut("execution(* com.jzy.hio..service.*.*(..) )")拦截所有service的方法
+ * spring事务默认会优先执行,即打开数据库连接---查找数据源
+ * 执行  {@link AbstractRoutingDataSource#determineTargetDataSource}
+ *        {@linkDynamicDataSource#determineCurrentLookupKey()}
+ *  此时如果数据源没设置的话就会出错，所以数据源切换需要优先执行
+ * </pre>
+ *
+ * @author wt.coffee<br />
+ *         2018年2月25日下午2:08:22
+ */
+@Aspect
+@Order(OrderValue.AOP_DATASOURCE)
+@Configuration
+public class DataSourceAop extends Base {
+
+	private Logger logger = LoggerFactory.getLogger(DataSourceAop.class);
+
+	private final String pointcut = "execution(* com.jzy.hio..service.impl.*.*(..) )";
+
+	/**
+	 * 在满足pointcut条件的情况下 排除特定的package
+	 */
+	public static List<String> excludePackages = new ArrayList<>();
+
+	public DataSourceAop() {
+
+	}
+
+	@Pointcut(pointcut)
+	public void excudeService() {
+
+	}
+
+	@Before("excudeService()")
+	public void before(JoinPoint thisJoinPoint) {
+		logger.info("设置数据源 {} ", thisJoinPoint.toString());
+		// 排除 主包 和方法
+		boolean isIgnore = ignorePackagesAndMethod(thisJoinPoint);
+		if (isIgnore) {
+			// 不需要切库
+		} else {
+			// 切换数据库
+			String datasource = switchCurrentSource(thisJoinPoint);
+			// datasource = "test_test015";
+			MethodSignature msig = (MethodSignature) thisJoinPoint.getSignature();
+			DataSourceContextHolder.setDataSourceType(datasource, msig.getMethod());
+		}
+	}
+
+	/**
+	 * 排除生成主键的方法
+	 *
+	 * @param pjp
+	 * @return true 不走切库的逻辑
+	 */
+	private boolean ignorePackagesAndMethod(JoinPoint pjp) {
+		MethodSignature msig = (MethodSignature) pjp.getSignature();
+		if (msig.getMethod().getName().equals(BaseConstants.GENERATE_PK_METHOD_NAME)) {
+			logger.info("排除生成主键方法 {} , 不切库", BaseConstants.GENERATE_PK_METHOD_NAME);
+			return true;
+		}
+		if (pjp.getTarget().getClass().getPackage().getName().startsWith("com.jzy.hio.redis.service")) {
+			return true;
+		}
+		return false;
+	}
+
+	@Around("excudeService()")
+	public Object around(ProceedingJoinPoint thisJoinPoint) throws Throwable {
+		try {
+			// logger.info("准备调用service");
+			Object obj = thisJoinPoint.proceed();
+			// logger.info(" 调用service结束 ");
+			return obj;
+		} catch (Throwable t) {
+			// 注意 这里的异常必须抛出去、否则无法被捕获
+			throw t;
+		}
+	}
+
+	/**
+	 * 先检测参数上是否有注解、没有的话 检测方法、最后检测类
+	 *
+	 * @param pjp
+	 * @return
+	 */
+	private String switchCurrentSource(JoinPoint pjp) {
+		String packageName = pjp.getTarget().getClass().getPackage().getName();
+		for (String exclude : excludePackages) {
+			if (packageName.contains(exclude)) {
+				logger.info("排除 {} , 不切库", packageName);
+				return BaseConstants.DATASOURCE_DEFAULT;
+			}
+		}
+		MethodSignature msig = (MethodSignature) pjp.getSignature();
+		// 1、先从方法参数上取@Datasource注解
+		Parameter[] paramters = msig.getMethod().getParameters();
+		String datasource = null;
+		for (int i = 0; i < paramters.length; i++) {
+			Parameter paramter = paramters[i];
+			DataSource annotation = paramter.getAnnotation(DataSource.class);
+			if (annotation != null) {
+				Object obj = pjp.getArgs()[i];
+				datasource = obj == null ? null : String.valueOf(obj);
+				logger.info("datasource 从参数获取{} ", obj);
+				break;
+			}
+		}
+		if (Base.isNotEmpty(datasource)) {
+			return datasource;
+		}
+		// 2 从header获取
+		try {
+			if (RequestContextHolder.getRequestAttributes() == null) {
+				// 忽略header
+			} else {
+				HttpServletRequest request = ((ServletRequestAttributes) RequestContextHolder.getRequestAttributes()).getRequest();
+				String tendId = request.getHeader(BaseConstants.HTTP_PARAM_TENDID);
+				if (isNotEmpty(tendId)) {
+					logger.info("datasource 从header获取{} ", tendId);
+					return tendId;
+				}
+				// modify by lvjie 20180703 disk项目中从param参数中获取tendId
+				String sessionId = request.getSession().getId();
+				tendId = (String) request.getAttribute(BaseConstants.DISK_PARAM_TENDID+sessionId);
+				if (isNotEmpty(tendId)) {
+					logger.info("disk项目请求 datasource 从attribute获取{} ", tendId);
+					return tendId;
+				}
+			}
+		} catch (Exception e) {
+			// 在线程里取不到header--这种一般都是手动设置的tendId、所以忽略这个错误
+			logger.warn("获取header失败 {} ", e);
+		}
+
+		// 2、取方法上的@Datasource注解
+		DataSource annotation = msig.getMethod().getAnnotation(DataSource.class);
+		if (annotation != null && Base.isNotEmpty(annotation.value())) {
+			logger.info("datasource 从方法获取{} ", annotation.value());
+			return annotation.value();
+		} else {
+			// 3、取类上的@Datasource注解
+			annotation = pjp.getTarget().getClass().getAnnotation(DataSource.class);
+			if (annotation != null && Base.isNotEmpty(annotation.value())) {
+				logger.info("datasource 从类中获取{} ", annotation.value());
+				return annotation.value();
+			} else {
+				// 4、从session中取
+				String tendId = null;
+				try {
+					tendId = super.getTendId();
+					logger.info("datasource 从Base-session中获取{} ", tendId);
+				} catch (Exception e) {
+					logger.warn("获取tendId 异常===> {}", e.getMessage());
+				}
+				// 5、以上方法都获取不到、则取默认值
+				if (Base.isEmpty(tendId)) {
+					tendId = BaseConstants.DATASOURCE_DEFAULT;
+					logger.info("datasource 从Base-session中获取 失败、采用默认数据源 {}  ", tendId);
+				}
+				return tendId;
+			}
+		}
+	}
+
+	public static void setExcludePackages(String... excludePackages) {
+		List<String> packages = Arrays.asList(excludePackages);
+		DataSourceAop.excludePackages.addAll(packages);
+	}
+
+}

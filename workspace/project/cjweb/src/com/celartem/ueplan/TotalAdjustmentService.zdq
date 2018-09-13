@@ -1,0 +1,199 @@
+package com.celartem.ueplan;
+
+import java.text.DecimalFormat;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.Iterator;
+import java.util.List;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.celartem.ueplan.bean.AmountAdjustLog;
+import com.celartem.ueplan.bean.DeptAmountInfo;
+import com.celartem.ueplan.bean.TotalAmountInfo;
+import com.celartem.common.Utils;
+
+/**
+ * 总量调整service
+ * 
+ * @author zhangdaoqiang
+ *
+ */
+@Service
+public class TotalAdjustmentService {
+
+	@Autowired
+	private TotalAdjustmentDAO totalAdjustmentDAO;  //总量调整Dao
+	
+	private static String ELE_TYPE = "ele";			//用电类型
+	private static String WATER_TYPE = "water";		//用水类型
+	private static String RATE_BIT = "#.00";		//百分比精度
+	private static String PRECENT_SIGN = "%";		//百分号字符
+	
+	/**
+	 * 用电查询初始化
+	 * 
+	 * @return {总量, 各部门量, 日志}
+	 */
+	public List<Object> init(String type) {
+		
+		//查询结果
+		List<Object> ret = new ArrayList<Object>();
+		List<TotalAmountInfo> planAmountList = null;
+		List<DeptAmountInfo> deptAmountList = null;
+		List<AmountAdjustLog> logList = null;
+		double price = 0;
+		
+		//取得当前年 
+		String year = Utils.getCurYear();
+		
+		//用电查询初始化
+		if(ELE_TYPE.equals(type)) {
+			
+			//获得总用电量<{日期, 上次总电量, 累计用量}>
+			planAmountList = this.totalAdjustmentDAO.getUsedEle(year);
+			
+			//取得电价
+			price = this.totalAdjustmentDAO.getElePrice();
+			
+			//获得各部门累计用电量
+			deptAmountList = this.totalAdjustmentDAO.getDptUsedEle(year);
+			
+			//取得总量修改日志
+			logList = this.totalAdjustmentDAO.getEleAmountModifyLog();
+		
+		//用水查询初始化
+		} else if(WATER_TYPE.equals(type)) {
+			
+			//获得总用电量{上次总用量，累计用量，累计用量占比，时间占比}
+			planAmountList = this.totalAdjustmentDAO.getUsedWater(year);
+			
+			//取得水价
+			price = this.totalAdjustmentDAO.getWaterPrice();
+
+			//获得各部门累计用水量
+			deptAmountList = this.totalAdjustmentDAO.getDptUsedWater(year);
+			
+			//取得总量修改日志
+			logList = this.totalAdjustmentDAO.getWaterAmountModifyLog();
+			
+		}
+		
+		//总量相关计算
+		planAmountList = calTotal(planAmountList);
+		
+		//部门用量相关计算
+		deptAmountList = calDept(deptAmountList);
+		
+		//设置返回值
+		ret.add(planAmountList);
+		ret.add(price);
+		ret.add(deptAmountList);
+		ret.add(logList);
+		
+		return ret;
+	}
+	
+	/**
+	 * 总量相关计算
+	 * 
+	 * @param infoList : 从DB查询出来的初始List
+	 * @return ：计算过累计用量占比与时间占比的List
+	 */
+	private List<TotalAmountInfo> calTotal(List<TotalAmountInfo> infoList) {
+		
+		//百分比格式
+		DecimalFormat df = new DecimalFormat(RATE_BIT);
+		
+		Iterator<TotalAmountInfo> iter = infoList.iterator();
+		while(iter.hasNext()) {
+			
+			//累计用量占比
+			TotalAmountInfo info = iter.next();
+			double rate = info.getActualAmount() / info.getActualAmount();
+			String rateStr = String.valueOf(df.format(rate * 100)) + PRECENT_SIGN;
+			info.setActualRate(rateStr);
+			
+			//时间占比
+			info.setTimeRate(getCurTimeRate());
+		}
+		
+		return infoList;
+	}
+	
+	/**
+	 * 部门用量相关计算
+	 * 
+	 * @param infoList : 从DB查询出来的初始List
+	 * @return ：计算过累计用量占比与时间占比的List
+	 */
+	private List<DeptAmountInfo> calDept(List<DeptAmountInfo> infoList) {
+		
+		//百分比格式
+		DecimalFormat df = new DecimalFormat(RATE_BIT);
+		
+		//部门用量相关计算
+		Iterator<DeptAmountInfo> iter = infoList.iterator();
+		while(iter.hasNext()) {
+			
+			//部门累计用量占比
+			DeptAmountInfo info = iter.next();
+			double rate = info.getActualAmount() / info.getPlanAmount();
+			String rateStr = String.valueOf(df.format(rate * 100)) + PRECENT_SIGN;
+			info.setActualRate(rateStr);
+			
+			//部门时间占比
+			info.setTimeRate(getCurTimeRate());
+			
+			//部门剩余用量
+			info.setRemainAmount(info.getPlanAmount() - info.getActualAmount());
+		}
+		
+		return infoList;
+	}
+	
+	/**
+	 * 修改原计划用电/水总量值
+	 * @param date : 当前年月日
+	 * @param newTotalAmount ： 新用电/水总量
+	 */
+	public void editPlanTotalAmount(String type, double newTotalAmount) {
+		
+		//取得当前日期
+		Date date = new Date();
+		
+		if(ELE_TYPE.equals(type)) {
+			this.totalAdjustmentDAO.editPlanEle(date, newTotalAmount);
+			
+		} else if(WATER_TYPE.equals(type)) {
+			this.totalAdjustmentDAO.editPlanWater(date, newTotalAmount);
+		}
+		
+	}
+	
+	/**
+	 * 取得当前时间占比
+	 * @return
+	 */
+	private String getCurTimeRate() {
+		
+		//百分比格式
+		DecimalFormat df = new DecimalFormat(RATE_BIT);
+		
+		//计算当前年的总天数
+		Calendar cal = Calendar.getInstance();
+		cal.set(Calendar.DAY_OF_YEAR, 1);
+		cal.roll(Calendar.DAY_OF_YEAR, -1);
+		int maxYear = cal.get(Calendar.DAY_OF_YEAR); 
+		
+		//计算当前日期是当前年的第几天
+		cal.setTime(new Date());
+		int curYear = cal.get(Calendar.DAY_OF_YEAR);
+		
+		String rate = String.valueOf(df.format(curYear * 1.0 / maxYear * 100)) + PRECENT_SIGN;
+		
+		return rate;
+	}
+}

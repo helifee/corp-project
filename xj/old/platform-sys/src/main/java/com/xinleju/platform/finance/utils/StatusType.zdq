@@ -1,0 +1,26 @@
+package com.xinleju.platform.finance.utils;
+
+public enum StatusType {
+	 StatusOpen("启用", "1"),StatusClosed("禁用", "0");  
+	    // 成员变量  
+	    private String name;  
+	    private String code;
+		public String getName() {
+			return name;
+		}
+		public void setName(String name) {
+			this.name = name;
+		}
+		public String getCode() {
+			return code;
+		}
+		public void setCode(String code) {
+			this.code = code;
+		}
+		private StatusType(String name, String code) {
+			this.name = name;
+			this.code = code;
+		}
+	
+	    
+}

@@ -1,0 +1,1224 @@
+package com.xinleju.erp.finance.action;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.apache.log4j.Logger;
+import org.apache.poi.hssf.usermodel.HSSFWorkbook;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.MatchMode;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.xinleju.erp.base.app.action.BaseAction;
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.utils.JsonUtils;
+import com.xinleju.erp.co.voucher.service.SyncFinaCoData;
+import com.xinleju.erp.data.cache.api.MDProductCacheService;
+import com.xinleju.erp.data.cache.api.MDProjectCacheService;
+import com.xinleju.erp.data.cache.api.MDSupplierCacheService;
+import com.xinleju.erp.data.cache.dto.ProductTypeDTO;
+import com.xinleju.erp.data.cache.dto.ProjectBaseDTO;
+import com.xinleju.erp.data.cache.dto.ProjectBranchDTO;
+import com.xinleju.erp.data.cache.dto.SupplierInfoDTO;
+import com.xinleju.erp.ex.service.SyncFinaExData;
+import com.xinleju.erp.finance.models.FiAccountSet;
+import com.xinleju.erp.finance.models.FiAccountSetData;
+import com.xinleju.erp.finance.models.FiAssDetailMapping;
+import com.xinleju.erp.finance.models.FiAssMapping;
+import com.xinleju.erp.finance.models.FiBizObject;
+import com.xinleju.erp.finance.models.FiBusinessobject;
+import com.xinleju.erp.finance.models.FiYsDept;
+import com.xinleju.erp.finance.models.extender.FiBuildTreeExtender;
+import com.xinleju.erp.finance.service.FiAccountSetDataService;
+import com.xinleju.erp.finance.service.FiAccountSetService;
+import com.xinleju.erp.finance.service.FiAssMappingDetailsService;
+import com.xinleju.erp.finance.service.FiAssMappingRoomService;
+import com.xinleju.erp.finance.service.FiAssMappingService;
+import com.xinleju.erp.finance.service.FiBizObjectService;
+import com.xinleju.erp.finance.service.FiBudgetCapService;
+import com.xinleju.erp.finance.service.FiYsDeptService;
+import com.xinleju.erp.finance.service.SyncFinaDataService;
+import com.xinleju.erp.finance.utils.ExcelHandlerUtil;
+import com.xinleju.erp.finance.utils.IExcelHandler;
+import com.xinleju.erp.flow.flowutils.bean.FlowResult;
+import com.xinleju.erp.flow.flowutils.bean.PageBean;
+import com.xinleju.erp.flow.service.api.extend.dto.DeptDTO;
+import com.xinleju.erp.flow.service.api.extend.dto.UserDTO;
+import com.xinleju.erp.flow.utils.LoginInfoUtils;
+import com.xinleju.erp.frame.dto.FiAssTypeDTO;
+import com.xinleju.erp.frame.dto.FiBudgetCapDTO;
+import com.xinleju.erp.frame.enums.FiSysTypeEnum;
+import com.xinleju.erp.frame.models.BusinessObject;
+import com.xinleju.erp.frame.models.FiSysInfo;
+import com.xinleju.erp.frame.utils.CommonUtil;
+import com.xinleju.erp.sa.service.SyncFinaSaData;
+import com.xinleju.erp.sm.cache.api.SyncFinaDataCompanyService;
+import com.xinleju.erp.sm.extend.dto.FinaData;
+import com.xinleju.erp.sm.extend.dto.FinaQueryParams;
+
+import net.sf.json.JSONArray;
+import net.sf.json.JSONObject;
+
+/**
+ * 辅助核算对照
+ * 
+ * @author songjunjie ztl
+ */
+public class FiAssMappingAction extends BaseAction {
+	private static final Log log = LogFactory.getLog(FiAssMappingAction.class);
+	/**
+	 * 辅助核算对照
+	 */
+	private FiAssMapping fiAssMapping;
+	/**
+	 * 辅助核算明细对照
+	 */
+	private FiAssDetailMapping fiAssDetailMapping;
+
+	private Long accountSetId;// 帐套id
+
+	@Autowired
+	private FiAssMappingService fiAssMappingService;
+
+	@Autowired
+	private SyncFinaDataService syncFinaDataService;
+	@Autowired
+	private FiAccountSetService fiAccountSetService;
+	@Autowired
+	private FiBizObjectService fiBizObjectService;
+	@Autowired
+	private FiYsDeptService fiYsDeptService;
+	@Autowired
+	private FiAccountSetDataService fiAccountSetDataService;
+	@Autowired
+	private FiBudgetCapService fiBudgetCapService;
+	//@Autowired
+	//private OrgnService orgnService;
+	@Autowired
+	private MDProjectCacheService mdProjectCacheService;
+	
+	@Autowired
+	private FiAssMappingDetailsService fiAssMappingDetailsService;
+	@Autowired
+	private FiAssMappingRoomService fiAssMappingRoomService;
+	private File  uploadfile;
+	private File  uploadRoomFile;
+
+	/**
+	 * 辅助核算对照主页面
+	 * 
+	 * @return
+	 */
+	public String list() {
+		try {
+			if (fiAssMapping == null)
+				fiAssMapping = new FiAssMapping();
+			if (accountSetId != null)
+				fiAssMapping.setAccountSetId(accountSetId);
+			
+			String sysId = request.getParameter("sysId");
+			String accountSetCode = request.getParameter("accountSetCode");
+			String companyCode = request.getParameter("companyCode");
+			List<FiAccountSetData> fasds = fiAccountSetDataService.getFiAccountSetsDataByAccountId(accountSetId,Long.parseLong(sysId));
+			if(fasds != null && fasds.size() > 0){
+				List<Long> ids = new ArrayList<Long>();
+				List<FiAccountSetData> companys = new ArrayList<FiAccountSetData>();
+				for(FiAccountSetData f:fasds){
+					if(!ids.contains(f.getCompanyId())){
+						ids.add(f.getCompanyId());
+						companys.add(f);
+					}
+				}
+				String accountSetsjson = JsonUtils.toJSONString(companys);
+				request.setAttribute("accountSetsjson", accountSetsjson);
+				ids.clear();
+			}else{
+				request.setAttribute("accountSetsjson", "[]");
+			}
+			
+			request.setAttribute("sysId", sysId);
+			request.setAttribute("accountSetCode", accountSetCode);
+			request.setAttribute("companyCode", companyCode);
+			request.setAttribute("statusMap", FiSysInfo.getStatusMap());
+			request.setAttribute("sysTypeMap", FiSysTypeEnum.getMap());
+			request.setAttribute("sysMap", FiAccountSetData.getsysMap());
+			request.setAttribute("vtype_ref", CommonUtil.transRef(FiSysTypeEnum.getMap()).toString());
+			Map<String, String> jsMap = new HashMap<String, String>();
+			// 系统状态列表
+			jsMap.put("status_ref", CommonUtil.transRef(BusinessObject.getStatusMap()).toString());
+			// 系统接口类型
+			jsMap.put("vtype_ref", CommonUtil.transRef(FiSysTypeEnum.getMap()).toString());
+			request.setAttribute("refs", jsMap);
+
+			// 加入业务对象
+			List<FiBizObject> bizObjects = getFibObjects("1",sysId);//BizObjectService.getBaseDataObjectList();
+			Map<String, String> bdmap = new HashMap<String, String>(bizObjects.size());
+			for (FiBizObject bo : bizObjects) {
+				bdmap.put(bo.getObjectId(), bo.getObjectName());
+			}
+
+			request.setAttribute("bizObjectNameMap", bdmap);
+		} catch (Exception e) {
+			e.printStackTrace();
+			log.error("", e);
+		}
+		return "list";
+	}
+
+	/**
+	 * 查询辅助核算数据
+	 */
+	public void loadlist() {
+		try {
+			String keyword = request.getParameter("keyword");
+			Long sysId = getParameterLong("sysId");
+			Long companyId = getParameterLong("companyId");
+			DetachedCriteria dc = DetachedCriteria.forClass(FiAssMapping.class);
+			if (StringUtils.isNotBlank(keyword)) {
+				dc.add(Restrictions.like("fiSysName", keyword, MatchMode.ANYWHERE));
+			}
+			if (sysId != null) {
+				dc.add(Restrictions.eq("sysId", sysId));
+			}
+			Long aSetId = fiAssMapping.getAccountSetId();
+			if(aSetId != null){
+				dc.add(Restrictions.eq("accountSetId", aSetId));
+			}
+			if (companyId != null) {
+				dc.add(Restrictions.eq("companyId", companyId));
+			}
+//			if (fiAssMapping != null && fiAssMapping.getAccountSetId() != null) {
+//				if (fiAssMapping.getAccountSetId() > 0l) {
+//					dc.add(Restrictions.eq("accountSetId", fiAssMapping.getAccountSetId()));
+//				}
+//			}
+
+			page = getCommonService().findPage(dc, start, limit);
+			List<FiAssMapping> assMaps = page.getItems();
+			for(FiAssMapping assMap:assMaps){
+				Long objectId = assMap.getBizObjectId();
+				FiBusinessobject bo = fiBizObjectService.getFiBusinessobjectById(objectId);
+				if(bo != null){
+					String className = bo.getVobject();
+					assMap.setBizObjectName(className);
+				}
+				
+			}
+			JSONObject jobj = CommonUtil.transListResult(page.getTotal(), assMaps);
+			renderJson(jobj.toString());
+		} catch (Exception ex) {
+			ex.printStackTrace();
+		}
+	}
+
+	/**
+	 * 查询辅助核算明细数据
+	 */
+	public void loadlistDetail() {
+		Long accountSetId = getParameterLong("accountSetId");
+		Long sysId = getParameterLong("sysId");
+		Long corpId = getParameterLong("companyId");
+		FiAccountSet fiAccountSet = fiAccountSetService.getFiAccountSetById(accountSetId);
+		Long companyId = getParameterLong("companyId");
+		Long buildId = getParameterLong("buildId");
+		try {
+			//Long bizObjectNum = fiAssMapping.getBizObjectId();
+			FiBusinessobject bo = fiBizObjectService.getFiBusinessobjectById(fiAssMapping.getBizObjectId());
+			List<FiAssDetailMapping> list = new ArrayList<FiAssDetailMapping>();
+			if(bo!=null){
+				String className = bo.getVfetchdataclass();
+				Long mappingId = fiAssMapping.getId();
+				
+				// 取公司信息走接口
+				if (className.equals("syncFinaDataCompanyService")) {
+					SyncFinaDataCompanyService syncFinaDataCompanyService = (SyncFinaDataCompanyService) com.xinleju.erp.base.app.config.App
+							.getBean("syncFinaDataCompany");
+					List<FinaData> fds = syncFinaDataCompanyService.getFinaData(new FinaQueryParams()).getResult().getItems();
+					buildFinaDataToFiAssDetailMapping(mappingId, fds, list);
+				}
+				// 取产品类型
+				//chc edit 2016.8.18 修改主数据接口
+				/*if (className.equals("mDProductCacheService")) {
+					SyncFinaDataProductTypeService syncFinaDataCompanyService = (SyncFinaDataProductTypeService) com.xinleju.erp.base.app.config.App
+							.getBean("syncFinaDataProductType");
+					List<FinaData> fds = syncFinaDataCompanyService.getFinaData(new FinaQueryParams()).getResult().getItems();
+					buildFinaDataToFiAssDetailMapping(mappingId, fds, list);
+				}*/
+				if (className.equals("mDProductCacheService")) {
+					MDProductCacheService mdProductCacheService = (MDProductCacheService) com.xinleju.erp.base.app.config.App
+							.getBean("mdProductCacheService");
+					List<ProductTypeDTO> fds = mdProductCacheService.getAllSubProductType().getResult();//.getAllProductType().getResult();
+					List<FinaData> dtos = new ArrayList<FinaData>();
+					if (fds != null && fds.size() > 0) {
+						for (ProductTypeDTO pb : fds) {
+							FinaData fd = new FinaData();
+							fd.put("id", pb.getId());
+							fd.put("name", pb.getName());
+							fd.put("code", pb.getCode());
+							dtos.add(fd);
+						}
+					}
+					buildFinaDataToFiAssDetailMapping(mappingId, dtos, list);
+				}
+				// 房间信息
+				/*if (className.equals("syncFinaSaData")) {
+					
+					list = fiAssMappingService.getFiAssDetailMappingByAssId(mappingId);
+					
+	//				FinaQueryParams params = new FinaQueryParams();
+	//				List<Long> projects = new ArrayList<Long>();
+	//				projects.add(10l);
+	//				projects.add(9l);
+	//				projects.add(11l);
+	//				projects.add(1l);
+	//				params.setProjectIdList(projects);
+	//				params.setCurrentPage(0);
+	//				//params.setPageSize(50);
+	//				
+	//				//List<Long> projectIdList = fiAccountSetService.getProjectIdListByAccountSetId(accountSetId);
+	//				//params.setProjectIdList(projectIdList);
+	//				SyncFinaSaData syncFinaSaData = (SyncFinaSaData) App.getBean("syncFinaSaData");
+	////				//根据项目查询房间信息
+	//				List<FinaData> roomsReuslt = syncFinaSaData.getRoomInfo(params).getResult().getItems();
+	//				List<FiAssDetailMapping> roomDetails = new ArrayList<FiAssDetailMapping>();
+	//				if (roomsReuslt != null && roomsReuslt.size() > 0) {
+	//					for (FinaData fd : roomsReuslt) {
+	//						FiAssDetailMapping fdm = new FiAssDetailMapping();
+	//						fdm.setObjectItemCode((String) fd.get("code"));
+	//						fdm.setObjectItemName((String) fd.get("name"));
+	//						fdm.setObjectId(String.valueOf(fd.get("id")));
+	//						
+	//						fdm.setAssItemCode((String) fd.get("code"));
+	//						fdm.setAssItemName((String) fd.get("name"));
+	//						//fdm.setId(Long.parseLong((fd.get("id").toString())));
+	//			         
+	//						roomDetails.add(fdm);
+	//						
+	//						//fiAssMappingService.saveFiAssDetailMapping(fdm);
+	//					}
+	//					fiAssMappingService.saveAllFiAssDetailMapping(roomDetails);
+	//				}
+					
+					//根据项目查询楼栋信息
+	//				List<FinaData> buildReusts = syncFinaSaData.getRoomBuilInfo(params).getResult().getItems();
+	//				List<Long> builds = new ArrayList<Long>();
+	//				for(FinaData build:buildReusts){
+	//					builds.add(Long.parseLong(build.get("id").toString()));
+	//					
+	//				}
+	//
+	//				//设置楼栋ID
+	//				params.setPayUnitIdList(builds);
+	//				
+	//				//根据楼栋查询房间信息
+	//				List<FinaData> roomsByBuildReusts = syncFinaSaData.getRoomInfo(params).getResult().getItems();
+	//				System.out.println("======="+roomsByBuildReusts.size());
+					//buildFinaDataToFiAssDetailMapping(mappingId, fds, list);
+				}*/
+				if(bo.getVobject().equals("房间信息")){
+					SyncFinaSaData syncFinaSaData = (SyncFinaSaData) App.getBean("syncFinaSaData");
+					FinaQueryParams params = new FinaQueryParams();
+					List<Long> projectidList = new ArrayList<Long>();
+					projectidList.add(buildId);
+					params.setCurrentPage(0);
+					params.setPayUnitIdList(projectidList);
+					List<FinaData> fds = syncFinaSaData.getRoomInfo(params).getResult().getItems();
+					buildFinaDataToFiAssDetailMapping(mappingId, fds, list);
+				}
+				//香港置地：合作项目
+				if(bo.getVobject().equals("合作项目")){
+					SyncFinaExData syncFinaExData = syncFinaDataService.getSyncFinaExData();
+					List<FinaData> fds = new ArrayList<FinaData>();
+					if (syncFinaExData != null) {
+						Map<String,List<Map<String,Object>>> returnmap = syncFinaExData.findDeptAndSub();
+						List<Map<String,Object>> list1 = returnmap.get("预算科目");
+						for(int i=0;i<list1.size();i++){
+							Map<String,Object> mpa = list1.get(i);
+							FinaData finaDate = new FinaData();
+							String id = String.valueOf(mpa.get("id"));
+							String code = String.valueOf(mpa.get("vcurrentcode"));
+							String name = String.valueOf(mpa.get("vsubname"));
+						   
+							finaDate.put("id", id);
+					    	finaDate.put("name", name);
+					    	finaDate.put("code", code);
+					    	fds.add(finaDate);
+						}
+					}
+				    buildFinaDataToFiAssDetailMapping(mappingId, fds, list);
+				}
+				// 款项类型
+	//			if (className.equals("")) {
+	//				SyncFinaSaData syncFinaSaData = (SyncFinaSaData) App.getBean("syncFinaSaData");
+	//				List<FinaData> fds = syncFinaSaData.getFunName(new FinaQueryParams()).getResult().getItems();
+	//				buildFinaDataToFiAssDetailMapping(mappingId, fds, list);
+	//			}
+				// 支付方式
+				if (className.equals("3")) {
+					SyncFinaSaData syncFinaSaData = (SyncFinaSaData) App.getBean("syncFinaSaData");
+					List<FinaData> fds = syncFinaSaData.getPayType(new FinaQueryParams()).getResult().getItems();
+					buildFinaDataToFiAssDetailMapping(mappingId, fds, list);
+				}
+				//人员档案
+				if (className.equals("partyEntityService")) {
+					List<UserDTO> users = fiAssMappingService.getUsersByCompanyId(companyId);
+				    List<FinaData> fds = new ArrayList<FinaData>();
+				    for(UserDTO user:users){
+				    	FinaData finaDate = new FinaData();
+				    	Long id = user.getId();
+				    	String name = user.getRealName();
+				    	String code = String.valueOf(user.getId());
+				    	
+				    	finaDate.put("id", id);
+				    	finaDate.put("name", name);
+				    	finaDate.put("code", code);
+				    	fds.add(finaDate);
+				    }
+				    buildFinaDataToFiAssDetailMapping(mappingId, fds, list);
+				}
+				//预算部门档案
+				if (className.equals("fiYsDeptService")) {
+					Integer compId = companyId.intValue();
+					List<FiYsDept> ysDepts = fiYsDeptService.getAllFiYsDeptByCoryId(compId);
+				    List<FinaData> fds = new ArrayList<FinaData>();
+				    for(FiYsDept dept:ysDepts){
+				    	FinaData finaDate = new FinaData();
+				    	Long id = dept.getDeptid();
+				    	String name = dept.getVdeptname();
+				    	String code = dept.getVdeptcode();
+				    	
+				    	finaDate.put("id", id);
+				    	finaDate.put("name", name);
+				    	finaDate.put("code", code);
+				    	fds.add(finaDate);
+				    }
+					/*SyncFinaExData syncFinaExData = syncFinaDataService.getSyncFinaExData();
+					List<FinaData> fds = new ArrayList<FinaData>();
+					if (syncFinaExData != null) {
+						Map<Long,List<Map<String,Object>>> returnmap = syncFinaExData.findDeptAndSub(companyId);
+						List<Map<String,Object>> list1 = returnmap.get(4l);
+						for(int i=0;i<list.size();i++){
+							Map<String,Object> mpa = list1.get(i);
+							FinaData finaDate = new FinaData();
+							String id = String.valueOf(mpa.get("id"));
+							String code = String.valueOf(mpa.get("fullCode"));
+							String name = String.valueOf(mpa.get("name"));
+						   
+							finaDate.put("id", id);
+					    	finaDate.put("name", name);
+					    	finaDate.put("code", code);
+					    	fds.add(finaDate);
+						}
+					}*/
+				    buildFinaDataToFiAssDetailMapping(mappingId, fds, list);
+				}
+				
+				//部门档案
+				if (className.equals("orgnService")) {
+					List<DeptDTO> depts = fiAssMappingService.getDeptsByCompanyId(companyId);
+				    List<FinaData> fds = new ArrayList<FinaData>();
+				    for(DeptDTO dept:depts){
+				    	FinaData finaDate = new FinaData();
+				    	Long id = dept.getId();
+				    	String name = dept.getName();
+				    	String code = dept.getCode();
+				    	
+				    	finaDate.put("id", id);
+				    	finaDate.put("name", name);
+				    	finaDate.put("code", code);
+				    	fds.add(finaDate);
+				    }
+				    buildFinaDataToFiAssDetailMapping(mappingId, fds, list);
+				}
+				
+				//项目分期
+				if (className.equals("mdProjectCacheService")) {
+					FlowResult<List<ProjectBranchDTO>> results = mdProjectCacheService.getProjectBranchListByOrgId(companyId);
+					if (results != null) {
+						List<ProjectBranchDTO> branchs = results.getResult();
+					    List<FinaData> fds = new ArrayList<FinaData>();
+					    for(ProjectBranchDTO branch:branchs){
+					    	FinaData finaDate = new FinaData();
+					    	Long id = branch.getId();
+					    	String name = branch.getName();
+					    	String code = branch.getCode();
+					    	
+					    	finaDate.put("id", id);
+					    	finaDate.put("name", name);
+					    	finaDate.put("code", code);
+					    	fds.add(finaDate);
+					    }
+					    buildFinaDataToFiAssDetailMapping(mappingId, fds, list);
+					}
+				}
+				
+				//费用科目
+				if (className.equals("fiAccountCaption")) {
+					List<FinaData> fds = new ArrayList<FinaData>();
+					List<FiBudgetCapDTO> fiBudgetCapDTOList = fiBudgetCapService.getFiBudgetCapDTOList(fiAccountSet.getId(), "1",3l);
+				    for(FiBudgetCapDTO fbc:fiBudgetCapDTOList){
+				    	FinaData finaDate = new FinaData();
+				    	Long id = Long.parseLong(fbc.getId());
+				    	String name = fbc.getSubname();
+				    	String code = fbc.getSubcode();
+				    	
+				    	finaDate.put("id", id);
+				    	finaDate.put("name", name);
+				    	finaDate.put("code", code);
+				    	fds.add(finaDate);
+				    }
+				    buildFinaDataToFiAssDetailMapping(mappingId, fds, list);
+				}
+				
+				//供方档案 ：供方档案的辅助核算从主数据获取
+				/*if (className.equals("mDSupplierCacheService")) {
+					MDSupplierCacheService SupplierService = App.getBean(MDSupplierCacheService.class);
+					FlowResult<PageBean<SupplierInfoDTO>> results = SupplierService.getSupplierInfoByCompanyId(companyId, 0, 9999999);
+					PageBean<SupplierInfoDTO> pages = results.getResult();
+					List<FinaData> fds = new ArrayList<FinaData>();
+					List<SupplierInfoDTO> sdtds = pages.getItems();
+					
+					for(SupplierInfoDTO sdtd:sdtds){
+				    	FinaData finaDate = new FinaData();
+				    	Long id = sdtd.getId();
+				    	String name = sdtd.getName();
+				    	String code = sdtd.getCode();
+				    	
+				    	finaDate.put("id", id);
+				    	finaDate.put("name", name);
+				    	finaDate.put("code", code);
+				    	fds.add(finaDate);
+				    }
+					buildFinaDataToFiAssDetailMapping(mappingId, fds, list);
+				}*/
+				
+				//费用中心
+				if (className.equals("exCenterService")) {
+					//SyncFinaSaData syncFinaSaData = (SyncFinaSaData) App.getBean("syncFinaSaData");
+					//List<FinaData> fds = syncFinaSaData.getAccountBlank(new FinaQueryParams()).getResult().getItems();
+					//buildFinaDataToFiAssDetailMapping(mappingId, fds, list);
+					//暂时写死 TODO  待确定
+					List<FiAssDetailMapping> fms = fiAssMappingService.getFiAssDetailMappingByAssId(fiAssMapping.getId());
+					for(FiAssDetailMapping fm:fms){
+						list.add(fm);
+					}
+				}
+				//销售-银行账户
+				if (className.equals("bankAccountService") && sysId == 1) {
+					SyncFinaSaData syncFinaSaData = (SyncFinaSaData) App.getBean("syncFinaSaData");
+					FinaQueryParams params = new FinaQueryParams();
+					params.setCorpId(corpId+"");
+					params.setCurrentPage(0);
+					List<FinaData> fds = syncFinaSaData.getAccountBlank(params).getResult().getItems();
+					buildFinaDataToFiAssDetailMapping(mappingId, fds, list);
+				}
+				//成本-银行账户
+				if (className.equals("bankAccountService") && sysId==2) {
+					SyncFinaCoData syncFinaCoData =  (SyncFinaCoData) App.getBean("syncFinaCoData");
+					FinaQueryParams params = new FinaQueryParams();
+					params.setCorpId(corpId+"");
+					params.setCurrentPage(0);
+					List<FinaData> fds = syncFinaCoData.findBank(params).getResult().getItems();
+					buildFinaDataToFiAssDetailMapping(mappingId, fds, list);
+					
+				}
+				//银行账户
+				if (className.equals("bankAccountService") && sysId==3) {
+					//SyncFinaSaData syncFinaSaData = (SyncFinaSaData) App.getBean("syncFinaSaData");
+					//List<FinaData> fds = syncFinaSaData.getAccountBlank(new FinaQueryParams()).getResult().getItems();
+					//buildFinaDataToFiAssDetailMapping(mappingId, fds, list);
+					//暂时写死 TODO  待确定
+					List<FiAssDetailMapping> fms = fiAssMappingService.getFiAssDetailMappingByAssId(mappingId);
+					for(FiAssDetailMapping fm:fms){
+						list.add(fm);
+					}
+					
+				}
+			}else{
+				List<FiAssDetailMapping> fms = fiAssMappingService.getFiAssDetailMappingByAssId(fiAssMapping.getId());
+				for(FiAssDetailMapping fm:fms){
+					list.add(fm);
+				}
+			}
+			session.removeAttribute("detailMapping");
+			session.setAttribute("detailMapping", list);
+			JSONObject jobj = CommonUtil.transListResult(list.size(), list);
+			renderJson(jobj.toString());
+		} catch (Exception ex) {
+			ex.printStackTrace();
+		}
+	}
+	
+	/**
+	 * 按公司查询项目分期
+	 * chc add 2016.10.26
+	 */
+	public void loadProjectBrance() {
+		try {
+			Long companyId = getParameterLong("companyId");
+			FlowResult<List<ProjectBaseDTO>> baseResults = mdProjectCacheService.getProjectBaseByOrgId(companyId);
+			Map<Long,String> baseMap = new HashMap<Long,String>();
+			if (baseResults != null) {
+				List<ProjectBaseDTO> baseList = baseResults.getResult();
+				for(ProjectBaseDTO dto:baseList){
+					baseMap.put(dto.getId(), dto.getName());
+				}
+			}
+			FlowResult<List<ProjectBranchDTO>> results = mdProjectCacheService.getProjectBranchListByOrgId(companyId);
+			if (results != null) {
+				List<ProjectBranchDTO> branchs = results.getResult();
+				for(ProjectBranchDTO dto:branchs){
+					dto.setName(baseMap.get(dto.getProjectId())+"-"+dto.getName());
+				}
+				String accountSetsjson = JsonUtils.toJSONString(branchs);
+				renderJson(accountSetsjson.toString());
+			}
+		} catch (Exception ex) {
+			ex.printStackTrace();
+		}
+	}
+	
+	/**
+	 * 按公司查询项目分期
+	 * chc add 2016.10.26
+	 */
+	public void loadBuildTree() {
+		try {
+			Long projectId = getParameterLong("projectId");
+			SyncFinaSaData syncFinaSaData = (SyncFinaSaData) App.getBean("syncFinaSaData");
+			FinaQueryParams params = new FinaQueryParams();
+			List<Long> projectidList = new ArrayList<Long>();
+			projectidList.add(projectId);
+			params.setProjectIdList(projectidList);
+			params.setCurrentPage(0);
+			List<FinaData> fds = syncFinaSaData.getRoomBuilInfo(params).getResult().getItems();
+			JSONArray jsonTree = CommonUtil.transListEx(fds, new FiBuildTreeExtender());
+			renderJson(jsonTree.toString());
+		} catch (Exception ex) {
+			ex.printStackTrace();
+		}
+	}
+	
+	/**
+	 * 查询辅助核算明细数据(辅助核算修改)
+	 */
+	public void loadDetails() {
+		Long accountSetId = getParameterLong("accountSetId");
+		FiAccountSet fiAccountSet = fiAccountSetService.getFiAccountSetById(accountSetId);
+		Long companyId = getParameterLong("companyId");
+		try {
+			Long bizObjectNum = fiAssMapping.getBizObjectId();// 1公司2项目分期3产品类型
+			List<FiAssDetailMapping> list = new ArrayList<FiAssDetailMapping>();
+			String assName = fiAssMapping.getAssName().trim();
+			assName = java.net.URLDecoder.decode(assName, "UTF-8").trim();
+			/*// 取公司信息走接口
+			if (bizObjectNum != null && bizObjectNum == 1L) {
+				assName = "公司";
+			}
+			// 取项目分期
+			if (bizObjectNum != null && bizObjectNum == 2L) {
+				assName = "项目分期";
+			}
+			// 取产品类型
+			if (bizObjectNum != null && bizObjectNum == 3L) {
+				assName = "产品类型";
+			}
+			// 房间信息
+			if (bizObjectNum != null && bizObjectNum == 4L) {
+				
+			}
+			// 银行账户
+			if (bizObjectNum != null && bizObjectNum == 5L) {
+				assName = "银行账户";
+			}
+			// 款项类型
+			if (bizObjectNum != null && bizObjectNum == 6L) {
+				
+			}
+			// 支付方式
+			if (bizObjectNum != null && bizObjectNum == 7L) {
+			
+			}
+			//人员档案
+			if (bizObjectNum == 9L) {
+				assName = "人员档案";
+			}
+			//部门档案
+			if (bizObjectNum == 10L) {
+				assName = "部门档案";
+			}
+			//供应商辅助核算
+			if (bizObjectNum != null && bizObjectNum == 11L) {
+				assName = "供应商辅助核算";
+			}*/
+			Long id = fiAssMappingService.loadFiAssByName(assName,accountSetId,companyId);
+			List<FiAssDetailMapping> details = fiAssMappingService.getFiAssDetailMappingByAssId(id);
+			FiAssDetailMapping fm = null;
+			List<FiAssDetailMapping> result = new ArrayList<FiAssDetailMapping>();
+			for(FiAssDetailMapping detail:details){
+				if(StringUtils.isNotBlank(detail.getAssItemCode()))
+					result.add(detail);
+			}
+			String json =  JsonUtils.toJSONString(result);
+			renderJson(json);
+		} catch (Exception ex) {
+			ex.printStackTrace();
+		}
+	}
+	
+	/**
+	 * 模糊查询辅助核算明细数据(辅助核算修改)
+	 */
+	public void loadDetailMap() {
+		Long accountSetId = getParameterLong("accountSetId");
+		Long companyId = getParameterLong("companyId");
+		try {
+			List<FiAssDetailMapping> list = new ArrayList<FiAssDetailMapping>();
+			String assName = java.net.URLDecoder.decode(fiAssMapping.getAssName(),"UTF-8");
+			String assDetailName = java.net.URLDecoder.decode(getParameter("queryParam"),"UTF-8");
+			Long id = fiAssMappingService.loadFiAssByName(assName,accountSetId,companyId);
+			List<FiAssDetailMapping> details = fiAssMappingService.getFiAssDetailMappingByAssDetailName(id,assDetailName);
+			List<FiAssDetailMapping> result = new ArrayList<FiAssDetailMapping>();
+			for(FiAssDetailMapping detail:details){
+				if(StringUtils.isNotBlank(detail.getAssItemCode()))
+					result.add(detail);
+			}
+			String json =  JsonUtils.toJSONString(result);
+			renderJson(json);
+		} catch (Exception ex) {
+			ex.printStackTrace();
+		}
+	}
+	
+	/**
+	 * 获取指定辅助核算的详细
+	 * 
+	 */
+	public void getDetailMapping(){
+		String assNames = getParameter("assName");
+		Long accountSetId = getParameterLong("accountSetId");
+		Long sysId = getParameterLong("sysId");
+		try {
+			assNames =  URLDecoder.decode(assNames,"utf-8");
+		} catch (UnsupportedEncodingException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		List<FiAssDetailMapping> fdms = new ArrayList<FiAssDetailMapping>();
+		FiAssDetailMapping fdm = null;
+		if(StringUtils.isNotBlank(assNames)){
+			String[] assNamesArray = assNames.split(",");
+			//chc edit 2016.7.6 start
+			/*String assName = assNamesArray[assNamesArray.length-1]; 
+			//现只有费用中心和现金流量项目 才会调用对应的详细数据
+			if(assName.equals("费用中心") || assName.equals("银行账户")){
+				FiAssMapping fm = fiAssMappingService.findFiAssMapping(null,assName);
+				Long id = fm.getId();
+				List<FiAssDetailMapping> details = fiAssMappingService.getFiAssDetailMappingByAssId(id);
+				
+				String json =  JsonUtils.toJSONString(details);
+				renderJson(json);
+			}*/ 
+			List<FiAssDetailMapping> fiAssDetailList = new ArrayList<FiAssDetailMapping>();
+			for(int i=0;i<assNamesArray.length;i++){
+				/*FiAssMapping fm = fiAssMappingService.findFiAssMapping(accountSetId,assNamesArray[i],sysId,null);
+				if(null == fm.getBizObjectName()){
+					Long id = fm.getId();
+					List<FiAssDetailMapping> details = fiAssMappingService.getFiAssDetailMappingByAssId(id);
+					fiAssDetailList.addAll(details);
+				}*/
+				List<FiAssMapping> fmlist = fiAssMappingService.findFiAssMappingList(accountSetId,assNamesArray[i],sysId,null);
+				if(fmlist!=null && fmlist.size()>0){
+				for(FiAssMapping fm:fmlist){
+					if(null == fm.getBizObjectName()){
+						Long id = fm.getId();
+						List<FiAssDetailMapping> details = fiAssMappingService.getFiAssDetailMappingByAssId(id);
+						fiAssDetailList.addAll(details);
+					}
+				}
+				}
+			}
+			String json =  JsonUtils.toJSONString(fiAssDetailList);
+			renderJson(json);
+		}
+		
+	}
+
+	/**
+	 * 根据id查出 辅助核算信息
+	 */
+	public void getFiAssMappingById() {
+		Long id = this.getParameterLong("id");
+		FiAssMapping fiAssMapping = this.fiAssMappingService.getFiAssMappingById(id);
+		this.renderJson(fiAssMapping);
+	}
+
+	/**
+	 * 保存对象
+	 */
+	public void saveFiAssMapping() throws Exception {
+		Map<String, Object> result = new HashMap<String, Object>();
+		if (fiAssMapping.getId() != null) {
+			fiAssMapping.setEditDate(new Date());
+			fiAssMapping.setEditUserId(LoginInfoUtils.getLoginInfoUserDtoId(request));
+		} else {
+			fiAssMapping.setCreateDate(new Date());
+			fiAssMapping.setStatus(0);
+			fiAssMapping.setCreateUserId(LoginInfoUtils.getLoginInfoUserDtoId(request));
+		}
+		try {
+			fiAssMappingService.saveFiAssMapping(fiAssMapping);
+			result.put("success", true);
+			result.put("msg", "保存成功");
+			String json = JsonUtils.toJSONString(result);
+			render(json, "text/html;charset=UTF-8");
+		} catch (Exception e) {
+			result.put("success", false);
+			result.put("msg", e.getMessage());
+			log.error("", e);
+			String json = JsonUtils.toJSONString(result);
+			render(json, "text/html;charset=UTF-8");
+		}
+	}
+
+	/**
+	 * 保存辅助核算明细对照
+	 */
+	public void saveAssDetailMapping() {
+		Map<String, Object> result = new HashMap<String, Object>();
+		if (fiAssDetailMapping == null) {
+			fiAssDetailMapping = new FiAssDetailMapping();
+		}
+		// 组装参数
+		// data :
+		// {id:id,assItemCode:assItemCode:assItemCode,assItemName:assItemName,objectItemCode:objectItemCode,objectItemName:objectItemName,assMappingId:assMappingId},
+		fiAssDetailMapping.setId(getParameterLong("id"));
+		fiAssDetailMapping.setAssItemCode(getParameter("assItemCode"));
+		fiAssDetailMapping.setAssItemName(getParameter("assItemName"));
+		fiAssDetailMapping.setObjectItemCode(getParameter("objectItemCode"));
+		fiAssDetailMapping.setObjectItemName(getParameter("objectItemName"));
+		fiAssDetailMapping.setAssMappingId(getParameterLong("assMappingId"));
+		fiAssDetailMapping.setObjectId(getParameter("objectId"));
+		fiAssDetailMapping.setCreateUserId(LoginInfoUtils.getLoginInfoUserDtoId(request));
+		if (fiAssDetailMapping.getId() != null) {
+			fiAssDetailMapping.setEditDate(new Date());
+			fiAssDetailMapping.setEditUserId(LoginInfoUtils.getLoginInfoUserDtoId(request));
+		} else {
+			fiAssDetailMapping.setCreateDate(new Date());
+			fiAssDetailMapping.setStatus(0);
+			fiAssDetailMapping.setCreateUserId(LoginInfoUtils.getLoginInfoUserDtoId(request));
+		}
+		try {
+			fiAssMappingService.saveFiAssDetailMapping(fiAssDetailMapping);
+			result.put("success", true);
+			result.put("msg", "保存成功");
+			String json = JsonUtils.toJSONString(result);
+			render(json, "text/html;charset=UTF-8");
+		} catch (Exception e) {
+			result.put("success", false);
+			result.put("msg", e.getMessage());
+			log.error("", e);
+			String json = JsonUtils.toJSONString(result);
+			render(json, "text/html;charset=UTF-8");
+		}
+	}
+
+	/**
+	 * 删除辅助核算对照
+	 */
+	public void delete() {
+
+		Map<String, Object> result = new HashMap<String, Object>();
+		try {
+			String ids = request.getParameter("id");
+			if (ids != null) {
+				Long[] idAry = CommonUtil.transformIds(ids.split(";"));
+				this.fiAssMappingService.delete(idAry);
+			}
+			result.put("success", true);
+		} catch (Exception e) {
+			result.put("success", false);
+			result.put("msg", e.getMessage());
+			log.error("", e);
+		}
+		renderJson(result);
+
+	}
+	
+	public void bulidEditedAssMaping() throws UnsupportedEncodingException{
+		String assStr = getParameter("assStr");
+		assStr = URLDecoder.decode(assStr,"utf-8");
+		String cusAssStr = getParameter("curAss");
+		cusAssStr =  URLDecoder.decode(cusAssStr,"utf-8");
+		String[] cusAsses = cusAssStr.trim().split("&");
+		List<FiAssTypeDTO> cusFts = new ArrayList<FiAssTypeDTO>();
+		/*for(int i=0;i<cusAsses.length; i++){
+			FiAssTypeDTO curFt = new FiAssTypeDTO();
+			String[] oneCusAss = cusAsses[i].split(",");
+			curFt.setAssname(oneCusAss[0]);
+			if(oneCusAss.length > 1){
+				curFt.setPid(oneCusAss[1]);
+			}
+			//设置具体内容
+			if(oneCusAss.length > 2){
+				curFt.setAsscode(oneCusAss[2]);
+			}
+			
+			curFt.setId(convertAssNameToObjuectId(oneCusAss[0]));
+			
+			cusFts.add(curFt);
+		}*/
+		if(StringUtils.isNotBlank(cusAssStr)){
+			String asscompent = cusAssStr.substring(1, cusAssStr.lastIndexOf("】"));
+			String[] oneCusAss = asscompent.split("】【");
+			for(int k=0;k<oneCusAss.length;k++){
+				FiAssTypeDTO curFt = new FiAssTypeDTO();
+				curFt.setAssname(oneCusAss[k].split("：")[0]);
+				curFt.setAsscode(oneCusAss[k].split("：")[1].split("/")[0]);
+				cusFts.add(curFt);
+			}
+		}
+		String[] ObjectIds = assStr.split(",");
+		FiAssTypeDTO ft = null;
+		List<FiAssTypeDTO> fts = new ArrayList<FiAssTypeDTO>();
+		for(int i=0; i<ObjectIds.length; i++ ){
+			ft = new FiAssTypeDTO();
+			/*String oid = ObjectIds[i];
+			String assName = convertObjuectIdToAssName(oid);
+			ft.setAssname(assName);
+			ft.setAsscode("");
+			ft.setId(oid);*/
+			String assName = ObjectIds[i];
+			ft.setAssname(assName);
+			if(StringUtils.isNotBlank(assName)){
+				fts.add(ft);
+			}
+			
+		}
+		
+		String json = "";
+		if(fts != null && fts.size() > 0){
+			json = JsonUtils.toJSONString(fts);
+		}else{
+			json = JsonUtils.toJSONString(cusFts);
+			
+		}
+		
+		renderJson(json);
+		
+	}
+	
+	/**
+	 * 组成辅助核算的标准串，格式"【辅助核算：编码/具体内容】"
+	 * 
+	 * 
+	 * 
+	 * 
+	 */
+	public void buildAssMapStr(){
+		
+		Map<String, Object> result = new HashMap<String, Object>();
+		try {
+			//返回辅助核算的标准串
+			String returnAssStr = "";
+			String[] assMaps = request.getParameterValues("assMaps[]");
+	
+			for(int i=0;i<assMaps.length;i++){
+				
+				String ass=assMaps[i];
+				String[] oneAssMaps = ass.split(",");
+				returnAssStr += "【" + oneAssMaps[0] + "：" + oneAssMaps[1] + "/" + oneAssMaps[2] + "】";
+			}
+			
+			result.put("success", true);
+			result.put("assStr", returnAssStr);
+		} catch (Exception e) {
+			result.put("success", false);
+			result.put("msg", e.getMessage());
+			log.error("", e);
+		}
+		renderJson(result);
+	}
+	
+	
+	protected String convertObjuectIdToAssName(String objId){
+		String assName = "";
+		if(objId.equals("2"))
+			assName="项目分期";
+		if(objId.equals("3"))
+			assName="产品类型";
+		if(objId.equals("4"))
+			assName="";
+		if(objId.equals("5"))
+			assName="银行账户";
+		if(objId.equals("9"))
+			assName="人员档案";
+		if(objId.equals("10"))
+			assName="部门档案";
+		if(objId.equals("11"))
+			assName="供应商辅助核算";
+		
+		return assName;
+		
+	}
+	
+	protected String convertAssNameToObjuectId(String assName){
+		String objectId = "";
+	
+		if(assName.equals("银行账户")){
+			objectId = "5";
+		}
+		if(assName.equals("人员档案")){
+			objectId = "9";
+		}
+		if(assName.equals("部门档案")){
+			objectId = "10";
+		}
+		if(assName.equals("供应商辅助核算")){
+			objectId = "11";
+		}
+	
+		return objectId;
+		
+	}
+
+	// 组装数据
+	public void buildFinaDataToFiAssDetailMapping(Long mappingId, List<FinaData> fds, List list) {
+		if (fds != null && fds.size() > 0) {
+			for (FinaData fd : fds) {
+				FiAssDetailMapping fdm = new FiAssDetailMapping();
+				fdm.setObjectItemCode((String) fd.get("code"));
+				fdm.setObjectItemName((String) fd.get("name"));
+				fdm.setObjectId(String.valueOf(fd.get("id")));
+				fdm.setAssMappingId(mappingId);
+				// 加核算数据====
+				FiAssDetailMapping fm = fiAssMappingService.loadDetailByBizCodeAndName(mappingId, fdm.getObjectItemCode(), fdm.getObjectItemName());
+				if (fm != null) {
+					fdm.setAssItemCode(fm.getAssItemCode());
+					fdm.setAssItemName(fm.getAssItemName());
+					fdm.setId(fm.getId());
+				}
+				list.add(fdm);
+			}
+		}
+	}
+	
+
+	public List<FiBizObject> getFibObjects(String type,String sysCode){
+		List<FiBizObject> fibs = new ArrayList<FiBizObject>();
+		List<FiBusinessobject> bos = fiBizObjectService.findBizObjectByType(type,sysCode);
+		
+		FiBizObject fbo = null;
+		String sysName = "";
+		if(sysCode.equals("1")){
+			sysName = "销售系统";
+		}else if(sysCode.equals("2")){
+			sysName = "成本系统";
+		}else{
+			sysName = "费用系统";
+		}
+		
+		for(FiBusinessobject bo:bos){
+			fbo = new FiBizObject();
+			fbo.setSysCode(Integer.parseInt(sysCode));
+			fbo.setObjectId(String.valueOf(bo.getId()));
+			fbo.setSysName(sysName);
+			fbo.setObjectName(bo.getVobject());
+			
+			
+			fibs.add(fbo);
+		}
+		return fibs;
+	}
+	/*
+	 * 房产信息对照
+	 * chc add 2016.10.28
+	 */
+	public void exportRoom(){
+		try {
+			String assMappingId = request.getParameter("assMappingId");
+			String buildId = request.getParameter("buildId");
+			List<IExcelHandler> iexcelHandlerList = new ArrayList<IExcelHandler>();
+			iexcelHandlerList.add(fiAssMappingRoomService);
+			HSSFWorkbook wb = ExcelHandlerUtil.onexport(iexcelHandlerList,assMappingId,Long.valueOf(buildId),0L,0L);
+			onExport(wb,"房间信息辅助核算对照.xls");
+		} catch (Exception e) {
+			e.printStackTrace();
+			Logger.getLogger(this.getClass()).error(e.getMessage());
+		}
+	}
+	
+	/**
+	 *  房产信息对照
+	 * chc add 2016.10.28
+	 */
+	public void  importRoomPr(){
+		try {
+			String assMappingId = request.getParameter("assId");
+			List<IExcelHandler> iexcelHandlerList = new ArrayList<IExcelHandler>();
+			iexcelHandlerList.add(fiAssMappingRoomService);
+			FileInputStream fileInputStream = new FileInputStream(uploadRoomFile);
+			ExcelHandlerUtil.importPr(fileInputStream,assMappingId,"","","",iexcelHandlerList,0L);
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+	}
+	
+	/*
+	 * 辅助核算导出
+	 * chc add 2016.7.4
+	 */
+	public void exportPr(){
+		try {
+			String accountSetCode = request.getParameter("accountSetCode");
+			String sysId = request.getParameter("sysId");
+			String accountSetId = request.getParameter("accountSetId");
+			Long companyId = getParameterLong("companyId");
+			List<IExcelHandler> iexcelHandlerList = new ArrayList<IExcelHandler>();
+			iexcelHandlerList.add(fiAssMappingService);
+			iexcelHandlerList.add(fiAssMappingDetailsService);
+			HSSFWorkbook wb = ExcelHandlerUtil.onexport(iexcelHandlerList,accountSetCode,Long.parseLong(sysId),Long.parseLong(accountSetId),companyId);
+			onExport(wb,"辅助核算.xls");
+		} catch (Exception e) {
+			e.printStackTrace();
+			Logger.getLogger(this.getClass()).error(e.getMessage());
+		}
+	}
+	
+	/**
+	 * 辅助核算导入
+	 * chc add 2016.7.5
+	 */
+	public void  importPr(){
+		try {
+			String accountSetCode = request.getParameter("accountSetCode");//账套好
+			String sysId = request.getParameter("sysId");//系统
+			String companyCode = request.getParameter("companyCode");//公司编码
+			String accountSetId = request.getParameter("accountSetId");
+			Long companyId = getParameterLong("companyId");
+			List<IExcelHandler> iexcelHandlerList = new ArrayList<IExcelHandler>();
+			iexcelHandlerList.add(fiAssMappingService);
+			iexcelHandlerList.add(fiAssMappingDetailsService);
+			FileInputStream fileInputStream = new FileInputStream(uploadfile);
+			ExcelHandlerUtil.importPr(fileInputStream,accountSetCode,sysId,companyCode,accountSetId,iexcelHandlerList,companyId);
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+	}
+	
+	/*
+	 * 辅助核算详细导出
+	 * chc add 2016.7.4
+	 */
+	public void exportDetailMapping(){
+		try {
+			Long assMappingId = getParameterLong("assMappingId");
+			List<IExcelHandler> iexcelHandlerList = new ArrayList<IExcelHandler>();
+			iexcelHandlerList.add(fiAssMappingDetailsService);
+			HSSFWorkbook wb = ExcelHandlerUtil.onexport(iexcelHandlerList,"",0L,0L,assMappingId);
+			onExport(wb,"辅助核算明细.xls");
+		} catch (Exception e) {
+			e.printStackTrace();
+			Logger.getLogger(this.getClass()).error(e.getMessage());
+		}
+	}
+	
+	/**
+	 *  辅助核算详细导入
+	 * chc add 2016.10.28
+	 */
+	public void  importDetailPr(){
+		try {
+			String assMappingId = request.getParameter("assId");
+			List<IExcelHandler> iexcelHandlerList = new ArrayList<IExcelHandler>();
+			iexcelHandlerList.add(fiAssMappingDetailsService);
+			FileInputStream fileInputStream = new FileInputStream(uploadfile);
+			ExcelHandlerUtil.importPr(fileInputStream,assMappingId,"","","",iexcelHandlerList,0L);
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+	}
+	
+	public void onExport(HSSFWorkbook wb,String fileName) throws UnsupportedEncodingException{
+		response.setContentType("application/vnd.ms-excel");
+		String downloadFileName=new String(fileName.getBytes("gb2312"), "iso8859-1");
+		
+		response.setHeader("Content-disposition","attachment;filename="+downloadFileName);
+		OutputStream ouputStream = null;
+		try {
+			ouputStream = response.getOutputStream();
+			wb.write(ouputStream);
+			ouputStream.flush();
+			ouputStream.close();
+		} catch (IOException e) {
+			Logger.getLogger(this.getClass()).error(e.getMessage());
+			Logger.getLogger(this.getClass()).error("业务异常",e);
+		}finally{
+			if (ouputStream != null)
+				try {
+					ouputStream.close();
+				} catch (IOException e) {
+					Logger.getLogger(this.getClass()).error(e.getMessage());
+					Logger.getLogger(this.getClass()).error("业务异常",e);
+				}
+            
+		}
+	}
+	
+	public FiAssMapping getFiAssMapping() {
+		return fiAssMapping;
+	}
+
+	public void setFiAssMapping(FiAssMapping fiAssMapping) {
+		this.fiAssMapping = fiAssMapping;
+	}
+
+	public FiAssDetailMapping getFiAssDetailMapping() {
+		return fiAssDetailMapping;
+	}
+
+	public void setFiAssDetailMapping(FiAssDetailMapping fiAssDetailMapping) {
+		this.fiAssDetailMapping = fiAssDetailMapping;
+	}
+
+	public Long getAccountSetId() {
+		return accountSetId;
+	}
+
+	public void setAccountSetId(Long accountSetId) {
+		this.accountSetId = accountSetId;
+	}
+
+	public File getUploadfile() {
+		return uploadfile;
+	}
+
+	public void setUploadfile(File uploadfile) {
+		this.uploadfile = uploadfile;
+	}
+
+	public File getUploadRoomFile() {
+		return uploadRoomFile;
+	}
+
+	public void setUploadRoomFile(File uploadRoomFile) {
+		this.uploadRoomFile = uploadRoomFile;
+	}
+
+}

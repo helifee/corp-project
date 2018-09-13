@@ -1,0 +1,342 @@
+/*
+ * @(#) K060011ServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 教育考试培训系统
+ *    SubSystem: 考试子系统
+ */
+package com.yds.tt.testing.service.impl;
+
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Service;
+import com.yds.base.service.AbstractBaseService;
+import com.yds.common.bean.UserInfo;
+import com.yds.tt.testing.bean.ExamineInfo;
+import com.yds.tt.manager.bean.AuthorityInfo;
+import com.yds.tt.manager.dao.TtCommonDao;
+import com.yds.tt.manager.service.TtCommonService;
+import com.yds.tt.manager.service.TtCommonUtil;
+import com.yds.tt.manager.service.TtConstants;
+import com.yds.tt.manager.service.TtExclusiveException;
+import com.yds.tt.testing.dao.K060011Dao;
+import com.yds.tt.testing.service.K060011Service;
+import com.yds.util.service.StringUtil;
+
+/**
+ * @see com.yds.tt.testing.service.K060011Service
+ */
+@Service("k060011Service")
+public class K060011ServiceImpl extends AbstractBaseService implements K060011Service {	
+	private static final String PARENT_EXAMINE_NO = "00";
+		
+	private K060011Dao k060011Dao;
+	private TtCommonService ttCommonService;
+	private TtCommonDao ttCommonDao;
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public ExamineInfo getInitInfo(String examineId){		
+		return k060011Dao.getInitInfo(examineId);		
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */	
+	@Override
+	public String[] getUserList(String examineId) {
+		
+		List<UserInfo> userInfoList =  k060011Dao.getUserList(examineId);
+		String[] resultUserInfoList = new String[2];
+		
+		StringBuffer resultUserId = new StringBuffer();
+		StringBuffer resultUserName = new StringBuffer();
+		
+		// 如果针对对象人员为空
+		resultUserId.append("");
+		resultUserName.append("");
+		for(int i=0;i<userInfoList.size();i++){
+			resultUserId.append(userInfoList.get(i).getUserId());
+			resultUserName.append(userInfoList.get(i).getUserName());
+			if(i != (userInfoList.size()-1)){
+				resultUserId.append(",");
+				resultUserName.append(",");
+			}
+		}
+		resultUserInfoList[0]=resultUserId.toString();
+		resultUserInfoList[1]=resultUserName.toString();
+		
+		return resultUserInfoList;
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void insertNewExamine(ExamineInfo examineInfo, 
+								AuthorityInfo executantInfo, 
+								List<AuthorityInfo> editorInfoList,
+								String strUserIdList){
+		// 登录者ID取得
+		String userId = TtCommonUtil.getLoginUserId();
+		// 采番获得试卷ID
+		String newExamineId = ttCommonService.getSequence(TtConstants.SEQID.Examine) + PARENT_EXAMINE_NO;
+		
+		// 考试ID
+		examineInfo.setExamineId(newExamineId);
+		// 考试标志
+		examineInfo.setExamineFlg(TtConstants.C08.C08_1.value());
+		// 参阅答案标志
+		examineInfo.setCheckAnswerFlg(TtConstants.C09.C09_1.value());
+		// 再考试标志
+		examineInfo.setAgainExamineFlg(TtConstants.C10.C10_1.value());
+		// 必考标志
+		examineInfo.setMustExamineFlg(TtConstants.C11.C11_1.value());
+		// 创建者
+		examineInfo.setCreateUserId(userId);
+		// 更新者
+		examineInfo.setUpdateUserId(userId);
+		
+		// 考试信息表考试信息插入处理(新建)
+		k060011Dao.insertNewExamineInfo(examineInfo);
+		
+		// 针对对象为<针对个人>时
+		if (TtCommonUtil.isEquals(examineInfo.getObjectType(),
+			          TtConstants.C12.C12_4.value())) {
+			
+			// 循环插入课程员工表
+			Map<String, String> examineAttentionInfo = new HashMap<String, String>();
+			examineAttentionInfo.put("examineId", newExamineId);
+			examineAttentionInfo.put("attentionFlag", TtConstants.C32.C32_3.toString());
+
+			String[] userIdList = strUserIdList.split(",");
+			for(int i = 0; i < userIdList.length; i++){
+				examineAttentionInfo.put("employeesId", userIdList[i]);
+				k060011Dao.insertUserList(examineAttentionInfo);
+			}
+		}
+		
+		// 2010/7/9 zhanghaibo 重构
+		// 保存编辑者信息至权限表
+		saveEditors(editorInfoList, newExamineId);
+		
+		// 保存实施者信息
+		saveExecutant(executantInfo.getUserId(), newExamineId);	
+		
+		// wanqiuhong 10/12追加：更新全局Sesssion中的权限版本时间戳
+		ttCommonService.authrityTimestampUpdate();
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void updateExamine(ExamineInfo examineInfo, 
+							AuthorityInfo executantInfo, 
+							List<AuthorityInfo> editorInfoList,
+							String strUserIdList){
+		
+		// 排他检查
+		Date updateTime = k060011Dao.getUpdateTime(examineInfo.getExamineId());
+		if(ttCommonService.checkTimeStamp(TtConstants.PageId.K060011,  
+								updateTime) == false){
+
+			throw new TtExclusiveException();
+		}
+		
+		// 登录者ID取得
+		String userId = TtCommonUtil.getLoginUserId();
+		
+		// 初期信息设置
+		// 登录者ID
+		examineInfo.setUpdateUserId(userId);
+		
+		// 考试信息表考试信息更新处理
+		k060011Dao.updateExamineInfo(examineInfo);
+		
+		// 删除课程员工关联表		
+		k060011Dao.deleteUserList(examineInfo.getExamineId());
+
+		// 针对对象为<针对个人>时
+		if (TtCommonUtil.isEquals(examineInfo.getObjectType(),
+			          TtConstants.C12.C12_4.value())) {
+			
+			// 循环插入课程员工表
+			Map<String, String> examineAttentionInfo = new HashMap<String, String>();
+			examineAttentionInfo.put("examineId", examineInfo.getExamineId());
+			examineAttentionInfo.put("attentionFlag", TtConstants.C32.C32_3.toString());
+
+			String[] userIdList = strUserIdList.split(",");
+			for(int i = 0; i < userIdList.length; i++){
+				examineAttentionInfo.put("employeesId", userIdList[i]);
+				k060011Dao.insertUserList(examineAttentionInfo);
+			}
+		}
+		
+		// 删除编辑者
+		Map<String, String> paraMap = new HashMap<String, String>();
+		paraMap.put("relatedobjectId", examineInfo.getExamineId());
+		paraMap.put("authorityId", TtConstants.C24.C24_8.toString());
+		ttCommonDao.deleteAuthority(paraMap);
+
+		// 2010/7/9 zhanghaibo 重构
+		// 保存编辑者信息至权限表
+		saveEditors(editorInfoList, examineInfo.getExamineId());
+
+		// 删除审批者
+		Map<String, String> paraMap2 = new HashMap<String, String>();
+		paraMap2.put("relatedobjectId", examineInfo.getExamineId());
+		paraMap2.put("authorityId", TtConstants.C24.C24_12.toString());
+		ttCommonDao.deleteAuthority(paraMap);
+		
+		// 更新实施者信息
+		AuthorityInfo approverInfo = new AuthorityInfo();
+		approverInfo.setUserId(StringUtil.leftPadYd(executantInfo.getUserId()));
+		approverInfo.setAuthorityId(TtConstants.C24.C24_12.value());
+		approverInfo.setRelatedobjectId(examineInfo.getExamineId());
+		approverInfo.setUpdateUserId(TtCommonUtil.getLoginUserId());
+		approverInfo.setCreateUserId(TtCommonUtil.getLoginUserId());
+		ttCommonDao.insertAuthority(approverInfo);
+		
+		// wanqiuhong 10/12追加：更新全局Sesssion中的权限版本时间戳
+		ttCommonService.authrityTimestampUpdate();
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void insertReferenceExamine(
+			ExamineInfo examineInfo, 
+			AuthorityInfo executantInfo, 
+			List<AuthorityInfo> editorInfoList,
+			String strUserIdList){
+		
+		// 登录者ID取得
+		String userId = TtCommonUtil.getLoginUserId();
+		// 采番获得试卷ID
+		String newExamineId = ttCommonService.getSequence(TtConstants.SEQID.Examine) + PARENT_EXAMINE_NO;
+		
+		// 初期信息设置
+		// 参照考试ID
+		examineInfo.setReferenceExamineId(examineInfo.getExamineId());
+		// 考试ID
+		examineInfo.setExamineId(newExamineId);
+		// 考试状态
+		examineInfo.setExamineStatus(TtConstants.R12.R12_1.value());
+		// 创建者
+		examineInfo.setCreateUserId(userId);
+		// 更新者
+		examineInfo.setUpdateUserId(userId);
+		
+		// 考试信息表考试信息插入处理(参照新建)
+		k060011Dao.insertReferenceExamineInfo(examineInfo);
+		
+		// 针对对象为<针对个人>时
+		if (TtCommonUtil.isEquals(examineInfo.getObjectType(),
+			          TtConstants.C12.C12_4.value())) {
+			
+			// 循环插入课程员工表
+			Map<String, String> examineAttentionInfo = new HashMap<String, String>();
+			examineAttentionInfo.put("examineId", examineInfo.getExamineId());
+			examineAttentionInfo.put("attentionFlag", TtConstants.C32.C32_3.toString());
+
+			String[] userIdList = strUserIdList.split(",");
+			for(int i = 0; i < userIdList.length; i++){
+				examineAttentionInfo.put("employeesId", userIdList[i]);
+				k060011Dao.insertUserList(examineAttentionInfo);
+			}
+		}
+		
+		// 2010/7/9 zhanghaibo 重构
+		// 保存编辑者信息至权限表
+		saveEditors(editorInfoList, newExamineId);
+		
+		// 保存实施者信息
+		saveExecutant(executantInfo.getUserId(), newExamineId);	
+		
+		// 考试试卷关联表信息插入处理
+		k060011Dao.insertExaminePaperRelation(examineInfo);
+		
+		// 需要通过考试关联表信息插入处理
+		k060011Dao.insertNecessaryExamine(examineInfo);
+		
+		// 需要学习课程关联表信息插入处理
+		k060011Dao.insertNecessaryCourse(examineInfo);
+		
+		// wanqiuhong 10/12追加：更新全局Sesssion中的权限版本时间戳
+		ttCommonService.authrityTimestampUpdate();
+	}
+	
+
+	
+	/**
+	 * 保存实施者信息
+	 */
+	private void saveExecutant(String executantId, String examineId) {
+		// 考试实施者信息设置
+		AuthorityInfo approverInfo = new AuthorityInfo();
+		// 用户ID
+		approverInfo.setUserId(StringUtil.leftPadYd(executantId));
+		// 权限区分
+		approverInfo.setAuthorityId(TtConstants.C24.C24_12.value());
+		// 关联对象ID
+		approverInfo.setRelatedobjectId(examineId);
+		// 创建者
+		approverInfo.setCreateUserId(TtCommonUtil.getLoginUserId());
+		// 更新者
+		approverInfo.setUpdateUserId(TtCommonUtil.getLoginUserId());		
+		// 权限表考试实施者信息插入处理
+		ttCommonDao.insertAuthority(approverInfo);
+	}
+
+	/**
+	 * 保存编辑者信息
+	 */
+	private void saveEditors(List<AuthorityInfo> editorInfoList, String examineId) {
+		
+		if (editorInfoList == null || editorInfoList.size() == 0){
+			return;
+		}
+		
+		for(AuthorityInfo editorInfo : editorInfoList){
+			// 考试编辑者信息设置
+			// 权限区分
+			editorInfo.setAuthorityId(TtConstants.C24.C24_8.value());
+			// 关联对象ID
+			editorInfo.setRelatedobjectId(examineId);
+			// 创建者
+			editorInfo.setCreateUserId(TtCommonUtil.getLoginUserId());
+			// 更新者
+			editorInfo.setUpdateUserId(TtCommonUtil.getLoginUserId());
+			// 权限表考试编辑者信息插入处理
+			ttCommonDao.insertAuthority(editorInfo);
+		}
+	}
+
+	/**
+	 * @param dao the k060011Dao to set
+	 */
+	public void setK060011Dao(K060011Dao dao) {
+		k060011Dao = dao;
+	}
+
+	/**
+	 * @param ttCommonService the ttCommonService to set
+	 */
+	public void setTtCommonService(TtCommonService ttCommonService) {
+		this.ttCommonService = ttCommonService;
+	}
+
+	/**
+	 * @param ttCommonDao the ttCommonDao to set
+	 */
+	public void setTtCommonDao(TtCommonDao ttCommonDao) {
+		this.ttCommonDao = ttCommonDao;
+	}
+}

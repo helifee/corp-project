@@ -1,0 +1,463 @@
+package com.celartem.datashow;
+
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.text.ParseException;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.celartem.common.OracleConnection;
+import com.celartem.common.SystemConstant;
+import com.celartem.common.Utils;
+import com.celartem.datashow.bean.BranchCurInfo;
+import com.celartem.datashow.bean.Device;
+import com.celartem.datashow.bean.Group;
+import com.celartem.datashow.bean.Line;
+import com.celartem.datashow.bean.PoBranchInfo;
+import com.celartem.datashow.bean.PoDot;
+import com.celartem.datashow.bean.PoPowerRoomRate;
+import com.celartem.datashow.bean.Unit;
+
+/**
+ * 供能建筑Service
+ * 
+ * @author zhangdaoqiang
+ *
+ */
+@Service
+public class EngSuplyService {
+
+	@Autowired
+	EngSuplyDAO engSuplyDAO;
+	
+	/**
+	 * 用电tab页的曲线数据集
+	 * 
+	 * @param bid
+	 * @param sdate
+	 * @param edate
+	 * @param precision
+	 * @return
+	 * @throws NumberFormatException
+	 * @throws SQLException
+	 * @throws ParseException 
+	 */
+	public BranchCurInfo getBranchCurData(int bid, String type, String sdate, 
+			String edate, String precision) throws NumberFormatException, SQLException, ParseException {
+		
+		BranchCurInfo info = new BranchCurInfo();
+		
+		//取得DB连接
+		Connection conn = OracleConnection.getConnectionFromLocal();
+//		Connection conn = OracleConnection.getConnectionFromServer();
+		if(conn == null) {
+			return null;
+		}
+
+		
+		//取得各支路信息(支路ID可能重复)
+		List<PoBranchInfo> branchList = getBranchList(conn, bid, type);
+
+		if(null != branchList && branchList.size() != 0) {
+			
+			//组合Line
+			List<Line> lineList = getLineList(branchList);
+			
+			//组合Unit
+			List<Unit> unitList = getUnitList(lineList);
+			
+			//组合Group(缺少连接信息，现在只是一组)
+			Group group = new Group();
+			group.setId(0);
+			group.setContent(unitList);
+			List<Group>  groupList = new ArrayList<Group>();
+			groupList.add(group);
+			
+			//取得曲线数据
+			Map<String, List<PoDot>> curveList = getCurveList(conn, type, sdate, edate, precision, branchList);
+			
+			//按时间轴组织曲线数据
+			List<Map<String, Object>> linesByDate = convert(curveList, sdate, edate, precision);
+
+			//组合返回数据
+			info.setGroupList(groupList);
+			info.setCurInfo(linesByDate);
+		}
+		
+		return info;
+	}
+	
+	/**
+	 * 取得指定ID的曲线数据
+	 * 
+	 * @param conn
+	 * @param sdate
+	 * @param edate
+	 * @param precision
+	 * @param branchList
+	 * @return
+	 * @throws SQLException
+	 */
+	public List<PoDot> getSingleCurve(int mid, String type,
+			String sdate, String edate, String precision) throws SQLException {
+		
+		//取得DB连接
+		Connection conn = OracleConnection.getConnectionFromLocal();
+//		Connection conn = OracleConnection.getConnectionFromServer();
+		if(conn == null) {
+			return null;
+		}
+		
+		List<PoDot> dots = null;
+		
+		if("ele".equals(type)) {
+			dots = this.engSuplyDAO.getMeterAmountEle(conn, mid, sdate, edate, precision);
+			
+		} else if("watercold".equals(type)){
+			dots = this.engSuplyDAO.getMeterAmountWater(conn, mid, sdate, edate, precision, type);
+			
+		} else if("heat".equals(type)) {
+//			dots = this.engSuplyDAO.getMeterAmountEle(conn, mid, sdate, edate, precision); TODO
+			
+		} else if("cool".equals(type)) {
+//			dots = this.engSuplyDAO.getMeterAmountEle(conn, mid, sdate, edate, precision); TODO
+		}
+
+		return dots;
+	}
+	
+	/**
+	 * 取得配电室所有出线支路数据（B4表格用）
+	 * 
+	 * @param bid
+	 * @param sdate
+	 * @param edate
+	 * @return
+	 * @throws SQLException
+	 */
+	public List<PoPowerRoomRate> getPowerRoomRate(int bid, String sdate, String edate) throws SQLException {
+		
+		//取得DB连接
+		Connection conn = OracleConnection.getConnectionFromLocal();
+//		Connection conn = OracleConnection.getConnectionFromServer();
+		if(conn == null) {
+			return null;
+		}
+		
+		List<PoPowerRoomRate> list = this.engSuplyDAO.getPowerRoomRate(conn, bid, sdate, edate);
+		
+		//去除入线支路数据
+		if(list != null && list.size() != 0) {
+			Iterator<PoPowerRoomRate> iter = list.iterator();
+			while(iter.hasNext()) {
+				PoPowerRoomRate branchData = iter.next();
+				
+				//入线判断
+				if(branchData.getFromFid() == 0) {
+					iter.remove();
+				}
+			}
+		}
+		
+		return list;
+	}
+	
+	/**
+	 * 取得各支路信息
+	 * 
+	 * @param conn
+	 * @param bid
+	 * @param type
+	 * @return
+	 * @throws SQLException
+	 */
+	private List<PoBranchInfo> getBranchList(Connection conn, 
+			int bid, String type) throws SQLException {
+		
+		List<PoBranchInfo> branchList = null;
+		
+		if("ele".equals(type)) {
+			branchList = this.engSuplyDAO.getBranchInfoEle(conn, bid);
+			
+		} else if("watercold".equals(type)){
+			branchList = this.engSuplyDAO.getBranchInfoWater(conn, bid, type);
+			
+		} else if("heat".equals(type)) {
+//			branchList = this.engSuplyDAO.getBranchInfoHeat(conn, bid);	TODO
+			
+		} else if("cool".equals(type)) {
+//			branchList = this.engSuplyDAO.getBranchInfoCool(conn, bid); TODO
+		}
+		
+		return branchList;
+	}
+	
+	/**
+	 * 按时间轴组织曲线数据
+	 * 
+	 * @param linesById
+	 * @param sdate
+	 * @param edate
+	 * @param precision
+	 * @return
+	 * @throws ParseException
+	 */
+	private List<Map<String, Object>> convert(Map<String, List<PoDot>> linesById, 
+			String sdate, String edate, String precision) throws ParseException {
+		
+		List<Map<String, Object>> linesByDate = new ArrayList<Map<String, Object>>();
+		
+		Date start = Utils.convert(sdate);
+		Date end = Utils.convert(edate);
+		Calendar s = Calendar.getInstance();
+		Calendar e = Calendar.getInstance();
+		s.setTime(start);
+		e.setTime(end);
+		
+		if(SystemConstant.StatPrecision.DAY.getValue().equals(precision)) {
+			for(Calendar c = s; !c.after(e); c.add(Calendar.DAY_OF_MONTH, 1)) {
+				
+				//取得时间
+				String date = Utils.convert(c.getTime());
+				Map<String, Object> map = new HashMap<String, Object>();
+				
+				double sum = 0;
+				for(String key : linesById.keySet()) {
+					
+					//取得曲线数据
+					List<PoDot> line = linesById.get(key);
+					
+					double amount = Utils.getValue2(line, date);
+					
+					map.put(key, amount);
+					
+					sum = sum + amount;
+				}
+				
+				map.put("Date", date);		//日期
+				map.put("Sum", sum);		//各表计量值和
+				
+				linesByDate.add(map);
+			}
+		} else if(SystemConstant.StatPrecision.WEEK.getValue().equals(precision)) {
+			// TODO
+		} else if(SystemConstant.StatPrecision.MONTH.getValue().equals(precision)) {
+			// TODO
+		} else if(SystemConstant.StatPrecision.YEAR.getValue().equals(precision)) {
+			// TODO
+		} 
+		
+		return linesByDate;
+		
+	}
+	
+	/**
+	 * 组合Unit(二层结构)
+	 * 
+	 * @param lineList
+	 * @return
+	 */
+	private List<Unit> getUnitList(List<Line> lineList) {
+		
+		List<Unit> unitList = new ArrayList<Unit>();
+		
+		if(lineList != null && lineList.size() != 0) {
+			
+			//找出根
+			for(int i=0; i<lineList.size(); i++) {
+				
+				Line line = lineList.get(i);
+				
+				if(line.getPreId() == 0) {
+					List<Line> list = new ArrayList<Line>();
+					list.add(line);
+					Unit unit = new Unit();
+					unit.setId(line.getBchId());
+					unit.setContent(list);
+					unitList.add(unit);
+				}
+			}
+			
+			//组合叶子
+			for(int i=0; i<unitList.size(); i++) {
+				Unit unit = unitList.get(i);
+				for(int j=0; j<lineList.size(); j++) {
+					Line line = lineList.get(j);
+					if(unit.getId() == line.getPreId()) {
+						unit.getContent().add(line);
+					}
+				}
+			}
+		}
+		
+		return unitList;
+	}
+	
+	/**
+	 * 组合Line，即list<Line>
+	 * 
+	 * @param branchList : 支路ID可能重复
+	 * @return
+	 */
+	private List<Line> getLineList(List<PoBranchInfo> branchList) {
+		
+		List<Line> lineList = new ArrayList<Line>();
+		
+		Iterator<PoBranchInfo> iter = branchList.iterator();
+		while(iter.hasNext()) {
+			
+			PoBranchInfo branch = iter.next();
+			
+			//判断此支路是否已存在
+			Line thisLine = new Line(branch.getFid());
+			int index = lineList.indexOf(thisLine);
+			
+			//不存在
+			if(index == -1) {
+				thisLine.setBchName(branch.getFname());	//支路名称
+				
+				//
+				int fromId = branch.getFromId();
+				thisLine.setPreId(fromId);			//父支路ID
+				if(fromId == 0) {
+					thisLine.setDirection(true);	//进线
+					
+				} else {
+					thisLine.setDirection(false);	//出线
+				}
+				
+				Device meter = new Device();
+				meter.setId(branch.getMid());
+				meter.setName(branch.getMname());
+				
+				List<Device> deviceList = new ArrayList<Device>();
+				deviceList.add(meter);
+				thisLine.setDevices(deviceList);
+				
+				lineList.add(thisLine);
+				
+			} else {
+				
+				thisLine = lineList.get(index);
+				
+				Device meter = new Device();
+				meter.setId(branch.getMid());
+				meter.setName(branch.getMname());
+				
+				List<Device> deviceList = thisLine.getDevices();
+				if(deviceList == null) {
+					deviceList = new ArrayList<Device>();
+					deviceList.add(meter);
+					lineList.add(thisLine);
+				} else {
+					deviceList.add(meter);
+				}
+			}
+		}
+		
+		return lineList;
+	}
+	
+	/**
+	 * 曲线数据集合
+	 * 
+	 * @param conn
+	 * @param sdate
+	 * @param edate
+	 * @param precision
+	 * @param branchList
+	 * @return
+	 * @throws SQLException
+	 */
+	private Map<String, List<PoDot>> getCurveList(Connection conn, String type,
+			String sdate, String edate, String precision, List<PoBranchInfo> branchList) throws SQLException {
+		
+		Map<String, List<PoDot>> map = new HashMap<String, List<PoDot>>();
+		
+		Iterator<PoBranchInfo> iter = branchList.iterator();
+		while(iter.hasNext()) {
+			
+			PoBranchInfo branch = iter.next();
+			
+			int mid = branch.getMid();
+			if(mid != 0) {
+				
+				List<PoDot> cur = null;
+				
+				if("ele".equals(type)) {
+					cur = this.engSuplyDAO.getMeterAmountEle(conn, mid, sdate, edate, precision);
+					
+				} else if("watercold".equals(type)){
+					cur = this.engSuplyDAO.getMeterAmountWater(conn, mid, sdate, edate, precision, type);
+					
+				} else if("heat".equals(type)) {
+//					cur = this.engSuplyDAO.getMeterAmountEle(conn, mid, sdate, edate, precision);	TODO
+					
+				} else if("cool".equals(type)) {
+//					cur = this.engSuplyDAO.getMeterAmountEle(conn, mid, sdate, edate, precision); TODO
+				}
+				
+				map.put(String.valueOf(mid), cur);
+			}
+		}
+
+		return map;
+	}
+	
+//	/**
+//	 * 用水tab页的曲线数据集
+//	 * 
+//	 * @param bid
+//	 * @param sdate
+//	 * @param edate
+//	 * @param precision
+//	 * @return
+//	 * @throws SQLException 
+//	 * @throws NumberFormatException 
+//	 */
+//	public Map<String, List<EnergyCurveInfo>> getLinchartData4UseWater(String bid, String sdate, 
+//			String edate, String precision) throws NumberFormatException, SQLException {
+//		
+//		//初始化返回值
+//		Map<String, List<EnergyCurveInfo>> map = new HashMap<String, List<EnergyCurveInfo>>();
+//		
+//		Connection conn = OracleConnection.getConnectionFromLocal();
+////		Connection conn = OracleConnection.getConnectionFromServer();
+//			
+//		//取得各支路信息
+//		List<Line> branchList = this.engSuplyDAO.getBranchInfoWater(conn, Integer.parseInt(bid), "watercold");
+//		
+//		if(null != branchList && branchList.size() != 0) {
+//			
+//			Iterator<Line> iter = branchList.iterator();
+//			while(iter.hasNext()) {
+//				Line branch = iter.next();
+//				
+//				//取得表计ID,名称列表
+//				int mid= branch.getMid();
+//				String mname = branch.getMname();
+//				String key = mid + "." + mname;
+//				
+//				List<EnergyCurveInfo> curList = this.engSuplyDAO.getMeterAmountWater(conn, mid, sdate, edate, precision);
+//				map.put(key, curList);
+//			}
+//		}
+//		return map;
+//	}
+
+	/**
+	 * @param engSuplyDAO the engSuplyDAO to set
+	 */
+	public void setEngSuplyDAO(EngSuplyDAO engSuplyDAO) {
+		this.engSuplyDAO = engSuplyDAO;
+	}
+	
+}

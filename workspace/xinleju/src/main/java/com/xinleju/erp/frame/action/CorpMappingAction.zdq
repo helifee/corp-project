@@ -1,0 +1,398 @@
+package com.xinleju.erp.frame.action;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.UnsupportedEncodingException;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import net.sf.json.JSONArray;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.log4j.Logger;
+import org.apache.poi.hssf.usermodel.HSSFWorkbook;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.MatchMode;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+
+import com.xinleju.erp.base.app.bean.Page;
+import com.xinleju.erp.finance.models.FiAccountSet;
+import com.xinleju.erp.finance.models.FiSysinfo;
+import com.xinleju.erp.finance.service.FiAccountCaptionService;
+import com.xinleju.erp.finance.service.FiBudgetCapService;
+import com.xinleju.erp.finance.service.FiCashFlowCaseService;
+import com.xinleju.erp.finance.service.FiVoucherEntryService;
+import com.xinleju.erp.finance.service.FiVoucherTempTypeService;
+import com.xinleju.erp.finance.service.FiVoucherTemplateService;
+import com.xinleju.erp.finance.utils.ExcelHandlerUtil;
+import com.xinleju.erp.finance.utils.IExcelHandler;
+import com.xinleju.erp.flow.service.api.extend.OrgnService;
+import com.xinleju.erp.frame.dao.AppDao;
+import com.xinleju.erp.frame.dto.FiSysCorpDTO;
+import com.xinleju.erp.frame.dto.JsonTreeTableTemplete;
+import com.xinleju.erp.frame.enums.MDTypeEnum;
+import com.xinleju.erp.frame.exception.ValidateException;
+import com.xinleju.erp.frame.models.App;
+import com.xinleju.erp.frame.models.BaseEntity;
+import com.xinleju.erp.frame.models.CorpMapping;
+import com.xinleju.erp.frame.models.EntityExtender;
+import com.xinleju.erp.frame.models.FiSysInfo;
+import com.xinleju.erp.frame.models.extender.FiSysCorpExtender;
+import com.xinleju.erp.frame.service.FiBusinessService;
+import com.xinleju.erp.frame.service.FiSysDataService;
+import com.xinleju.erp.frame.service.extend.dto.FiAggDTO;
+import com.xinleju.erp.frame.utils.CommonUtil;
+import com.xinleju.erp.frame.utils.MdServiceProxy;
+import com.xinleju.erp.frame.utils.ValidateCheckUtil;
+
+public class CorpMappingAction extends FiBaseAction {
+    private CorpMapping corpMapping;
+    private FiAccountSet fiAccountSet;
+    @Autowired
+    private FiBusinessService fiBusinessService;
+    @Autowired
+    @Qualifier("orgnServiceProvider")
+    private OrgnService orgnService;
+    @Autowired
+    private FiSysDataService fiSysDataService;
+    //chc add 2016.6.30 start
+    @Autowired
+    private FiAccountCaptionService fiAccountCaptionService;  //会计科目
+    @Autowired
+    private FiCashFlowCaseService fiCashFlowCaseService; //现金流量项目
+    @Autowired
+    private FiBudgetCapService fiBudgetCapService; //预算科目
+    @Autowired
+    private FiVoucherTempTypeService fiVoucherTempTypeService; //凭证模板-业务类型
+    @Autowired
+	private FiVoucherTemplateService fiVoucherTemplateService;//凭证模板-业务类型对应的凭证模板
+    @Autowired
+	private FiVoucherEntryService fiVoucherEntryService;//凭证模板-凭证模板分录
+    private File  uploadfile;
+    private String uploadfileFileName; 
+  //chc add 2016.6.30 end
+    @Autowired
+    AppDao appDao;
+    /**
+     * 列表
+     *
+     * @return
+     */
+    public String list() {
+    	
+    	String keyword = request.getParameter("keyword");
+		DetachedCriteria dc = DetachedCriteria.forClass(FiSysinfo.class);
+		if (StringUtils.isNotBlank(keyword)) {
+			dc.add(Restrictions.like("fiSysName", keyword, MatchMode.ANYWHERE));
+		}
+
+		page = getCommonService().findPage(dc, start, limit);
+	    List<FiSysinfo> fss = page.getItems();
+	    
+	    request.setAttribute("fss",fss);
+    	
+        request.setAttribute("statusMap", BaseEntity.getStatusMap());
+        request.setAttribute("mdcorpidMap", CommonUtil.transform(orgnService.getCompanyListAll().getResult(), "id","name"));
+        initRef();
+        return super.list();
+    }
+
+    private void initRef(){
+        addRefs("mdcorpid_ref", CommonUtil.transform(orgnService.getCompanyListAll().getResult(), "id","name"));
+        addRefs("mddatatype_ref", MDTypeEnum.getMap());
+        addRefs("status_ref", CorpMapping.getStatusMap());
+        if(MdServiceProxy.getMdProjectCacheService() != null)
+            addRefs("project_ref", CommonUtil.transform(MdServiceProxy.getMdProjectCacheService().getAllProjectBase().getResult(), "id","name"));
+        else{
+            addRefs("project_ref", null);
+        }
+        List<Object> list = new ArrayList<Object>();
+        if(MdServiceProxy.getMdFinanceCacheService() != null){
+            list.add(MdServiceProxy.getMdFinanceCacheService().getFinanceLegalPersonById(10l).getResult());
+            addRefs("legalperson_ref", CommonUtil.transform(list, "id","name"));
+        }else{
+            addRefs("legalperson_ref", null);
+        }
+        Map<Object,Object> appMap = new HashMap<Object,Object>();
+        for(App app : appDao.getAppMap().values()){
+            appMap.put(app.getCode(),app.getName());
+        }
+        addRefs("beusedsys_ref",appMap);
+    }
+
+    public void loadficorp(){
+        Long fisysinfoid = getParameterLong("fisysinfoid");
+        List<FiSysCorpDTO> corpList = null;
+        if(fisysinfoid != null)
+            corpList = fiSysDataService.queryFiSysCorp(fisysinfoid);
+        else
+            corpList = new ArrayList<FiSysCorpDTO>();
+        JsonTreeTableTemplete jttt = new JsonTreeTableTemplete("id","pid",new String[]{"id"},FiSysCorpExtender.class);
+        JSONArray jsonTree = CommonUtil.transTree(corpList, jttt);
+        renderJson(jsonTree.toString());
+    }
+
+    public FiBusinessService getFiBusinessService() {
+        return fiBusinessService;
+    }
+
+    public void setFiBusinessService(FiBusinessService fiBusinessService) {
+        this.fiBusinessService = fiBusinessService;
+    }
+
+
+    /**
+     * 编辑页面
+     *
+     * @return
+     */
+    public String edit() throws Exception {
+        Long fisysinfoid = getParameterLong("fisysinfoid");
+        String targsyscorpid = getParameter("targsyscorpid");
+        Long id = getParameterLong("id");
+        if (id != null) {
+            FiAggDTO aggDTO = fiBusinessService.queryAggById(getMainClass(), id);
+            corpMapping = (CorpMapping) aggDTO.getParent();
+        }else{
+            if(corpMapping == null)
+                corpMapping= new CorpMapping();
+            corpMapping.setFisysinfoid(fisysinfoid);
+            corpMapping.setTargsyscorpid(targsyscorpid);
+        }
+        addRefs("fisysinfoid_ref",fiBusinessService.queryDataSet(FiSysInfo.class));
+        if(corpMapping.getFisysinfoid() != null){
+            addRefs("targsyscorpid_ref", CommonUtil.transform(fiSysDataService.queryFiSysCorp(corpMapping.getFisysinfoid()), "id","name"));
+        }
+        initRef();
+        return "edit";
+    }
+
+    /**
+     * 保存对象
+     */
+    public void save() throws Exception {
+        Map<String, Object> result = new HashMap<String, Object>();
+        if (corpMapping.getId() != null) {
+            corpMapping.setEditDate(new Date());
+        } else {
+            corpMapping.setCreateDate(new Date());
+            corpMapping.setStatus(0);
+        }
+        try {
+            FiAggDTO aggDTO = new FiAggDTO();
+            aggDTO.setParent(corpMapping);
+            ValidateCheckUtil.checkValidate(aggDTO);
+            fiBusinessService.saveOrUpdate(aggDTO);
+            result.put("success", true);
+            result.put("msg", "保存成功");
+            renderJson(result);
+        } catch (ValidateException e) {
+            result.put("success", false);
+            result.put("msg", e.getMessage());
+            renderJson(result);
+        }
+    }
+    
+    
+
+    /**
+     * 启用
+     */
+    public void enable() {
+        Map<String, Object> result = new HashMap<String, Object>();
+        try {
+            String ids = request.getParameter("id");
+            if (ids != null) {
+                String[] idAry = ids.split(";");
+                fiBusinessService.batchUpdateStatus(CorpMapping.class,
+                        CommonUtil.transformIds(idAry), Integer.valueOf(0));
+            }
+            result.put("success", true);
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("msg", e.getMessage());
+        }
+        renderJson(result);
+    }
+
+    /**
+     *
+     */
+    public void delete() {
+        Map<String, Object> result = new HashMap<String, Object>();
+        try {
+            String ids = request.getParameter("id");
+            if (ids != null) {
+                Long[] idAry = CommonUtil.transformIds(ids.split(";"));
+                fiBusinessService.delete(CorpMapping.class, idAry);
+            }
+            result.put("success", true);
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("msg", e.getMessage());
+        }
+        renderJson(result);
+    }
+
+
+    /**
+     * 禁用
+     */
+    public void unable() {
+        Map<String, Object> result = new HashMap<String, Object>();
+        try {
+            String ids = request.getParameter("id");
+            if (ids != null) {
+                String[] idAry = ids.split(";");
+                fiBusinessService.batchUpdateStatus(CorpMapping.class,
+                        CommonUtil.transformIds(idAry), Integer.valueOf(1));
+            }
+            result.put("success", true);
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("msg", e.getMessage());
+        }
+        renderJson(result);
+    }
+
+    public CorpMapping getCorpMapping() {
+        return corpMapping;
+    }
+
+    public void setCorpMapping(CorpMapping corpMapping) {
+        this.corpMapping = corpMapping;
+    }
+
+
+    @Override
+    protected Page loaddata() {
+        String beusedsys = getParameter("beusedsys");
+        String sta = getParameter("status");
+        String targsyscorpid =  getParameter("targsyscorpid");
+        Long fisysinfoid = getParameterLong("fisysinfoid");
+        DetachedCriteria dc = DetachedCriteria.forClass(CorpMapping.class);
+        if (StringUtils.isNotBlank(sta)) {
+            Integer status = Integer.valueOf(sta);
+            dc.add(Restrictions.eq("status", status));
+        }
+        if(StringUtils.isNotBlank(beusedsys)){
+            dc.add(Restrictions.like("beusedsys", beusedsys, MatchMode.ANYWHERE));
+        }
+        if(StringUtils.isNotBlank(targsyscorpid)){
+            dc.add(Restrictions.eq("targsyscorpid", targsyscorpid));
+        }
+        if(fisysinfoid != null){
+            dc.add(Restrictions.eq("fisysinfoid",fisysinfoid));
+        }
+        return  getCommonService().findPage(dc, start, limit);
+    }
+    
+    /*
+	 * 凭证模板导出
+	 * chc add 2016.7.4
+	 */
+	public void exportPr(){
+		try {
+			String accountSetCode = request.getParameter("accountSetCode");
+			String sysId = request.getParameter("sysId");
+			String accountSetId = request.getParameter("accountSetId");
+			List<IExcelHandler> iexcelHandlerList = new ArrayList<IExcelHandler>();
+			iexcelHandlerList.add(fiAccountCaptionService);
+			iexcelHandlerList.add(fiCashFlowCaseService);
+			iexcelHandlerList.add(fiBudgetCapService);
+			/*iexcelHandlerList.add(fiVoucherTempTypeService);
+			iexcelHandlerList.add(fiVoucherTemplateService);
+			iexcelHandlerList.add(fiVoucherEntryService);*/
+			HSSFWorkbook wb = ExcelHandlerUtil.onexport(iexcelHandlerList,accountSetCode,Long.parseLong(sysId),Long.parseLong(accountSetId),null);
+			onExport(wb,"凭证信息.xls");
+		} catch (Exception e) {
+			e.printStackTrace();
+			Logger.getLogger(this.getClass()).error(e.getMessage());
+		}
+	}
+	
+	public void onExport(HSSFWorkbook wb,String fileName) throws UnsupportedEncodingException{
+		response.setContentType("application/vnd.ms-excel");
+		String downloadFileName=new String(fileName.getBytes("gb2312"), "iso8859-1");
+		
+		response.setHeader("Content-disposition","attachment;filename="+downloadFileName);
+		OutputStream ouputStream = null;
+		try {
+			ouputStream = response.getOutputStream();
+			wb.write(ouputStream);
+			ouputStream.flush();
+			ouputStream.close();
+		} catch (IOException e) {
+			Logger.getLogger(this.getClass()).error(e.getMessage());
+			Logger.getLogger(this.getClass()).error("业务异常",e);
+		}finally{
+			if (ouputStream != null)
+				try {
+					ouputStream.close();
+				} catch (IOException e) {
+					Logger.getLogger(this.getClass()).error(e.getMessage());
+					Logger.getLogger(this.getClass()).error("业务异常",e);
+				}
+            
+		}
+	}
+	
+	/**
+	 * 凭证模板导入
+	 * chc add 2016.7.5
+	 */
+	public void  importPr(){
+		try {
+			String accountSetCode = request.getParameter("accountSetCode");//账套好
+			String sysId = request.getParameter("sysId");//系统
+			String companyCode = request.getParameter("companyCode");//公司编码
+			String accountSetId = request.getParameter("accountSetId");
+			List<IExcelHandler> iexcelHandlerList = new ArrayList<IExcelHandler>();
+			iexcelHandlerList.add(fiAccountCaptionService);
+			iexcelHandlerList.add(fiCashFlowCaseService);
+			iexcelHandlerList.add(fiBudgetCapService);
+			/*iexcelHandlerList.add(fiVoucherTempTypeService);
+			iexcelHandlerList.add(fiVoucherTemplateService);
+			iexcelHandlerList.add(fiVoucherEntryService);*/
+			FileInputStream fileInputStream = new FileInputStream(uploadfile);
+			ExcelHandlerUtil.importPr(fileInputStream,accountSetCode,sysId,companyCode,accountSetId,iexcelHandlerList,null);
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+	}
+
+    @Override
+    protected Class<? extends BaseEntity> getMainClass() {
+        return CorpMapping.class;
+    }
+
+    @Override
+    protected Class<? extends EntityExtender> getExtender() {
+        return null;
+    }
+
+	public File  getUploadfile() {
+		return uploadfile;
+	}
+
+	public void setUploadfile(File uploadfile) {
+		this.uploadfile = uploadfile;
+	}
+
+	public String getUploadfileFileName() {
+		return uploadfileFileName;
+	}
+
+	public void setUploadfileFileName(String uploadfileFileName) {
+		this.uploadfileFileName = uploadfileFileName;
+	}
+    
+}

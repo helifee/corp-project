@@ -1,0 +1,1144 @@
+/*
+ * @(#)Ye0060Action.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 共通系统
+ */
+package com.yds.att.action;
+
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+
+import net.sf.json.JSONArray;
+import net.sf.json.JSONObject;
+
+import org.springframework.beans.factory.config.BeanDefinition;
+import org.springframework.context.annotation.Scope;
+import org.springframework.stereotype.Controller;
+
+import com.yds.att.bean.AttOvertime;
+import com.yds.att.bean.OrgInfo;
+import com.yds.att.bean.Ye0060CondA;
+import com.yds.att.bean.Ye0060Statistics;
+import com.yds.att.common.service.DateRelationService;
+import com.yds.att.common.service.OrgRelationService;
+import com.yds.att.service.AttConstants;
+import com.yds.att.service.Ye0060Service;
+import com.yds.base.action.AbstractBaseAction;
+import com.yds.common.bean.ComCodeInfo;
+import com.yds.common.bean.UserInfo;
+import com.yds.common.service.ComCodeInfoService;
+import com.yds.common.service.SessionConstants;
+import com.yds.common.service.SessionService;
+import com.yds.util.service.DateUtil;
+
+/**
+ * @author 远东) sundefu
+ * @version 1.00 2010/12/02
+ */
+
+
+@Scope(BeanDefinition.SCOPE_PROTOTYPE)
+@Controller("ye0060Action")
+public class Ye0060Action extends AbstractBaseAction{
+
+	private static final long serialVersionUID = 2926372616922203610L;
+
+	/** 注入Service. */
+	private Ye0060Service ye0060Service;
+	private OrgRelationService orgRelationService;
+	private ComCodeInfoService comCodeInfoService;
+	private DateRelationService dateRelationService;
+	
+	/** 画面模式. */
+	private Integer mode;
+	/** 查询指定月. */	
+	private String monthForSearch;
+	/** 初期检索标识. */	
+	private Integer searchFlag;
+	/** 加班一览检索条件. */
+	private Ye0060CondA ye0060CondA;
+	
+	/** 日期查询条件. */
+	private List<ComCodeInfo> dateOption;
+	/** 统计方式. */
+	private List<ComCodeInfo> staticMode;
+	/** 审批状态. */
+	private List<ComCodeInfo> confirmStatus;
+	/** 收益区分. */	
+	private List<ComCodeInfo> benefitFlagList;
+	/** 收益区分检索条件. */	
+	private List<ComCodeInfo> searchBenefitList;
+	/** 项目List. */	
+	private List<OrgInfo> projectList;
+	/** 项目List串. */	
+	private String projectString;
+	
+	/** 项目加班一览信息. */	
+	private List<Ye0060Statistics> ye0060Statistics;
+	/** 项目加班一览信息JSON串. */	
+	private String prjOvertimeJSON;
+	/** 项目组织信息JSON串. */	
+	String attEmpOrgInfoJSON;
+	
+	/** 加班信息操作类型. */	
+	private String operateType;
+	/** 加班信息Bean. */	
+	private AttOvertime attOvertime;
+	/** 加班至翌日标识. */	
+	private Integer tomorrowValue;
+	/** 项目组员工列表. */	
+	private List<UserInfo> prjEmpList;
+	private List<String> prjEmpStringList;
+	/** 申请加班员工列表. */	
+	private List<UserInfo> applyOvertimeEmpList;
+	private List<String> applyEmpStringList;
+	
+	/** 提交修改员工加班信息Json. */
+	private String checkBoxStatusJson;
+	/** 员工加班信息状态修改类型. */
+	private Integer changeStatusType;
+
+	/** 登录者Id. */	
+	private String loginUserId;
+	/** 结果标识. */	
+	private String resultFlag;
+	/** 日期类型标识. */	
+	private String dateTypeFlag;
+	/** 申请参照日期. */	
+	private String dateApplyRefered;
+	/** 项目状态. */	
+	private String projectStatus;
+	/** 共通画面错误消息. */	
+	private String errorMessage;
+	/** 共通画面错误消息. */	
+	private String prjType;
+	
+	/**
+	 * 项目加班一览初期化
+	 * @return SUCCESS
+	 */
+	public String execute() throws Exception{
+		
+		// 默认查看全部状态
+		if (ye0060CondA == null) {
+			ye0060CondA = new Ye0060CondA();
+		}
+		
+		// 审批或者查看模式
+		if (Ye0060Service.MODE_APPROVE.equals(mode)
+				|| Ye0060Service.MODE_SHOW.equals(mode)) {
+			// 设置日期检索条件
+			if (monthForSearch != null && !monthForSearch.isEmpty()) {
+				Date baseDate = DateUtil.parse(new StringBuilder(monthForSearch)
+						.append("-01").toString());
+				ye0060CondA.setSearchStartTime(baseDate);
+				ye0060CondA.setSearchEndTime(DateUtil.dateAdd(DateUtil.dateAdd(
+						baseDate, Calendar.MONTH, 1), Calendar.DATE, -1));
+				ye0060CondA.setDateOptionType(AttConstants.PeriodType.DATE_BYINPUT.toString());
+			}
+			// 设置审批状态默认值
+			if (ye0060CondA.getStateFlag() == null || ye0060CondA.getStateFlag().isEmpty()) {
+				ye0060CondA.setStateFlag(AttConstants.AppStatus.ALLSTATUS.toString());
+				if (Ye0060Service.MODE_APPROVE.equals(mode)) {
+					// 审批模式下默认选中待审批
+					ye0060CondA.setStateFlag(AttConstants.AppStatus.PENDING
+							.toString());
+				}
+			}
+			// 取得项目组织信息
+			OrgInfo orgInfo = orgRelationService.getOrgInfoBy(ye0060CondA.getPrjId());
+			
+			// 设置画面表示默认值
+			if (orgInfo == null) {
+				errorMessage = propMgr.getMessage("yds.com.warning.0004", "项目");
+				return ERROR;
+			}
+			recordProjectBasicInfo(orgInfo, false);
+			
+			// 初期化需要检索
+			searchFlag = Ye0060Service.SEARCHFLAG_NEED;
+		} else {
+			// 追加申请模式
+			mode = Ye0060Service.MODE_NEW;
+			// 默认查看本月数据
+			if (ye0060CondA.getDateOptionType() == null || ye0060CondA.getDateOptionType().isEmpty()) {
+				ye0060CondA.setDateOptionType(AttConstants.PeriodType.THIS_MONTH.toString());
+			}
+			if (ye0060CondA.getStateFlag() == null || ye0060CondA.getStateFlag().isEmpty()) {
+				ye0060CondA.setStateFlag(AttConstants.AppStatus.ALLSTATUS.toString());
+			}			
+			// 取得参与项目List
+			if (prjType == null || prjType.isEmpty()) {
+				prjType = "1";
+			}
+			if (prjType.equals("1")) {
+				projectList = orgRelationService.getJoinProjectBy(SessionService
+						.getLoginUserId(), AttConstants.OrgLifeCycle.NOW);
+			} else {
+				projectList = orgRelationService.getJoinProjectBy(SessionService
+						.getLoginUserId(), AttConstants.OrgLifeCycle.PASS);
+			}
+			// 设置画面表示项目
+			if (ye0060CondA.getPrjId() == null || ye0060CondA.getPrjId().isEmpty()) {
+				if (projectList != null && projectList.size() != 0) {
+					recordProjectBasicInfo(projectList.get(0), false);
+				} else {
+					putOpTip(propMgr.getMessage("yds.com.warning.0004", "员工参与项目"));
+					recordProjectBasicInfo(new OrgInfo(), true);
+				}
+			} else {
+				OrgInfo orgInfo = orgRelationService.getOrgInfoBy(ye0060CondA.getPrjId());
+				recordProjectBasicInfo(orgInfo, false);
+			}
+			// 审批状态默认值
+			if (searchFlag == null || searchFlag.intValue() == 0) {
+				searchFlag = Ye0060Service.SEARCHFLAG_NOTNEED;
+			}
+		}
+		
+		loginUserId = SessionService.getLoginUserId();
+		
+		return SUCCESS;
+	}
+	
+	/**
+	 * 由检索条件取得项目加班一览
+	 * 
+	 * @return SUCCESS
+	 */
+	public String searchByCondition() throws Exception{
+		// 设置检索条件
+		if (1 == ye0060CondA.getMyOvertime()) {
+			ye0060CondA.setEmpId(SessionService.getLoginUserId());
+		}
+		// 取得加班信息条数
+		long recordCount = ye0060Service.getAttOvertimeListCount(ye0060CondA);
+		if (recordCount > 800) {
+			prjOvertimeJSON = INPUT;
+			return SUCCESS;
+		}
+		
+		// 取得项目加班信息一览
+		searchPrjOverTimeList();
+	    JSONArray jsArr = JSONArray.fromObject(ye0060Statistics);
+	    setPrjOvertimeJSON(jsArr.toString());
+		
+		return SUCCESS;
+	}
+	
+	/**
+	 * 弹出加班信息
+	 * 
+	 * @return SUCCESS
+	 */
+	public String overtimeInfoOperate() throws Exception{
+		// 取得收益区分
+		benefitFlagList = comCodeInfoService.getComCodeInfo("ATT",
+				"BENEFIT_FLAG");
+		
+		// 新申请加班信息
+		if (Ye0060Service.OPERATETYPE_NEW.equals(operateType)) {
+			dateOption = comCodeInfoService.getComCodeInfo("ATT", "PERIOD_TYPE");
+			attOvertime.setApplyOvertimeDate(DateUtil.getDate());
+			// 不是项目组长时只能申请自己加班信息
+			if (!ye0060CondA.getIfPrjLeader()) {
+				attOvertime.setEmpId(SessionService.getLoginUserId());
+				String userName = ((UserInfo)SessionService.get(SessionConstants.USERINFO)).getUserName();
+				attOvertime.setEmpName(userName);
+			}
+		} else {
+			// 取得加班信息
+			attOvertime = ye0060Service.getOvertimeInfo(attOvertime);
+			if (DateUtil.getDay(attOvertime.getAppEndTime()) > DateUtil
+					.getDay(attOvertime.getAppStartTime())) {
+				tomorrowValue = Ye0060Service.TIME_TYPE_TOMORROW;
+			} else {
+				tomorrowValue = Ye0060Service.TIME_TYPE_TODAY;
+			}
+		}
+		// 取得项目组织信息
+		OrgInfo orgInfo = orgRelationService.getOrgInfoBy(attOvertime.getPrjId());
+		attOvertime.setPrjName(orgInfo.getOrgSnm());
+		
+		// 取得加班员工列表
+		searchEmpInfoList();
+
+		// 设置日期类型
+		searchDateTypeInfo();
+		
+		return SUCCESS;
+	}	
+	
+	/**
+	 * 加班登记保存
+	 * 
+	 * @return SUCCESS
+	 */
+	public String saveApplyOvertimeInfo() throws Exception{
+		// 返回结果
+		resultFlag = SUCCESS;
+		
+		// 操作类型
+		if (Ye0060Service.OPERATETYPE_MODIFY.equals(operateType)) {
+			Map<String, Object> resultMap = ye0060Service.updateOvertimeInfo(
+					attOvertime, tomorrowValue);
+			boolean modifyResult = (Boolean) resultMap.get("executeResult");
+			if (!modifyResult) {
+				resultFlag = (String) resultMap.get("resultMessage");
+				return INPUT;
+			}
+		} else if (Ye0060Service.OPERATETYPE_NEW.equals(operateType)) {
+			// 取得部门组织信息
+			OrgInfo orgInfo = orgRelationService.getParentOrgBy(attOvertime.getPrjId());
+			
+			// 设置部门Id
+			attOvertime.setDpmId(orgInfo.getOrgId());
+			if (!ye0060CondA.getIfPrjLeader()) {
+				applyEmpStringList = new ArrayList<String>();
+				applyEmpStringList.add(SessionService.getLoginUserId());
+			}
+			// 检查员工列表
+			if (applyEmpStringList == null || applyEmpStringList.size() == 0) {
+				resultFlag = propMgr.getMessage("yds.com.warning.0001", "加班员工");
+				
+				return INPUT;
+			}
+			
+			// 加班申请保存
+			Map<String, Object> resultMap = ye0060Service.insertOvertimeInfo(attOvertime, tomorrowValue,
+					applyEmpStringList);
+			boolean insertResult = (Boolean) resultMap.get("executeResult");
+			if (!insertResult) {
+				resultFlag = (String)resultMap.get("resultMessage");
+				return INPUT;
+			}
+		}
+		// 提示保存成功并进行画面再检索
+		putOpTip(propMgr.getMessage("yds.com.info.0017"));
+		searchFlag = Ye0060Service.SEARCHFLAG_NEED;
+		return resultFlag;
+	}
+	
+	/**
+	 * 删除加班申请
+	 * 
+	 * @return SUCCESS
+	 */
+	public String deleteOvertimeInfo() throws Exception{
+		// 提示消息
+		String popMessage = propMgr.getMessage("yds.com.info.0010");
+		
+		// 删除加班信息
+		boolean deleteResult = ye0060Service.deleteOvertimeInfo(attOvertime);
+		if (!deleteResult) {
+			popMessage = propMgr.getMessage("yds.com.info.0011");
+			resultFlag = popMessage;
+		}
+		// 返回后进行初期检索
+		searchFlag = Ye0060Service.SEARCHFLAG_NEED;
+		// 显示提示消息
+		putOpTip(popMessage);
+		resultFlag = SUCCESS;
+		return SUCCESS;
+	}
+	
+	/**
+	 * 删除指定日期加班申请
+	 * 
+	 * @return SUCCESS
+	 */
+	public String deleteALLOvertimeInfoByDate() throws Exception {
+		// 删除指定日加班信息
+		ye0060Service.deleteALLOvertimeInfoByDate(attOvertime);
+		// 提示删除成功并进行画面再检索
+		putOpTip(propMgr.getMessage("yds.com.info.0010"));
+		// 返回后进行初期检索
+		searchFlag = Ye0060Service.SEARCHFLAG_NEED;
+		resultFlag = SUCCESS;
+		return SUCCESS;
+	}
+
+	/**
+	 * 参照登记加班申请
+	 * 
+	 * @return SUCCESS
+	 */
+	public String newOvertimeByRefer() throws Exception {
+		// 提示消息
+		String popMessage = propMgr.getMessage("yds.com.info.0017");
+		resultFlag = SUCCESS;
+		// 取得日期类型
+		String dateTypeApplying = dateRelationService.getDateType(
+				DateUtil.parse(attOvertime.getApplyOvertimeDate())).toString();
+		String dateTypeRefered = dateRelationService.getDateType(
+				DateUtil.parse(dateApplyRefered)).toString();
+		// 日期类型不同时
+		if (!dateTypeApplying.equals(dateTypeRefered)) {
+			popMessage = propMgr.getMessage("yds.att.error.0005");
+//			putOpTip(popMessage);
+			resultFlag = popMessage;
+			return SUCCESS;
+		}
+		// 参照新建加班信息
+		Map<String, Object> resultMap = ye0060Service.insertOvertimeByRefer(attOvertime, dateApplyRefered);
+		boolean newByReferResult = (Boolean) resultMap.get("executeResult");
+		// 参照新建失败时
+		if (!newByReferResult) {
+			popMessage = (String) resultMap.get("resultMessage");
+			resultFlag = popMessage;
+			return SUCCESS;
+		}
+		
+		// 提示操作成功并进行画面再检索
+		putOpTip(popMessage);
+		return SUCCESS;
+	}
+	
+	/**
+	 * 加班信息状态更改（提交申请，批准或否决）
+	 * 
+	 * @return SUCCESS
+	 */
+	public String applyChangeOvertimeStatus() throws Exception{
+		
+		// 取得画面选中加班信息
+		JSONObject json = JSONObject.fromObject(checkBoxStatusJson);
+		// 权限检查
+		if (!checkOperateRight()) {
+			errorMessage = propMgr.getMessage("yds.com.error.0003");
+			return ERROR;
+		}
+		
+		// 提交更新
+		ye0060Service.updateapplyChangeStatus(json, changeStatusType);
+		// 提示操作成功并进行画面再检索
+		putOpTip(propMgr.getMessage("yds.com.info.0017"));
+
+		resultFlag = SUCCESS;
+		
+		return SUCCESS;
+	}
+	
+	/**
+	 * 按项目状态取得项目列表
+	 * 
+	 * @return SUCCESS
+	 */
+	public String searchPrjByListStatus() {
+		// 项目状态
+		if (AttConstants.OrgLifeCycle.NOW.toString().equals(projectStatus)) {
+			projectList = orgRelationService.getJoinProjectBy(SessionService
+					.getLoginUserId(), AttConstants.OrgLifeCycle.NOW);
+		} else {
+			projectList = orgRelationService.getJoinProjectBy(SessionService
+					.getLoginUserId(), AttConstants.OrgLifeCycle.PASS);
+		}
+		// 参与项目不存在
+		if (projectList == null || projectList.size() == 0) {
+			projectString = "";
+			return SUCCESS;
+		}
+		
+		// 将项目列表转化为json串
+		JSONArray prjJson = JSONArray.fromObject(projectList);
+		projectString = prjJson.toString();
+		
+		return SUCCESS;
+	}
+	
+	/**
+	 * 取得项目相关信息
+	 * 
+	 * @return SUCCESS
+	 */
+	public String searchPrjInfo() {
+		
+		// 项目下拉框选择变化，取得项目基本信息
+		OrgInfo orgInfo = orgRelationService.getOrgInfoBy(ye0060CondA.getPrjId());
+		// 转化成json格式
+		JSONObject json = JSONObject.fromObject(orgInfo);
+		attEmpOrgInfoJSON = json.toString();
+		
+		return SUCCESS;
+	}
+	
+	/**
+	 * 日期变化重设加班限定条件
+	 * 
+	 * @return SUCCESS
+	 */
+	public String onOvertimeDateChanged() throws Exception{
+		// 取得收益区分
+		benefitFlagList = comCodeInfoService.getComCodeInfo("ATT",
+				"BENEFIT_FLAG");
+		// 取得加班员工列表
+		searchEmpInfoList();
+		// 不是项目组长时只能申请自己加班信息
+		if (!ye0060CondA.getIfPrjLeader()) {
+			attOvertime.setEmpId(SessionService.getLoginUserId());
+			String userName = ((UserInfo)SessionService.get(SessionConstants.USERINFO)).getUserName();
+			attOvertime.setEmpName(userName);
+		}
+		// 设置日期类型
+		searchDateTypeInfo();
+		
+		return SUCCESS;
+	}
+	
+	/**
+	 * 取得项目加班信息一览
+	 * @return 
+	 */
+	private void searchPrjOverTimeList() throws Exception{
+
+		// 取得项目加班信息一览
+		ye0060Statistics = ye0060Service.getAttOvertimeList(ye0060CondA, mode);
+	}
+	
+	/**
+	 * 取得审批状态区分
+	 * @return SUCCESS
+	 */
+	private void searchConfirmStatus() {
+		// 取得所有审批状态区分
+		confirmStatus = comCodeInfoService.getComCodeInfo("ATT", "APP_STATE");
+		// 待去除的状态区分
+		List<ComCodeInfo> comCodeInfoPreDelete = new ArrayList<ComCodeInfo>();
+		for (ComCodeInfo comCodeInfo : confirmStatus) {
+			if (AttConstants.AppStatus.APP_ING.toString().equals(
+					comCodeInfo.getDiffNo())
+					|| AttConstants.AppStatus.EDIAT_DIRECT.toString()
+							.equals(comCodeInfo.getDiffNo())
+					|| AttConstants.AppStatus.REVOKEED.toString().equals(
+							comCodeInfo.getDiffNo())) {
+				comCodeInfoPreDelete.add(comCodeInfo);
+			}
+		}
+		
+		// 编辑状态区分
+		confirmStatus.removeAll(comCodeInfoPreDelete);
+		
+		// 添加一个全部
+		ComCodeInfo allStatus  = new ComCodeInfo();
+		allStatus.setDiffNo(AttConstants.AppStatus.ALLSTATUS.toString());
+		allStatus.setDiffName(AttConstants.AppStatusText.ALLSTATUS.toString());
+		
+		confirmStatus.add(allStatus);
+	}
+	
+	/**
+	 * 取得统计方式区分
+	 * 
+	 * @return List<ComCodeInfo> 统计方式区分设置结果
+	 */
+	private List<ComCodeInfo> searchStaticMode() {
+		List<ComCodeInfo> staticModelist = new ArrayList<ComCodeInfo>();
+		ComCodeInfo statisticsCode;
+		
+		statisticsCode = new ComCodeInfo();
+		statisticsCode.setDiffNo(Ye0060Service.STATISTIC_MODE_BYDATE);
+		statisticsCode.setDiffName("按日期");
+		staticModelist.add(statisticsCode);
+		
+		statisticsCode = new ComCodeInfo();
+		statisticsCode.setDiffNo(Ye0060Service.STATISTIC_MODE_BYEMP);
+		statisticsCode.setDiffName("按人员");
+		staticModelist.add(statisticsCode);
+		
+		return staticModelist;
+	}
+	
+	/**
+	 * 取得加班员工列表
+	 */
+	private void searchEmpInfoList () {
+		// 项目组所有员工
+		prjEmpList = orgRelationService.getMembersBy(attOvertime.getPrjId(), new Date());
+		// 已申请加班员工
+		applyOvertimeEmpList = ye0060Service.getOvertimeEmpInfo(attOvertime);
+		if (prjEmpList.size() != 0 && applyOvertimeEmpList.size() != 0) {
+			// 剔除已经申请的员工
+			List<String> appliedEmpList = new ArrayList<String>();
+			List<UserInfo> appliedEmpInfo = new ArrayList<UserInfo>();
+			for (UserInfo userInfo : applyOvertimeEmpList) {
+				appliedEmpList.add(userInfo.getUserId());
+			}
+			for (UserInfo userInfo : prjEmpList) {
+				if (appliedEmpList.contains(userInfo.getUserId())) {
+					appliedEmpInfo.add(userInfo);
+				}
+			}
+			// 画面只表示项目组内还未申请加班的员工
+			prjEmpList.removeAll(appliedEmpInfo);
+			// 待申请的员工List初期化成空List
+			applyOvertimeEmpList.clear();
+		}
+	}
+	
+	/**
+	 * 设置日期类型
+	 */
+	private void searchDateTypeInfo() throws Exception{
+		// 取得日期类型
+		String dateTypeFlag = dateRelationService.getDateType(
+				DateUtil.parse(attOvertime.getApplyOvertimeDate())).toString();
+		attOvertime.setDateTypeFlag(dateTypeFlag);
+		// 依据日期类型设置画面默认选中项
+		if (AttConstants.DateTypeEnum.HOLIDAY.toString().equals(dateTypeFlag)) {
+			if (attOvertime.getBenefitFlag() == null || attOvertime.getBenefitFlag().isEmpty()) {
+				attOvertime.setBenefitFlag(AttConstants.BenefitFlagEnum.FOR_DAY.toString());
+			}
+		} else if (AttConstants.DateTypeEnum.REST.toString().equals(dateTypeFlag)) {
+			if (attOvertime.getBenefitFlag() == null || attOvertime.getBenefitFlag().isEmpty()) {
+				attOvertime.setBenefitFlag(AttConstants.BenefitFlagEnum.FOR_MONEY.toString());
+			}
+		} else {
+			attOvertime.setBenefitFlag(AttConstants.BenefitFlagEnum.FOR_MONEY.toString());
+		}  
+	}
+	
+	/**
+	 * 设置画面初始值
+	 * 
+	 * @param orgInfoBasic 组织基本信息
+	 */
+	private void recordProjectBasicInfo(OrgInfo orgInfoBasic, Boolean defaultSet) {
+		// 取得设置日期条件区分
+		dateOption = comCodeInfoService.getComCodeInfo("ATT",
+				"PERIOD_TYPE");
+		// 取得统计方式区分
+		staticMode = searchStaticMode();
+		// 收益区分
+		benefitFlagList = comCodeInfoService.getComCodeInfo("ATT",
+				"BENEFIT_FLAG");
+		searchBenefitList = editBenifitList(benefitFlagList);
+		if (ye0060CondA.getBenifitFlag() == null || ye0060CondA.getBenifitFlag().isEmpty()) {
+			ye0060CondA.setBenifitFlag(AttConstants.BenefitFlagEnum.FOR_ALL.toString());
+		}
+		
+		// 取得审批状态区分
+		searchConfirmStatus();
+		
+		// 设置画面默认值
+		if (ye0060CondA.getStatisticMode() == null || ye0060CondA.getStatisticMode().isEmpty()) {
+			ye0060CondA.setStatisticMode(Ye0060Service.STATISTIC_MODE_BYDATE);
+		}
+		
+		// 设置画面表示项目基本信息
+		if (!defaultSet) {
+			ye0060CondA.setPrjId(orgInfoBasic.getOrgId());
+			ye0060CondA.setPrjName(orgInfoBasic.getOrgSnm());
+			ye0060CondA.setPrjLeaderId(orgInfoBasic.getOrgMnger());
+			ye0060CondA.setPrjLeaderName(orgInfoBasic.getOrgMngerName());
+			ye0060CondA.setIfPrjLeader(SessionService.getLoginUserId()
+					.equals(orgInfoBasic.getOrgMnger()));
+			String prjEndDate = DateUtil.dateToString(orgInfoBasic
+					.getOrgEndDate());
+			prjEndDate = "9999-12-31".equals(prjEndDate) ? "" : prjEndDate;
+			ye0060CondA.setPrjStartTime(DateUtil.dateToString(orgInfoBasic
+					.getOrgStDate()));
+			ye0060CondA.setPrjEndTime(prjEndDate);
+			
+			// 取得项目组员工
+			attOvertime = new AttOvertime();
+			attOvertime.setPrjId(orgInfoBasic.getOrgId());
+			attOvertime.setApplyOvertimeDate(DateUtil.getDate());
+			searchEmpInfoList();
+		} else {
+			prjEmpList = new ArrayList<UserInfo>();
+			applyOvertimeEmpList = new ArrayList<UserInfo>();
+		}
+	}
+	
+	/**
+	 * 设置画面初始值
+	 * 
+	 * @param benefitList 受益区分列表
+	 */
+	private List<ComCodeInfo> editBenifitList(List<ComCodeInfo> benefitList) {
+		
+		// 添加一个全部
+		ComCodeInfo allStatus  = new ComCodeInfo();
+		allStatus.setDiffNo(AttConstants.BenefitFlagEnum.FOR_ALL.toString());
+		allStatus.setDiffName("全部");
+		benefitList.add(allStatus);
+		
+		return benefitList;
+	}
+	
+	/**
+	 * 判断权限
+	 * 
+	 * @return Boolean 是否具有画面操作权限
+	 */
+	private Boolean checkOperateRight() {
+		if (Ye0060Service.CSTYPE_APPLY.equals(changeStatusType)) {
+			if (ye0060CondA.getIfPrjLeader()) {
+				return true;
+			}
+		} else if (Ye0060Service.CSTYPE_APPROVED.equals(changeStatusType)
+				|| Ye0060Service.CSTYPPE_REFUSED.equals(changeStatusType)) {
+			if (ye0060Service.checkHasConfirm(SessionService.getLoginUserId(),
+					ye0060CondA.getPrjId())) {
+				return true;
+			}
+		}
+		
+		return false;
+	}
+	
+	/**
+	 * @param ye0060Service
+	 *            the ye0060Service to set
+	 */
+	public void setYe0060Service(Ye0060Service ye0060Service) {
+		this.ye0060Service = ye0060Service;
+	}	
+
+	/**
+	 * @param dateOption the dateOption to set
+	 */
+	public void setDateOption(List<ComCodeInfo> dateOption) {
+		this.dateOption = dateOption;
+	}
+
+	/**
+	 * @return the dateOption
+	 */
+	public List<ComCodeInfo> getDateOption() {
+		return dateOption;
+	}
+
+	/**
+	 * @param staticMode the staticMode to set
+	 */
+	public void setStaticMode(List<ComCodeInfo> staticMode) {
+		this.staticMode = staticMode;
+	}
+
+	/**
+	 * @return the staticMode
+	 */
+	public List<ComCodeInfo> getStaticMode() {
+		return staticMode;
+	}
+
+	/**
+	 * @param confirmStatus the confirmStatus to set
+	 */
+	public void setConfirmStatus(List<ComCodeInfo> confirmStatus) {
+		this.confirmStatus = confirmStatus;
+	}
+
+	/**
+	 * @return the confirmStatus
+	 */
+	public List<ComCodeInfo> getConfirmStatus() {
+		return confirmStatus;
+	}
+
+	/**
+	 * @param ye0060CondA the ye0060CondA to set
+	 */
+	public void setYe0060CondA(Ye0060CondA ye0060CondA) {
+		this.ye0060CondA = ye0060CondA;
+	}
+
+	/**
+	 * @return the ye0060CondA
+	 */
+	public Ye0060CondA getYe0060CondA() {
+		return ye0060CondA;
+	}
+
+	/**
+	 * @param prjOvertimeJSON the prjOvertimeJSON to set
+	 */
+	public void setPrjOvertimeJSON(String prjOvertimeJSON) {
+		this.prjOvertimeJSON = prjOvertimeJSON;
+	}
+
+	/**
+	 * @return the prjOvertimeJSON
+	 */
+	public String getPrjOvertimeJSON() {
+		return prjOvertimeJSON;
+	}
+
+	/**
+	 * @param ye0060Statistics the ye0060Statistics to set
+	 */
+	public void setYe0060Statistics(List<Ye0060Statistics> ye0060Statistics) {
+		this.ye0060Statistics = ye0060Statistics;
+	}
+
+	/**
+	 * @return the ye0060Statistics
+	 */
+	public List<Ye0060Statistics> getYe0060Statistics() {
+		return ye0060Statistics;
+	}
+
+	/**
+	 * @param operateType the operateType to set
+	 */
+	public void setOperateType(String operateType) {
+		this.operateType = operateType;
+	}
+
+	/**
+	 * @return the operateType
+	 */
+	public String getOperateType() {
+		return operateType;
+	}
+
+	/**
+	 * @param attOvertime the attOvertime to set
+	 */
+	public void setAttOvertime(AttOvertime attOvertime) {
+		this.attOvertime = attOvertime;
+	}
+
+	/**
+	 * @return the attOvertime
+	 */
+	public AttOvertime getAttOvertime() {
+		return attOvertime;
+	}
+
+	/**
+	 * @return the tomorrowValue
+	 */
+	public Integer getTomorrowValue() {
+		return tomorrowValue;
+	}
+
+	/**
+	 * @param tomorrowValue the tomorrowValue to set
+	 */
+	public void setTomorrowValue(Integer tomorrowValue) {
+		this.tomorrowValue = tomorrowValue;
+	}
+
+	/**
+	 * @return the benefitFlagList
+	 */
+	public List<ComCodeInfo> getBenefitFlagList() {
+		return benefitFlagList;
+	}
+
+	/**
+	 * @param benefitFlagList the benefitFlagList to set
+	 */
+	public void setBenefitFlagList(List<ComCodeInfo> benefitFlagList) {
+		this.benefitFlagList = benefitFlagList;
+	}
+
+	/**
+	 * @param comCodeInfoService the comCodeInfoService to set
+	 */
+	public void setComCodeInfoService(ComCodeInfoService comCodeInfoService) {
+		this.comCodeInfoService = comCodeInfoService;
+	}
+
+	/**
+	 * @param projectList the projectList to set
+	 */
+	public void setProjectList(List<OrgInfo> projectList) {
+		this.projectList = projectList;
+	}
+
+	/**
+	 * @return the projectList
+	 */
+	public List<OrgInfo> getProjectList() {
+		return projectList;
+	}
+
+	/**
+	 * @param orgRelationService the orgRelationService to set
+	 */
+	public void setOrgRelationService(OrgRelationService orgRelationService) {
+		this.orgRelationService = orgRelationService;
+	}
+
+	/**
+	 * @param mode the mode to set
+	 */
+	public void setMode(Integer mode) {
+		this.mode = mode;
+	}
+
+	/**
+	 * @return the mode
+	 */
+	public Integer getMode() {
+		return mode;
+	}
+
+	/**
+	 * @param monthForSearch the monthForSearch to set
+	 */
+	public void setMonthForSearch(String monthForSearch) {
+		this.monthForSearch = monthForSearch;
+	}
+
+	/**
+	 * @return the monthForSearch
+	 */
+	public String getMonthForSearch() {
+		return monthForSearch;
+	}
+
+	/**
+	 * @param prjEmpList the prjEmpList to set
+	 */
+	public void setPrjEmpList(List<UserInfo> prjEmpList) {
+		this.prjEmpList = prjEmpList;
+	}
+
+	/**
+	 * @return the prjEmpList
+	 */
+	public List<UserInfo> getPrjEmpList() {
+		return prjEmpList;
+	}
+
+	/**
+	 * @return the applyOvertimeEmpList
+	 */
+	public List<UserInfo> getApplyOvertimeEmpList() {
+		return applyOvertimeEmpList;
+	}
+
+	/**
+	 * @param applyOvertimeEmpList the applyOvertimeEmpList to set
+	 */
+	public void setApplyOvertimeEmpList(List<UserInfo> applyOvertimeEmpList) {
+		this.applyOvertimeEmpList = applyOvertimeEmpList;
+	}
+
+	/**
+	 * @param prjEmpStringList the prjEmpStringList to set
+	 */
+	public void setPrjEmpStringList(List<String> prjEmpStringList) {
+		this.prjEmpStringList = prjEmpStringList;
+	}
+
+	/**
+	 * @return the prjEmpStringList
+	 */
+	public List<String> getPrjEmpStringList() {
+		return prjEmpStringList;
+	}
+
+	/**
+	 * @param applyEmpStringList the applyEmpStringList to set
+	 */
+	public void setApplyEmpStringList(List<String> applyEmpStringList) {
+		this.applyEmpStringList = applyEmpStringList;
+	}
+
+	/**
+	 * @return the applyEmpStringList
+	 */
+	public List<String> getApplyEmpStringList() {
+		return applyEmpStringList;
+	}
+
+	/**
+	 * @return the projectString
+	 */
+	public String getProjectString() {
+		return projectString;
+	}
+
+	/**
+	 * @param projectString the projectString to set
+	 */
+	public void setProjectString(String projectString) {
+		this.projectString = projectString;
+	}
+
+	/**
+	 * @return the attEmpOrgInfoJSON
+	 */
+	public String getAttEmpOrgInfoJSON() {
+		return attEmpOrgInfoJSON;
+	}
+
+	/**
+	 * @param attEmpOrgInfoJSON the attEmpOrgInfoJSON to set
+	 */
+	public void setAttEmpOrgInfoJSON(String attEmpOrgInfoJSON) {
+		this.attEmpOrgInfoJSON = attEmpOrgInfoJSON;
+	}
+
+	/**
+	 * @param resultFlag the resultFlag to set
+	 */
+	public void setResultFlag(String resultFlag) {
+		this.resultFlag = resultFlag;
+	}
+
+	/**
+	 * @return the resultFlag
+	 */
+	public String getResultFlag() {
+		return resultFlag;
+	}
+
+	/**
+	 * @return the searchFlag
+	 */
+	public Integer getSearchFlag() {
+		return searchFlag;
+	}
+
+	/**
+	 * @param searchFlag the searchFlag to set
+	 */
+	public void setSearchFlag(Integer searchFlag) {
+		this.searchFlag = searchFlag;
+	}
+
+	/**
+	 * @param loginUserId the loginUserId to set
+	 */
+	public void setLoginUserId(String loginUserId) {
+		this.loginUserId = loginUserId;
+	}
+
+	/**
+	 * @return the loginUserId
+	 */
+	public String getLoginUserId() {
+		return loginUserId;
+	}
+
+	/**
+	 * @param dateRelationService the dateRelationService to set
+	 */
+	public void setDateRelationService(DateRelationService dateRelationService) {
+		this.dateRelationService = dateRelationService;
+	}
+
+	/**
+	 * @param dateTypeFlag the dateTypeFlag to set
+	 */
+	public void setDateTypeFlag(String dateTypeFlag) {
+		this.dateTypeFlag = dateTypeFlag;
+	}
+
+	/**
+	 * @return the dateTypeFlag
+	 */
+	public String getDateTypeFlag() {
+		return dateTypeFlag;
+	}
+
+	/**
+	 * @param checkBoxStatusJson the checkBoxStatusJson to set
+	 */
+	public void setCheckBoxStatusJson(String checkBoxStatusJson) {
+		this.checkBoxStatusJson = checkBoxStatusJson;
+	}
+
+	/**
+	 * @return the checkBoxStatusJson
+	 */
+	public String getCheckBoxStatusJson() {
+		return checkBoxStatusJson;
+	}
+
+	/**
+	 * @param changeStatusType the changeStatusType to set
+	 */
+	public void setChangeStatusType(Integer changeStatusType) {
+		this.changeStatusType = changeStatusType;
+	}
+
+	/**
+	 * @return the changeStatusType
+	 */
+	public Integer getChangeStatusType() {
+		return changeStatusType;
+	}
+
+	/**
+	 * @param dateApplyRefered the dateApplyRefered to set
+	 */
+	public void setDateApplyRefered(String dateApplyRefered) {
+		this.dateApplyRefered = dateApplyRefered;
+	}
+
+	/**
+	 * @return the dateApplyRefered
+	 */
+	public String getDateApplyRefered() {
+		return dateApplyRefered;
+	}
+
+	/**
+	 * @param projectStatus the projectStatus to set
+	 */
+	public void setProjectStatus(String projectStatus) {
+		this.projectStatus = projectStatus;
+	}
+
+	/**
+	 * @return the projectStatus
+	 */
+	public String getProjectStatus() {
+		return projectStatus;
+	}
+
+	/**
+	 * @param errorMessage the errorMessage to set
+	 */
+	public void setErrorMessage(String errorMessage) {
+		this.errorMessage = errorMessage;
+	}
+
+	/**
+	 * @return the errorMessage
+	 */
+	public String getErrorMessage() {
+		return errorMessage;
+	}
+
+	/**
+	 * @param prjType the prjType to set
+	 */
+	public void setPrjType(String prjType) {
+		this.prjType = prjType;
+	}
+
+	/**
+	 * @return the prjType
+	 */
+	public String getPrjType() {
+		return prjType;
+	}
+
+	/**
+	 * @param searchBenefitList the searchBenefitList to set
+	 */
+	public void setSearchBenefitList(List<ComCodeInfo> searchBenefitList) {
+		this.searchBenefitList = searchBenefitList;
+	}
+
+	/**
+	 * @return the searchBenefitList
+	 */
+	public List<ComCodeInfo> getSearchBenefitList() {
+		return searchBenefitList;
+	}
+
+}

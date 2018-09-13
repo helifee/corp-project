@@ -1,0 +1,48 @@
+package com.xinleju.platform.flow.service.impl;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.flow.dao.CalendarDetailDao;
+import com.xinleju.platform.flow.entity.CalendarDetail;
+import com.xinleju.platform.flow.service.CalendarDetailService;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class CalendarDetailServiceImpl extends  BaseServiceImpl<String,CalendarDetail> implements CalendarDetailService{
+	
+
+	@Autowired
+	private CalendarDetailDao calendarDetailDao;
+
+	@Override
+	public void deleteDataForInitAction(Map<String, Integer> map) {
+		calendarDetailDao.deleteDataForInitAction(map);
+	}
+
+	@Override
+	public void updateDetailList(List<CalendarDetail> detailList) {
+		for(CalendarDetail detail : detailList){
+			Map<String, Object> detailMap = new HashMap<String, Object>();
+			//year: year, month: month, day: day, dayType :2
+			detailMap.put("year", detail.getYear());
+			detailMap.put("month", detail.getMonth());
+			detailMap.put("day", detail.getDay());
+			detailMap.put("dayType", detail.getDayType());
+			calendarDetailDao.updateDetailInfo(detailMap);
+		}	
+	}
+	
+
+}

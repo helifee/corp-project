@@ -1,0 +1,23 @@
+package com.xinleju.platform.flow.dao;
+
+import com.xinleju.platform.base.dao.BaseDao;
+import com.xinleju.platform.flow.entity.InstanceGroup;
+
+import java.util.List;
+import java.util.Map;
+
+/**
+ * @author admin
+ *
+ */
+
+public interface InstanceGroupDao extends BaseDao<String, InstanceGroup> {
+
+    /**
+     * 根据实例ID查询所有实例节点相关审批人
+     * @param paramMap
+     * @return
+     */
+	public List<Map<String,Object>> queryListByInstanceId(Map<String,Object> paramMap);
+
+}

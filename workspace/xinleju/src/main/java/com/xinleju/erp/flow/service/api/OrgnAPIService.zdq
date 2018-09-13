@@ -1,0 +1,853 @@
+package com.xinleju.erp.flow.service.api;
+
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+
+import com.xinleju.erp.base.utils.CollectionUtils;
+import com.xinleju.erp.base.utils.StringHelper;
+import com.xinleju.erp.flow.dao.impl.ParticipantDAO;
+import com.xinleju.erp.flow.flowutils.bean.Gvs;
+import com.xinleju.erp.flow.flowutils.utils.WsConstant;
+import com.xinleju.erp.flow.frameapi.domain.User;
+import com.xinleju.erp.flow.service.api.entitybean.PartEntityBean;
+import com.xinleju.erp.form.utils.DbType;
+import com.xinleju.erp.frame.models.PartyType;
+
+
+/**
+ * 
+ * 
+ * <p>
+ * </p>
+ * <p>
+ * </p>
+ * 
+ * @author 孙朝辉
+ * @version $Id: OrgnAPIService.java 2309 2015-01-09 03:23:33Z zhongjun $
+ * @since
+ * 
+ */
+public class OrgnAPIService {
+    
+    /**
+     * 数据库访问
+     */
+    @Autowired
+    private JdbcTemplate jt;
+    
+    /**
+     * 获取指定LoginName的User对象
+     * 
+     * @param loginName
+     *            用户名
+     * @return 用户对象
+     */
+    public User getUserByLoginName(String loginName) {
+        User user = jt.queryForObject("select t.id,t.loginname as login_name,t.real_name as user_name,t.email as email,t.mobile as mobile, t.contact_phone as contact_phone"
+                + "," + getRoleNameSqlOfUserMainPost("ref_id = t.main_role_id") + " as role_name "
+                + "," + getRolePrefixSqlOfUserMainPost("ref_id = t.main_role_id") + " as prefix "
+                + " from sm_user t where t.loginname = ? and t.status=0", new Object[] { loginName },
+                new ParticipantDAO.UserMapper());
+        return user;
+    }
+    
+    /**
+     * 获取指定userId的User对象
+     * 
+     * @param userId
+     *            用户ID
+     * @return 用户对象
+     */
+    public User getUserByUserId(Long userId) {
+        List<User> list = this.getUserListByUserIds(userId + "");
+        if (list != null && !list.isEmpty()) {
+            return this.getUserListByUserIds(userId + "").get(0);
+        }
+        return null;
+    }
+    
+    
+    public List<User> getUserListByUserIds(String userIds){
+    	List<User> userList = new ArrayList<User>();
+    	String queryUrl="select t.id,t.loginname as login_name,t.real_name as user_name,t.email as email,t.mobile as mobile, t.contact_phone as contact_phone"
+                + "," + getRoleNameSqlOfUserMainPost("ref_id = t.main_role_id") + " as role_name"
+                + "," + getRolePrefixSqlOfUserMainPost("ref_id = t.main_role_id") + " as prefix"
+                + " from sm_user t where t.id in(" + userIds + ") and t.status=0";
+    	if (StringUtils.isNotBlank(userIds)){
+    		userList.addAll(jt.query(queryUrl, new Object[] {}, new ParticipantDAO.UserMapper()));
+    	}
+        return userList;
+    }
+    
+    /**
+     * 获取所有该部门下的User对象
+     * 
+     * @param orgnId
+     *            部门ID
+     * @param includeDisabled
+     *            是否包括禁用
+     * @param querys
+     *            名称
+     * @return 部门集合
+     */
+    @SuppressWarnings("unchecked")
+    public List<User> getUserListByOrgn(Long orgnId, boolean includeDisabled, String... querys){
+        List<User> userListByOrgnList = new LinkedList<User>();
+        if (null != orgnId && orgnId > 0){
+            String nameLimitSql = "";
+            if (null != querys && querys.length > 0){
+                nameLimitSql = StringHelper.join(querys, "'% or fu.real_name like %'");
+                nameLimitSql = " and (fu.real_name like %'" + nameLimitSql + "'%)";
+            }
+            String disabledLimitSql = " ";
+            if (!includeDisabled){
+                disabledLimitSql = " and (fu.status is null or fu.status = 0)";
+            }
+           /**
+            String userListSql = "select c.ref_id as id,fu.real_name as user_name,fu.loginname as login_name,fu.email as email,fu.mobile as mobile, fu.contact_phone as contact_phone"
+                + ",c.name_prefix as role_name"
+                + ",c.prefix as prefix"
+                + " from sm_party_entity c"
+                + " left join sm_party_type t on t.id =  c.party_type_id"
+                + " left join sm_user fu on fu.id =  c.ref_id"
+                + " where t.type = '" + PartyType.TYPE_USER+ "'"
+                + disabledLimitSql
+                + nameLimitSql
+                + " and exists(select 'y' from sm_party_entity e inner join sm_party_type t2 on (t2.id = e.party_type_id and t2.type = '" + PartyType.TYPE_DEPARTMENT+ "')"
+                + " where e.ref_id = " + orgnId
+                + " and locate(concat('-',e.id,'-'),concat('-',c.prefix)) > 0)";
+                **/
+            String userListSql = "select c.ref_id as id,fu.real_name as user_name,fu.loginname as login_name,fu.email as email,fu.mobile as mobile, fu.contact_phone as contact_phone"
+                    + ",c.name_prefix as role_name"
+                    + ",c.prefix as prefix"
+                    + " from sm_party_entity c"
+                    + " left join sm_party_type t on t.id =  c.party_type_id "
+                    + " left join sm_user fu on fu.id =  c.ref_id "
+                    +", (select e.temp from sm_party_entity e inner join sm_party_type t2 on (t2.id = e.party_type_id and t2.type = '" + PartyType.TYPE_DEPARTMENT+ "' where e.ref_id = "+orgnId+")) temp"
+                    +" where c.prefix like "+DbType.getType()+"concat(temp.prefix,'%') and t.type='user' "
+					+ disabledLimitSql
+                    + nameLimitSql ;
+            userListByOrgnList = jt.query(userListSql, new ParticipantDAO.UserMapper());
+        }
+        userListByOrgnList = CollectionUtils.distinct(userListByOrgnList);
+        return userListByOrgnList;
+    }
+    
+    public List<User> getUserListByRankId(Long rankId, boolean includeDisabled){
+        List<User> users = new LinkedList<User>();
+        String disabledLimitSql = " ";
+        if (!includeDisabled){
+            disabledLimitSql = " and (fu.status is null or fu.status = 0)";
+        }
+        if (null != rankId){
+            String userListSql = "select c.ref_id as id,c.name as user_name,fu.loginname as login_name,fu.email as email,fu.mobile as mobile, fu.contact_phone as contact_phone"
+                    + ",c.name_prefix as role_name"
+                    + ",c.prefix as prefix"
+                    + " from sm_party_entity c"
+                    + " left join sm_party_type t on t.id =  c.party_type_id"
+                    + " left join sm_user fu on fu.id =  c.ref_id"
+                    + " left join sm_dict sd on sd.code =  fu.zhiji"
+                    + " where t.type = '" + PartyType.TYPE_USER+ "' " + disabledLimitSql
+                    + " and sd.id = ?";
+                users = jt.query(userListSql, new Object[]{rankId}, new ParticipantDAO.UserMapper());
+        }
+        return users;
+    }
+    
+    public List<User> getUserListByRoleId(Long roleId, boolean includeDisabled){
+    	List<User> users = new LinkedList<User>();
+    	String disabledLimitSql = " ";
+        if (!includeDisabled){
+            disabledLimitSql = " and (fu.status is null or fu.status = 0)";
+        }
+        if (null != roleId){
+        	/**
+        	String userListSql = "select c.ref_id as id,c.name as user_name,fu.loginname as login_name,fu.email as email,fu.mobile as mobile, fu.contact_phone as contact_phone"
+            		+ ",c.name_prefix as role_name"
+                    + ",c.prefix as prefix"
+                    + " from sm_party_entity c"
+                    + " left join sm_party_type t on t.id =  c.party_type_id"
+                    + " left join sm_user fu on fu.id =  c.ref_id"
+                    + " where t.type = '" + PartyType.TYPE_USER+ "' " + disabledLimitSql
+                    + " and exists(select 'y' from sm_party_entity e inner join sm_party_type t2 on (t2.id = e.party_type_id and t2.type = '" + PartyType.TYPE_ROLE+ "')"
+                    + " where e.ref_parent_id = " + roleId + ""
+                    + " and locate(concat('-', e.id, '-'),concat('-', c.prefix)) > 0)";
+                    **/
+        	String userListSql ="select c.ref_id as id,c.name as user_name,fu.loginname as login_name,fu.email as email,fu.mobile as mobile, fu.contact_phone as contact_phone"
+    	    		+ ",c.name_prefix as role_name"
+    	            + ",c.prefix as prefix"
+    	            + " from sm_party_entity c"
+    	            + " left join sm_party_type t on t.id =  c.party_type_id"
+    	            + " left join sm_user fu on fu.id =  c.ref_id,"
+    	            +",(select e.* from sm_party_entity e inner join sm_party_type t2 on (t2.id = e.party_type_id and t2.type = '" + PartyType.TYPE_ROLE+ "')"
+    	            + " where e.ref_parent_id = " + roleId + ") temp"
+    	            +" and c.prefix like "+DbType.getType()+"concat(temp.prefix,'%') and c.type='user' "
+    	            +disabledLimitSql;
+                users = jt.query(userListSql, new ParticipantDAO.UserMapper());
+        }
+    	return users;
+    }
+    
+    /**
+     * 获取所有指定Role的User对象
+     * @author jun
+     * @param appCode 系统编码
+     * @param roleId 角色ID
+     * @param gvs 计算变量
+     * @param includeDisabled 是否包含已经禁用的
+     * @return 参与人列表
+     */
+    @SuppressWarnings("unchecked")
+    public List<User> getUserListByRole(String appCode, Long roleId, Gvs gvs, boolean includeDisabled) {
+        List<User> users = new LinkedList<User>();
+        //启动人岗位
+        Long postId = gvs.get(WsConstant.WI_OP_ROLE) == null ? null : Long.parseLong(String.valueOf(gvs.get(WsConstant.WI_OP_ROLE)));  //发起人岗位
+        //页面对应的项目
+        String projectIds = gvs.get(WsConstant.WI_OP_PROJECT) == null ? null : String.valueOf(gvs.get(WsConstant.WI_OP_PROJECT));//表单对应项目
+      	
+        Long queryRoot = this.getQueryRootByPost(roleId, postId,projectIds);
+        
+        String disabledLimitSql = " ";
+        if (!includeDisabled){
+            disabledLimitSql = " and (fu.status is null or fu.status = 0)";
+        }
+        if(queryRoot != null){
+            //获取该公司下的指定的标准角色(roleId)的用户
+           /**
+            String userListSql = "select c.ref_id as id,c.name as user_name,fu.loginname as login_name,fu.email as email,fu.mobile as mobile, fu.contact_phone as contact_phone"
+        		+ ",c.name_prefix as role_name"
+                + ",c.prefix as prefix"
+                + " from sm_party_entity c"
+                + " left join sm_party_type t on t.id =  c.party_type_id"
+                + " left join sm_user fu on fu.id =  c.ref_id"
+                + " where t.type = '" + PartyType.TYPE_USER+ "' " + disabledLimitSql
+                + " and exists(select 'y' from sm_party_entity e inner join sm_party_type t2 on (t2.id = e.party_type_id and t2.type = '" + PartyType.TYPE_ROLE+ "')"
+                + " where e.ref_parent_id = " + roleId
+                + " and locate((select min(concat('-',f.id,'-')) from sm_party_entity f where f.id = " + queryRoot + "),concat('-',e.prefix)) > 0"
+                + " and locate(concat('-', e.id, '-'),concat('-', c.prefix)) > 0)";
+                **/
+        	String userListSql = "select c.ref_id as id,c.name as user_name,fu.loginname as login_name,fu.email as email,fu.mobile as mobile, fu.contact_phone as contact_phone"
+            		+ ",c.name_prefix as role_name"
+                    + ",c.prefix as prefix"
+                    + " from sm_party_entity c"
+					+"  LEFT JOIN sm_party_type t ON t.id = c.party_type_id LEFT JOIN sm_user fu ON fu.id = c.ref_id,"
+					+" (SELECT e.prefix FROM sm_party_entity e INNER JOIN sm_party_type t2 ON ( t2.id = e.party_type_id AND t2.type = '"+ PartyType.TYPE_ROLE+ "') WHERE e.ref_parent_id = "+roleId+" AND e.prefix LIKE '%-"+queryRoot+"-%') temp "
+					+" WHERE t.type = '" + PartyType.TYPE_USER+ "' " + disabledLimitSql+" AND c.prefix like "+DbType.getType()+"CONCAT(temp.prefix,'%')";
+            users = jt.query(userListSql, new ParticipantDAO.UserMapper());
+
+        }
+        users = CollectionUtils.distinct(users);
+        return users;
+    }
+
+    
+    
+    /**
+     * 
+     * 获取角色对应的岗位
+     * @param roleId
+     * @param postId
+     * @param projectId
+     * @return
+     */
+    public Long getQueryRootByPost(Long roleId,Long postId,String projectId){
+        //查出标准角色的类别 
+//        String sql = "select r.code from sm_role r where r.parent_id is null start with r.id = " + roleId + " connect by prior r.parent_id = r.id";
+        String sql = "select r.type_code from sm_role r where r.id = " + roleId;
+        List<String> roleCodes = jt.queryForList(sql,String.class);
+        
+        boolean isTdRole = roleCodes != null && roleCodes.contains(PartyType.TYPE_GROUP);  //项目角色
+        
+        boolean isBmRole = roleCodes != null && roleCodes.contains(PartyType.TYPE_DEPARTMENT);  //部门角色
+        
+        boolean isCsRole = roleCodes != null && roleCodes.contains(PartyType.TYPE_COMPANY);   	//	公司角色
+        
+        boolean isJtRole = roleCodes != null && roleCodes.contains(PartyType.TYPE_ZB);  //集团角色
+        
+        Long queryRoot = null;
+        if(isTdRole){
+            //如果是城市公司角色，获取该城市公司E.ID
+            /*String start_post_at_group_sql =  "select p.id from sm_party_struct s"
+                    + " left join sm_party_entity p on s.parent_entity_id = p.id"
+                    + " left join sm_party_entity c on s.child_entity_id =  c.id"
+                    + " left join sm_party_type t on t.id =  p.party_type_id"
+                    + " where t.type = '" + PartyType.TYPE_GROUP + "'"
+                    + " start with  c.ref_id = " + postId + " connect by c.id = prior p.id";*/
+        	/**
+            String start_post_at_group_sql =  "select c.id from sm_party_entity c"
+                + " left join sm_party_type t on t.id =  c.party_type_id"
+                + " where t.type = '" + PartyType.TYPE_GROUP + "'"
+                + " and exists(select 'y' from sm_party_entity e inner join sm_party_type t2 on (t2.id = e.party_type_id and t2.type = '" + PartyType.TYPE_ROLE+ "')"
+                + " where e.ref_id = " + postId
+                + " and locate(concat('-',c.id,'-'),concat('-',e.prefix)) > 0) order by c.prefix desc";
+                
+            **/
+        	
+        
+        	if(projectId!=null &!"".equals(projectId)){
+        	      String[] ids=projectId.split(",");
+        	      StringBuffer sb=new StringBuffer();
+        		  for(String id:ids){
+        			  sb.append("'"+id+"',");
+        		  }
+        		  String sqlIn="";
+        		  if(sb.toString().endsWith(",")){
+        			  sqlIn=sb.substring(0, sb.toString().length()-1);
+        		  }
+        		
+        		  String start_post_at_group_sql =  "select pe.id from sm_party_entity pe  left join sm_party_entity e on "+DbType.getType()+"locate(e.prefix,pe.prefix)>0 left join sm_party_type ty"+
+        		            " on pe.party_type_id=ty.id left join sm_party_type pt on e.party_type_id=pt.id left join sm_group g on g.id=e.ref_id  where  pt.type= '" + PartyType.TYPE_GROUP+ "' and g.ref_object_id in("+sqlIn+") and ty.type= '" + PartyType.TYPE_ROLE+ "' and pe.ref_parent_id='"+roleId+"'  " ;
+        		            List<Long> start_post_at_groupIds = jt.queryForList(start_post_at_group_sql,Long.class);
+        		            if(start_post_at_groupIds != null && start_post_at_groupIds.size() > 0){
+        		                queryRoot = start_post_at_groupIds.get(0);
+        		            }
+        	}else{
+        		
+        		//获取发起岗位对应的项目
+        		   String start_post_at_group_sql =  "select c.id from sm_party_entity c"
+        	                + " left join sm_party_type t on t.id =  c.party_type_id"
+        	                + " where t.type = '" + PartyType.TYPE_GROUP + "'"
+        	                + " and exists(select 'y' from sm_party_entity e inner join sm_party_type t2 on (t2.id = e.party_type_id and t2.type = '" + PartyType.TYPE_ROLE+ "')"
+        	                + " where e.ref_id = " + postId
+        	                + " and "+DbType.getType()+"locate("+DbType.getType()+"concat('-',c.id,'-'),"+DbType.getType()+"concat('-',e.prefix)) > 0) order by c.prefix desc";
+        		   List<Long> start_post_at_groupIds = jt.queryForList(start_post_at_group_sql,Long.class);
+		            if(start_post_at_groupIds != null && start_post_at_groupIds.size() > 0){
+		                queryRoot = start_post_at_groupIds.get(0);
+		            }
+        	}
+        	
+          
+        }
+        //如果是部门级别的角色，获取该部门E.ID，作为 roleId 的查询起源
+        else if(isBmRole){
+            /*String start_post_at_complany_sql =  "select p.id from sm_party_struct s"
+                    + " left join sm_party_entity p on s.parent_entity_id = p.id"
+                    + " left join sm_party_entity c on s.child_entity_id =  c.id"
+                    + " left join sm_party_type t on t.id =  p.party_type_id"
+                    + " where t.type = '" + PartyType.TYPE_DEPARTMENT + "'"
+                    + " start with  c.ref_id = " + postId + " connect by c.id = prior p.id";*/
+
+            String start_post_at_complany_sql =  "select c.id from sm_party_entity c"
+                    + " left join sm_party_type t on t.id =  c.party_type_id"
+                    + " where t.type = '" + PartyType.TYPE_DEPARTMENT + "'"
+                    + " and exists(select 'y' from sm_party_entity e inner join sm_party_type t2 on (t2.id = e.party_type_id and t2.type = '" + PartyType.TYPE_ROLE+ "')"
+                    + " where e.ref_id = " + postId
+                    + " and "+DbType.getType()+"locate("+DbType.getType()+"concat('-',c.id,'-'),"+DbType.getType()+"concat('-',e.prefix)) > 0) order by c.prefix desc";
+            List<Long> start_post_at_complanyIds = jt.queryForList(start_post_at_complany_sql,Long.class);
+            if(start_post_at_complanyIds != null && start_post_at_complanyIds.size() > 0){
+                queryRoot = start_post_at_complanyIds.get(0);
+            }
+        }
+        //如果是城市公司级别的角色，获取该城市公司E.ID，作为 roleId 的查询起源
+        else if(isCsRole){
+            /*String start_post_at_complany_sql =  "select p.id from sm_party_struct s"
+                    + " left join sm_party_entity p on s.parent_entity_id = p.id"
+                    + " left join sm_party_entity c on s.child_entity_id =  c.id"
+                    + " left join sm_party_type t on t.id =  p.party_type_id"
+                    + " where t.type = '" + PartyType.TYPE_COMPANY + "'"
+                    + " start with  c.ref_id = " + postId + " connect by c.id = prior p.id";*/
+
+            String start_post_at_complany_sql =  "select c.id from sm_party_entity c"
+                    + " left join sm_party_type t on t.id =  c.party_type_id"
+                    + " where t.type = '" + PartyType.TYPE_COMPANY + "'"
+                    + " and exists(select 'y' from sm_party_entity e inner join sm_party_type t2 on (t2.id = e.party_type_id and t2.type = '" + PartyType.TYPE_ROLE+ "')"
+                    + " where e.ref_id = " + postId
+                    + " and "+DbType.getType()+"locate("+DbType.getType()+"concat('-',c.id,'-'),"+DbType.getType()+"concat('-',e.prefix)) > 0) order by c.prefix desc";
+            List<Long> start_post_at_complanyIds = jt.queryForList(start_post_at_complany_sql,Long.class);
+            if(start_post_at_complanyIds != null && start_post_at_complanyIds.size() > 0){
+                queryRoot = start_post_at_complanyIds.get(0);
+            }
+        }
+        //如果是集团级别的角色，则从全局查询
+        else  if(isJtRole){
+            String start_post_at_complany_sql =  "select e.id from sm_party_entity e"
+                + " left join sm_party_type t on t.id =  e.party_type_id"
+                + " left join sm_company c on c.id = e.ref_id"
+                + " where t.type = '" + PartyType.TYPE_COMPANY + "'"
+                + " and c.code = 'JTBB'";
+            List<Long> start_post_at_complanyIds = jt.queryForList(start_post_at_complany_sql,Long.class);
+            if(start_post_at_complanyIds != null && start_post_at_complanyIds.size() > 0){
+                queryRoot = start_post_at_complanyIds.get(0);
+            }
+        }
+        return queryRoot;
+    }
+    
+    /***
+     * 获取岗位的上级岗位的PartId
+     * @param currentPostId
+     * @return
+     */
+    public Long getPartEntityId_of_ParentPost_by_CurrentPostId(Long currentPostId) {
+        String SQL_parentPostId = "select parent_role_entity.id from sm_role child_post "
+                + " inner join sm_party_entity parent_role_entity on parent_role_entity.ref_id = child_post.leader_role_id"
+                + " inner join sm_party_type t2  on (t2.id = parent_role_entity.party_type_id and t2.type = '" + PartyType.TYPE_ROLE+ "')"
+                + " where child_post.id = " + currentPostId;
+        List<BigDecimal> parenteids = jt.queryForList(SQL_parentPostId,BigDecimal.class);
+        if(parenteids != null && parenteids.size() > 0 && parenteids.get(0) != null){
+            return ((BigDecimal)parenteids.get(0)).longValue();
+        }
+        return null;
+    }
+
+    
+    /****
+     * 获取上级RoleId
+     * @param currentPostId
+     * @return
+     */
+    public Long getParentPostId_of_CurrentPostId(Long currentPostId) {
+       String SQL_parentPostId = "select r.leader_role_id from sm_role r "
+               + " where r.id = " + currentPostId;
+       List<BigDecimal> parenteids = jt.queryForList(SQL_parentPostId,BigDecimal.class);
+       if(parenteids != null && parenteids.size() > 0 && parenteids.get(0) != null){
+           return ((BigDecimal)parenteids.get(0)).longValue();
+       }
+       return null;
+    }
+   
+    public Long getLeaderRoleIdOfOrgn(Long currentPostId) {
+       String SQL_parentPostId = "select r.leader_role_id from sm_role r "
+               + " where r.id = " + currentPostId;
+       List<BigDecimal> parenteids = jt.queryForList(SQL_parentPostId,BigDecimal.class);
+       if(parenteids != null && parenteids.size() > 0 && parenteids.get(0) != null){
+           return ((BigDecimal)parenteids.get(0)).longValue();
+       }
+       return null;
+    }
+   
+    /**
+     * 获取岗位的上级岗位的上级岗位的PartId
+     * @param currentPostId
+     * @return
+     */
+    public Long getPartEntityId_of_GrandPost_by_CurrentPostId(Long currentPostId) {
+        String SQL_parentPostId = "select grand_role_entity.id from sm_role fa_post"
+            + " inner join sm_party_entity grand_role_entity on grand_role_entity.ref_id = fa_post.id"
+            + " inner join sm_party_type t2  on (t2.id = grand_role_entity.party_type_id and t2.type = '" + PartyType.TYPE_ROLE+ "')"
+            + " inner join sm_role sun_post on fa_post.id = sun_post.leader_role_id"
+            + " where sun_post.id =" + currentPostId;
+        List<BigDecimal> parenteids = jt.queryForList(SQL_parentPostId,BigDecimal.class);
+        if(parenteids != null && parenteids.size() > 0 && parenteids.get(0) != null){
+            return ((BigDecimal)parenteids.get(0)).longValue();
+        }
+        return null;
+    }
+    
+    /**
+     * 当前Post所在部门的 up_deptrole_id对应的EntityID
+     * @param subPostRoleId
+     * @return
+     */
+    public Long getPartEntityId_of_DeptUpLeader_by_CurrentPostId(Long subPostRoleId) {
+        String SQL_parentPostRoleId = "select post.id from sm_dept dept"
+            + " inner join sm_party_entity de on de.ref_id = dept.id"
+            + " inner join sm_party_type dpt on (de.party_type_id = dpt.id and dpt.type = '" + PartyType.TYPE_DEPARTMENT+ "')"
+            + " inner join sm_party_entity post on post.ref_id = dept.up_deptrole_id"
+            + " inner join sm_party_type pt on (post.party_type_id = pt.id and pt.type = '" + PartyType.TYPE_ROLE+ "')"
+            + " where exists(select 'y' from sm_party_entity e inner join sm_party_type t2 on (t2.id = e.party_type_id and t2.type = '" + PartyType.TYPE_ROLE+ "')"
+            + " where e.ref_id = " + subPostRoleId
+            + " and "+DbType.getType()+"locate("+DbType.getType()+"concat('-',de.id,'-'),"+DbType.getType()+"concat('-',e.prefix)) > 0)"
+            + " order by post.prefix desc";
+        List<BigDecimal> parenteids = jt.queryForList(SQL_parentPostRoleId,BigDecimal.class);
+        if(parenteids != null && parenteids.size() > 0){
+            return ((BigDecimal)parenteids.get(0)).longValue();
+        }
+        return null;
+    }
+    
+    /**
+     * 当前Post所在部门的 dept_role_id对应的EntityID
+     * @param subPostRoleId
+     * @return
+     * getPartIdOfParentOrgnOfPostId
+     */
+    public Long getPartEntityId_of_DeptLeader_by_CurrentPostId(Long currentPostId) {
+    	/**
+        String SQL_parentPostRoleId = "select post.id from sm_dept dept"
+            + " inner join sm_party_entity de on de.ref_id = dept.id"
+            + " inner join sm_party_type dpt on (de.party_type_id = dpt.id and dpt.type = '" + PartyType.TYPE_DEPARTMENT+ "')"
+            + " inner join sm_party_entity post on post.ref_id = dept.dept_role_id"
+            + " inner join sm_party_type pt on (post.party_type_id = pt.id and pt.type = '" + PartyType.TYPE_ROLE+ "')"
+            + " where exists(select 'y' from sm_party_entity e inner join sm_party_type t2 on (t2.id = e.party_type_id and t2.type = '" + PartyType.TYPE_ROLE+ "')"
+            + " where e.ref_id = " + currentPostId
+            + " and locate(concat('-',de.id,'-'),concat('-',e.prefix)) > 0)"
+            + " order by post.prefix desc";
+            **/
+    	
+    	String SQL_parentPostRoleId = " select yyy.id from  sm_dept dep ,sm_party_entity y ,sm_party_entity yy,sm_party_entity yyy  where "+DbType.getType()+"locate(y.prefix,yy.prefix)>0 and yy.ref_id="+currentPostId+ 
+    			" and exists(select 1 from sm_party_type type where type.id=y.party_type_id and type.type = '" + PartyType.TYPE_DEPARTMENT+ "') and dep.id=y.ref_id and yyy.ref_id=dep.dept_role_id "+
+    	        " and y.prefix=(select max(y.prefix) from sm_party_entity y ,sm_party_entity yy  where "+DbType.getType()+"locate(y.prefix,yy.prefix)>0 and yy.ref_id="+currentPostId+" and " +
+    	        "  exists(select 1 from sm_party_type type where type.id=y.party_type_id and type.type ='" + PartyType.TYPE_DEPARTMENT+ "')) ";
+        List<BigDecimal> parenteids = jt.queryForList(SQL_parentPostRoleId,BigDecimal.class);
+        if(parenteids != null && parenteids.size() > 0 && parenteids.get(0) != null){
+            return ((BigDecimal)parenteids.get(0)).longValue();
+        }
+        return null;
+    }
+   
+    /**
+     * 根据组织架构树查找其下（包含本节点下的）所有人员
+     * @author jun
+     * @param partId 组织架构树id
+     * @return 根据组织架构树查找其下（包含本节点下的）所有人员
+     */
+    @SuppressWarnings("unchecked")
+    public List<User> getUserListByPartId(Long partId){
+        List<User> users = new LinkedList<User>();
+        if (null != partId){
+           /* String userListSql = "select c.ref_id as id,c.name as user_name,fu.loginname as login_name"
+                    + "," + getRoleNameSql("id = c.id")
+                    + " from sm_party_struct s"
+                    + " left join sm_party_entity p on s.parent_entity_id = p.id"
+                    + " left join sm_party_entity c on s.child_entity_id =  c.id"
+                    + " left join sm_party_type t on t.id =  c.party_type_id"
+                    + " left join sm_party_type t2 on t2.id =  p.party_type_id"
+                    + " left join sm_user fu on fu.id =  c.ref_id"
+                    + " where t.type = '" + PartyType.TYPE_USER+ "' and t2.type = 'role'"
+                    + " and (fu.status is null or fu.status = 0)"
+                    + " start with c.id = ? connect by prior c.id = p.id";*/
+            String userListSql = "select c.ref_id as id,c.name as user_name,fu.loginname as login_name,fu.email as email,fu.mobile as mobile, fu.contact_phone as contact_phone"
+        		 + ",c.name_prefix as role_name"
+                 + ",c.prefix as prefix"
+                 + " from sm_party_entity c"
+                 + " left join sm_party_type t on t.id =  c.party_type_id"
+                 + " left join sm_user fu on fu.id =  c.ref_id"
+                 + " where t.type = '" + PartyType.TYPE_USER+ "'"
+                 + " and (fu.status is null or fu.status = 0)"
+                 + " and exists(select 'y' from sm_party_entity e"
+                 + " where e.id = ?"
+                 + " and "+DbType.getType()+"locate("+DbType.getType()+"concat('-',e.id,'-'),"+DbType.getType()+"concat('-',c.prefix)) > 0)";
+            users = jt.query(userListSql, new Object[]{partId}, new ParticipantDAO.UserMapper());
+            users = CollectionUtils.distinct(users);
+        }
+        return users;
+    }
+    
+    @SuppressWarnings("unchecked")
+    public List<User> getUserListByPartIdAndUserMainPost(Long partId) {
+        List<User> users = new LinkedList<User>();
+        if (null != partId){
+            /*String userListSql = "select c.ref_id as id,c.name as user_name,fu.loginname as login_name"
+                    + ",'/' || fu.real_name || " + getRoleNameSqlOfUserMainPost("ref_id = fu.main_role_id") + ""
+                    + " from sm_party_struct s"
+                    + " left join sm_party_entity p on s.parent_entity_id = p.id"
+                    + " left join sm_party_entity c on s.child_entity_id =  c.id"
+                    + " left join sm_party_type t on t.id =  c.party_type_id"
+                    + " left join sm_user fu on fu.id =  c.ref_id"
+                    + " where t.type = '" + PartyType.TYPE_USER+ "' "
+                    + " and (fu.status is null or fu.status = 0)"
+                    + " start with c.id = ? connect by prior c.id = p.id";*/
+            String userListSql = "select c.ref_id as id,c.name as user_name,fu.loginname as login_name,fu.email as email,fu.mobile as mobile, fu.contact_phone as contact_phone"
+                + ","+DbType.getType()+"concat(" + getRoleNameSqlOfUserMainPost("ref_id = fu.main_role_id") + ",fu.real_name,'-')  as role_name"
+                + "," + getRolePrefixSqlOfUserMainPost("ref_id = fu.main_role_id") + " as prefix"
+                + " from sm_party_entity c"
+                + " left join sm_party_type t on t.id =  c.party_type_id"
+                + " left join sm_user fu on fu.id =  c.ref_id"
+                + " where t.type = '" + PartyType.TYPE_USER+ "' "
+                + " and (fu.status is null or fu.status = 0)"
+                + " and exists(select 'y' from sm_party_entity e where e.id = ?"
+                + " and "+DbType.getType()+"locate("+DbType.getType()+"concat('-',e.id,'-'),"+DbType.getType()+"concat('-',c.prefix)) > 0)";
+            users = jt.query(userListSql, new Object[]{partId}, new ParticipantDAO.UserMapper());
+            users = CollectionUtils.distinct(users);
+        }
+        return users;
+    }
+    
+    /**
+     * 得到岗位信息
+     * @author jun
+     * @param tKey 参数形式如为 sm_party_entity表的一个字段 = 主表别名.id 如：id = t.id(注：t为sm_user)
+     * @return 得到岗位信息
+     */
+    public static String getRoleNameSql(String c1Key){
+        String roleNameSql = "(select max(c1.name_prefix) from sm_party_entity c1 where c1." + c1Key + ") as role_name";
+        return roleNameSql;
+    }
+    
+    /**
+     * 得到岗位信息
+     * @author jun
+     * @param tKey 参数形式如为 sm_party_entity表的一个字段 = 主表别名.id 如：id = t.id(注：t为sm_user)
+     * @return 得到岗位信息
+     */
+    public static String getRolePrefixSql(String c1Key){
+        String roleNameSql = "(select max(c1.prefix) from sm_party_entity c1 where c1." + c1Key + ") as prefix";
+        return roleNameSql;
+    }
+    
+    /**
+     * 获取领导角色
+     * @param userId
+     * @param gvs
+     * @return
+     */
+    public List<User> getLeaderUsers(Long userId, Gvs gvs){
+    	List<User> leaderUserList = new ArrayList<User>();
+    	if (null != userId){
+    		//用户拥有的岗位id集合
+    		List<Long> roleIds = new ArrayList<Long>();
+    		//主岗
+	    	String mainRoleIdSql = "select u.main_role_id from sm_user u where id = ?  and u.status=0";
+	    	List<Long> mainRoleIdList = jt.queryForList(mainRoleIdSql, Long.class, userId);
+	    	if (null != mainRoleIdList && mainRoleIdList.isEmpty()){
+	    		roleIds.addAll(mainRoleIdList);
+	    	}
+	    	//兼职角色
+	    	String jzRoleIdsSql = "select p.ref_id from sm_party_struct sps"
+	    			+ " inner join sm_party_entity c on sps.child_entity_id = c.id"
+	    			+ " inner join sm_party_entity p on sps.parent_entity_id = p.id"
+	    			+ " inner join sm_party_type cpt on c.party_type_id = cpt.id"
+	    			+ " inner join sm_party_type ppt on p.party_type_id = ppt.id"
+	    			+ " where c.ref_id = ?"
+	    			+ " and ppt.type = ?"
+	    			+ " and cpt.type = ?";
+			List<Long> jzRoleIds = jt.queryForList(jzRoleIdsSql, new Object[]{userId, PartyType.TYPE_ROLE, PartyType.TYPE_USER}, Long.class);
+			if(jzRoleIds != null && !jzRoleIds.isEmpty()){
+				roleIds.addAll(jzRoleIds);
+			}
+			//用户列表
+			String userListSql = "select c.ref_id as id,c.name as user_name,fu.loginname as login_name,fu.email as email,fu.mobile as mobile, fu.contact_phone as contact_phone"
+	                + ","+DbType.getType()+"concat(" + getRoleNameSqlOfUserMainPost("ref_id = fu.main_role_id") + ",fu.real_name,'-')  as role_name"
+	                + "," + getRolePrefixSqlOfUserMainPost("ref_id = fu.main_role_id") + "  as prefix"
+	                + " from sm_party_entity c"
+	                + " left join sm_party_type t on t.id =  c.party_type_id"
+	                + " left join sm_user fu on fu.id =  c.ref_id"
+	                + " where t.type = ?"
+	                + " and (fu.status is null or fu.status = 0)"
+	                + " and exists(select 'y' from sm_party_entity e"
+	                + " inner join sm_party_type et on e.party_type_id = et.id where et.type = ?"
+	                + " and e.ref_id in(" + (roleIds.size() > 0 ? StringHelper.join(roleIds, ",") : "0") + ")"
+	                + " and "+DbType.getType()+"locate("+DbType.getType()+"concat('-',e.id,'-'),"+DbType.getType()+"concat('-',c.prefix)) > 0)  and fu.status=0";
+			leaderUserList.addAll(jt.query(userListSql, new Object[]{PartyType.TYPE_USER, PartyType.TYPE_ROLE}, new ParticipantDAO.UserMapper()));
+			leaderUserList = CollectionUtils.distinct(leaderUserList);
+    	}
+    	return leaderUserList;
+    }
+    
+    /**
+     * 
+     * @param c1Key = userentity.ref_id
+     * @return
+     */
+    public static String getRoleNameSqlOfUserMainPost(String c1Key){
+/*        String roleNameSql = "(select max(sys_connect_by_path(c1.name,'/')) from sm_party_struct s1"
+                + " left join sm_party_entity p1 on s1.parent_entity_id = p1.id"
+                + " left join sm_party_entity c1 on s1.child_entity_id = c1.id"
+                + " start with c1." + c1Key + " connect by c1.id = prior p1.id ) as role_name";*/
+        String roleNameSql = "(select max(c1.name_prefix) from sm_party_entity c1 , sm_party_type ct2 where ct2.id = c1.party_type_id and ct2.type = '" + PartyType.TYPE_ROLE+ "' and c1." + c1Key + ")";
+        return roleNameSql;
+    }
+    /**
+     * 
+     * @param c1Key = userentity.ref_id
+     * @return
+     */
+    public static String getRolePrefixSqlOfUserMainPost(String c1Key){
+        String roleNameSql = "(select max(c1.prefix) from sm_party_entity c1 , sm_party_type ct2 where ct2.id = c1.party_type_id and ct2.type = '" + PartyType.TYPE_ROLE+ "' and c1." + c1Key + ")";
+        return roleNameSql;
+    }
+
+    public PartEntityBean getPartEntityById(Long partentityid) {
+        List<PartEntityBean> es = jt.query("select p.id as id,p.name as name, t.type as type,p.ref_id as refId,p.prefix as prefix from sm_party_entity p left join "
+                + " sm_party_type t on t.id = p.party_type_id where p.id = ?", new Object[]{partentityid}
+                ,new ParticipantDAO.PartEntityMapper());
+        if(es!=null && es.size()>0){
+            return es.get(0);
+        }
+        return null;
+        
+    }
+    
+    public String getEntityPath(Long eid) {
+        return this.getEntityPath(eid, true);
+    }
+    public String getEntityPath(Long eid, Boolean withStartFix) {
+        String it = "";
+        if (null != eid){
+            String rolePathSQL = "select max(c1.name_prefix) from sm_party_entity c1 where c1.id = " + eid;
+            it = jt.queryForObject(rolePathSQL,String.class);
+            it = getRolePathDisplay(it,false);
+            it = StringUtils.isNotBlank(it) && it.startsWith("/") ? it.replaceFirst("/", "") : it;
+        }
+        return it;
+    }
+    public String getPostPath(Long postId){
+        return this.getPostPathWithStartFix(postId, true);
+    }
+    public String getPostPathWithStartFix(Long postId, Boolean withStartFix){
+        String rolePathSQL = "select max(c1.name_prefix) from sm_party_entity c1 inner join sm_party_type ct2 on ( ct2.id = c1.party_type_id and ct2.type = '" + PartyType.TYPE_ROLE+ "') where c1.ref_id = " + postId;
+        String it = jt.queryForObject(rolePathSQL,String.class);
+        it = getRolePathDisplay(it,false);
+        it = !withStartFix && StringUtils.isNotBlank(it) && it.startsWith("/") ? it.replaceFirst("/", "") : it;
+        return it;
+    }
+    public String getPostPrefix(Long postId){
+        String rolePrefixSQL = "select max(c1.prefix) from sm_party_entity c1 left join sm_party_type ct2  on ( ct2.id = c1.party_type_id and ct2.type = '" + PartyType.TYPE_ROLE+ "') where c1.ref_id = " + postId;
+        String it = jt.queryForObject(rolePrefixSQL,String.class);
+        return it;
+    }
+    public String getRolePathDisplay(String roleName,boolean cutUserAtLast,boolean cutFirst) {
+        String r = "";
+        LinkedList<String> x = new LinkedList<String>();
+        if(roleName!=null){
+            if (roleName.contains("/")){
+                String s[] = roleName.split("/");
+                for(int i = s.length-1;i>=0;i--){
+                    if(StringUtils.isNotEmpty(s[i])){
+                        x.add(s[i]);
+                    }
+                }
+            } else if (roleName.contains("-")){
+                String s[] = roleName.split("-");
+                for(int i = 0;i < s.length;i++){
+                    if(StringUtils.isNotEmpty(s[i])){
+                        x.add(s[i]);
+                    }
+                }
+            }
+            //根：（最后的用户名）
+            int startAt = cutFirst ? 1 : 0;
+            for(int i = startAt; i <x.size();i++){
+                if(!cutUserAtLast || cutUserAtLast && i < x.size() - 1){
+                    r += "/" + x.get(i);
+                }
+            }
+        }
+        return r;
+    }
+    public String getRolePathDisplay(String roleName,boolean cutUserAtLast) {
+        return getRolePathDisplay(roleName, cutUserAtLast,true);
+    }
+
+    public String getMainRolePath(Long ownerUserId) {
+        Long main_role_id = jt.queryForObject("select main_role_id from sm_user where id = ? and status=0",Long.class,ownerUserId);
+        return main_role_id == null ? null : getPostPath(main_role_id);
+    }
+    
+    public String getPostPathByRoleAndRoot(Long roleId, Long queryRoot) {
+        /**
+        String sql = "select " + getRoleNameSql("id = c.id")
+            + " from sm_party_entity c"
+            + " left join sm_party_type t on t.id =  c.party_type_id"
+            + " where t.type = 'role'"
+            + " and exists(select 'y' from sm_party_entity e inner join sm_party_type t2 on (t2.id = e.party_type_id and t2.type = '" + PartyType.TYPE_ROLE+ "')"
+            + " where e.ref_parent_id = " + roleId
+            + " and locate((select min(concat('-',f.id,'-')) from sm_party_entity f where f.id = " + queryRoot + "),concat('-',e.prefix)) > 0"
+            + " and  locate(concat('-', e.id, '-'),concat('-', c.prefix)) > 0)";
+          **/
+    	
+    	   String sql = "select " + getRoleNameSql("id = c.id")
+    	            + " from sm_party_entity c"
+    	            + " left join sm_party_type t on t.id =  c.party_type_id"
+    	            + " where t.type = 'role' and  c.ref_parent_id = "+roleId+" and c.prefix like '%-"+queryRoot+"-%' ";
+        List<String> ls = jt.queryForList(sql,String.class);
+        String roleName = null;
+        if(ls.size() >0){
+            roleName = ls.get(0);
+            return getRolePathDisplay(roleName,false);
+        }
+        return "";
+    }
+    public List<User> getUsersByObjf(Long objfId, Long fiId){
+    	List<User> users = new ArrayList<User>();
+    	String userIds = "";
+    	if (null != objfId){
+    		try{
+    			String usql="select "+DbType.getType()+"concat(g.val,'') from sm_service_object_field f left join tf_gv g on g.name = f.name where f.id ="+objfId+" and g.fi_id = "+fiId;
+        		List<String> strLists=jt.queryForList(usql, String.class);
+        	    if(strLists!=null&&strLists.size()>0){
+        	    	userIds=strLists.get(0);
+        	    }
+    		}catch(Exception ex){
+    			System.out.println(ex.toString());
+    		}
+    		
+    		//userIds = jt.queryForObject("select concat(g.val,'') from sm_service_object_field f left join tf_gv g on g.name = f.name where f.id = ? and g.fi_id = ?", new Object[]{objfId, fiId}, String.class);
+    	
+    	}
+    	if (StringUtils.isNotBlank(userIds)){
+    	    String sql = "select u.id as id,u.loginname as login_name,u.real_name as user_name,u.email as email,u.mobile as mobile,u.contact_phone as contact_phone"
+                    + "," + getRoleNameSqlOfUserMainPost("ref_id = u.main_role_id") + " as role_name"
+                    + "," + getRolePrefixSqlOfUserMainPost("ref_id = u.main_role_id") + " as prefix"
+                    + " from sm_user u"
+                    + " where u.id in(" + userIds + ")  and u.status=0";
+    	    try {
+    	        users.addAll(jt.query(sql, new Object[]{}, new ParticipantDAO.UserMapper()));
+    	    } catch (Exception e){
+    	        e.printStackTrace();
+    	    }
+    	    users = CollectionUtils.distinct(users);
+    	}
+    	return users;
+    }
+    
+    public Long getObjectIdByPePrefix(String prefix,String partType){
+        Long objectId = null;
+        if (StringUtils.isNotBlank(prefix) && StringUtils.isNotBlank(partType)){
+            String sqlStr = "select max(c.id) from sm_party_entity c"
+                + " inner join sm_party_type ct on c.party_type_id = ct.id"
+                + " where ct.type = ?"
+                + " and "+DbType.getType()+"locate("+DbType.getType()+"concat('-',c.id,'-'),"+DbType.getType()+"concat('-',?)) > 0";
+            objectId = (Long) jt.queryForLong(sqlStr, partType, prefix);
+        }
+        return objectId;
+    }
+    
+    public Long getObjectRefIdByPePrefix(String prefix,String partType){
+        Long objectId = null;
+        if (StringUtils.isNotBlank(prefix) && StringUtils.isNotBlank(partType)){
+            String sqlStr = "select max(c.ref_id) from sm_party_entity c"
+                + " inner join sm_party_type ct on c.party_type_id = ct.id"
+                + " where ct.type = ?"
+                + " and "+DbType.getType()+"locate("+DbType.getType()+"concat('-',c.id,'-'),"+DbType.getType()+"concat('-',?)) > 0";
+            objectId = (Long) jt.queryForLong(sqlStr, partType, prefix);
+        }
+        return objectId;
+    }
+    
+    /**
+     * 得到rolePath
+     * @author jun
+     * @param roleId roleId
+     * @return
+     */
+    public String getRolePath(Long roleId){
+        String sql = "select parent_id,name from sm_role r where r.id = ?";
+        if (null == roleId){
+            roleId = 0L;
+        }
+        Map<String, Object> idNameMap = jt.queryForMap(sql, new Object[]{roleId});
+        if (null != idNameMap){
+            if (StringUtils.isNotBlank(idNameMap.get("parentId").toString())){
+                return (StringUtils.isNotBlank(idNameMap.get("parentName").toString()) ? idNameMap.get("parentName").toString() : "") + "/" + this.getRolePath(Long.valueOf(idNameMap.get("parentId").toString()));
+            } else {
+                return "";
+            }
+        } else {
+            return "";
+        }
+    }
+    
+    public String getRolePathNew(Long roleId){
+        if (null == roleId){
+            roleId = 0L;
+        }
+        Long parentId = jt.queryForObject("select parent_id from sm_role where id = ?",Long.class,roleId);
+        String name = jt.queryForObject("select name from sm_role where id = ?",String.class,roleId);
+        
+        if(parentId!=null&&parentId>0L){
+        	return getRolePathNew(parentId)+"/"+name;
+        }
+        
+        return name;
+    	
+    }
+}

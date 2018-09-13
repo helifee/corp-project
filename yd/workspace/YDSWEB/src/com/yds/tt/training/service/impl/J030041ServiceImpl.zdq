@@ -1,0 +1,299 @@
+/*
+ * @(#) J030041ServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 教育考试培训系统
+ *    SubSystem: 教育
+ */
+package com.yds.tt.training.service.impl;
+
+import java.util.Date;
+import java.util.List;
+
+import org.springframework.stereotype.Service;
+
+import com.yds.base.service.AbstractBaseService;
+import com.yds.tt.manager.bean.MessageReminding;
+import com.yds.tt.manager.dao.TtCommonDao;
+import com.yds.tt.manager.service.TtCommonService;
+import com.yds.tt.manager.service.TtCommonUtil;
+import com.yds.tt.manager.service.TtConstants;
+import com.yds.tt.manager.service.TtExclusiveException;
+import com.yds.tt.testing.bean.TestPaperInfo;
+import com.yds.tt.training.bean.BookContent;
+import com.yds.tt.training.bean.BookInfo;
+import com.yds.tt.training.dao.J030041Dao;
+import com.yds.tt.training.service.J030041Service;
+import com.yds.util.service.FileUtil;
+
+/**
+ * @see com.yds.tt.training.service.J030041Service
+ */
+@Service("j030041Service")
+public class J030041ServiceImpl extends AbstractBaseService implements
+		J030041Service {
+
+	private J030041Dao j030041Dao;
+	private TtCommonService ttCommonService;
+	private TtCommonDao ttCommonDao;
+
+	/**
+	 * @param dao
+	 *            the j030041Dao to set
+	 */
+	public void setJ030041Dao(J030041Dao dao) {
+		j030041Dao = dao;
+	}
+
+	/**
+	 * @param ttCommonService
+	 *            the ttCommonService to set
+	 */
+	public void setTtCommonService(TtCommonService ttCommonService) {
+		this.ttCommonService = ttCommonService;
+	}
+
+	/**
+	 * @param dao
+	 *            the ttCommonDao to set
+	 */
+	public void setTtCommonDao(TtCommonDao dao) {
+		ttCommonDao = dao;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public BookInfo getBookInfo(String bookId) {
+		return j030041Dao.getBookInfo(bookId);
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public List<BookContent> getBookChapterInfoList(String bookId, int editNo) {
+
+		BookContent bookChapterInfo = new BookContent();
+		bookChapterInfo.setBookId(bookId);
+		bookChapterInfo.setEditNo(editNo);
+		return j030041Dao.getBookChapterInfoList(bookChapterInfo);
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void updateBookInfo(BookInfo bookInfo) {
+
+		// 排他检查
+		if (!checkTimestamp(bookInfo)) {
+			throw new TtExclusiveException();
+		}
+
+		// 更新用户ID设为当前登录用户ID
+		bookInfo.setUpdateUserId(TtCommonUtil.getLoginUserId());
+
+		// 保存教材信息
+		saveBookInfo(bookInfo);
+	}
+
+	/**
+	 * 保存教材信息
+	 * 
+	 * @param bookInfo
+	 */
+	private void saveBookInfo(BookInfo bookInfo) {
+		// 封面文件名
+		String imgFileName = bookInfo.getBookCover();
+		boolean needToCopyFile = false;
+
+		// 若文件名长度与文件名格式的长度不一致，并且不是默认图片，则说明上传了新封面文件
+		if (this.getFileNameWithoutExt(imgFileName).length() != TtConstants.FILENAMEFORMAT
+				.length() && 
+			!imgFileName.equals(TtConstants.DEFAULTCOVERNAME)) {
+			// 临时文件名改为正式文件名
+			bookInfo.setBookCover(TtCommonUtil.generateFileName(imgFileName));
+			needToCopyFile = true;
+		}
+
+		// 更新教材信息
+		j030041Dao.updateBookInfo(bookInfo);
+
+		if (needToCopyFile) {
+			// 把临时目录下的教材封面图片拷贝到教育系统图片目录下
+			FileUtil.saveFile(imgFileName, propMgr
+					.getParameter(TtConstants.FILE_PATH.BOOK_IMAGE.value()),
+					this.getFileNameWithoutExt(bookInfo.getBookCover()));
+		}
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void saveAndSendToApproval(BookInfo bookInfo) {
+
+		// 教材状态置为 待审批
+		bookInfo.setBookStatus(TtConstants.R01.R01_2.value());
+
+		// 更新用户ID设为当前登录用户ID
+		bookInfo.setUpdateUserId(TtCommonUtil.getLoginUserId());
+
+		// 申请者设为当前用户ID
+		bookInfo.setApplyUserId(TtCommonUtil.getLoginUserId());
+
+		// 保存教材信息
+		this.saveBookInfo(bookInfo);
+
+		// 登录提醒信息
+		this.insertMessageReminding(bookInfo);
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void insertOrUpdateBookInfo(BookInfo bookInfo) {
+
+		// 画面.教材状态
+		int bookStatus = bookInfo.getBookStatus();
+
+		// 用户ID取得
+		String userId = TtCommonUtil.getLoginUserId();
+
+		// 教材状态为“已发布”时，登录新版本教材。
+		if (bookStatus == TtConstants.R01.R01_3.value()) {
+
+			// 教材详细信息取得
+			BookInfo oldBookInfo = j030041Dao.getBookInfo(bookInfo.getBookId());
+
+			// 章节信息取得
+			BookContent bookChapterInfo = new BookContent();
+			bookChapterInfo.setBookId(bookInfo.getBookId());
+			bookChapterInfo.setEditNo(bookInfo.getEditNo());
+			List<BookContent> chapterList = j030041Dao
+					.getBookChapterInfoList(bookChapterInfo);
+
+			// 练习试卷信息取得
+			List<TestPaperInfo> practiceList = j030041Dao
+					.getPracticeInfo(bookInfo.getBookId());
+
+			// 教材详细信息登录
+			oldBookInfo.setUpdateUserId(userId);
+			j030041Dao.insertBookInfo(oldBookInfo);
+
+			// 章节信息登录
+			for (BookContent chapter : chapterList) {
+
+				chapter.setCreateUserId(userId);
+				chapter.setUpdateUserId(userId);
+				j030041Dao.insertChapterInfo(chapter);
+			}
+
+			// 练习试卷信息登录
+			for (TestPaperInfo practice : practiceList) {
+
+				practice.setCreateUserId(userId);
+				practice.setUpdateUserId(userId);
+				j030041Dao.insertPracticeInfo(practice);
+			}
+
+		} else {
+
+			// 排他检查
+			if (!checkTimestamp(bookInfo)) {
+				throw new TtExclusiveException();
+			}
+
+			bookInfo.setBookStatus(TtConstants.R01.R01_1.value());
+			bookInfo.setUpdateUserId(userId);
+			j030041Dao.updateBookStatus(bookInfo);
+
+			// 提醒信息失效
+			this.updateMessageReminding(bookInfo.getBookId());
+		}
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public boolean checkTimestamp(BookInfo bookInfo) {
+
+		Date updateTime = j030041Dao.getUpdateTime(bookInfo);
+
+		return ttCommonService.checkTimeStamp(TtConstants.PageId.J030041,
+				updateTime);
+	}
+
+	/**
+	 * 登录提醒信息
+	 * 
+	 * @param BookInfo
+	 *            关联教材信息
+	 */
+	private void insertMessageReminding(BookInfo bookInfo) {
+
+		MessageReminding message = new MessageReminding();
+
+		// 消息内容
+		message.setContent(propMgr.getMessage("yds.tt.remind.JYY01", bookInfo
+				.getBookName()));
+
+		// 消息模式
+		message.setMode(TtConstants.REMIND_MODE.JYY01.value());
+
+		// 消息参数 教材ID
+		message.setParameter(bookInfo.getBookId());
+
+		// Id采番
+		message.setInformationId(ttCommonService
+				.getSequence(TtConstants.SEQID.Information));
+
+		// 用户ID 审批者ID
+		message.setUserId(j030041Dao.getReviewer(bookInfo.getBookId()));
+
+		// 主页面左侧显示
+		message.setInformationFlg(TtConstants.REMIND_FLG.LEFT.value());
+
+		// 设置失效日期为无穷大
+		message.setLosetime(TtCommonUtil.getMaxDate());
+
+		ttCommonDao.insertMessageReminding(message);
+	}
+
+	/**
+	 * 提醒消息失效
+	 * 
+	 * @param courseId
+	 *            教材ID
+	 */
+	private void updateMessageReminding(String bookId) {
+
+		MessageReminding message = new MessageReminding();
+
+		// 消息模式
+		message.setMode(TtConstants.REMIND_MODE.JYY01.value());
+
+		// 消息参数
+		message.setParameter(bookId);
+
+		// 审批者
+		message.setUserId(j030041Dao.getReviewer(bookId));
+
+		ttCommonDao.updateMessageReminding(message);
+	}
+
+	/**
+	 * 取得不带后缀的文件名
+	 * 
+	 * @return String 处理后文件名
+	 */
+	private String getFileNameWithoutExt(String file) {
+		int position = file.lastIndexOf(".");
+
+		return file.substring(0, position);
+	}
+}

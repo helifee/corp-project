@@ -1,0 +1,216 @@
+package com.yds.att.service.impl;
+
+
+import java.util.ArrayList;
+import java.util.List;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.springframework.stereotype.Service;
+
+import com.yds.att.bean.AttBatchPar;
+import com.yds.att.bean.AttInfo;
+import com.yds.att.bean.Ye8021AttInfo;
+import com.yds.att.bean.Ye8021CondA;
+import com.yds.att.common.service.AttComService;
+import com.yds.att.common.service.AttInfoService;
+import com.yds.att.dao.Ye8030Dao;
+import com.yds.att.service.AttConstants;
+import com.yds.att.service.Ye8021Service;
+import com.yds.batch.service.BatchJobRun;
+import com.yds.util.service.DateUtil;
+
+
+
+
+@Service("ye8030Service")
+public class Ye8030ServiceImpl implements BatchJobRun {
+	
+	private Ye8030Dao ye8030Dao;
+	private Ye8021Service ye8021Service;   // batch子程序dao
+	private AttComService attComService;       // att共通子程序
+	private AttInfoService attInfoService;  // 考勤信息表通用程序
+	
+	/** 日志. */
+	private static final Log LOG = LogFactory.getLog(Ye8030ServiceImpl.class);
+	
+	/**
+	 * @param attInfoService the attInfoService to set
+	 */
+	public void setAttInfoService(AttInfoService attInfoService) {
+		this.attInfoService = attInfoService;
+	}
+
+	/**
+	 * @param ye8021S the ye8021S to set
+	 */
+	public void setYe8021Service(Ye8021Service ye8021S) {
+		this.ye8021Service = ye8021S;
+	}
+	/**
+	 * @param acs the acs to set
+	 */
+	public void setAttComService(AttComService acs) {
+		this.attComService = acs;
+	}
+
+	/**
+	 * @param ye8030Dao the ye8030Dao to set
+	 */
+	public void setYe8030Dao(Ye8030Dao ye8030Dao) {
+		this.ye8030Dao = ye8030Dao;
+	}
+
+	@Override
+	public void jobRun() throws Throwable {
+		LOG.info("月结ye8030程序开始");
+		
+		List<String> lockTbls = new ArrayList<String>();     // 锁表
+		String now = attComService.getParameter("com.yds.att.curday"); // 当前日期
+		String mon1 = now.substring(0, 6) + "01";            // 月初
+		Ye8021CondA ye8021CondA = new Ye8021CondA();         // 考勤详细检索条件
+		List<AttInfo> attInfos ; 
+		
+		try{
+			/*取得batch执行参数*/
+			List<AttBatchPar> lBatchPar = ye8030Dao.getAttBatchPar(AttConstants.ATT_BATCH_YC);
+			
+			if(null == lBatchPar || lBatchPar.isEmpty()){
+				
+				if( (now.substring(6, 7).equals("0")
+					&& Integer.valueOf(now.substring(7,8)) > 
+				        Integer.valueOf(attComService.getParameter("com.yds.att.monthfin")))
+				  || (!now.substring(6, 7).equals("0")
+					&& Integer.valueOf(now.substring(6,8)) > 
+			            Integer.valueOf(attComService.getParameter("com.yds.att.monthfin")))){
+					// 月结日之后不运行
+					return ;
+				}else{
+					// 参数不存在 默认为上个月全员
+					ye8021CondA.setStYmd(DateUtil.setDateFormat(DateUtil.parse(DateUtil.dateAdd(mon1, -1, 1)), "yyyyMMdd"));
+					ye8021CondA.setEdYmd(DateUtil.setDateFormat(DateUtil.parse(DateUtil.dateAdd(mon1, -1, 2)), "yyyyMMdd"));
+				}
+			}else{
+				// 参数存在
+				for(AttBatchPar abp:lBatchPar){
+					// 开始结束日期设定
+					if(null == ye8021CondA.getStYmd() 
+							|| ye8021CondA.getStYmd().equals("")){
+						ye8021CondA.setStYmd(abp.getAppYm().concat("01"));
+						ye8021CondA.setEdYmd(
+								DateUtil.setDateFormat(DateUtil.parse(
+							DateUtil.dateAdd(
+										DateUtil.dateAdd(abp.getAppYm().concat("01"), 1, 1)
+										,-1
+										,2)), "yyyyMMdd"));
+							
+					}
+					// 人员设定
+					if(abp.getAppPerId().equals("00000000")){
+						// 全员
+						ye8021CondA.setEmpIdList(null);
+						break;
+					}else{
+						if(null == ye8021CondA.getEmpIdList()){
+							ye8021CondA.setEmpIdList(new ArrayList<String>());
+						}
+						ye8021CondA.getEmpIdList().add(abp.getAppPerId());
+					}
+				}
+			}
+			
+			/* 锁表 */
+			// 考勤信息表
+			lockTbls.add("ATT_INFO");
+			// 换休明细表
+			lockTbls.add("ATT_EXREST_INFO");
+			// 月次统计表
+			lockTbls.add("ATT_MON_REPORT");
+			// batch执行表
+			lockTbls.add("ATT_BATCH_PAR");
+			// batch执行结果表
+			lockTbls.add("ATT_INFO_UNCOR");
+			// 不执行锁表
+			// 锁表问题未解决 暂不
+//			ye8021Service.lockTables(lockTbls);
+			
+			/* 取得指定月指定人的考勤数据*/
+
+			attInfos = ye8021Service.getAttInfos(ye8021CondA);
+			
+			/* 对取得的考勤数据进行检查处理*/
+			for(AttInfo ai : attInfos){
+
+				/* 考勤信息检查（实出退勤单个null）*/
+				if(!ye8021Service.chkAttInfos(ai)){
+					LOG.error("月次batch(Ye8030)实出退勤单个null检查修改处理  error:"
+							  +" empId=" + ai.getEmpId() + ","
+							  +" year=" + ai.getYear() + ","
+							  +" month=" + ai.getMonth() + ","
+							  +" day=" + ai.getDay() + " ;"
+							  );
+					throw new Exception();
+				}
+				/* 班型部分，日期部分检查修改处理   */
+				try {
+					attInfoService.updateAttInfo(ai.getEmpId(), 
+							                     DateUtil.parse(ai.getYear()+ai.getMonth()+ai.getDay()));
+				} catch (Exception e) {
+					LOG.error("月次batch(Ye8030)班型部分，日期部分检查修改处理  error:"
+							  +" empId=" + ai.getEmpId() + ","
+							  +" year=" + ai.getYear() + ","
+							  +" month=" + ai.getMonth() + ","
+							  +" day=" + ai.getDay() + " ;"
+							  , e);
+					throw e;
+				}
+			}
+			/* 换休信息检查 */
+			// 检索半天请假的考勤信息 
+			ye8021CondA.setRestFlg("1"); //检索条件追加条件（半天换休）
+			attInfos = ye8021Service.getAttInfos(ye8021CondA);
+			ye8021CondA.setRestFlg("");  //检索条件删除
+			for(AttInfo ai : attInfos){
+				// 换休明细表实际使用换休的检查（调用子程序）
+				try {
+					attInfoService.insertExrestInfo(ai);
+				} catch (Exception e) {
+					LOG.error("月次batch(Ye8030)换休明细检查修改（使用换休部分）处理  error:"
+							  +" empId=" + ai.getEmpId() + ","
+							  +" year=" + ai.getYear() + ","
+							  +" month=" + ai.getMonth() + ","
+							  +" day=" + ai.getDay() + " ;"
+							  , e);
+					throw e;
+				}
+			}
+			// 检索加班的考勤信息
+			List<Ye8021AttInfo> ye8021AttInfos = ye8021Service.getYe8021AttInfo(ye8021CondA);
+			for(Ye8021AttInfo ai : ye8021AttInfos){
+				// 考勤信息表对应的换休加班时间的检查
+				ye8021Service.chkAttExrestInfos(ai);
+			}
+			
+			/* 不整合数据检查 */
+			if(!ye8021Service.chkUnCorAtt(ye8021CondA)){
+				LOG.error("月次batch(Ye8030)不整合数据检查处理  error:");
+				throw new Exception();
+			}
+			
+			/* 考勤信息统计*/
+			if(!ye8021Service.accAttInfo(ye8021CondA)){
+				LOG.error("月次batch(Ye8030)考勤信息统计  error:");
+				throw new Exception();
+			}
+			
+		}finally{
+			
+			/*删除batch执行参数*/
+			ye8030Dao.deleteAttBatchPar(AttConstants.ATT_BATCH_YC);
+			/* 解表*/
+//			ye8021Service.unlockTables(lockTbls);
+			LOG.info("月结ye8030程序结束");
+		}
+	}
+
+
+}

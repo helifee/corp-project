@@ -1,0 +1,176 @@
+package com.xinleju.platform.sys.res.dao.impl;
+
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.platform.base.dao.impl.BaseDaoImpl;
+import com.xinleju.platform.sys.res.dao.DataPermissionDao;
+import com.xinleju.platform.sys.res.entity.DataPermission;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Repository
+public class DataPermissionDaoImpl extends BaseDaoImpl<String,DataPermission> implements DataPermissionDao{
+
+	public DataPermissionDaoImpl() {
+		super();
+	}
+	/**
+	 * 保存数据授权
+	 * @param param
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public Integer saveDataAuth(Map<String, Object> param) throws Exception {
+		return getSqlSession().insert("com.xinleju.platform.sys.res.entity.DataPermission.insertDataPmsBatch", param);
+	}
+	/**
+	 * 删除旧数据授权
+	 * @param param
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public Integer delDataAuth(Map<String, Object> param) throws Exception {
+		return getSqlSession().delete("com.xinleju.platform.sys.res.entity.DataPermission.delDataPmsBatch", param);
+	}
+
+	/**
+	 * 保存数据授权（角色到数据）
+	 * @param param
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public Integer saveDataAuthRoleToData(Map<String, Object> param) throws Exception {
+		return getSqlSession().insert("com.xinleju.platform.sys.res.entity.DataPermission.saveDataAuthRoleToData", param);
+	}
+	/**
+	 * 删除旧数据授权（角色到数据）
+	 * @param param
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public Integer delDataAuthRoleToData(Map<String, Object> param) throws Exception {
+		return getSqlSession().delete("com.xinleju.platform.sys.res.entity.DataPermission.delDataAuthRoleToData", param);
+	}
+	/**
+	 * 根据控制项Id和角色Ids查询已授权数据(控制点)
+	 * @param map
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public List<Map<String, Object>> queryDataPermission(Map<String,Object> map) {
+		
+		return getSqlSession().selectList("com.xinleju.platform.sys.res.entity.DataPermission.queryDataPermission", map);
+	}
+	/**
+	 * 根据控制项Id和角色Ids查询已授权数据(指定数据)
+	 * @param map
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public List<Map<String, Object>> queryDataPointPermission(Map<String,Object> map) {
+		
+		return getSqlSession().selectList("com.xinleju.platform.sys.res.entity.DataPermission.queryDataPointPermission", map);
+	}
+	
+	/**
+	 * 根据控制项Id和控制点Ids查询已授权数据(控制点)
+	 * @param map
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public List<Map<String, Object>> queryDataPermissionByPointId(Map<String,Object> map) {
+		
+		return getSqlSession().selectList("com.xinleju.platform.sys.res.entity.DataPermission.queryDataPermissionByPointId", map);
+	}
+	/**
+	 * 根据控制项Id和valIds查询已授权数据(指定数据)
+	 * @param map
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public List<Map<String, Object>> queryDataPointPermissionByvalId(Map<String,Object> map) {
+		
+		return getSqlSession().selectList("com.xinleju.platform.sys.res.entity.DataPermission.queryDataPointPermissionByvalId", map);
+	}
+	
+	@Override
+	public List<Map<String, Object>> getDataPointAuthByUserLoginNameAndAppCodeAndItemCode(Map<String,Object> map) {
+		
+		return getSqlSession().selectList("com.xinleju.platform.sys.res.entity.DataPermission.getDataPointAuthByUserLoginNameAndAppCodeAndItemCode", map);
+	}
+	
+	@Override
+	public List<Map<String, Object>> getDataPointValAuthByDataPermissionId(Map<String,Object> map) {
+		
+		return getSqlSession().selectList("com.xinleju.platform.sys.res.entity.DataPermission.getDataPointValAuthByDataPermissionId", map);
+	}
+	
+	
+	/**
+	 * 根据对象Id获取已授权控制点的主键ID（为了删除）
+	 * @param map
+	 * @return
+	 */
+	@Override
+	public List<String> queryAuthDataIdByobjectIds(Map<String,Object> map) throws Exception{
+		return getSqlSession().selectList("com.xinleju.platform.sys.res.entity.DataPermission.queryAuthDataIdByobjectIds", map);
+	}
+	/**
+	 * 根据对象Id获取已授权控制点val的主键ID（为了删除）
+	 * @param map
+	 * @return
+	 */
+	@Override
+	public List<String> queryAuthDataValIdByobjectIds(Map<String,Object> map) throws Exception{
+		return getSqlSession().selectList("com.xinleju.platform.sys.res.entity.DataPermission.queryAuthDataValIdByobjectIds", map);
+	}
+	/**
+	 * 根据对象Id获取已授权数据
+	 * @param map
+	 * @return
+	 */
+	@Override
+	public List<Map<String,Object>> queryAuthDataByobjectIds(Map<String,Object> map) throws Exception{
+		return getSqlSession().selectList("com.xinleju.platform.sys.res.entity.DataPermission.queryAuthDataByobjectIds", map);
+	}
+	/**
+	 * 根据已授权的主键ID获取已授权val数据
+	 * @param map
+	 * @return
+	 */
+	@Override
+	public List<Map<String,Object>> queryAuthValDataBydataPermissionId(Map<String,Object> map) throws Exception{
+		return getSqlSession().selectList("com.xinleju.platform.sys.res.entity.DataPermission.queryAuthValDataBydataPermissionId", map);
+	}
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+}

@@ -1,0 +1,25 @@
+package com.xinleju.platform.univ.mq.service.impl;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.univ.mq.dao.MessageDao;
+import com.xinleju.platform.univ.mq.entity.Message;
+import com.xinleju.platform.univ.mq.service.MessageService;
+
+/**
+ * @author xubaoyong
+ * 
+ * 
+ */
+
+@Service
+public class MessageServiceImpl extends  BaseServiceImpl<String,Message> implements MessageService{
+	
+
+	@Autowired
+	private MessageDao mqMessageDao;
+	
+
+}

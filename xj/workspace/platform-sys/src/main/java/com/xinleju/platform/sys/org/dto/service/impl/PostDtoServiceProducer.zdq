@@ -1,0 +1,779 @@
+package com.xinleju.platform.sys.org.dto.service.impl;
+
+import java.io.File;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.util.ResourceUtils;
+
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.flow.dto.AcDto;
+import com.xinleju.platform.sys.org.dto.FlowAcPostDto;
+import com.xinleju.platform.sys.org.dto.OrgnazationNodeDto;
+import com.xinleju.platform.sys.org.dto.PostQueryDto;
+import com.xinleju.platform.sys.org.dto.service.PostDtoServiceCustomer;
+import com.xinleju.platform.sys.org.entity.Post;
+import com.xinleju.platform.sys.org.entity.PostUser;
+import com.xinleju.platform.sys.org.service.OrgnazationService;
+import com.xinleju.platform.sys.org.service.PostService;
+import com.xinleju.platform.sys.org.service.PostUserService;
+import com.xinleju.platform.sys.org.service.RootService;
+import com.xinleju.platform.sys.org.service.UserPostScopeService;
+import com.xinleju.platform.sys.res.utils.InvalidCustomException;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+/**
+ * @author admin
+ * 
+ *
+ */
+ 
+public class PostDtoServiceProducer implements PostDtoServiceCustomer{
+	private static Logger log = Logger.getLogger(PostDtoServiceProducer.class);
+	@Autowired
+	private PostService postService;
+	
+	@Autowired
+	private PostUserService postUserService;
+	
+	@Autowired
+	private UserPostScopeService userPostScopeService;
+	
+	@Autowired
+	private RootService rootService;
+	
+	@Autowired
+	private OrgnazationService orgnazationService;
+
+	public String save(String userInfo, String saveJson){
+		// TODO Auto-generated method stub
+	   DubboServiceResultInfo info=new DubboServiceResultInfo();
+	   try {
+		   Post post=JacksonUtils.fromJson(saveJson, Post.class);
+		   postService.save(post);
+		   info.setResult(JacksonUtils.toJson(post));
+		   info.setSucess(true);
+		   info.setMsg("保存对象成功!");
+		} catch (Exception e) {
+		 log.error("保存对象失败!"+e.getMessage());
+		 info.setSucess(false);
+		 info.setMsg("保存对象失败!");
+		 info.setExceptionMsg(e.getMessage());
+		}
+	   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String saveBatch(String userInfo, String saveJsonList)
+			 {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+			if (StringUtils.isNotBlank(saveJsonList)) {
+				Map map = JacksonUtils.fromJson(saveJsonList, HashMap.class);
+				String method = (String)map.get("method");
+				
+				//一个组织机构多个角色批量保存岗位
+				if("roles".equals(method)){
+					String refId = (String)map.get("refId");
+					String roleids = (String)map.get("roleids");
+					String uuids = (String)map.get("uuids");
+					String type = (String)map.get("type");
+					Map mapCon = new HashMap<>();
+					//根据组织机构查询出原先有的岗位
+					mapCon.put("refId", refId);
+					mapCon.put("delflag", false);
+					String [] roleidsList = roleids.split(",");
+					String [] uuidsList = uuids.split(",");
+					List<Post>  listOld = postService.queryList(mapCon);
+					//要删除的列表
+					List<String> listDelIds = new ArrayList<String>();
+					//要插入的列表
+					List<String> listAddIds = new ArrayList<String>();
+					//查询出数据库中的，而列表中没有的进行删除操作
+					for(int i =0;i<listOld.size();i++){
+						boolean isexist = false;
+						Post postOld = listOld.get(i);
+						for(int y =0;y<roleidsList.length;y++){
+							if(postOld.getRoleId().equals(roleidsList[y])){
+								isexist = true;
+							}
+						}
+						if(!isexist){
+							listDelIds.add(postOld.getId());
+						}
+					}
+					if(listDelIds.size()>0){
+						postService.deletePseudoAllObjectByIds(listDelIds);
+					}
+					//查询列表中有的，并且数据库中没有的进行插入操作
+					for(int y =0;y<roleidsList.length;y++){
+						boolean isexist = false;
+						for(int i =0;i<listOld.size();i++){
+							Post postOld = listOld.get(i);
+							if(postOld.getRoleId().equals(roleidsList[y])){
+								isexist = true;
+							}
+						}
+						if(!isexist){
+							listAddIds.add(roleidsList[y]);
+						}
+					}
+					if(listAddIds.size()>0){
+						for(int i =0;i<listAddIds.size();i++){
+							Post post = new Post();
+							post.setId(IDGenerator.getUUID());
+							post.setRefId(refId);
+							post.setRoleId(listAddIds.get(i));
+							post.setType(type);
+							post.setStatus("1");
+							post.setDelflag(false);
+							postService.save(post);
+						}
+					}
+					//一个角色多个组织机构批量保存岗位
+				}else if("orgs".equals(method)){
+					String refIds = (String)map.get("refId");
+					String roleid = (String)map.get("roleids");
+					String uuids = (String)map.get("uuids");
+					String types = (String)map.get("type");
+					
+					Map mapCon = new HashMap<>();
+					//根据组织机构查询出原先有的岗位
+					mapCon.put("roleId", roleid);
+					mapCon.put("delflag", false);
+					String [] refIdsList = refIds.split(",");
+					String [] uuidsList = uuids.split(",");
+					String [] typesList = types.split(",");
+					List<Post>  listOld = postService.queryList(mapCon);
+					//要删除的列表
+					List<String> listDelIds = new ArrayList<String>();
+					//要插入的列表
+					List<String> listAddIds = new ArrayList<String>();
+					//要插入的类型列表
+					List<String> listTypeIds = new ArrayList<String>();
+					//查询出数据库中的，而列表中没有的进行删除操作
+					for(int i =0;i<listOld.size();i++){
+						boolean isexist = false;
+						Post postOld = listOld.get(i);
+						for(int y =0;y<refIdsList.length;y++){
+							if(postOld.getRefId().equals(refIdsList[y])){
+								isexist = true;
+							}
+						}
+						if(!isexist){
+							listDelIds.add(postOld.getId());
+						}
+					}
+					if(listDelIds.size()>0){
+						postService.deletePseudoAllObjectByIds(listDelIds);
+					}
+					//查询列表中有的，并且数据库中没有的进行插入操作
+					for(int y =0;y<refIdsList.length;y++){
+						boolean isexist = false;
+						for(int i =0;i<listOld.size();i++){
+							Post postOld = listOld.get(i);
+							if(postOld.getRefId().equals(refIdsList[y])){
+								isexist = true;
+							}
+						}
+						if(!isexist){
+							listAddIds.add(refIdsList[y]);
+							listTypeIds.add(typesList[y]);
+						}
+					}
+					if(listAddIds.size()>0){
+						for(int i =0;i<listAddIds.size();i++){
+							Post post = new Post();
+							post.setId(IDGenerator.getUUID());
+							post.setRefId(listAddIds.get(i));
+							post.setRoleId(roleid);
+							post.setType(listTypeIds.get(i));
+							post.setStatus("1");
+							post.setDelflag(false);
+							postService.save(post);
+						}
+					}
+				}
+				
+				
+				info.setResult("保存成功");
+				info.setSucess(true);
+				info.setMsg("保存成功!");
+			} else {
+				info.setResult("保存失败");
+				info.setSucess(true);
+				info.setMsg("保存失败");
+			}
+		} catch (Exception e) {
+			log.error("保存失败!" + e.getMessage());
+			info.setResult("保存失败");
+			info.setSucess(false);
+			info.setMsg("保存失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+		// TODO Auto-generated method stub
+	}
+
+	@Override
+	public String updateBatch(String userInfo, String updateJsonList)
+			 {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public String update(String userInfo, String updateJson)  {
+		// TODO Auto-generated method stub
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   Post post=JacksonUtils.fromJson(updateJson, Post.class);
+			   int result=   postService.update(post);
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("更新对象成功!");
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deleteObjectById(String userInfo, String deleteJson)
+	{
+		// TODO Auto-generated method stub
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   Post post=JacksonUtils.fromJson(deleteJson, Post.class);
+			   Map<String, Object> paramater = new HashMap<String, Object>();
+			   postUserService.queryList(paramater);
+			   
+			   int result= postService.deleteObjectById(post.getId());
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("删除对象成功!");
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deleteAllObjectByIds(String userInfo, String deleteJsonList)
+   {
+		// TODO Auto-generated method stub
+		 DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   if (StringUtils.isNotBlank(deleteJsonList)) {
+				   Map map=JacksonUtils.fromJson(deleteJsonList, HashMap.class);
+				   List<String> list=Arrays.asList(map.get("id").toString().split(","));
+				   int result= postService.deleteAllObjectByIds(list);
+				   info.setResult(JacksonUtils.toJson(result));
+				   info.setSucess(true);
+				   info.setMsg("删除对象成功!");
+				}
+			} catch (Exception e) {
+			 log.error("删除对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getObjectById(String userInfo, String getJson)
+	 {
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Post post=JacksonUtils.fromJson(getJson, Post.class);
+			Post	result = postService.getObjectById(post.getId());
+			info.setResult(JacksonUtils.toJson(result));
+		    info.setSucess(true);
+		    info.setMsg("获取对象成功!");
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getPage(String userInfo, String paramater) {
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map map=JacksonUtils.fromJson(paramater, HashMap.class);
+				Page page=postService.getPage(map, (Integer)map.get("start"),  (Integer)map.get("limit"));
+				info.setResult(JacksonUtils.toJson(page));
+			    info.setSucess(true);
+			    info.setMsg("获取分页对象成功!");
+			}else{
+				Page page=postService.getPage(new HashMap(), null, null);
+				info.setResult(JacksonUtils.toJson(page));
+			    info.setSucess(true);
+			    info.setMsg("获取分页对象成功!");
+			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取分页对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取分页对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String queryList(String userInfo, String paramater){
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map map=JacksonUtils.fromJson(paramater, HashMap.class);
+				List list=postService.queryList(map);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}else{
+				List list=postService.queryList(null);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取列表对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取列表对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getCount(String userInfo, String paramater)  {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public String queryPostListByUserId(String userInfo, String paramater){
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map map = JacksonUtils.fromJson(paramater, HashMap.class);
+				//根据用户ID获取岗位
+				List<PostQueryDto> list=postService.queryPostListByUserId(map);
+				
+				//根据用户ID获取用户岗位关系
+				List<PostUser>  listPostuser = postUserService.queryList(map);
+				
+				//根据用户ID查询岗位范围
+				List<Map<String,Object>>  listUserPostScope = userPostScopeService.queryUserPostScopeList(map);
+				
+				for(PostQueryDto pd:list){
+					for(PostUser pu :listPostuser){
+						if(pd.getId().equals(pu.getPostId())){
+							String orgIds="";
+							String orgNames="";
+							for(Map ups:listUserPostScope){
+								if(((String)ups.get("postUserId")).equals(pu.getId())){
+									orgIds += (String)ups.get("refId")+",";
+									orgNames += (String)ups.get("refName")+",";
+								}
+							}
+							if(!orgIds.equals("")){
+								orgIds = orgIds.substring(0, orgIds.length()-1);
+								orgNames = orgNames.substring(0, orgNames.length()-1);
+							}
+							pd.setOrgIds(orgIds);
+							pd.setOrgNames(orgNames);
+						}
+					}
+				}
+				
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}else{
+				List<PostQueryDto> list=postService.queryPostListByUserId(null);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取列表对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取列表对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	
+	/**
+	 * 根据用户id查询用户岗位和用户虚拟角色
+	 * @param userInfo
+	 * @param paramater
+	 * @return
+	 */
+	@Override
+	public String queryPostRoleListByUserId(String userInfo, String paramater){
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map map = JacksonUtils.fromJson(paramater, HashMap.class);
+				List<Map<String,Object>> list=null;
+				if (!map.containsKey("userId")||map.get("userId")==null||StringUtils.isBlank(map.get("userId").toString())) {
+					list=new ArrayList<>();
+				}else{
+					//根据用户ID获取岗位
+					list=postService.queryPostRoleListByUserId(map);				
+				}
+				
+				info.setResult(JacksonUtils.toJson(list));
+				info.setSucess(true);
+				info.setMsg("获取列表对象成功!");
+			}else{
+				List<PostQueryDto> list=postService.queryPostListByUserId(null);
+				info.setResult(JacksonUtils.toJson(list));
+				info.setSucess(true);
+				info.setMsg("获取列表对象成功!");
+			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			log.error("获取列表对象失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取列表对象失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	
+	@Override
+	public String queryPostListByOrgId(String userInfo, String paramater) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+			if (StringUtils.isNotBlank(paramater)) {
+				Map map = JacksonUtils.fromJson(paramater, HashMap.class);
+				List list = postService.queryPostListByOrgId(map);
+				info.setResult(JacksonUtils.toJson(list));
+				info.setSucess(true);
+				info.setMsg("获取列表对象成功!");
+			} else {
+				List list = postService.queryPostListByOrgId(null);
+				info.setResult(JacksonUtils.toJson(list));
+				info.setSucess(true);
+				info.setMsg("获取列表对象成功!");
+			}
+		} catch (Exception e) {
+			log.error("获取列表对象失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取列表对象失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	
+	@Override
+	public String queryPostListByRoleId(String userInfo, String paramater) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+			if (StringUtils.isNotBlank(paramater)) {
+				Map map = JacksonUtils.fromJson(paramater, HashMap.class);
+				if (map.get("limit")!=null&&Integer.valueOf(map.get("limit").toString())==-1 && map.get("fristLimit")!=null) {
+					map.put("limit", map.get("fristLimit"));
+				}
+				List list = postService.queryPostListByRoleId(map);
+				info.setResult(JacksonUtils.toJson(list));
+				info.setSucess(true);
+				info.setMsg("获取列表对象成功!");
+			} else {
+				List list = postService.queryPostListByRoleId(null);
+				info.setResult(JacksonUtils.toJson(list));
+				info.setSucess(true);
+				info.setMsg("获取列表对象成功!");
+			}
+		} catch (Exception e) {
+			log.error("获取列表对象失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取列表对象失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	
+	/**
+	 * 获取岗位tree带组织机构的
+	 * @param paramater
+	 * @return
+	 */
+	@Override
+	public String getPostTree(String userInfo, String paramater){
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try{
+			Map<String,Object> map =JacksonUtils.fromJson(paramater, HashMap.class);
+			//查询出来第一级根目录
+			List<OrgnazationNodeDto> list  = rootService.queryListRoot(map);
+			//查询出来所有目录
+			List<OrgnazationNodeDto> list_cata  = rootService.queryAllRoot(map);
+			//查询出来所有组织机构
+			List<OrgnazationNodeDto> list_org  = orgnazationService.queryAllOrgList(map);
+			
+			//查询出来所有岗位
+			List<OrgnazationNodeDto> list_post  = postService.queryAllPostList(map);
+			
+			for(OrgnazationNodeDto orgnazationNodeDto:list){
+				getRootList(orgnazationNodeDto,list_cata,list_org,list_post);
+			}
+			
+			info.setResult(JacksonUtils.toJson(list));
+		    info.setSucess(true);
+		    info.setMsg("获取树对象成功!");
+			System.out.println(JacksonUtils.toJson(list));
+		}catch(Exception e){
+			log.error("获取树对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取树对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	
+	
+	/**
+	 * 递归获取目录子节点
+	 * @param orgnazationNodeDto
+	 * @return
+	 */
+	public OrgnazationNodeDto getRootList(OrgnazationNodeDto orgnazationNodeDto,List<OrgnazationNodeDto> list_cata,List<OrgnazationNodeDto> list_org,List<OrgnazationNodeDto> list_post) throws Exception{
+//		List<OrgnazationNodeDto> list1  = rootService.queryListRoot(orgnazationNodeDto.getId());
+		List<OrgnazationNodeDto> list1  = queryCataChildNode(orgnazationNodeDto.getId(),list_cata);
+		orgnazationNodeDto.setChildren(list1);
+		if(list1!=null && list1.size()>0){
+			for(OrgnazationNodeDto orgnazationNodeDto1:list1){
+				getRootList(orgnazationNodeDto1,list_cata,list_org,list_post);
+			}
+		}else{
+			List<OrgnazationNodeDto> ll= getOrgRootList(orgnazationNodeDto,list_org);
+			for(OrgnazationNodeDto orgnazationNodeDto2:ll){
+				getOrgList(orgnazationNodeDto2,list_org,list_post);
+			}
+			return orgnazationNodeDto;
+		}
+		getOrgList(orgnazationNodeDto,list_org,list_post);
+		return orgnazationNodeDto;
+	}
+	
+	//获取目录子节点目录（代替从数据库中进行查询）
+	public List<OrgnazationNodeDto> queryCataChildNode(String parentId,List<OrgnazationNodeDto> list_cata){
+		List<OrgnazationNodeDto> list_childNode = new ArrayList<OrgnazationNodeDto>();
+		for(OrgnazationNodeDto orgNodeDto:list_cata){
+			if(parentId.equals(orgNodeDto.getParentId())){
+				list_childNode.add(orgNodeDto);
+			}
+		}
+		
+		return list_childNode;
+		
+	}
+	
+	
+	/**
+	 * 获取目录下的一级集团和公司
+	 * @param orgnazationNodeDto
+	 * @return
+	 */
+	public List<OrgnazationNodeDto> getOrgRootList(OrgnazationNodeDto orgnazationNodeDto,List<OrgnazationNodeDto> list_org ) throws Exception{
+//		List<OrgnazationNodeDto> list1  = orgnazationService.queryOrgListRoot(orgnazationNodeDto.getId());
+		List<OrgnazationNodeDto> list1  = queryOrgRootNode(orgnazationNodeDto.getId(),list_org);
+		orgnazationNodeDto.setChildren(list1);
+		return list1;
+	}
+	
+	/**
+	 * 递归查询组织结构子节点
+	 * @param orgnazationNodeDto
+	 * @return
+	 */
+	public OrgnazationNodeDto getOrgList(OrgnazationNodeDto orgnazationNodeDto,List<OrgnazationNodeDto> list_org,List<OrgnazationNodeDto> list_post) throws Exception{
+//		List<OrgnazationNodeDto> list1  = orgnazationService.queryOrgList(orgnazationNodeDto.getId());
+		//查询组织结构子节点（代替从数据库中进行查询）
+		List<OrgnazationNodeDto> list1  = queryOrgChildNode(orgnazationNodeDto.getId(),list_org);
+		/******************查询下属岗位******************/
+		List<OrgnazationNodeDto> list2  = queryPostChildNode(orgnazationNodeDto.getId(),list_post);
+		/******************查询下属岗位******************/
+		list2.addAll(list1);
+		orgnazationNodeDto.setChildren(list2);
+		if(list1!=null && list1.size()>0){
+			for(OrgnazationNodeDto orgnazationNodeDto1:list1){
+				getOrgList(orgnazationNodeDto1,list_org,list_post);
+			}
+		}else{
+			return orgnazationNodeDto;
+		}
+		return orgnazationNodeDto;
+	}
+	
+	//查询组织结构子节点（代替从数据库中进行查询）
+	public List<OrgnazationNodeDto> queryOrgChildNode(String parentId,List<OrgnazationNodeDto> list_org){
+		List<OrgnazationNodeDto> listOrgChildNode = new ArrayList<OrgnazationNodeDto>();
+		for(OrgnazationNodeDto orgNodeDto:list_org){
+			if(parentId.equals(orgNodeDto.getParentId())){
+				listOrgChildNode.add(orgNodeDto);
+			}
+		}
+		return listOrgChildNode;
+	}
+	
+	//查询目录下的一级集团或者公司（代替从数据库中进行查询）
+	public List<OrgnazationNodeDto> queryOrgRootNode(String rootId,List<OrgnazationNodeDto> list_org){
+		List<OrgnazationNodeDto> listOrgChildNode = new ArrayList<OrgnazationNodeDto>();
+		for(OrgnazationNodeDto orgNodeDto:list_org){
+			if(rootId.equals(orgNodeDto.getRootId())){
+				if(orgNodeDto.getParentId() == null || "".equals(orgNodeDto.getParentId())){
+					if("company".equals(orgNodeDto.getType()) || "zb".equals(orgNodeDto.getType())){
+						listOrgChildNode.add(orgNodeDto);
+					}
+				}
+			}
+		}
+		return listOrgChildNode;
+	}
+	
+	//查询组织结构下的岗位
+	public List<OrgnazationNodeDto> queryPostChildNode(String parentId,List<OrgnazationNodeDto> list_post){
+		List<OrgnazationNodeDto> listPostChildNode = new ArrayList<OrgnazationNodeDto>();
+		for(OrgnazationNodeDto orgNodeDto:list_post){
+			if(parentId.equals(orgNodeDto.getParentId())){
+				listPostChildNode.add(orgNodeDto);
+			}
+		}
+		return listPostChildNode;
+	}
+	
+	@Override
+	public String deletePseudoObjectById(String userInfo, String deleteJson) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public String deletePseudoAllObjectByIds(String userInfo,
+			String deleteJsonList) {
+		// TODO Auto-generated method stub
+		 DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   if (StringUtils.isNotBlank(deleteJsonList)) {
+				   Map map=JacksonUtils.fromJson(deleteJsonList, HashMap.class);
+				   List<String> list=Arrays.asList(map.get("id").toString().split(","));
+				   List<String> listPostUserIds = new ArrayList<String>();
+				   //(后改成多个进行删除)加上外层循环
+				   for(int j= 0;j<list.size(); j++){
+					   Map<String, Object> paramater = new HashMap<String, Object>();
+					   paramater.put("postId", list.get(j));
+					   paramater.put("delflag", "0");
+					   List<PostUser> listPostUser = postUserService.queryList(paramater);
+					   if(null != listPostUser && listPostUser.size()>0){
+						   for(int i = 0; i<listPostUser.size();i++){
+							   PostUser pu = listPostUser.get(i);
+							   listPostUserIds.add(pu.getId());
+						   }
+					   }
+				   }
+				   
+				   if(listPostUserIds.size()>0){
+//					   postUserService.deleteAllObjectByIds(listPostUserIds);
+					   info.setResult("岗位下有人不允许被删除");
+					   info.setSucess(false);
+					   info.setMsg("岗位下有人不允许被删除");
+				   }else{
+					   int result= postService.deletePseudoAllObjectByIds(list);
+					   info.setResult(JacksonUtils.toJson(result));
+					   info.setSucess(true);
+					   info.setMsg("删除对象成功!"); 
+				   }
+				}
+			} catch (Exception e) {
+			 log.error("删除对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getFlowPostData(String userInfo, String paramater) {
+		 DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+		
+//				File	cfgFile = ResourceUtils.getFile("classpath:post.json");
+//				String post=JacksonUtils.ReadFile(cfgFile);
+//				System.out.println(post);
+			    log.info ("getFlowPostData的请求paramater="+paramater);
+				Map<String,Object> map = JacksonUtils.fromJson(paramater, HashMap.class);
+				Map<String,Object> businesInfo=JacksonUtils.fromJson(map.get("flow_business_variable_data").toString(), HashMap.class);
+				List<AcDto> flowAcInfo=JacksonUtils.fromJson(map.get("flow_ac_data").toString(), List.class,AcDto.class);
+			   log.info ("getFlowPostData的请求paramater==flowAcInfo ="+JacksonUtils.toJson (flowAcInfo));
+				List<FlowAcPostDto> flowacPostInfo=postUserService.getFlowPostData(businesInfo, flowAcInfo);
+				info.setResult(JacksonUtils.toJson(flowacPostInfo));
+		   } catch (Exception e) {
+				 log.error("删除对象失败!"+e.getMessage());
+				 info.setSucess(false);
+				 info.setMsg("删除更新对象失败!");
+				 info.setExceptionMsg(e.getMessage());
+		   }
+		  return JacksonUtils.toJson(info);
+	}
+	
+	/**
+	 * 批量设置领导岗位
+	 */
+	@Override
+	public String updateBatchLeaderId(String userInfo, String paramater) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+			Map<String,Object> map = JacksonUtils.fromJson(paramater, HashMap.class);
+			if(!map.containsKey("list")||map.get("list")==null||StringUtils.isBlank(map.get("list").toString())){
+				throw new InvalidCustomException("参数不可为空");
+			}
+			Integer i = postService.updateBatchLeaderId(map);
+			info.setResult(JacksonUtils.toJson(i));
+			info.setSucess(true);
+			info.setMsg("获取列表对象成功!");
+		} catch (Exception e) {
+			log.error("获取列表对象失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取列表对象失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	
+	
+	
+
+}

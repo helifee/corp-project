@@ -1,0 +1,253 @@
+package com.xinleju.platform.flow.entity;
+
+import java.sql.Timestamp;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang.builder.ReflectionToStringBuilder;
+import org.apache.commons.lang.builder.ToStringStyle;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Table(value="PT_FLOW_SYS_NOTICE_MSG",desc="系统通知消息")
+public class SysNoticeMsg extends BaseEntity{
+		
+	@Column(value="code",desc="编号")
+	private String code;//编号
+	
+	@Column(value="title",desc="标题")
+	private String title;//标题
+	
+	@Column(value="login_name",desc="接收用户账号")
+	private String loginName;//接收用户账号
+
+	@Column(value="user_id",desc="接收用户id")
+	private String userId;//接收用户id
+
+	@Column(value="user_name",desc="接收用户名称")
+	private String userName;//接收用户名称
+
+	@Column(value="msg_type",desc="消息类型 true:审批类消息, false 通知类消息")
+	private Boolean msgType ;//消息类型 true:审批类消息, false 通知类消息
+
+	@Column(value="op_type",desc="消息操作类型, DB：待办 ，DY：待阅 ，YB 已办 , YY 已阅")
+	private String opType;//消息操作类型, DB：待办 ，DY：待阅 ，YB 已办 , YY 已阅
+
+	@Column(value="source",desc="消息来源类型, FQ")
+	private String source;//消息来源类型, FQ
+
+	@Column(value="app_code",desc="消息来源系统编号")
+	private String appCode;//消息来源系统编号
+	
+	@Column(value="business_id",desc="消息业务id")
+	private String businessId;//消息业务id
+
+	@Column(value="ip_address",desc="消息发送者IP地址")
+	private String ipAddress;//消息发送者IP地址
+
+	@Column(value="send_date",desc="消息发送时间")
+	private Timestamp sendDate;//消息发送时间
+
+	@Column(value="deal_date",desc="消息处理时间")
+	private Timestamp dealDate;//消息处理时间
+
+	@Column(value="extend_info",desc="消息扩展信息")
+	private String extendInfo;//消息扩展信息
+
+	@Column(value="url",desc="消息连接地址")
+	private String url;//消息连接地址
+	
+	@Column(value="mobible_url",desc="移动端的URL")
+	private String mobibleUrl;//移动端的URL
+	
+	@Column(value="mobible_param",desc="移动端的参数JSON串")
+	private String mobibleParam;//移动端的参数JSON串
+
+	@Column(value="is_open",desc="消息是否可以打开")
+	private Boolean isOpen;//消息是否可以打开, 1-(true):可以打开，0-(false):不可以打开  
+	
+	@Column(value="first_type",desc="一级分类")
+	private String firstType;//一级分类
+	@Column(value="second_type",desc="二级分类")
+	private String secondType;//二级分类
+	@Column(value="third_type",desc="三级分类")
+	private String thirdType;//三级分类
+	
+	@Column(value="manual_set",desc="是否用户手动设置 0.否  1.是")
+	private Integer manualSet;
+
+	@Column(value="operation_tip",desc="操作提示：用于记录协办等图标提示信息")
+	private String operationTip;
+	
+	@Column(value="if_bussniss_object_lock",desc="消息是否支持移动端打开")
+	private Boolean ifBussnissObjectLock;
+	
+	public Boolean getIfBussnissObjectLock() {
+		return ifBussnissObjectLock;
+	}
+	public void setIfBussnissObjectLock(Boolean ifBussnissObjectLock) {
+		this.ifBussnissObjectLock = ifBussnissObjectLock;
+	}
+	public String getOperationTip() {
+		return operationTip;
+	}
+	public void setOperationTip(String operationTip) {
+		this.operationTip = operationTip;
+	}
+	public Integer getManualSet() {
+		return manualSet;
+	}
+	public void setManualSet(Integer manualSet) {
+		this.manualSet = manualSet;
+	}
+	public String getCode() {
+		return code;
+	}
+	public void setCode(String code) {
+		this.code = code;
+	}
+	public String getTitle() {
+		return title;
+	}
+	public void setTitle(String title) {
+		if(StringUtils.isNotEmpty(title) && title.contains("'")
+				&& !title.contains("\\")) {
+			title = title.replaceAll("\'", "\\\\'");
+		}
+		this.title = title;
+	}
+	public String getLoginName() {
+		return loginName;
+	}
+	public void setLoginName(String loginName) {
+		
+		if(StringUtils.isNotEmpty(loginName) && loginName.contains("'")
+				&& !loginName.contains("\\")) {
+			loginName = loginName.replaceAll("\'", "\\\\'");
+		}
+		
+		this.loginName = loginName;
+	}
+	public String getUserId() {
+		return userId;
+	}
+	public void setUserId(String userId) {
+		this.userId = userId;
+	}
+	public String getUserName() {
+		return userName;
+	}
+	public void setUserName(String userName) {
+		this.userName = userName;
+	}
+	
+	public String getOpType() {
+		return opType;
+	}
+	public void setOpType(String opType) {
+		this.opType = opType;
+	}
+	public String getSource() {
+		return source;
+	}
+	public void setSource(String source) {
+		this.source = source;
+	}
+	public String getAppCode() {
+		return appCode;
+	}
+	public void setAppCode(String appCode) {
+		this.appCode = appCode;
+	}
+	public String getBusinessId() {
+		return businessId;
+	}
+	public void setBusinessId(String businessId) {
+		this.businessId = businessId;
+	}
+	public String getIpAddress() {
+		return ipAddress;
+	}
+	public void setIpAddress(String ipAddress) {
+		this.ipAddress = ipAddress;
+	}
+	public Timestamp getSendDate() {
+		return sendDate;
+	}
+	public void setSendDate(Timestamp sendDate) {
+		this.sendDate = sendDate;
+	}
+	public Timestamp getDealDate() {
+		return dealDate;
+	}
+	public void setDealDate(Timestamp dealDate) {
+		this.dealDate = dealDate;
+	}
+	public String getExtendInfo() {
+		return extendInfo;
+	}
+	public void setExtendInfo(String extendInfo) {
+		this.extendInfo = extendInfo;
+	}
+	public String getUrl() {
+		return url;
+	}
+	public void setUrl(String url) {
+		this.url = url;
+	}
+	public Boolean getIsOpen() {
+		return isOpen;
+	}
+	public void setIsOpen(Boolean isOpen) {
+		this.isOpen = isOpen;
+	}
+	public Boolean getMsgType() {
+		return msgType;
+	}
+	public void setMsgType(Boolean msgType) {
+		this.msgType = msgType;
+	}
+  		
+	@Override
+	public String toString() {
+		return ReflectionToStringBuilder.toString(this, ToStringStyle.MULTI_LINE_STYLE);
+	}
+	public String getMobibleUrl() {
+		return mobibleUrl;
+	}
+	public void setMobibleUrl(String mobibleUrl) {
+		this.mobibleUrl = mobibleUrl;
+	}
+	public String getMobibleParam() {
+		return mobibleParam;
+	}
+	public void setMobibleParam(String mobibleParam) {
+		this.mobibleParam = mobibleParam;
+	}
+	public String getFirstType() {
+		return firstType;
+	}
+	public void setFirstType(String firstType) {
+		this.firstType = firstType;
+	}
+	public String getSecondType() {
+		return secondType;
+	}
+	public void setSecondType(String secondType) {
+		this.secondType = secondType;
+	}
+	public String getThirdType() {
+		return thirdType;
+	}
+	public void setThirdType(String thirdType) {
+		this.thirdType = thirdType;
+	}
+}

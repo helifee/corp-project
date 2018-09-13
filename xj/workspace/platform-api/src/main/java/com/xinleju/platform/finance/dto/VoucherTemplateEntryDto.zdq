@@ -1,0 +1,182 @@
+package com.xinleju.platform.finance.dto;
+
+import com.xinleju.platform.base.dto.BaseDto;
+
+
+
+
+
+/**
+ * @author admin
+ * 
+ *
+ */
+public class VoucherTemplateEntryDto extends BaseDto{
+
+		
+	//摘要
+	private String summary;
+    
+  		
+	//贷方金额
+	private String crmnyexpr;
+    
+  		
+	//借方金额
+	private String drmnyexpr;
+    
+  		
+	//凭证模板id
+	private String voucherTemplateId;
+    
+  		
+	//备注
+	private String remark;
+    
+  		
+	//筛选条件
+	private String filter;
+    
+  		
+	//会计科目id
+	private String captionId;
+    
+  		
+	//会计科目名称
+	private String captionName;
+    
+  		
+	//辅助核算代码
+	private String assCode;
+    
+  		
+	//辅助核算名称
+	private String assName;
+    
+  		
+	//现金流量code
+	private String cashFlowCode;
+    
+  		
+	//现金流量名称
+	private String cashFlowName;
+    
+  		
+	//现金流量id
+	private String cashFlowId;
+    
+	//排序号
+	private Integer sort;
+
+	public String getSummary() {
+		return summary;
+	}
+	public void setSummary(String summary) {
+		this.summary = summary;
+	}
+    
+  		
+	public String getCrmnyexpr() {
+		return crmnyexpr;
+	}
+	public void setCrmnyexpr(String crmnyexpr) {
+		this.crmnyexpr = crmnyexpr;
+	}
+    
+  		
+	public String getDrmnyexpr() {
+		return drmnyexpr;
+	}
+	public void setDrmnyexpr(String drmnyexpr) {
+		this.drmnyexpr = drmnyexpr;
+	}
+    
+  		
+	public String getVoucherTemplateId() {
+		return voucherTemplateId;
+	}
+	public void setVoucherTemplateId(String voucherTemplateId) {
+		this.voucherTemplateId = voucherTemplateId;
+	}
+    
+  		
+	public String getRemark() {
+		return remark;
+	}
+	public void setRemark(String remark) {
+		this.remark = remark;
+	}
+    
+  		
+	public String getFilter() {
+		return filter;
+	}
+	public void setFilter(String filter) {
+		this.filter = filter;
+	}
+    
+  		
+	public String getCaptionId() {
+		return captionId;
+	}
+	public void setCaptionId(String captionId) {
+		this.captionId = captionId;
+	}
+    
+  		
+	public String getCaptionName() {
+		return captionName;
+	}
+	public void setCaptionName(String captionName) {
+		this.captionName = captionName;
+	}
+    
+  		
+	public String getAssCode() {
+		return assCode;
+	}
+	public void setAssCode(String assCode) {
+		this.assCode = assCode;
+	}
+    
+  		
+	public String getAssName() {
+		return assName;
+	}
+	public void setAssName(String assName) {
+		this.assName = assName;
+	}
+    
+  		
+	public String getCashFlowCode() {
+		return cashFlowCode;
+	}
+	public void setCashFlowCode(String cashFlowCode) {
+		this.cashFlowCode = cashFlowCode;
+	}
+    
+  		
+	public String getCashFlowName() {
+		return cashFlowName;
+	}
+	public void setCashFlowName(String cashFlowName) {
+		this.cashFlowName = cashFlowName;
+	}
+    
+  		
+	public String getCashFlowId() {
+		return cashFlowId;
+	}
+	public void setCashFlowId(String cashFlowId) {
+		this.cashFlowId = cashFlowId;
+	}
+	
+	public Integer getSort() {
+		return sort;
+	}
+	public void setSort(Integer sort) {
+		this.sort = sort;
+	}
+    
+  		
+}

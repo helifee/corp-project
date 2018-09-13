@@ -1,0 +1,93 @@
+package com.xinleju.platform.flow.utils;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.log4j.Logger;
+
+import com.googlecode.aviator.AviatorEvaluator;
+import com.googlecode.aviator.exception.ExpressionSyntaxErrorException;
+import com.xinleju.platform.flow.exception.FlowException;
+import com.xinleju.platform.flow.service.ExpressionTranslator;
+import com.xinleju.platform.flow.service.impl.GeneralExpressionTranslator;
+
+/**
+ * 表达式工具类
+ * 
+ * @author daoqi
+ *
+ */
+public class ExpressionUtils {
+	
+	private static Logger log = Logger.getLogger(ExpressionUtils.class);
+
+	/**
+	 * 表达式正确性检查
+	 * 
+	 * @param expression
+	 * @return
+	 * @throws FlowException
+	 */
+	public static boolean validate(String expression) {
+		
+		ExpressionTranslator translator = new GeneralExpressionTranslator();
+		String innerExpression = translator.translate(expression);
+		
+		try {
+			AviatorEvaluator.compile(innerExpression);
+			log.info("表达式校验成功：" + expression);
+			return true;
+			
+		} catch(ExpressionSyntaxErrorException e) {
+			log.error("表达式校验失败：" + expression, e);
+			return false;
+		} catch(Exception e) {
+			log.error("表达式校验异常！", e);
+			throw new FlowException(e);
+		}
+		
+	}
+	
+	/**
+	 * 条件表达式执行
+	 * 
+	 * @param expression
+	 * @param env
+	 * @return
+	 * @throws FlowException 
+	 */
+	public static boolean evaluate(String expression, Map<String, Object> env) {
+		boolean success = true;
+		if (StringUtils.isNotBlank(expression) && env != null) {
+			ExpressionTranslator translator = new GeneralExpressionTranslator();
+			String innerExpression = translator.translate(expression, env);
+			try {
+				success = (boolean) AviatorEvaluator.execute(innerExpression, env, true);
+				translator.clearTempKeys(env);
+//				log.info("表达式执行：innerExpression=" + innerExpression + ", env=" + env);
+			} catch(Exception e) {
+				log.error("表达式执行错误：innerExpression=" + innerExpression + "env=" + env + e.getMessage());
+				throw new FlowException("表达式执行错误！", e);
+			}
+		}
+		return success;
+	}
+	
+
+	public static void main(String[] args) {
+		String expression = "([amount]=90) and ([type] in a,b,c) and ([location] not in d,e,f) and ([name] like 'zhang')";
+		Map<String, Object> env = new HashMap<String, Object>();
+		env.put("amount", 90);
+		env.put("type", "a");
+		env.put("location", "a");
+		env.put("name", "zhangdaoqiang");
+		
+//		boolean success = ExpressionUtils.evaluate("([公司]='巨洲云') and (金额>9000) or (过期标志=true)", env);
+		boolean success = ExpressionUtils.evaluate(expression, env);
+		System.out.println(success);
+	}
+
+}

@@ -1,0 +1,20 @@
+package com.xinleju.platform.flow.dto.utils;
+
+import java.io.Serializable;
+
+/**
+ * <p></p>
+ * <p></p>
+ * @author   Administrator
+ * @version  $Id: IResultBean.java 837 2014-07-03 09:53:17Z sunchaohui $
+ * @since
+ * @see
+ */
+public interface IResultBean extends Serializable{
+
+    /**
+     * 序列化ID
+     */
+    static final long serialVersionUID = 2964327109375266366L;
+    
+}

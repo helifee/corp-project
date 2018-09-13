@@ -1,0 +1,43 @@
+package com.xinleju.platform.finance.dao.impl;
+
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.platform.base.dao.impl.BaseDaoImpl;
+import com.xinleju.platform.finance.dao.VoucherFormSettingDao;
+import com.xinleju.platform.finance.entity.VoucherFormSetting;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Repository
+public class VoucherFormSettingDaoImpl extends BaseDaoImpl<String,VoucherFormSetting> implements VoucherFormSettingDao{
+
+	public VoucherFormSettingDaoImpl() {
+		super();
+	}
+
+	/**
+	 * @param map
+	 * @return
+	 */
+	@Override
+	public List<VoucherFormSetting> getFormSettingList(Map map){
+		return getSqlSession().selectList("com.xinleju.platform.finance.entity.VoucherFormSetting.getFormSettingList", map);
+	}
+
+	/**
+	 * @param map
+	 * @return
+	 */
+	@Override
+	public  Integer getFormSettingListCount(Map map){
+		return getSqlSession().selectOne("com.xinleju.platform.finance.entity.VoucherFormSetting.getFormSettingListCount", map);
+	}
+	
+}

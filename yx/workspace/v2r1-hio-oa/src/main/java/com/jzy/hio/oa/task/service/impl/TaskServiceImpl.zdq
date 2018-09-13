@@ -1,0 +1,3577 @@
+package com.jzy.hio.oa.task.service.impl;
+
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.commons.lang.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import tk.mybatis.mapper.entity.Example;
+import tk.mybatis.mapper.entity.Example.Criteria;
+
+import com.alibaba.fastjson.JSONObject;
+import com.github.pagehelper.PageHelper;
+import com.github.pagehelper.PageInfo;
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.annotation.DataSource;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.RedisKeyConstant;
+import com.jzy.hio.base.anno.TargetIM;
+import com.jzy.hio.cloud.core.CoreHeaderInterceptor;
+import com.jzy.hio.entity.Calendar;
+import com.jzy.hio.entity.ProjectTeamPerson;
+import com.jzy.hio.entity.Task;
+import com.jzy.hio.entity.TaskFollow;
+import com.jzy.hio.entity.TaskParticipants;
+import com.jzy.hio.entity.TaskRemind;
+import com.jzy.hio.entity.TaskShared;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.feign.SysExtrenalFeignService;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.oa.OaConstant;
+import com.jzy.hio.oa.OaEunm;
+import com.jzy.hio.oa.project.dto.ProjectInfoDto;
+import com.jzy.hio.oa.project.dto.ProjectTeamQueryParamDto;
+import com.jzy.hio.oa.project.dto.ProjectTrendsDto;
+import com.jzy.hio.oa.project.service.ProjectInfoService;
+import com.jzy.hio.oa.project.service.ProjectStageService;
+import com.jzy.hio.oa.project.service.ProjectTeamPersonService;
+import com.jzy.hio.oa.project.service.ProjectTrendsService;
+import com.jzy.hio.oa.schedule.mapper.CalendarMapper;
+import com.jzy.hio.oa.task.dto.QueryProjectTaskDto;
+import com.jzy.hio.oa.task.dto.QueryTaskAuthDto;
+import com.jzy.hio.oa.task.dto.QueryTaskDetailsDto;
+import com.jzy.hio.oa.task.dto.QueryTaskListDto;
+import com.jzy.hio.oa.task.dto.TaskParticipantsDto;
+import com.jzy.hio.oa.task.dto.TaskParticipantsSharedListDto;
+import com.jzy.hio.oa.task.dto.TaskSharedDto;
+import com.jzy.hio.oa.task.dto.TaskSharedListDto;
+import com.jzy.hio.oa.task.mapper.QueryProjectTaskListMapper;
+import com.jzy.hio.oa.task.mapper.QueryScheduleMyTaskListMapper;
+import com.jzy.hio.oa.task.mapper.TaskFollowMapper;
+import com.jzy.hio.oa.task.mapper.TaskMapper;
+import com.jzy.hio.oa.task.mapper.TaskParticipantsMapper;
+import com.jzy.hio.oa.task.mapper.TaskRemindMapper;
+import com.jzy.hio.oa.task.mapper.TaskSharedMapper;
+import com.jzy.hio.oa.task.param.CancelFollowParam;
+import com.jzy.hio.oa.task.param.DeleteTaskParam;
+import com.jzy.hio.oa.task.param.FollowTaskParam;
+import com.jzy.hio.oa.task.param.QueryProjectTaskParam;
+import com.jzy.hio.oa.task.param.QueryTaskAuthParam;
+import com.jzy.hio.oa.task.param.QueryTaskDetailsParam;
+import com.jzy.hio.oa.task.param.QueryTaskListParam;
+import com.jzy.hio.oa.task.param.SaveTaskParam;
+import com.jzy.hio.oa.task.param.UpdateParam;
+import com.jzy.hio.oa.task.param.UpdateStatusParam;
+import com.jzy.hio.oa.task.service.TaskService;
+import com.jzy.hio.platform.dto.tenantcompanyinfo.TenantCompanyInfoDto;
+import com.jzy.hio.platform.message.MessageFeignService;
+import com.jzy.hio.platform.message.param.IMToUserParam;
+import com.jzy.hio.platform.message.param.ImNoticeMsgSendParam;
+import com.jzy.hio.platform.message.param.ImNoticeMsgsParam;
+import com.jzy.hio.platform.message.param.MessageEnum;
+import com.jzy.hio.platform.message.param.MsgTypeEnum;
+import com.jzy.hio.platform.redis.PlatformRedis;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.sys.external.dto.ExternalContactDto;
+import com.jzy.hio.sys.external.param.ExternalContactRelationParam;
+import com.jzy.hio.sys.organization.dto.OrganizationDto;
+import com.jzy.hio.sys.redis.SysRedis;
+import com.jzy.hio.sys.user.dto.OAUserDto;
+import com.jzy.hio.sys.user.param.OAUserParam;
+import com.jzy.hio.sys.user.param.UserStatusParam;
+import com.jzy.hio.utils.DateUtil;
+import com.jzy.hio.utils.IDGenerator;
+import com.jzy.hio.utils.LoginUser;
+import com.jzy.hio.utils.OaUserUtil;
+import com.jzy.hio.utils.Page;
+
+/**
+ * 任务
+ * 
+ * @author wdy
+ * @date 2018年4月14日
+ */
+@Service
+public class TaskServiceImpl implements TaskService {
+
+	private static Logger logger = LoggerFactory.getLogger(TaskServiceImpl.class);
+
+	@Autowired
+	private TaskMapper taskMapper;// 任务表
+	@Autowired
+	private TaskParticipantsMapper taskParticipantsMapper;// 参与人表
+	@Autowired
+	private TaskFollowMapper taskFollowMapper;// 任务关注表
+	@Autowired
+	private TaskSharedMapper taskSharedMapper;// 共享人表
+	@Autowired
+	private TaskRemindMapper taskRemindMapper;// 任务提醒表
+	@Autowired
+	private QueryScheduleMyTaskListMapper queryScheduleMyTaskListMapper;// 查询共享人
+	@Autowired
+	private MessageFeignService messageFeignService;// 发送cc消息服务
+	@Autowired
+	private ProjectInfoService projectInfoService;// 项目service
+	@Autowired
+	private ProjectStageService projectStageService;// 项目阶段service
+
+	@Value("${oa_task_message.save}")
+	private String task_message_save;// 任务创建发送cc消息内容
+
+	@Value("${oa_task_message.updateStatus}")
+	private String task_message_updateStatus;// 任务变更发送cc消息内容
+
+	@Value("${oa_task_message.update}")
+	private String task_message_update;// 任务修改发送cc消息内容
+
+	@Value("${oa_task_details_url}")
+	private String task_details_url;// 任务详情controller url
+
+	@Autowired
+	private ProjectTrendsService projectTrendsService;// 项目
+
+	@Autowired
+	private SysFeignService sysFeignService;// feign接口
+
+	@Autowired
+	private OaUserUtil oaUserUtil;// oa fengin工具类
+
+	@Autowired
+	private QueryProjectTaskListMapper queryProjectTaskListMapper;// 查询项目中任务列表
+
+	@Autowired
+	private CalendarMapper calendarMapper;// 日历表
+
+	@Autowired
+	private ProjectTeamPersonService projectTeamPersonService;// 项目团队service
+
+	@Autowired
+	private SysExtrenalFeignService sysExtrenalFeignService;// sys外部联系人
+
+	@Autowired
+	private PlatformRedis platformRedis;// 取租户id
+
+	@Autowired
+	private SysRedis sysRedis;// sys redis
+
+	/**
+	 * 查询任务id
+	 */
+	@Override
+	public String queryTaskId() {
+		String taskId = IDGenerator.getUUID();
+		return taskId;
+	}
+
+	/**
+	 * 查询任务列表
+	 * 
+	 * @author wdy
+	 *
+	 */
+	@Override
+	public Page queryTaskList(QueryTaskListParam queryTaskListParam, LoginUser loginUser) {
+
+		Page resultPage = null;
+		Integer pageNum = queryTaskListParam.getPageNum();
+		Integer pageCount = queryTaskListParam.getPageCount();
+		//获取登录人当前部门
+		Set<String> getOrgIds = new HashSet<String>();
+		getOrgIds = oaUserUtil.findAllOrgIdsToSet(loginUser.getTendId(),loginUser.getUserId());
+
+		if (OaConstant.OPERATION_TYPE0.equals(queryTaskListParam.getType())) {// 我创建的
+
+			List<QueryTaskListDto> listResult = new ArrayList<QueryTaskListDto>();
+
+			queryTaskListParam.setCreatePersonId(loginUser.getUserId());
+			Integer count = taskMapper.queryCountTaskList(queryTaskListParam);
+
+			Integer start = pageNum.intValue() == 0 ? 1 : pageNum;
+			start = (start - 1) * pageCount.intValue();
+			queryTaskListParam.setPageNum(start);
+			queryTaskListParam.setPageCount(pageCount.intValue());
+
+			if (count.intValue() > 0) {
+				List<String> orderby = queryTaskListParam.getOrderby();
+				if (orderby != null) {
+					StringBuilder sql = new StringBuilder();
+					for (String key : orderby) {
+						if (sql.length() == 0) {
+							sql.append(" order by " + key.split(",")[0] + " " + key.split(",")[1]);
+						} else {
+							sql.append(" , " + key.split(",")[0] + " " + key.split(",")[1]);
+						}
+					}
+					queryTaskListParam.setDynamicSql(sql.toString());
+				}
+			}
+
+			List<QueryTaskListDto> list = taskMapper.queryTaskList(queryTaskListParam);
+
+			for (QueryTaskListDto queryTaskListDto : list) {
+
+				String taskLiableId = queryTaskListDto.getTaskLiableId();
+				String taskLiableName = oaUserUtil.selectUserName(taskLiableId);
+				queryTaskListDto.setTaskLiableName(taskLiableName);
+
+				// 任务中的任务管理员可以操作，项目中的任务管理员不能操作
+				if (StringUtils.isBlank(queryTaskListDto.getProjectId())) {
+					queryTaskListDto.setIsUpdate(true);
+				} else {
+					queryTaskListDto.setIsUpdate(false);
+				}
+
+				// 查询任务是否关注
+				QueryTaskListParam queryTaskListParam1 = new QueryTaskListParam();
+				queryTaskListParam1.setUserId(loginUser.getUserId());
+				queryTaskListParam1.setTaskId(queryTaskListDto.getTaskId());
+
+				List<QueryTaskListDto> followList = taskFollowMapper.queryTaskFollowList(queryTaskListParam1);
+				if (followList.size() > 0) {
+					queryTaskListDto.setIsfollow(true);
+				} else {
+					queryTaskListDto.setIsfollow(false);
+				}
+
+				listResult.add(queryTaskListDto);
+			}
+
+			resultPage = getPage(queryTaskListParam, count, listResult, pageNum);
+
+		} else if (OaConstant.OPERATION_TYPE1.equals(queryTaskListParam.getType())) {// 我负责的
+
+			List<QueryTaskListDto> listResult = new ArrayList<QueryTaskListDto>();
+
+			queryTaskListParam.setTaskLiableId(loginUser.getUserId());
+			Integer count = taskMapper.queryCountTaskList(queryTaskListParam);
+
+			Integer start = pageNum.intValue() == 0 ? 1 : pageNum;
+			start = (start - 1) * pageCount.intValue();
+			queryTaskListParam.setPageNum(start);
+			queryTaskListParam.setPageCount(pageCount.intValue());
+
+			if (count.intValue() > 0) {
+				List<String> orderby = queryTaskListParam.getOrderby();
+				if (orderby != null) {
+					StringBuilder sql = new StringBuilder();
+					for (String key : orderby) {
+						if (sql.length() == 0) {
+							sql.append(" order by " + key.split(",")[0] + " " + key.split(",")[1]);
+						} else {
+							sql.append(" , " + key.split(",")[0] + " " + key.split(",")[1]);
+						}
+					}
+					queryTaskListParam.setDynamicSql(sql.toString());
+				}
+			}
+
+			List<QueryTaskListDto> list = taskMapper.queryTaskList(queryTaskListParam);
+
+			for (QueryTaskListDto queryTaskListDto : list) {
+
+				String taskLiableId = queryTaskListDto.getTaskLiableId();
+				String taskLiableName = oaUserUtil.selectUserName(taskLiableId);
+				queryTaskListDto.setTaskLiableName(taskLiableName);
+
+				// 任务中的任务管理员可以操作，项目中的任务管理员不能操作
+				if (StringUtils.isBlank(queryTaskListDto.getProjectId())) {
+					queryTaskListDto.setIsUpdate(true);
+				} else {
+					queryTaskListDto.setIsUpdate(false);
+				}
+
+				// 查询任务是否关注
+				QueryTaskListParam queryTaskListParam1 = new QueryTaskListParam();
+				queryTaskListParam1.setUserId(loginUser.getUserId());
+				queryTaskListParam1.setTaskId(queryTaskListDto.getTaskId());
+
+				List<QueryTaskListDto> followList = taskFollowMapper.queryTaskFollowList(queryTaskListParam1);
+				if (followList.size() > 0) {
+					queryTaskListDto.setIsfollow(true);
+				} else {
+					queryTaskListDto.setIsfollow(false);
+				}
+
+				listResult.add(queryTaskListDto);
+			}
+
+			resultPage = getPage(queryTaskListParam, count, listResult, pageNum);
+
+		} else if (OaConstant.OPERATION_TYPE2.equals(queryTaskListParam.getType())) {// 我参与的
+
+			List<QueryTaskListDto> listResult = new ArrayList<QueryTaskListDto>();
+
+			queryTaskListParam.setUserId(loginUser.getUserId());
+			Integer count = taskParticipantsMapper.queryCountTaskParticipantsList(queryTaskListParam);
+
+			Integer start = pageNum.intValue() == 0 ? 1 : pageNum;
+			start = (start - 1) * pageCount.intValue();
+			queryTaskListParam.setPageNum(start);
+			queryTaskListParam.setPageCount(pageCount.intValue());
+
+			if (count.intValue() > 0) {
+				List<String> orderby = queryTaskListParam.getOrderby();
+				if (orderby != null) {
+					StringBuilder sql = new StringBuilder();
+					for (String key : orderby) {
+						if (sql.length() == 0) {
+							sql.append(" order by " + key.split(",")[0] + " " + key.split(",")[1]);
+						} else {
+							sql.append(" , " + key.split(",")[0] + " " + key.split(",")[1]);
+						}
+					}
+					queryTaskListParam.setDynamicSql(sql.toString());
+				}
+			}
+
+			List<QueryTaskListDto> list = taskParticipantsMapper.queryTaskParticipantsList(queryTaskListParam);
+
+			for (QueryTaskListDto queryTaskListDto : list) {
+
+				String taskLiableId = queryTaskListDto.getTaskLiableId();
+				String taskLiableName = oaUserUtil.selectUserName(taskLiableId);
+				queryTaskListDto.setTaskLiableName(taskLiableName);
+
+				// 任务中的任务管理员可以操作，项目中的任务管理员不能操作
+				if (StringUtils.isBlank(queryTaskListDto.getProjectId())) {
+					queryTaskListDto.setIsUpdate(true);
+				} else {
+					queryTaskListDto.setIsUpdate(false);
+				}
+
+				// 查询任务是否关注
+				QueryTaskListParam queryTaskListParam1 = new QueryTaskListParam();
+				queryTaskListParam1.setUserId(loginUser.getUserId());
+				queryTaskListParam1.setTaskId(queryTaskListDto.getTaskId());
+
+				List<QueryTaskListDto> followList = taskFollowMapper.queryTaskFollowList(queryTaskListParam1);
+				if (followList.size() > 0) {
+					queryTaskListDto.setIsfollow(true);
+				} else {
+					queryTaskListDto.setIsfollow(false);
+				}
+
+				listResult.add(queryTaskListDto);
+			}
+
+			resultPage = getPage(queryTaskListParam, count, listResult, pageNum);
+
+		} else if (OaConstant.OPERATION_TYPE3.equals(queryTaskListParam.getType())) {// 我关注的
+
+			List<QueryTaskListDto> listResult = new ArrayList<QueryTaskListDto>();
+
+			queryTaskListParam.setUserId(loginUser.getUserId());
+			queryTaskListParam.setRoleList(loginUser.getRoleIds());
+			queryTaskListParam.setDepartmentList(getOrgIds);
+			Integer count = taskFollowMapper.queryCountTaskFollowList(queryTaskListParam);
+
+			Integer start = pageNum.intValue() == 0 ? 1 : pageNum;
+			start = (start - 1) * pageCount.intValue();
+			queryTaskListParam.setPageNum(start);
+			queryTaskListParam.setPageCount(pageCount.intValue());
+
+			if (count.intValue() > 0) {
+				List<String> orderby = queryTaskListParam.getOrderby();
+				if (orderby != null) {
+					StringBuilder sql = new StringBuilder();
+					for (String key : orderby) {
+						if (sql.length() == 0) {
+							sql.append(" order by " + key.split(",")[0] + " " + key.split(",")[1]);
+						} else {
+							sql.append(" , " + key.split(",")[0] + " " + key.split(",")[1]);
+						}
+					}
+					queryTaskListParam.setDynamicSql(sql.toString());
+				}
+			}
+
+			List<QueryTaskListDto> list = taskFollowMapper.queryTaskFollowList(queryTaskListParam);
+
+			for (QueryTaskListDto queryTaskListDto : list) {
+
+				String taskLiableId = queryTaskListDto.getTaskLiableId();
+				String taskLiableName = oaUserUtil.selectUserName(taskLiableId);
+				queryTaskListDto.setTaskLiableName(taskLiableName);
+
+				// 任务中的任务管理员可以操作，项目中的任务管理员不能操作
+				if (StringUtils.isBlank(queryTaskListDto.getProjectId())) {
+					queryTaskListDto.setIsUpdate(true);
+				} else {
+					queryTaskListDto.setIsUpdate(false);
+				}
+
+				listResult.add(queryTaskListDto);
+			}
+
+			resultPage = getPage(queryTaskListParam, count, listResult, pageNum);
+
+		} else if (OaConstant.OPERATION_TYPE4.equals(queryTaskListParam.getType())) {// 共享给我的
+
+			List<QueryTaskListDto> listResult = new ArrayList<QueryTaskListDto>();
+
+			queryTaskListParam.setUserId(loginUser.getUserId());
+			queryTaskListParam.setRoleList(loginUser.getRoleIds());
+			queryTaskListParam.setDepartmentList(getOrgIds);
+			Integer count = queryScheduleMyTaskListMapper.queryCountScheduleMyTaskList(queryTaskListParam);
+
+			Integer start = pageNum.intValue() == 0 ? 1 : pageNum;
+			start = (start - 1) * pageCount.intValue();
+			queryTaskListParam.setPageNum(start);
+			queryTaskListParam.setPageCount(pageCount.intValue());
+
+			if (count.intValue() > 0) {
+				List<String> orderby = queryTaskListParam.getOrderby();
+				if (orderby != null) {
+					StringBuilder sql = new StringBuilder();
+					for (String key : orderby) {
+						if (sql.length() == 0) {
+							sql.append(" order by " + key.split(",")[0] + " " + key.split(",")[1]);
+						} else {
+							sql.append(" , " + key.split(",")[0] + " " + key.split(",")[1]);
+						}
+					}
+					queryTaskListParam.setDynamicSql(sql.toString());
+				}
+			}
+
+			List<QueryTaskListDto> list = queryScheduleMyTaskListMapper.queryScheduleMyTaskList(queryTaskListParam);
+
+			for (QueryTaskListDto queryTaskListDto : list) {
+
+				String taskLiableId = queryTaskListDto.getTaskLiableId();
+				String taskLiableName = oaUserUtil.selectUserName(taskLiableId);
+				queryTaskListDto.setTaskLiableName(taskLiableName);
+
+				// 任务中的任务管理员可以操作，项目中的任务管理员不能操作
+				if (StringUtils.isBlank(queryTaskListDto.getProjectId())) {
+					queryTaskListDto.setIsUpdate(true);
+				} else {
+					queryTaskListDto.setIsUpdate(false);
+				}
+
+				// 查询任务是否关注
+				QueryTaskListParam queryTaskListParam1 = new QueryTaskListParam();
+				queryTaskListParam1.setUserId(loginUser.getUserId());
+				queryTaskListParam1.setTaskId(queryTaskListDto.getTaskId());
+				List<QueryTaskListDto> followList = taskFollowMapper.queryTaskFollowList(queryTaskListParam1);
+				if (followList.size() > 0) {
+					queryTaskListDto.setIsfollow(true);
+				} else {
+					queryTaskListDto.setIsfollow(false);
+				}
+
+				listResult.add(queryTaskListDto);
+			}
+
+			resultPage = getPage(queryTaskListParam, count, listResult, pageNum);
+
+		} else {
+			logger.info("请输入正确的操作标识");
+		}
+
+		return resultPage;
+	}
+
+	/**
+	 * 任务状态变更
+	 */
+	@Override
+	public int updateStatus(UpdateStatusParam updateStatusParam, LoginUser loginUser) {
+
+		Map<String, Object> map = new HashMap<String, Object>();// 发送消息内容map
+
+		String createPersonId = loginUser.getUserId();
+		String createPersonName = oaUserUtil.selectUserName(createPersonId);
+
+		// 查询任务原始状态
+		String taskStatus = "";
+		String projectId = "";
+		String taskId = "";
+		String taskName = "";
+		Date date = null;
+		Date endDate = null;
+
+		Task taskOriginal = new Task();
+		taskOriginal.setTaskId(updateStatusParam.getTaskId());
+		Task taskOriginalResult = taskMapper.queryTaskId(taskOriginal);
+		if (taskOriginalResult != null) {
+			taskStatus = taskOriginalResult.getTaskStatus();
+			projectId = taskOriginalResult.getProjectId();
+			taskId = taskOriginalResult.getTaskId();
+			taskName = taskOriginalResult.getTaskName();
+			date = DateUtil.getDateToFormatStr(DateUtil.dateToDateString(new Date(), DateUtil.DATE_DEFAULT_FORMAT), DateUtil.DATAFORMAT_STR);
+			endDate = DateUtil.getDateToFormatStr(DateUtil.dateToDateString(taskOriginalResult.getEndDate(), DateUtil.DATE_DEFAULT_FORMAT), DateUtil.DATAFORMAT_STR);
+		}
+
+		Task task = new Task();
+		task.setTaskId(updateStatusParam.getTaskId());
+
+		if (OaConstant.TASK_STATUS1.equals(updateStatusParam.getType())) {// 任务完成
+
+			task.setTaskStatus(OaConstant.TASK_STATUS1);
+
+		} else if (OaConstant.TASK_STATUS2.equals(updateStatusParam.getType())) {// 任务关闭
+
+			task.setTaskStatus(OaConstant.TASK_STATUS2);
+
+		} else if (OaConstant.TASK_STATUS4.equals(updateStatusParam.getType())) {// 任务激活
+
+			// 比较到期日和当前日期，如果已经到期，设置为超期，否则设置为未完成
+			if (endDate.compareTo(date) < 0) {
+				task.setTaskStatus(OaConstant.TASK_STATUS3);
+			} else {
+				task.setTaskStatus(OaConstant.TASK_STATUS0);
+			}
+		} else if (OaConstant.TASK_STATUS5.equals(updateStatusParam.getType())) {// 任务未完成
+
+			if (endDate.compareTo(date) < 0) {
+				task.setTaskStatus(OaConstant.TASK_STATUS3);
+			} else {
+				task.setTaskStatus(OaConstant.TASK_STATUS0);
+			}
+		} else {
+			logger.info(">>>>>>请传入正确的操作类型>>>>>>{}", updateStatusParam.getType());
+			return 0;
+		}
+
+		taskMapper.updateStatus(task);
+
+		if (!StringUtils.isBlank(projectId)) {
+			logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>开始调用项目模块,新增项目动态>>>>>>>>>>>>>>{}>>>>>>>>>>>>>>>>>", taskId);
+			ProjectTrendsDto projectTrendsDto = new ProjectTrendsDto();
+			String trendContent = taskName + "任务状态由" + getStatusName(taskStatus) + "变更为" + getStatusName(task.getTaskStatus());
+			projectTrendsDto.setProjectId(projectId);
+			projectTrendsDto.setCreatePersonId(createPersonId);
+			projectTrendsDto.setCreatePersonName(createPersonName);
+			projectTrendsDto.setTrendContent(trendContent);
+			projectTrendsDto.setTrendPersonName(createPersonName);
+			projectTrendsDto.setTrendPersonId(createPersonId);
+
+			try {
+				projectTrendsService.saveProjectTrends(projectTrendsDto);
+			} catch (Exception e) {
+				logger.error(">>>>调用项目模块,新增项目动态失败>>>>" + e);
+				e.printStackTrace();
+			}
+			logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>结束调用项目模块,新增项目动态>>>>>>>>>>>>>>{}>>>>>>>>>>>>>>>>>", taskId);
+		}
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>开始发送cc消息>>>>>>>>>>>>>>{}>>>>>>>>>>>>>>>>>", updateStatusParam.getTaskId());
+
+		// 组装消息发送内容
+		map.put("moduleType", MessageEnum.TASK.getValue() + "_3");
+		map.put("message", taskName + "由" + getStatusName(taskStatus) + "变更为" + getStatusName(task.getTaskStatus()));
+		map.put("updatePersonName", createPersonName);
+		map.put("updateDate", DateUtil.dateToDateString(new Date(), DateUtil.DATE_DEFAULT_FORMAT));
+
+		sendMessage(updateStatusParam.getTaskId(), task_message_updateStatus, loginUser, true, true, true, true, updateStatusParam.getImUserId(), map);
+		logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>结束发送cc消息>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+
+		return 1;
+	}
+
+	/**
+	 * 任务删除
+	 */
+	@Override
+	public int delete(DeleteTaskParam deleteTaskParam, LoginUser loginUser) {
+
+		Map<String, Object> map = new HashMap<String, Object>();// 发送消息内容map
+
+		String createPersonId = loginUser.getUserId();
+		String createPersonName = oaUserUtil.selectUserName(createPersonId);
+
+		String projectId = "";
+		String taskName = "";
+		String taskId = "";
+
+		// 查询任务表，获取项目id
+		Task task2 = new Task();
+		task2.setTaskId(deleteTaskParam.getTaskId());
+		Task taskResult1 = taskMapper.queryTaskId(task2);
+
+		if (taskResult1 != null) {
+			projectId = taskResult1.getProjectId();
+			taskName = taskResult1.getTaskName();
+			taskId = taskResult1.getTaskId();
+
+		}
+
+		Set<String> sendMessageList = new HashSet<String>();// 非外部联系人人员集合
+		Set<String> sendMessageOutList = new HashSet<String>();// 外部联系人人员集合
+
+		TaskShared TaskShared = new TaskShared();
+		List<String> roleIds = new ArrayList<String>();
+		List<String> organizationIds = new ArrayList<String>();
+
+		// 发送创建人
+		String createPersonSengMessageId = oaUserUtil.queryImUserIdByOaUserId(taskResult1.getCreatePersonId(), loginUser.getTendId());
+		if (StringUtils.isNotBlank(createPersonSengMessageId)) {
+			sendMessageList.add(createPersonSengMessageId);// 创建人
+		}
+
+		// 发送负责人
+		String taskLiableSengMessageId = oaUserUtil.queryImUserIdByOaUserId(taskResult1.getTaskLiableId(), loginUser.getTendId());
+		if (StringUtils.isNotBlank(taskLiableSengMessageId)) {
+			sendMessageList.add(taskLiableSengMessageId);// 负责人
+		}
+
+		// 发送参与人
+		TaskParticipants taskParticipants1 = new TaskParticipants();
+		taskParticipants1.setTaskId(taskId);
+		taskParticipants1.setType(OaConstant.SHAREDSHOW_TYPE0);
+		List<TaskParticipants> personList2 = taskParticipantsMapper.queryList(taskParticipants1);
+		for (TaskParticipants taskParticipants2 : personList2) {
+
+			if (StringUtils.isNotBlank(taskParticipants2.getSharedshowImid())) {
+				if (OaConstant.OUTTYPE0.equals(taskParticipants2.getOutType())) {
+
+					sendMessageList.add(taskParticipants2.getSharedshowImid());
+
+				} else if (OaConstant.OUTTYPE1.equals(taskParticipants2.getOutType())) {
+
+					sendMessageOutList.add(taskParticipants2.getSharedshowImid());
+
+				} else {
+					logger.info(">>>>OUTTYPE为空>>>>");
+				}
+
+			}
+
+		}
+
+		// 发送共享人
+		// 查询共享人员表人员id列表
+		TaskShared.setTaskId(taskId);
+		TaskShared.setType(OaConstant.SHAREDSHOW_TYPE0);
+		List<TaskShared> personList = taskSharedMapper.queryTaskSharedList(TaskShared);
+		for (TaskShared taskShared2 : personList) {
+			if (StringUtils.isNotBlank(taskShared2.getSharedshowImid())) {
+
+				if (OaConstant.OUTTYPE0.equals(taskShared2.getOutType())) {
+
+					sendMessageList.add(taskShared2.getSharedshowImid());
+
+				} else if (OaConstant.OUTTYPE1.equals(taskShared2.getOutType())) {
+
+					sendMessageOutList.add(taskShared2.getSharedshowImid());
+
+				} else {
+					logger.info(">>>>OUTTYPE为空>>>>");
+				}
+
+			}
+
+		}
+
+		// 查询共享人员表角色id列表，调用sys查询角色id对应的人员
+		TaskShared TaskShared1 = new TaskShared();
+		TaskShared1.setTaskId(taskId);
+		TaskShared1.setType(OaConstant.SHAREDSHOW_TYPE1);
+		List<TaskShared> roleList = taskSharedMapper.queryTaskSharedList(TaskShared1);
+		for (TaskShared taskShared2 : roleList) {
+			String roleId = taskShared2.getSharedshowId();
+			if (StringUtils.isNotBlank(roleId)) {
+				roleIds.add(roleId);
+			}
+
+		}
+
+		// 查询共享人员表部门id列表，调用sys查询部门id对应的人员
+		TaskShared TaskShared2 = new TaskShared();
+		TaskShared2.setTaskId(taskId);
+		TaskShared2.setType(OaConstant.SHAREDSHOW_TYPE2);
+		List<TaskShared> departmentList = taskSharedMapper.queryTaskSharedList(TaskShared2);
+		for (TaskShared taskShared3 : departmentList) {
+			String departmentId = taskShared3.getSharedshowId();
+			if (StringUtils.isNotBlank(departmentId)) {
+				organizationIds.add(departmentId);
+			}
+
+		}
+
+		// 组装调用sys接口数据
+		OAUserParam oAUserParam = new OAUserParam();
+		// oAUserParam.setUserIds(personIds);
+		oAUserParam.setRoleIds(roleIds);
+		oAUserParam.setOrganizationIds(organizationIds);
+		oAUserParam.setTendId(loginUser.getTendId());
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>>>>>开始调用sys服务获取角色、部门下所有人员>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+		ApiFeignResponse<List<OAUserDto>> apiFeignResponse = sysFeignService.queryUserByOrgAndRoleAndUser(oAUserParam);
+		if (apiFeignResponse != null) {
+			if (200 == apiFeignResponse.getStatus()) {
+				List<OAUserDto> list = apiFeignResponse.getResult();
+				for (OAUserDto oaUserDto : list) {
+					sendMessageList.add(oaUserDto.getImUserId());
+				}
+			} else {
+				throw new HioException("调用queryNameByOrgAndRoleAndUser feign接口失败" + apiFeignResponse.getMessage());
+			}
+		}
+		logger.info(">>>>>>>>>>>>>>>>>>>>>>>>结束调用sys服务获取角色、部门下所有人员>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+
+		// 删除参与人表、共享人表、任务提醒表、任务表
+		deleteTask(deleteTaskParam, loginUser);
+
+		// 删除任务关注表
+		TaskFollow taskFollow = new TaskFollow();
+		taskFollow.setTaskId(deleteTaskParam.getTaskId());
+		taskFollow.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+		taskFollowMapper.delete(taskFollow);
+
+		if (!StringUtils.isBlank(projectId)) {
+			logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>开始调用项目模块,新增项目动态>>>>>>>>>>>>>>{}>>>>>>>>>>>>>>>>>", taskId);
+			ProjectTrendsDto projectTrendsDto = new ProjectTrendsDto();
+			String userId = loginUser.getUserId();
+
+			String userName = oaUserUtil.selectUserName(userId);
+			String trendContent = "任务" + taskName + "被" + userName + "删除";
+			projectTrendsDto.setProjectId(projectId);
+			projectTrendsDto.setCreatePersonId(createPersonId);
+			projectTrendsDto.setCreatePersonName(createPersonName);
+			projectTrendsDto.setTrendContent(trendContent);
+			projectTrendsDto.setTrendPersonName(createPersonName);
+			projectTrendsDto.setTrendPersonId(createPersonId);
+
+			try {
+				projectTrendsService.saveProjectTrends(projectTrendsDto);
+			} catch (Exception e) {
+				logger.error(">>>>调用项目模块,新增项目动态失败>>>>{}", e);
+				e.printStackTrace();
+			}
+			logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>结束调用项目模块,新增项目动态>>>>>>>>>>>>>>{}>>>>>>>>>>>>>>>>>", taskId);
+		}
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>开始发送cc消息>>>>>>>>>>>>>>{}>>>>>>>>>>>>>>>>>", deleteTaskParam.getTaskId());
+
+		// 组装消息发送内容
+		map.put("moduleType", MessageEnum.TASK.getValue() + "_4");
+		map.put("message", taskName + "被删除");
+		map.put("updatePersonName", createPersonName);
+		map.put("updateDate", new Date());
+
+		deleteSendMessage(deleteTaskParam.getTaskId(), task_message_updateStatus, loginUser, true, true, true, true, deleteTaskParam.getImUserId(), map, sendMessageList,
+				sendMessageOutList);
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>结束发送cc消息>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+
+		return 1;
+	}
+
+	/**
+	 * 关注
+	 */
+	@Override
+	public int follow(FollowTaskParam followTaskParam, LoginUser loginUser) {
+
+		TaskFollow taskFollow = new TaskFollow();
+		taskFollow.setTaskId(followTaskParam.getTaskId());
+		taskFollow.setFollowStatus(OaConstant.FLOW_STATUS0);
+		taskFollow.setCreateDate(new Date());
+		taskFollow.setCreatePersonId(loginUser.getUserId());
+		taskFollow.setCreatePersonName(oaUserUtil.selectUserName(loginUser.getUserId()));
+		taskFollow.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+		taskFollow.setIsfollow(true);
+		taskFollowMapper.insert(taskFollow);
+
+		// 更新任务表是否关注为关注
+		Task task = new Task();
+		task.setIsfollow(true);
+		task.setTaskId(followTaskParam.getTaskId());
+		taskMapper.updateIsFollow(task);
+
+		// 更新参与人表是否关注为关注
+		TaskParticipants taskParticipants = new TaskParticipants();
+		taskParticipants.setIsfollow(true);
+		taskParticipants.setTaskId(followTaskParam.getTaskId());
+		taskParticipantsMapper.updateIsFollow(taskParticipants);
+
+		// 更新共享人表是否关注为关注
+		TaskShared taskShared = new TaskShared();
+		taskShared.setIsfollow(true);
+		taskShared.setTaskId(followTaskParam.getTaskId());
+		taskSharedMapper.updateIsFollow(taskShared);
+
+		return 1;
+	}
+
+	/**
+	 * 取消关注
+	 */
+	@Override
+	public int cancelFollow(CancelFollowParam cancelFollowParam, LoginUser loginUser) {
+
+		TaskFollow taskFollow = new TaskFollow();
+		taskFollow.setTaskId(cancelFollowParam.getTaskId());
+		taskFollow.setFollowStatus(OaConstant.FLOW_STATUS1);
+		taskFollow.setUpdateDate(new Date());
+		taskFollow.setUpdatePersonId(loginUser.getUserId());
+		taskFollow.setUpdatePersonName(oaUserUtil.selectUserName(loginUser.getUserId()));
+		taskFollow.setIsfollow(false);
+		taskFollowMapper.cancelFollow(taskFollow);
+
+		// 更新任务表是否关注为关注
+		Task task = new Task();
+		task.setIsfollow(false);
+		task.setTaskId(cancelFollowParam.getTaskId());
+		taskMapper.updateIsFollow(task);
+
+		// 更新参与人表是否关注为关注
+		TaskParticipants taskParticipants = new TaskParticipants();
+		taskParticipants.setIsfollow(false);
+		taskParticipants.setTaskId(cancelFollowParam.getTaskId());
+		taskParticipantsMapper.updateIsFollow(taskParticipants);
+
+		// 更新共享人表是否关注为关注
+		TaskShared taskShared = new TaskShared();
+		taskShared.setIsfollow(false);
+		taskShared.setTaskId(cancelFollowParam.getTaskId());
+		taskSharedMapper.updateIsFollow(taskShared);
+
+		return 1;
+	}
+
+	/**
+	 * 保存任务 isSendMessage 是否发送cc消息，修改任务时自己发送cc消息，该值设置为false
+	 */
+	@Override
+	public int saveTask(SaveTaskParam saveTaskParam, LoginUser loginUser, Boolean isSendMessage) {
+
+		// 校验负责人是否在项目中
+		if (StringUtils.isNotBlank(saveTaskParam.getProjectId())) {
+			logger.info(">>>>>>>>>>>>>>>>>>>>>调用project校验负责人是否在项目中开始>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+
+			ProjectTeamQueryParamDto projectTeamQueryParamDto = new ProjectTeamQueryParamDto();
+			projectTeamQueryParamDto.setProjectId(saveTaskParam.getProjectId());
+			projectTeamQueryParamDto.setShareType("0");
+			projectTeamQueryParamDto.setTeamPersonId(saveTaskParam.getTaskLiableId());
+			projectTeamQueryParamDto.setOutType("0");
+			List<ProjectTeamPerson> list = projectTeamPersonService.queryProjectTeamPersonByTeamQueryParam(projectTeamQueryParamDto);
+			if (list.size() == 0) {
+				throw new HioException("所选负责人不在项目团队中请重新选择");
+			}
+		}
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>>调用project校验负责人是否在项目中结束>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+
+		Map<String, Object> map = new HashMap<String, Object>();// 发送消息内容map
+
+		String createPersonId = "";
+		String createPersonName = "";
+		Date createPersonDate = null;
+
+		if (StringUtils.isNotBlank(saveTaskParam.getId())) {
+			createPersonId = saveTaskParam.getCreatePersonId();
+			createPersonName = oaUserUtil.selectUserName(createPersonId);
+			createPersonDate = saveTaskParam.getCreateDate();
+		} else {
+			createPersonId = loginUser.getUserId();
+			createPersonName = oaUserUtil.selectUserName(createPersonId);
+			createPersonDate = new Date();
+		}
+
+		String remindId = "";
+
+		// 插入日历表
+		String calendarId = "";
+		Calendar calendar = new Calendar();
+		calendar.setCreatePersonId(loginUser.getUserId());
+		calendar = calendarMapper.selectOne(calendar);
+		if (calendar == null) {
+			Calendar calendar1 = new Calendar();
+			calendarId = IDGenerator.getUUID();
+			calendar1.setId(Base.generatePk(Calendar.class));
+			calendar1.setCalendarId(calendarId);
+			calendar1.setCalendarCode("v2");
+			calendar1.setCalendarName("v2日历");
+			calendar1.setCreatePersonId(createPersonId);
+			calendar1.setCreatePersonName(createPersonName);
+			calendar1.setCreateDate(createPersonDate);
+			calendar1.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+			calendarMapper.insert(calendar1);
+		} else {
+			calendarId = calendar.getCalendarId();
+		}
+
+		if (OaConstant.NOTREMIND != saveTaskParam.getAdvanceTime()) {// 选择提醒到期日前为不提醒
+
+			remindId = IDGenerator.getUUID();
+
+			SimpleDateFormat format = new SimpleDateFormat(DateUtil.DATAFORMAT_STR);
+			Date endDate = saveTaskParam.getEndDate();// 到期日
+			String endDateResult = DateUtil.getLastDateDay(format.format(endDate), saveTaskParam.getAdvanceTime());
+
+			String remindTimeResult = endDateResult + " " + saveTaskParam.getRemindTime() + ":00";
+
+			logger.info(">>>>>>>>>>>>>提醒时间>>>>>>>>>>>>>{}", remindTimeResult);
+
+			Date remindTime = DateUtil.getDate(remindTimeResult, DateUtil.DATATIMEF_STR);
+
+			// 保存任务提醒表
+			TaskRemind taskRemind = new TaskRemind();
+			taskRemind.setId(Base.generatePk(TaskRemind.class));
+			taskRemind.setRemindId(remindId);
+			taskRemind.setRemindTime(remindTime);
+			taskRemind.setRemindStatus(OaConstant.REMIND_STATUS1);
+			taskRemind.setCreateDate(createPersonDate);
+			taskRemind.setCreatePersonId(createPersonId);
+			taskRemind.setCreatePersonName(createPersonName);
+			taskRemind.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+			taskRemind.setIsremindCreateperson(saveTaskParam.getIsremindCreateperson());
+			taskRemind.setIsremindLiable(saveTaskParam.getIsremindLiable());
+			taskRemind.setIsremindAffiliated(saveTaskParam.getIsremindAffiliated());
+			taskRemindMapper.insert(taskRemind);
+		}
+
+		// 保存共享人表
+		TaskSharedListDto taskSharedParm = saveTaskParam.getTaskSharedListDto();
+		if (taskSharedParm != null) {
+
+			//为了日程共享日历查询方便，初始化一条自己共享自己的任务
+//			TaskShared taskShared1 = new TaskShared();
+//			taskShared1.setId(Base.generatePk(TaskShared.class));
+//			taskShared1.setSharedshowId(createPersonId);
+//			taskShared1.setTaskId(saveTaskParam.getTaskId());
+//			taskShared1.setType(OaConstant.SHAREDSHOW_TYPE0);
+//			taskShared1.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+//			taskShared1.setCreatePersonId(createPersonId);
+//			taskShared1.setCreatePersonName(createPersonName);
+//			taskShared1.setCreateDate(createPersonDate);
+//			taskShared1.setIsfollow(false);
+//			taskShared1.setSharedshowImid(saveTaskParam.getImUserId());
+//			taskShared1.setOutType(OaConstant.OUTTYPE0);
+//			taskSharedMapper.insert(taskShared1);
+			
+			List<TaskSharedDto> personList = taskSharedParm.getPersonList();// 人员列表
+			if (personList != null && personList.size() > 0) {
+				for (TaskSharedDto taskSharedDto : personList) {
+					TaskShared taskShared = new TaskShared();
+					taskShared.setId(Base.generatePk(TaskShared.class));
+					taskShared.setSharedshowId(taskSharedDto.getSharedshowId());
+					taskShared.setTaskId(saveTaskParam.getTaskId());
+					taskShared.setType(OaConstant.SHAREDSHOW_TYPE0);
+					taskShared.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+					taskShared.setCreatePersonId(createPersonId);
+					taskShared.setCreatePersonName(createPersonName);
+					taskShared.setCreateDate(createPersonDate);
+					taskShared.setIsfollow(false);
+					taskShared.setSharedshowImid(taskSharedDto.getSharedshowImid());
+					taskShared.setOutType(taskSharedDto.getOutType());
+					taskSharedMapper.insert(taskShared);
+				}
+			}
+			List<TaskSharedDto> roleList = taskSharedParm.getRoleList();// 角色列表
+			if (roleList != null && roleList.size() > 0) {
+				for (TaskSharedDto taskSharedDto : roleList) {
+					TaskShared taskShared = new TaskShared();
+					taskShared.setId(Base.generatePk(TaskShared.class));
+					taskShared.setSharedshowId(taskSharedDto.getSharedshowId());
+					taskShared.setTaskId(saveTaskParam.getTaskId());
+					taskShared.setType(OaConstant.SHAREDSHOW_TYPE1);
+					taskShared.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+					taskShared.setCreatePersonId(createPersonId);
+					taskShared.setCreatePersonName(createPersonName);
+					taskShared.setCreateDate(createPersonDate);
+					taskShared.setIsfollow(false);
+					taskSharedMapper.insert(taskShared);
+				}
+			}
+
+			List<TaskSharedDto> departmentList = taskSharedParm.getDepartmentList();// 部门列表
+			if (departmentList != null && departmentList.size() > 0) {
+				for (TaskSharedDto taskSharedDto : departmentList) {
+					TaskShared taskShared = new TaskShared();
+					taskShared.setId(Base.generatePk(TaskShared.class));
+					taskShared.setSharedshowId(taskSharedDto.getSharedshowId());
+					taskShared.setTaskId(saveTaskParam.getTaskId());
+					taskShared.setType(OaConstant.SHAREDSHOW_TYPE2);
+					taskShared.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+					taskShared.setCreatePersonId(createPersonId);
+					taskShared.setCreatePersonName(createPersonName);
+					taskShared.setCreateDate(createPersonDate);
+					taskShared.setIsfollow(false);
+					taskSharedMapper.insert(taskShared);
+				}
+			}
+
+		}
+
+		// 保存参与人员表
+		TaskParticipantsSharedListDto taskParticipantsParm = saveTaskParam.getTaskParticipantsSharedListDto();
+		if (taskParticipantsParm != null) {
+
+			List<TaskParticipantsDto> personList = taskParticipantsParm.getPersonList();// 人员列表
+			if (personList != null && personList.size() > 0) {
+				for (TaskParticipantsDto TtaskParticipantsDto : personList) {
+					TaskParticipants taskParticipants = new TaskParticipants();
+					taskParticipants.setId(Base.generatePk(TaskParticipants.class));
+					taskParticipants.setSharedshowId(TtaskParticipantsDto.getSharedshowId());
+					taskParticipants.setTaskId(saveTaskParam.getTaskId());
+					taskParticipants.setType(OaConstant.SHAREDSHOW_TYPE0);
+					taskParticipants.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+					taskParticipants.setCreatePersonId(createPersonId);
+					taskParticipants.setCreatePersonName(createPersonName);
+					taskParticipants.setCreateDate(createPersonDate);
+					taskParticipants.setIsfollow(false);
+					taskParticipants.setSharedshowImid(TtaskParticipantsDto.getSharedshowImid());
+					taskParticipants.setOutType(TtaskParticipantsDto.getOutType());
+
+					taskParticipantsMapper.insert(taskParticipants);
+				}
+			}
+
+		}
+
+		// 保存任务表
+		Task task = new Task();
+		task.setId(Base.generatePk(Task.class));
+		task.setTaskName(saveTaskParam.getTaskName());
+		task.setProjectId(saveTaskParam.getProjectId());
+		task.setProjectstageId(saveTaskParam.getProjectstageId());
+		task.setTaskId(saveTaskParam.getTaskId());
+		task.setBeginDate(saveTaskParam.getBeginDate());
+		task.setEndDate(saveTaskParam.getEndDate());
+		task.setTaskProgress(saveTaskParam.getTaskProgress());
+		task.setTaskUrgentFlag(saveTaskParam.getTaskUrgentFlag());
+		task.setTaskDescribe(saveTaskParam.getDescribe());
+		task.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+		task.setCreatePersonId(createPersonId);
+		task.setCreatePersonName(createPersonName);
+		task.setCreateDate(createPersonDate);
+
+		if (StringUtils.isBlank(saveTaskParam.getId())) {
+			task.setIsfollow(false);
+		} else {
+			task.setIsfollow(saveTaskParam.getIsFllow());
+		}
+
+		task.setCalendarId(calendarId);
+		task.setRemindStatus(OaConstant.REMIND_STATUS1);
+
+		if (!StringUtils.isBlank(saveTaskParam.getTaskStatus())) {
+			task.setTaskStatus(saveTaskParam.getTaskStatus());
+		} else {
+			Date date = DateUtil.getDateToFormatStr(DateUtil.dateToDateString(new Date(), DateUtil.DATE_DEFAULT_FORMAT), DateUtil.DATAFORMAT_STR);
+			Date endDate = DateUtil.getDateToFormatStr(DateUtil.dateToDateString(saveTaskParam.getEndDate(), DateUtil.DATE_DEFAULT_FORMAT), DateUtil.DATAFORMAT_STR);
+
+			logger.info(">>>>>>>>>>>>>date>>>>>>>>>>>>>{}", date);
+			logger.info(">>>>>>>>>>>>>endDate>>>>>>>>>>>>>{}", endDate);
+			logger.info(">>>>>>>>>>>>>判断是否超期>>>>>>>>>>>>>{}", endDate.compareTo(date) < 0);
+
+			if (endDate.compareTo(date) < 0) {
+				task.setTaskStatus(OaConstant.TASK_STATUS3);
+			} else {
+				task.setTaskStatus(OaConstant.TASK_STATUS0);
+			}
+		}
+
+		task.setTaskLiableId(saveTaskParam.getTaskLiableId());
+		task.setRemindId(remindId);
+		task.setRemindTime(saveTaskParam.getRemindTime());
+		task.setAdvanceTime(saveTaskParam.getAdvanceTime());
+		taskMapper.insert(task);
+
+		if (!StringUtils.isBlank(saveTaskParam.getProjectId())) {
+			logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>开始调用项目模块,新增项目动态>>>>>>>>>>>>>>{}>>>>>>>>>>>>>>>>>", saveTaskParam.getTaskId());
+			ProjectTrendsDto projectTrendsDto = new ProjectTrendsDto();
+
+			String trendContent = "" + createPersonName + "创建了" + saveTaskParam.getTaskName() + "任务";
+			projectTrendsDto.setProjectId(saveTaskParam.getProjectId());
+			projectTrendsDto.setTrendContent(trendContent);
+			projectTrendsDto.setCreatePersonId(createPersonId);
+			projectTrendsDto.setCreatePersonName(createPersonName);
+			projectTrendsDto.setTrendPersonName(createPersonName);
+			projectTrendsDto.setTrendPersonId(createPersonId);
+
+			try {
+				projectTrendsService.saveProjectTrends(projectTrendsDto);
+			} catch (Exception e) {
+				logger.error(">>>>调用项目模块,新增项目动态失败>>>>" + e);
+				e.printStackTrace();
+			}
+			logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>结束调用项目模块,新增项目动态>>>>>>>>>>>>>>{}>>>>>>>>>>>>>>>>>", saveTaskParam.getTaskId());
+		}
+
+		if (isSendMessage) {
+
+			logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>开始发送cc消息>>>>>>>>>>>>>>{}>>>>>>>>>>>>>>>>>", saveTaskParam.getTaskId());
+			// 组装消息内容
+			map.put("moduleType", MessageEnum.TASK.getValue() + "_1");
+			map.put("message", saveTaskParam.getTaskName());
+			map.put("taskLiableName", oaUserUtil.selectUserName(saveTaskParam.getTaskLiableId()));
+			map.put("beginDate", DateUtil.dateToDateString(saveTaskParam.getBeginDate(), DateUtil.DATE_DEFAULT_FORMAT));
+			map.put("endDate", DateUtil.dateToDateString(saveTaskParam.getEndDate(), DateUtil.DATE_DEFAULT_FORMAT));
+
+			sendMessage(saveTaskParam.getTaskId(), task_message_save, loginUser, true, true, true, true, saveTaskParam.getImUserId(), map);
+			logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>结束发送cc消息>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+		}
+
+		return 1;
+	}
+
+	/**
+	 * 查询任务详情
+	 * 
+	 * @param queryTaskDetailsParam
+	 *            查询任务输入项
+	 */
+	@Override
+	public QueryTaskDetailsDto queryTaskDetails(QueryTaskDetailsParam queryTaskDetailsParam, LoginUser loginUser, boolean admin) {
+
+		String projectName = "";// 项目名称
+		String projectstageName = "";// 关联项目阶段id
+		QueryTaskDetailsDto queryTaskDetailsDto = new QueryTaskDetailsDto();// 输出Dto
+		Boolean isCreatePersonLiable = false;// 是否是创建人负责人管理员
+		Boolean isAffiliated = false;// 是否是参与人
+		Boolean isShared = false;// 是否是共享人
+		List<String> roleList = loginUser.getRoleIds();// 角色列表
+
+		logger.info("当前登录用户>>>>>{}", loginUser.getUserId());
+		logger.info("角色列表>>>>>{}", roleList.toString());
+
+		Boolean isExternal = sysRedis.isExternal(loginUser.getTendId(), loginUser.getUserId());// 是否是外部联系人
+		logger.info("是否是外部联系人>>>>>{}", isExternal);
+
+		// 查询任务详情
+		Task task = new Task();
+		task.setTaskId(queryTaskDetailsParam.getTaskId());
+		Task taskResult = taskMapper.queryTaskId(task);
+
+		if (taskResult != null) {
+
+			// 判断登录用户是任务负责人、创建人、管理员，用于编辑任务时可修改字段权限
+			if (taskResult.getTaskLiableId().equals(loginUser.getUserId()) || taskResult.getCreatePersonId().equals(loginUser.getUserId()) || loginUser.isSuper()) {
+				isCreatePersonLiable = true;
+			}
+
+			// 根据项目id查询项目名称
+			if (StringUtils.isNotBlank(taskResult.getProjectId())) {
+				logger.info(">>>>>>>>>>>>>>>>>>>调用项目系统查询项目名称开始>>>>>>>>>>>>>>>>>>>tendId:{}>>>>>>>>>>", loginUser.getTendId());
+				try {
+					ProjectInfoDto projectInfoDto = projectInfoService.getProjectInfoById(loginUser.getTendId(), taskResult.getProjectId());
+					if (projectInfoDto != null) {
+						projectName = projectInfoDto.getProjectName();
+					}
+				} catch (Exception e) {
+					logger.error(">>>>>>>>>调用项目系统查询项目名称失败>>>>>{}", e);
+					e.printStackTrace();
+				}
+				logger.info(">>>>>>>>>>>>>>>>>>>调用项目系统查询项目名称结束>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+			}
+
+			// 根据项目阶段id查询项目阶段名称
+			// logger.info(">>>>>>>>>>>>>>>>>>>调用项目系统查询项目阶段名称开始>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+			// try {
+			// ProjectStageDto projectStageDto = projectStageService.getProjectStageById(taskResult.getProjectstageId());
+			// if (projectStageDto != null) {
+			// projectstageName = projectStageDto.getStageName();
+			// }
+			// } catch (Exception e) {
+			// logger.error(">>>>>>>>>调用项目系统查询项目阶段名称失败>>>>>{}", e);
+			// e.printStackTrace();
+			// }
+			// logger.info(">>>>>>>>>>>>>>>>>>>调用下系统查询项目阶段名称结束>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+
+			// 查询参与人员列表
+			TaskParticipantsSharedListDto taskParticipantsSharedListDto = new TaskParticipantsSharedListDto();
+			TaskParticipants taskParticipants = new TaskParticipants();
+			taskParticipants.setTaskId(queryTaskDetailsParam.getTaskId());
+			taskParticipants.setType(OaConstant.SHAREDSHOW_TYPE0);
+
+			List<TaskParticipantsDto> taskPersonListResult = new ArrayList<TaskParticipantsDto>();
+			List<TaskParticipants> taskPersonList = taskParticipantsMapper.queryList(taskParticipants);
+
+			if (taskPersonList.size() > 0) {
+				for (TaskParticipants taskParticipants2 : taskPersonList) {
+
+					// 判断登录用户是否是任务参与人，用于编辑任务时可修改字段权限
+					if (loginUser.getUserId().equals(taskParticipants2.getSharedshowId())) {
+						isAffiliated = true;
+					}
+
+					TaskParticipantsDto taskParticipantsDto = new TaskParticipantsDto();
+					taskParticipantsDto.setSharedshowId(taskParticipants2.getSharedshowId());
+					taskParticipantsDto.setType(taskParticipants2.getType());
+					taskParticipantsDto.setSharedshowImid(taskParticipants2.getSharedshowImid());
+					taskParticipantsDto.setOutType(taskParticipants2.getOutType());
+
+					String sharedshowName = "";
+
+					if (OaConstant.PROJECTINPERSON.equals(taskParticipants2.getOutType())) {// 内部人员
+
+						sharedshowName = oaUserUtil.selectUserNameByTendIdAndQuit(taskParticipants2.getSharedshowId(), loginUser.getTendId());
+
+					} else if (OaConstant.PROJECTOUTPERSON.equals(taskParticipants2.getOutType())) {// 外部联系人
+
+						logger.info("********************************调用查询外部联系人信息接口开始*****************************");
+						ApiFeignResponse<ExternalContactDto> response = sysExtrenalFeignService.queryDetailByStatus(loginUser.getTendId(), taskParticipants2.getSharedshowId(), 1);
+						if (response.getStatus() == OaConstant.SUCCESSSTATUS) {
+							ExternalContactDto externalContactDto = response.getResult();
+
+							if (externalContactDto != null) {
+								logger.info("********************************externalContactDto.getId():{}*****************************", externalContactDto.getId());
+								logger.info("********************************externalContactDto.getName():{}*****************************", externalContactDto.getName());
+								logger.info("********************************调用查询外部联系人信息接口结束*****************************");
+								sharedshowName = externalContactDto.getName();
+							}
+
+						} else {
+							logger.info("接口返回状态" + response.getStatus() + "***********接口返回message." + response.getMessage());
+						}
+
+					} else {
+						logger.info(">>>>>>>>>>>>>>>参与人类型错误>>>>>>>>>>>>{}", taskParticipants2.getOutType());
+					}
+
+					if (StringUtils.isBlank(sharedshowName)) {// 如果名称为空，不将用户id返回给前端
+						continue;
+					}
+
+					taskParticipantsDto.setSharedshowName(sharedshowName);
+					taskPersonListResult.add(taskParticipantsDto);
+				}
+			}
+
+			taskParticipantsSharedListDto.setPersonList(taskPersonListResult);
+
+			// 查询共享人列表--人员列表、角色列表、部门列表
+			TaskSharedListDto taskSharedListDto = new TaskSharedListDto();
+
+			// step1查询人员列表
+			TaskShared taskShared = new TaskShared();
+			taskShared.setTaskId(queryTaskDetailsParam.getTaskId());
+			taskShared.setType(OaConstant.SHAREDSHOW_TYPE0);
+			List<TaskSharedDto> sharedPersonListResult = new ArrayList<TaskSharedDto>();
+			List<TaskShared> sharedPersonList = taskSharedMapper.queryTaskSharedList(taskShared);
+
+			if (sharedPersonList.size() > 0) {
+				for (TaskShared taskShared2 : sharedPersonList) {
+
+					// 判断登录用户是否是任务共享人，用于编辑任务时可修改字段权限
+					if (loginUser.getUserId().equals(taskShared2.getSharedshowId())) {
+						isShared = true;
+					}
+
+					TaskSharedDto taskSharedDto = new TaskSharedDto();
+					taskSharedDto.setSharedshowId(taskShared2.getSharedshowId());
+					taskSharedDto.setType(taskShared2.getType());
+					taskSharedDto.setSharedshowImid(taskShared2.getSharedshowImid());
+					taskSharedDto.setOutType(taskShared2.getOutType());
+
+					String sharedshowName = "";
+
+					if (OaConstant.PROJECTINPERSON.equals(taskShared2.getOutType())) {// 内部人员
+
+						sharedshowName = oaUserUtil.selectUserNameByTendIdAndQuit(taskShared2.getSharedshowId(), loginUser.getTendId());
+
+					} else if (OaConstant.PROJECTOUTPERSON.equals(taskShared2.getOutType())) {// 外部联系人
+
+						logger.info("********************************调用查询外部联系人信息接口开始*****************************");
+						ApiFeignResponse<ExternalContactDto> response = sysExtrenalFeignService.queryDetailByStatus(loginUser.getTendId(), taskShared2.getSharedshowId(), 1);
+						if (response.getStatus() == OaConstant.SUCCESSSTATUS) {
+							ExternalContactDto externalContactDto = response.getResult();
+
+							if (externalContactDto != null) {
+								logger.info("********************************externalContactDto.getId():{}*****************************", externalContactDto.getId());
+								logger.info("********************************externalContactDto.getName():{}*****************************", externalContactDto.getName());
+								logger.info("********************************调用查询外部联系人信息接口结束*****************************");
+								sharedshowName = externalContactDto.getName();
+							}
+
+						} else {
+							logger.info("接口返回状态" + response.getStatus() + "***********接口返回message." + response.getMessage());
+						}
+
+					} else {
+						logger.info(">>>>>>>>>>>>>>>参与人类型错误>>>>>>>>>>>>{}", taskShared2.getOutType());
+					}
+
+					if (StringUtils.isBlank(sharedshowName)) {// 如果名称为空，不将用户id返回给前端
+						continue;
+					}
+
+					taskSharedDto.setSharedshowName(sharedshowName);
+					sharedPersonListResult.add(taskSharedDto);
+				}
+			}
+
+			// step2查询角色列表
+			TaskShared taskShared1 = new TaskShared();
+			taskShared1.setTaskId(queryTaskDetailsParam.getTaskId());
+			taskShared1.setType(OaConstant.SHAREDSHOW_TYPE1);
+			List<TaskSharedDto> sharedRoleListResult = new ArrayList<TaskSharedDto>();
+			List<TaskShared> sharedRoleList = taskSharedMapper.queryTaskSharedList(taskShared1);
+
+			if (sharedRoleList.size() > 0) {
+				for (TaskShared taskShared2 : sharedRoleList) {
+
+					// 判断登录用户是否是任务共享人，用于编辑任务时可修改字段权限
+					if (roleList.contains(taskShared2.getSharedshowId())) {
+						isShared = true;
+					}
+
+					TaskSharedDto taskSharedDto = new TaskSharedDto();
+					taskSharedDto.setSharedshowId(taskShared2.getSharedshowId());
+					taskSharedDto.setType(taskShared2.getType());
+
+					String sharedshowName = oaUserUtil.selectRoleName(taskShared2.getSharedshowId(), loginUser.getTendId());
+
+					if (StringUtils.isBlank(sharedshowName)) {// 如果名称为空，不将用户id返回给前端
+						continue;
+					}
+
+					taskSharedDto.setSharedshowName(sharedshowName);
+					sharedRoleListResult.add(taskSharedDto);
+				}
+			}
+
+			taskSharedListDto.setPersonList(sharedPersonListResult);
+			taskSharedListDto.setRoleList(sharedRoleListResult);
+
+			// step3查询部门列表
+			Set<String> orgIds = new HashSet<String>();
+			orgIds = oaUserUtil.findAllOrgIdsToSet(loginUser.getTendId(),loginUser.getUserId());
+			
+			if(orgIds != null){
+				TaskShared taskShared3 = new TaskShared();
+				taskShared3.setTaskId(queryTaskDetailsParam.getTaskId());
+				taskShared3.setType(OaConstant.SHAREDSHOW_TYPE2);
+				List<TaskSharedDto> sharedDepartmentResult = new ArrayList<TaskSharedDto>();
+				List<TaskShared> sharedDepartmentList = taskSharedMapper.queryTaskSharedList(taskShared3);
+
+				if (sharedDepartmentList.size() > 0) {
+					for (TaskShared taskShared2 : sharedDepartmentList) {
+
+						// 判断登录用户是否是任务共享人，用于编辑任务时可修改字段权限
+						if (orgIds.contains(taskShared2.getSharedshowId())) {
+							isShared = true;
+						}
+
+						TaskSharedDto taskSharedDto = new TaskSharedDto();
+						taskSharedDto.setSharedshowId(taskShared2.getSharedshowId());
+						taskSharedDto.setType(taskShared2.getType());
+
+						String sharedshowName = oaUserUtil.selectOrgName(taskShared2.getSharedshowId(), loginUser.getTendId());
+
+						if (StringUtils.isBlank(sharedshowName)) {// 如果名称为空，不将用户id返回给前端
+							continue;
+						}
+
+						taskSharedDto.setSharedshowName(sharedshowName);
+						sharedDepartmentResult.add(taskSharedDto);
+					}
+				}
+
+				taskSharedListDto.setDepartmentList(sharedDepartmentResult);
+			}
+			
+
+			// 查询提醒人
+			Task task1 = new Task();
+			task1.setTaskId(queryTaskDetailsParam.getTaskId());
+			Task taskResult1 = taskMapper.queryTaskId(task1);
+
+			if (taskResult1 != null) {
+				TaskRemind taskRemind = new TaskRemind();
+				taskRemind.setRemindId(taskResult1.getRemindId());
+				TaskRemind taskRemindResult = taskRemindMapper.queryTaskRemindId(taskRemind);
+				if (taskRemindResult != null) {
+					if (taskRemindResult.getIsremindCreateperson()) {
+						queryTaskDetailsDto.setIsremindCreateperson(true);
+					}
+
+					if (taskRemindResult.getIsremindAffiliated()) {
+						queryTaskDetailsDto.setIsremindAffiliated(true);
+					}
+
+					if (taskRemindResult.getIsremindLiable()) {
+						queryTaskDetailsDto.setIsremindLiable(true);
+					}
+
+				} else {
+					logger.info(">>>>>>>>>>>>>>>>>>>>未保存提醒人>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+				}
+			}
+
+			logger.info("是否是创建人、负责人>>{}", isCreatePersonLiable);
+			logger.info("是否是参与人>>{}", isAffiliated);
+			logger.info("是否是共享人>>{}", isShared);
+			logger.info("是否是系统管理员>>{}", admin);
+
+			// 非项目中的任务判断是否是任务的创建人、负责人、共享人
+			if (!admin) {
+				if (StringUtils.isNotBlank(taskResult.getProjectId())) {
+
+					logger.info(">>>>>>>>>>>>>>>>>>>>>调用project校验登录人是否在项目中开始>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+					String external = "";
+
+					if (isExternal) {// 外部联系人
+						external = OaConstant.PROJECTOUTPERSON;
+					} else {// 非外部联系人
+						external = OaConstant.PROJECTINPERSON;
+					}
+
+					String auth = projectInfoService.queryProjectPermission(taskResult.getProjectId(), external, loginUser);
+					// ProjectTeamQueryParamDto projectTeamQueryParamDto = new ProjectTeamQueryParamDto();
+					// projectTeamQueryParamDto.setProjectId(taskResult.getProjectId());
+					// projectTeamQueryParamDto.setShareType("0");
+					// projectTeamQueryParamDto.setTeamPersonId(loginUser.getUserId());
+					// projectTeamQueryParamDto.setOutType("0");
+					// List<ProjectTeamPerson> list = projectTeamPersonService.queryProjectTeamPersonByTeamQueryParam(projectTeamQueryParamDto);
+					logger.info("是否在项目中:{}", auth);
+
+					if (StringUtils.isBlank(auth)) {// 不在项目中
+
+						if (!isCreatePersonLiable && !isAffiliated && !isShared) {
+							throw new HioException("您的访问权限已被取消！");
+						}
+
+					}
+				} else {
+
+					if (!isCreatePersonLiable && !isAffiliated && !isShared) {
+						throw new HioException("您的访问权限已被取消！");
+					}
+
+				}
+			}
+
+			queryTaskDetailsDto.setTaskId(taskResult.getTaskId());
+			queryTaskDetailsDto.setTaskStatus(taskResult.getTaskStatus());
+			queryTaskDetailsDto.setProjectId(taskResult.getProjectId());
+			queryTaskDetailsDto.setProjectName(projectName);
+			queryTaskDetailsDto.setProjectstageId(taskResult.getProjectstageId());
+			queryTaskDetailsDto.setProjectstageName(projectstageName);
+			queryTaskDetailsDto.setTaskLiableId(taskResult.getTaskLiableId());
+			queryTaskDetailsDto.setTaskLiableName(oaUserUtil.selectUserNameByTendIdAndQuit(taskResult.getTaskLiableId(), loginUser.getTendId()));
+			queryTaskDetailsDto.setBeginDate(taskResult.getBeginDate());
+			queryTaskDetailsDto.setEndDate(taskResult.getEndDate());
+			queryTaskDetailsDto.setTaskProgress(taskResult.getTaskProgress());
+			queryTaskDetailsDto.setTaskUrgentFlag(taskResult.getTaskUrgentFlag());
+			queryTaskDetailsDto.setDescribe(taskResult.getTaskDescribe());
+			queryTaskDetailsDto.setAdvanceTime(taskResult.getAdvanceTime());
+			queryTaskDetailsDto.setRemindTime(taskResult.getRemindTime());
+			queryTaskDetailsDto.setTaskParticipantsSharedListDto(taskParticipantsSharedListDto);
+			queryTaskDetailsDto.setTaskSharedListDto(taskSharedListDto);
+			queryTaskDetailsDto.setTaskName(taskResult.getTaskName());
+			queryTaskDetailsDto.setIsfollow(taskResult.getIsfollow());
+			queryTaskDetailsDto.setCreateDate(taskResult.getCreateDate());
+			queryTaskDetailsDto.setCreatePersonName(oaUserUtil.selectUserNameByTendIdAndQuit(taskResult.getCreatePersonId(), loginUser.getTendId()));
+			queryTaskDetailsDto.setIsAffiliated(isAffiliated);
+			queryTaskDetailsDto.setIsCreatePersonLiable(isCreatePersonLiable);
+			queryTaskDetailsDto.setIsShared(isShared);
+
+		} else {
+			throw new HioException("您的任务已经被删除!");
+		}
+
+		return queryTaskDetailsDto;
+	}
+
+	/**
+	 * 查询IM任务详情
+	 * 
+	 * @param queryTaskDetailsParam
+	 * @return
+	 */
+	@TargetIM
+	@Override
+	public QueryTaskDetailsDto queryImTaskDetails(@DataSource String tendId, QueryTaskDetailsParam queryTaskDetailsParam, LoginUser loginUser, String imUserId, boolean admin) {
+
+		String projectName = "";// 项目名称
+		QueryTaskDetailsDto queryTaskDetailsDto = new QueryTaskDetailsDto();// 输出Dto
+		Boolean isCreatePersonLiable = false;// 是否是创建人负责人管理员
+		Boolean isAffiliated = false;// 是否是参与人
+		Boolean isShared = false;// 是否是共享人
+		List<String> roleList = loginUser.getRoleIds();// 角色列表
+
+		logger.info("当前登录用户>>>>>{}", loginUser.getUserId());
+		logger.info("角色列表>>>>>{}", roleList.toString());
+
+		// 查询任务详情
+		Task task = new Task();
+		task.setTaskId(queryTaskDetailsParam.getTaskId());
+		Task taskResult = taskMapper.queryTaskId(task);
+
+		if (taskResult != null) {
+
+			// 判断登录用户是任务负责人、创建人、管理员，用于编辑任务时可修改字段权限
+			if (taskResult.getTaskLiableId().equals(loginUser.getUserId()) || taskResult.getCreatePersonId().equals(loginUser.getUserId()) || loginUser.isSuper()) {
+				isCreatePersonLiable = true;
+			}
+
+			// 根据项目id查询项目名称
+			if (StringUtils.isNotBlank(taskResult.getProjectId())) {
+
+				logger.info(">>>>>>>>>>>>>>>>>>>调用项目系统查询项目名称开始>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+				try {
+					ProjectInfoDto projectInfoDto = projectInfoService.getProjectInfoById(tendId, taskResult.getProjectId());
+					if (projectInfoDto != null) {
+						projectName = projectInfoDto.getProjectName();
+					}
+				} catch (Exception e) {
+					logger.error(">>>>>>>>>调用项目系统查询项目名称失败>>>>>{}", e);
+					e.printStackTrace();
+				}
+				logger.info(">>>>>>>>>>>>>>>>>>>调用项目系统查询项目名称结束>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+			}
+
+			// 根据项目阶段id查询项目阶段名称
+			// logger.info(">>>>>>>>>>>>>>>>>>>调用项目系统查询项目阶段名称开始>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+			// try {
+			// ProjectStageDto projectStageDto = projectStageService.getProjectStageById(taskResult.getProjectstageId());
+			// if (projectStageDto != null) {
+			// projectstageName = projectStageDto.getStageName();
+			// }
+			// } catch (Exception e) {
+			// logger.error(">>>>>>>>>调用项目系统查询项目阶段名称失败>>>>>{}", e);
+			// e.printStackTrace();
+			// }
+			// logger.info(">>>>>>>>>>>>>>>>>>>调用下系统查询项目阶段名称结束>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+
+			// 查询参与人员列表
+			TaskParticipantsSharedListDto taskParticipantsSharedListDto = new TaskParticipantsSharedListDto();
+			TaskParticipants taskParticipants = new TaskParticipants();
+			taskParticipants.setTaskId(queryTaskDetailsParam.getTaskId());
+			taskParticipants.setType(OaConstant.SHAREDSHOW_TYPE0);
+
+			List<TaskParticipantsDto> taskPersonListResult = new ArrayList<TaskParticipantsDto>();
+			List<TaskParticipants> taskPersonList = taskParticipantsMapper.queryList(taskParticipants);
+
+			if (taskPersonList.size() > 0) {
+				for (TaskParticipants taskParticipants2 : taskPersonList) {
+
+					// 判断登录用户是否是任务参与人，用于编辑任务时可修改字段权限
+					if (taskParticipants2.getSharedshowId().equals(loginUser.getUserId()) || taskParticipants2.getSharedshowImid().equals(imUserId)) {
+						isAffiliated = true;
+					}
+
+					TaskParticipantsDto taskParticipantsDto = new TaskParticipantsDto();
+					taskParticipantsDto.setSharedshowId(taskParticipants2.getSharedshowId());
+					taskParticipantsDto.setType(taskParticipants2.getType());
+					taskParticipantsDto.setSharedshowImid(taskParticipants2.getSharedshowImid());
+					taskParticipantsDto.setOutType(taskParticipants2.getOutType());
+
+					String sharedshowName = "";
+
+					if (OaConstant.PROJECTINPERSON.equals(taskParticipants2.getOutType())) {// 内部人员
+
+						sharedshowName = oaUserUtil.selectUserNameByTendIdAndQuit(taskParticipants2.getSharedshowId(), tendId);
+
+					} else if (OaConstant.PROJECTOUTPERSON.equals(taskParticipants2.getOutType())) {// 外部联系人
+
+						logger.info("********************************调用查询外部联系人信息接口开始*****************************");
+						ApiFeignResponse<ExternalContactDto> response = sysExtrenalFeignService.queryDetailByStatus(tendId, taskParticipants2.getSharedshowId(), 1);
+						if (response.getStatus() == OaConstant.SUCCESSSTATUS) {
+							ExternalContactDto externalContactDto = response.getResult();
+
+							if (externalContactDto != null) {
+								logger.info("********************************externalContactDto.getId():{}*****************************", externalContactDto.getId());
+								logger.info("********************************externalContactDto.getName():{}*****************************", externalContactDto.getName());
+								logger.info("********************************调用查询外部联系人信息接口结束*****************************");
+								sharedshowName = externalContactDto.getName();
+							}
+
+						} else {
+							logger.info("接口返回状态" + response.getStatus() + "***********接口返回message." + response.getMessage());
+						}
+
+					} else {
+						logger.info(">>>>>>>>>>>>>>>参与人类型错误>>>>>>>>>>>>{}", taskParticipants2.getOutType());
+					}
+
+					if (StringUtils.isBlank(sharedshowName)) {// 如果名称为空，不将用户id返回给前端
+						continue;
+					}
+
+					taskParticipantsDto.setSharedshowName(sharedshowName);
+					taskPersonListResult.add(taskParticipantsDto);
+				}
+
+			}
+
+			taskParticipantsSharedListDto.setPersonList(taskPersonListResult);
+
+			// 查询共享人列表--人员列表、角色列表、部门列表
+			TaskSharedListDto taskSharedListDto = new TaskSharedListDto();
+
+			// step1查询人员列表
+			TaskShared taskShared = new TaskShared();
+			taskShared.setTaskId(queryTaskDetailsParam.getTaskId());
+			taskShared.setType(OaConstant.SHAREDSHOW_TYPE0);
+			List<TaskSharedDto> sharedPersonListResult = new ArrayList<TaskSharedDto>();
+			List<TaskShared> sharedPersonList = taskSharedMapper.queryTaskSharedList(taskShared);
+
+			if (sharedPersonList.size() > 0) {
+				for (TaskShared taskShared2 : sharedPersonList) {
+
+					// 判断登录用户是否是任务共享人，用于编辑任务时可修改字段权限
+					if (taskShared2.getSharedshowId().equals(loginUser.getUserId()) || taskShared2.getSharedshowImid().equals(imUserId)) {
+						isShared = true;
+					}
+
+					TaskSharedDto taskSharedDto = new TaskSharedDto();
+					taskSharedDto.setSharedshowId(taskShared2.getSharedshowId());
+					taskSharedDto.setType(taskShared2.getType());
+					taskSharedDto.setSharedshowImid(taskShared2.getSharedshowImid());
+					taskSharedDto.setOutType(taskShared2.getOutType());
+
+					String sharedshowName = "";
+
+					if (OaConstant.PROJECTINPERSON.equals(taskShared2.getOutType())) {// 内部人员
+
+						sharedshowName = oaUserUtil.selectUserNameByTendIdAndQuit(taskShared2.getSharedshowId(), tendId);
+
+					} else if (OaConstant.PROJECTOUTPERSON.equals(taskShared2.getOutType())) {// 外部联系人
+
+						logger.info("********************************调用查询外部联系人信息接口开始*****************************");
+						ApiFeignResponse<ExternalContactDto> response = sysExtrenalFeignService.queryDetailByStatus(tendId, taskShared2.getSharedshowId(), 1);
+						if (response.getStatus() == OaConstant.SUCCESSSTATUS) {
+							ExternalContactDto externalContactDto = response.getResult();
+
+							if (externalContactDto != null) {
+								logger.info("********************************externalContactDto.getId():{}*****************************", externalContactDto.getId());
+								logger.info("********************************externalContactDto.getName():{}*****************************", externalContactDto.getName());
+								logger.info("********************************调用查询外部联系人信息接口结束*****************************");
+								sharedshowName = externalContactDto.getName();
+							}
+
+						} else {
+							logger.info("接口返回状态" + response.getStatus() + "***********接口返回message." + response.getMessage());
+						}
+
+					} else {
+						logger.info(">>>>>>>>>>>>>>>参与人类型错误>>>>>>>>>>>>{}", taskShared2.getOutType());
+					}
+
+					if (StringUtils.isBlank(sharedshowName)) {// 如果名称为空，不将用户id返回给前端
+						continue;
+					}
+
+					taskSharedDto.setSharedshowName(sharedshowName);
+					sharedPersonListResult.add(taskSharedDto);
+				}
+			}
+
+			// step2查询角色列表
+			TaskShared taskShared1 = new TaskShared();
+			taskShared1.setTaskId(queryTaskDetailsParam.getTaskId());
+			taskShared1.setType(OaConstant.SHAREDSHOW_TYPE1);
+			List<TaskSharedDto> sharedRoleListResult = new ArrayList<TaskSharedDto>();
+			List<TaskShared> sharedRoleList = taskSharedMapper.queryTaskSharedList(taskShared1);
+
+			if (sharedRoleList.size() > 0) {
+				for (TaskShared taskShared2 : sharedRoleList) {
+
+					// 判断登录用户是否是任务共享人，用于编辑任务时可修改字段权限
+					if (roleList.contains(taskShared2.getSharedshowId())) {
+						isShared = true;
+					}
+
+					TaskSharedDto taskSharedDto = new TaskSharedDto();
+					taskSharedDto.setSharedshowId(taskShared2.getSharedshowId());
+					taskSharedDto.setType(taskShared2.getType());
+
+					String sharedshowName = oaUserUtil.selectRoleName(taskShared2.getSharedshowId(), tendId);
+
+					if (StringUtils.isBlank(sharedshowName)) {// 如果名称为空，不将用户id返回给前端
+						continue;
+					}
+
+					taskSharedDto.setSharedshowName(sharedshowName);
+					sharedRoleListResult.add(taskSharedDto);
+				}
+			}
+
+			taskSharedListDto.setPersonList(sharedPersonListResult);
+			taskSharedListDto.setRoleList(sharedRoleListResult);
+
+			// step3查询部门列表
+			ApiFeignResponse<List<OrganizationDto>> response1 = sysFeignService.queryOrganizationsByUserId(tendId, loginUser.getUserId());
+			if (response1.getStatus() == 200) {
+
+				List<OrganizationDto> orgList = response1.getResult();
+				String[] orgIdArray = null;
+				if (orgList != null && orgList.size() > 0) {
+					for (OrganizationDto org : orgList) {
+						String ids = org.getPrefixId();
+						orgIdArray = ids.split("/");
+					}
+				}
+				List<String> orgIds = new ArrayList<String>();
+				if (orgIdArray != null) {
+					orgIds = Arrays.asList(orgIdArray);
+				}
+
+				logger.info("部门列表>>>>>{}", orgIds.toString());
+
+				TaskShared taskShared3 = new TaskShared();
+				taskShared3.setTaskId(queryTaskDetailsParam.getTaskId());
+				taskShared3.setType(OaConstant.SHAREDSHOW_TYPE2);
+				List<TaskSharedDto> sharedDepartmentResult = new ArrayList<TaskSharedDto>();
+				List<TaskShared> sharedDepartmentList = taskSharedMapper.queryTaskSharedList(taskShared3);
+
+				if (sharedDepartmentList.size() > 0) {
+					for (TaskShared taskShared2 : sharedDepartmentList) {
+
+						// 判断登录用户是否是任务共享人，用于编辑任务时可修改字段权限
+						if (orgIds.contains(taskShared2.getSharedshowId())) {
+							isShared = true;
+						}
+
+						TaskSharedDto taskSharedDto = new TaskSharedDto();
+						taskSharedDto.setSharedshowId(taskShared2.getSharedshowId());
+						taskSharedDto.setType(taskShared2.getType());
+
+						String sharedshowName = oaUserUtil.selectOrgName(taskShared2.getSharedshowId(), tendId);
+
+						if (StringUtils.isBlank(sharedshowName)) {// 如果名称为空，不将用户id返回给前端
+							continue;
+						}
+
+						taskSharedDto.setSharedshowName(sharedshowName);
+						sharedDepartmentResult.add(taskSharedDto);
+					}
+				}
+
+				taskSharedListDto.setDepartmentList(sharedDepartmentResult);
+			}
+
+			// 查询提醒人
+			Task task1 = new Task();
+			task1.setTaskId(queryTaskDetailsParam.getTaskId());
+			Task taskResult1 = taskMapper.queryTaskId(task1);
+
+			if (taskResult1 != null) {
+				TaskRemind taskRemind = new TaskRemind();
+				taskRemind.setRemindId(taskResult1.getRemindId());
+				TaskRemind taskRemindResult = taskRemindMapper.queryTaskRemindId(taskRemind);
+				if (taskRemindResult != null) {
+					if (taskRemindResult.getIsremindCreateperson()) {
+						queryTaskDetailsDto.setIsremindCreateperson(true);
+					}
+
+					if (taskRemindResult.getIsremindAffiliated()) {
+						queryTaskDetailsDto.setIsremindAffiliated(true);
+					}
+
+					if (taskRemindResult.getIsremindLiable()) {
+						queryTaskDetailsDto.setIsremindLiable(true);
+					}
+
+				} else {
+					logger.info(">>>>>>>>>>>>>>>>>>>>未保存提醒人>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+				}
+			}
+
+			logger.info("是否是创建人、负责人>>{}", isCreatePersonLiable);
+			logger.info("是否是参与人>>{}", isAffiliated);
+			logger.info("是否是共享人>>{}", isShared);
+			logger.info("是否是系统管理员>>{}", admin);
+
+			// 非项目中的任务判断是否是任务的创建人、负责人、共享人
+			if (StringUtils.isBlank(taskResult.getProjectId())) {
+				if (!admin) {
+					if (!isCreatePersonLiable && !isAffiliated && !isShared) {
+						throw new HioException("您的访问权限已被取消！");
+					}
+				}
+			}
+
+			if (taskResult != null) {
+				queryTaskDetailsDto.setTaskId(taskResult.getTaskId());
+				queryTaskDetailsDto.setTaskStatus(taskResult.getTaskStatus());
+
+				if (StringUtils.isNotBlank(taskResult.getTaskLiableId())) {
+					queryTaskDetailsDto.setProjectId(taskResult.getProjectId());
+					queryTaskDetailsDto.setProjectName(projectName);
+				}
+
+				queryTaskDetailsDto.setTaskLiableId(taskResult.getTaskLiableId());
+				queryTaskDetailsDto.setTaskLiableName(oaUserUtil.selectUserNameByTendIdAndQuit(taskResult.getTaskLiableId(), tendId));
+				queryTaskDetailsDto.setBeginDate(taskResult.getBeginDate());
+				queryTaskDetailsDto.setEndDate(taskResult.getEndDate());
+				queryTaskDetailsDto.setTaskProgress(taskResult.getTaskProgress());
+				queryTaskDetailsDto.setTaskUrgentFlag(taskResult.getTaskUrgentFlag());
+				queryTaskDetailsDto.setDescribe(taskResult.getTaskDescribe());
+				queryTaskDetailsDto.setAdvanceTime(taskResult.getAdvanceTime());
+				queryTaskDetailsDto.setRemindTime(taskResult.getRemindTime());
+				queryTaskDetailsDto.setTaskParticipantsSharedListDto(taskParticipantsSharedListDto);
+				queryTaskDetailsDto.setTaskSharedListDto(taskSharedListDto);
+				queryTaskDetailsDto.setTaskName(taskResult.getTaskName());
+				queryTaskDetailsDto.setIsfollow(taskResult.getIsfollow());
+				queryTaskDetailsDto.setCreateDate(taskResult.getCreateDate());
+				queryTaskDetailsDto.setCreatePersonName(taskResult.getCreatePersonName());
+				queryTaskDetailsDto.setIsAffiliated(isAffiliated);
+				queryTaskDetailsDto.setIsCreatePersonLiable(isCreatePersonLiable);
+				queryTaskDetailsDto.setIsShared(isShared);
+			}
+		} else {
+			throw new HioException("您的任务已经被删除!");
+		}
+
+		return queryTaskDetailsDto;
+	}
+
+	/**
+	 * 查询任务管理列表
+	 * 
+	 * @param queryTaskDetailsParam
+	 * @return
+	 */
+	@Override
+	public Page queryAdminTaskList(QueryTaskListParam queryTaskListParam) {
+
+		List<QueryTaskListDto> listResult = new ArrayList<QueryTaskListDto>();
+
+		Integer pageNum = queryTaskListParam.getPageNum();
+
+		Integer count = taskMapper.queryCountTaskAdminList(queryTaskListParam);
+
+		Integer start = queryTaskListParam.getPageNum().intValue() == 0 ? 1 : queryTaskListParam.getPageNum();
+		start = (start - 1) * queryTaskListParam.getPageCount().intValue();
+		queryTaskListParam.setPageNum(start);
+		queryTaskListParam.setPageCount(queryTaskListParam.getPageCount().intValue());
+
+		if (count.intValue() > 0) {
+			List<String> orderby = queryTaskListParam.getOrderby();
+			if (orderby != null) {
+				StringBuilder sql = new StringBuilder();
+				for (String key : orderby) {
+					if (sql.length() == 0) {
+						sql.append(" order by " + key.split(",")[0] + " " + key.split(",")[1]);
+					} else {
+						sql.append(" , " + key.split(",")[0] + " " + key.split(",")[1]);
+					}
+				}
+				queryTaskListParam.setDynamicSql(sql.toString());
+			}
+		}
+
+		List<QueryTaskListDto> list = taskMapper.queryTaskAdminList(queryTaskListParam);
+
+		for (QueryTaskListDto queryTaskListDto : list) {
+
+			String taskLiableId = queryTaskListDto.getTaskLiableId();
+			String taskLiableName = oaUserUtil.selectUserName(taskLiableId);
+			queryTaskListDto.setTaskLiableName(taskLiableName);
+
+			// 任务中的任务管理员可以操作，项目中的任务管理员不能操作
+			if (StringUtils.isBlank(queryTaskListDto.getProjectId())) {
+				queryTaskListDto.setIsUpdate(true);
+			} else {
+				queryTaskListDto.setIsUpdate(false);
+			}
+
+			listResult.add(queryTaskListDto);
+		}
+
+		Page resultPage = getPage(queryTaskListParam, count, listResult, pageNum);
+
+		return resultPage;
+	}
+
+	/**
+	 * 根据任务id更新任务
+	 * 
+	 * @param updateStatusParam
+	 * @return
+	 */
+	@Override
+	public int updateTask(UpdateParam updateParam, LoginUser loginUser) {
+
+		List<String> personIds = new ArrayList<String>();
+		List<String> roleIds = new ArrayList<String>();
+		List<String> organizationIds = new ArrayList<String>();
+
+		// 校验负责人是否在项目中
+		if (StringUtils.isNotBlank(updateParam.getProjectId())) {
+			logger.info(">>>>>>>>>>>>>>>>>>>>>调用project校验负责人是否在项目中开始>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+
+			ProjectTeamQueryParamDto projectTeamQueryParamDto = new ProjectTeamQueryParamDto();
+			projectTeamQueryParamDto.setProjectId(updateParam.getProjectId());
+			projectTeamQueryParamDto.setShareType("0");
+			projectTeamQueryParamDto.setTeamPersonId(updateParam.getTaskLiableId());
+			projectTeamQueryParamDto.setOutType("0");
+			List<ProjectTeamPerson> list = projectTeamPersonService.queryProjectTeamPersonByTeamQueryParam(projectTeamQueryParamDto);
+			if (list.size() == 0) {
+				throw new HioException("所选负责人不在项目团队中请重新选择");
+			}
+		}
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>>调用project校验负责人是否在项目中结束>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+
+		Set<String> sendMessageList = new HashSet<String>();// 非外部联系人人员集合
+		Set<String> sendMessageOutList = new HashSet<String>();// 外部联系人人员集合
+
+		String json = JedisUtil.fetchRow(RedisKeyConstant.userTendList + updateParam.getImUserId(), loginUser.getTendId());
+		JSONObject jsonObject = JSONObject.parseObject(json);
+		String tendName = jsonObject.getString("tendName");// 租户名称
+
+		// String tendName = "测试租户";
+
+		// 判断负责人是否变化，如果变化向新负责人发送cc消息
+		Task task = new Task();
+		task.setTaskId(updateParam.getTaskId());
+		Task task1 = taskMapper.queryTaskId(task);
+
+		if(Base.isEmpty(task1)){
+			throw new HioException("该任务已被删除!");
+		}
+
+		if (StringUtils.isNotBlank(updateParam.getTaskLiableId())) {
+
+			// 判断负责人是否离职，如果离职，请用户重新选择
+			UserStatusParam apiParam = new UserStatusParam();
+			List<String> userIds = new ArrayList<String>();
+			userIds.add(updateParam.getTaskLiableId());
+			apiParam.setUserIds(userIds);
+			apiParam.setTendId(loginUser.getTendId());
+			if (!oaUserUtil.queryUserStatusByIds(apiParam)) {
+				String taskLiableName = oaUserUtil.selectUserNameByTendIdAndQuit(updateParam.getTaskLiableId(), loginUser.getTendId());
+				throw new HioException(taskLiableName + "已离职或该联系人已删除");
+			}
+
+			if (!updateParam.getTaskLiableId().equals(task1.getTaskLiableId())) {
+				String taskLiableId = updateParam.getTaskLiableId();
+				if (StringUtils.isNotBlank(taskLiableId)) {
+
+					personIds.add(taskLiableId);
+				}
+
+			}
+		}
+
+		// 判断是否有新增加参与人，向新增加参与人发送cc消息
+		TaskParticipantsSharedListDto taskParticipantsSharedListDto = new TaskParticipantsSharedListDto();
+
+		// 查询原参与人信息
+		List<TaskParticipantsDto> personList3 = new ArrayList<TaskParticipantsDto>();
+		TaskParticipants taskParticipants1 = new TaskParticipants();
+		taskParticipants1.setTaskId(updateParam.getTaskId());
+		taskParticipants1.setType(OaConstant.SHAREDSHOW_TYPE0);
+		List<TaskParticipants> personList2 = taskParticipantsMapper.queryList(taskParticipants1);
+		for (TaskParticipants taskParticipants2 : personList2) {
+			TaskParticipantsDto taskParticipantsDto = new TaskParticipantsDto();
+			taskParticipantsDto.setSharedshowId(taskParticipants2.getSharedshowId());
+			taskParticipantsDto.setType(taskParticipants2.getType());
+			taskParticipantsDto.setSharedshowImid(taskParticipants2.getSharedshowImid());
+			taskParticipantsDto.setOutType(taskParticipants2.getOutType());
+			personList3.add(taskParticipantsDto);
+			taskParticipantsSharedListDto.setPersonList(personList3);
+		}
+
+		if (updateParam.getTaskParticipantsSharedListDto() != null) {
+			List<TaskParticipantsDto> personList = updateParam.getTaskParticipantsSharedListDto().getPersonList();
+			if (personList != null) {
+
+				for (TaskParticipantsDto taskParticipantsDto : personList) {
+
+					TaskParticipants taskParticipants = new TaskParticipants();
+
+					if (OaConstant.PROJECTINPERSON.equals(taskParticipantsDto.getOutType())) {// 内部人员
+
+						// 判断参与人是否离职，如果离职，请用户重新选择
+						UserStatusParam apiParam = new UserStatusParam();
+						List<String> userIds = new ArrayList<String>();
+						userIds.add(taskParticipantsDto.getSharedshowId());
+						apiParam.setUserIds(userIds);
+						apiParam.setTendId(loginUser.getTendId());
+						if (!oaUserUtil.queryUserStatusByIds(apiParam)) {
+							String SharedshowName = oaUserUtil.selectUserNameByTendIdAndQuit(taskParticipantsDto.getSharedshowId(), loginUser.getTendId());
+							throw new HioException(SharedshowName + "已离职或该联系人已删除");
+						}
+
+						taskParticipants.setSharedshowId(taskParticipantsDto.getSharedshowId());
+						taskParticipants.setType(OaConstant.SHAREDSHOW_TYPE0);
+						taskParticipants.setTaskId(updateParam.getTaskId());
+						List<TaskParticipants> personList1 = taskParticipantsMapper.queryList(taskParticipants);
+						if (personList1.size() == 0) {
+							String taskParticipantsId = taskParticipantsDto.getSharedshowImid();
+							if (StringUtils.isNotBlank(taskParticipantsId)) {
+
+								sendMessageList.add(taskParticipantsId);
+							}
+						}
+					} else if (OaConstant.PROJECTOUTPERSON.equals(taskParticipantsDto.getOutType())) {// 外部联系人
+
+						String sharedshowName = "";
+
+						logger.info("********************************调用查询外部联系人信息接口开始******************sharedshowId:{}****sharedshowImid:{}*******",
+								taskParticipantsDto.getSharedshowId(), taskParticipantsDto.getSharedshowImid());
+						ApiFeignResponse<ExternalContactDto> response = sysExtrenalFeignService
+								.queryDetailByStatus(loginUser.getTendId(), taskParticipantsDto.getSharedshowId(), 1);
+						if (response.getStatus() == OaConstant.SUCCESSSTATUS) {
+							ExternalContactDto externalContactDto = response.getResult();
+
+							if (externalContactDto != null) {
+								logger.info("********************************externalContactDto.getId():{}*****************************", externalContactDto.getId());
+								logger.info("********************************externalContactDto.getName():{}*****************************", externalContactDto.getName());
+								logger.info("********************************调用查询外部联系人信息接口结束*****************************");
+								sharedshowName = externalContactDto.getName();
+							}
+
+						} else {
+							logger.info("接口返回状态" + response.getStatus() + "***********接口返回message." + response.getMessage());
+							throw new HioException("查询外部联系人信息失败!");
+						}
+
+						// 判断参与人是否离职，如果离职，请用户重新选择
+						ExternalContactRelationParam apiParam = new ExternalContactRelationParam();
+						apiParam.setImUserId(taskParticipantsDto.getSharedshowImid());
+						apiParam.setTendId(loginUser.getTendId());
+						apiParam.setUserId(loginUser.getUserId());
+						if (!oaUserUtil.queryExternalIsHaveRelation(apiParam)) {
+							throw new HioException(sharedshowName + "已离职或该联系人已删除!");
+						}
+
+						taskParticipants.setSharedshowImid(taskParticipantsDto.getSharedshowImid());
+						taskParticipants.setType(OaConstant.SHAREDSHOW_TYPE0);
+						taskParticipants.setTaskId(updateParam.getTaskId());
+						List<TaskParticipants> personList4 = taskParticipantsMapper.queryList(taskParticipants);
+						if (personList4.size() == 0) {
+							String taskParticipantsId = taskParticipantsDto.getSharedshowImid();
+
+							// logger.info("taskParticipantsId外部联系人>>>>>>>{}",taskParticipantsId);
+
+							if (StringUtils.isNotBlank(taskParticipantsId)) {
+
+								sendMessageOutList.add(taskParticipantsId);
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// 判断是否有新增加共享人，向新增加共享人发送cc消息
+		TaskSharedListDto taskSharedListDto = new TaskSharedListDto();
+
+		// 查询原共享人
+		// 人员
+		List<TaskSharedDto> personList = new ArrayList<TaskSharedDto>();
+
+		TaskShared taskSharedPerson = new TaskShared();
+		taskSharedPerson.setTaskId(updateParam.getTaskId());
+		taskSharedPerson.setType(OaConstant.SHAREDSHOW_TYPE0);
+		List<TaskShared> taskSharedPersonList2 = taskSharedMapper.queryTaskSharedList(taskSharedPerson);
+		for (TaskShared taskShared : taskSharedPersonList2) {
+			TaskSharedDto taskSharedDto = new TaskSharedDto();
+			taskSharedDto.setSharedshowId(taskShared.getSharedshowId());
+			taskSharedDto.setSharedshowImid(taskShared.getSharedshowImid());
+			taskSharedDto.setType(taskShared.getType());
+			taskSharedDto.setOutType(taskShared.getOutType());
+			personList.add(taskSharedDto);
+			taskSharedListDto.setPersonList(personList);
+		}
+
+		// 角色
+		List<TaskSharedDto> roleList = new ArrayList<TaskSharedDto>();
+
+		TaskShared taskSharedRole = new TaskShared();
+		taskSharedRole.setTaskId(updateParam.getTaskId());
+		taskSharedRole.setType(OaConstant.SHAREDSHOW_TYPE1);
+		List<TaskShared> taskSharedRoleList2 = taskSharedMapper.queryTaskSharedList(taskSharedRole);
+		for (TaskShared taskShared : taskSharedRoleList2) {
+			TaskSharedDto taskSharedDto = new TaskSharedDto();
+			taskSharedDto.setSharedshowId(taskShared.getSharedshowId());
+			taskSharedDto.setType(taskShared.getType());
+			roleList.add(taskSharedDto);
+			taskSharedListDto.setRoleList(roleList);
+		}
+
+		// 部门
+		List<TaskSharedDto> departmentList = new ArrayList<TaskSharedDto>();
+		TaskShared taskSharedDepartment = new TaskShared();
+		taskSharedDepartment.setTaskId(updateParam.getTaskId());
+		taskSharedDepartment.setType(OaConstant.SHAREDSHOW_TYPE2);
+		List<TaskShared> taskSharedDepartmentList2 = taskSharedMapper.queryTaskSharedList(taskSharedDepartment);
+		for (TaskShared taskShared : taskSharedDepartmentList2) {
+			TaskSharedDto taskSharedDto = new TaskSharedDto();
+			taskSharedDto.setSharedshowId(taskShared.getSharedshowId());
+			taskSharedDto.setType(taskShared.getType());
+			departmentList.add(taskSharedDto);
+			taskSharedListDto.setDepartmentList(departmentList);
+		}
+
+		if (updateParam.getTaskSharedListDto() != null) {
+			List<TaskSharedDto> taskSharedPersonList = updateParam.getTaskSharedListDto().getPersonList();
+			if (taskSharedPersonList != null) {
+
+				for (TaskSharedDto taskSharedDto : taskSharedPersonList) {
+					TaskShared taskShared = new TaskShared();
+
+					if (OaConstant.PROJECTINPERSON.equals(taskSharedDto.getOutType())) {// 内部人员
+
+						// 判断共享人是否离职，如果离职，请用户重新选择
+						UserStatusParam apiParam = new UserStatusParam();
+						List<String> userIds = new ArrayList<String>();
+						userIds.add(taskSharedDto.getSharedshowId());
+						apiParam.setUserIds(userIds);
+						apiParam.setTendId(loginUser.getTendId());
+						if (!oaUserUtil.queryUserStatusByIds(apiParam)) {
+
+							String sharedshowName = oaUserUtil.selectUserNameByTendIdAndQuit(taskSharedDto.getSharedshowId(), loginUser.getTendId());
+
+							throw new HioException(sharedshowName + "已离职或该联系人已删除");
+						}
+
+						taskShared.setSharedshowId(taskSharedDto.getSharedshowId());
+						taskShared.setType(OaConstant.SHAREDSHOW_TYPE0);
+						taskShared.setTaskId(updateParam.getTaskId());
+						List<TaskShared> taskSharedPersonList1 = taskSharedMapper.queryTaskSharedList(taskShared);
+						if (taskSharedPersonList1.size() == 0) {
+							String sharedId = taskSharedDto.getSharedshowImid();
+
+							if (StringUtils.isNotBlank(sharedId)) {
+
+								sendMessageList.add(sharedId);
+							}
+
+						}
+					} else if (OaConstant.PROJECTOUTPERSON.equals(taskSharedDto.getOutType())) {// 外部联系人
+
+						String sharedshowName = "";
+
+						logger.info("********************************调用查询外部联系人信息接口开始******************sharedshowId:{}****sharedshowImid:{}*******",
+								taskSharedDto.getSharedshowId(), taskSharedDto.getSharedshowImid());
+						ApiFeignResponse<ExternalContactDto> response = sysExtrenalFeignService.queryDetailByStatus(loginUser.getTendId(), taskSharedDto.getSharedshowId(), 1);
+						if (response.getStatus() == OaConstant.SUCCESSSTATUS) {
+							ExternalContactDto externalContactDto = response.getResult();
+
+							if (externalContactDto != null) {
+								logger.info("********************************externalContactDto.getId():{}*****************************", externalContactDto.getId());
+								logger.info("********************************externalContactDto.getName():{}*****************************", externalContactDto.getName());
+								logger.info("********************************调用查询外部联系人信息接口结束*****************************");
+								sharedshowName = externalContactDto.getName();
+							}
+
+						} else {
+							logger.info("接口返回状态" + response.getStatus() + "***********接口返回message." + response.getMessage());
+							throw new HioException("查询外部联系人信息失败!");
+						}
+
+						// 判断共享人是否离职，如果离职，请用户重新选择
+						ExternalContactRelationParam apiParam1 = new ExternalContactRelationParam();
+						apiParam1.setUserId(loginUser.getUserId());
+						apiParam1.setImUserId(taskSharedDto.getSharedshowImid());
+						apiParam1.setTendId(loginUser.getTendId());
+						if (!oaUserUtil.queryExternalIsHaveRelation(apiParam1)) {
+							throw new HioException(sharedshowName + "已离职或该联系人已删除");
+						}
+
+						taskShared.setSharedshowImid(taskSharedDto.getSharedshowImid());
+						taskShared.setType(OaConstant.SHAREDSHOW_TYPE0);
+						taskShared.setTaskId(updateParam.getTaskId());
+						List<TaskShared> taskSharedPersonList1 = taskSharedMapper.queryTaskSharedList(taskShared);
+						if (taskSharedPersonList1.size() == 0) {
+							String sharedId = taskSharedDto.getSharedshowImid();
+
+							// logger.info("sharedId外部联系人>>>>>>>{}",sharedId);
+
+							if (StringUtils.isNotBlank(sharedId)) {
+
+								sendMessageOutList.add(sharedId);
+							}
+
+						}
+					}
+
+				}
+			}
+
+			List<TaskSharedDto> taskSharedRoleList = updateParam.getTaskSharedListDto().getRoleList();
+
+			if (taskSharedRoleList != null) {
+				for (TaskSharedDto taskSharedDto : taskSharedRoleList) {
+					TaskShared taskShared = new TaskShared();
+					taskShared.setSharedshowId(taskSharedDto.getSharedshowId());
+					taskShared.setType(OaConstant.SHAREDSHOW_TYPE1);
+					taskShared.setTaskId(updateParam.getTaskId());
+					List<TaskShared> taskSharedPersonList1 = taskSharedMapper.queryTaskSharedList(taskShared);
+					if (taskSharedPersonList1.size() == 0) {
+						String roleId = taskShared.getSharedshowId();
+						if (StringUtils.isNotBlank(roleId)) {
+							roleIds.add(roleId);
+						}
+
+					}
+				}
+			}
+
+			List<TaskSharedDto> taskSharedDepartmentList = updateParam.getTaskSharedListDto().getDepartmentList();
+
+			if (taskSharedDepartmentList != null) {
+				for (TaskSharedDto taskSharedDto : taskSharedDepartmentList) {
+					TaskShared taskShared = new TaskShared();
+					taskShared.setSharedshowId(taskSharedDto.getSharedshowId());
+					taskShared.setType(OaConstant.SHAREDSHOW_TYPE2);
+					taskShared.setTaskId(updateParam.getTaskId());
+					List<TaskShared> taskSharedPersonList1 = taskSharedMapper.queryTaskSharedList(taskShared);
+					if (taskSharedPersonList1.size() == 0) {
+						String organizationId = taskShared.getSharedshowId();
+						if (StringUtils.isNotBlank(organizationId)) {
+							organizationIds.add(organizationId);
+						}
+
+					}
+				}
+			}
+		}
+
+		// 查询所有任务信息
+		Task task2 = new Task();
+		task2.setTaskId(updateParam.getTaskId());
+		Task taskResult = taskMapper.queryTaskId(task2);
+		if (taskResult != null) {
+
+			Date beginDate = taskResult.getBeginDate();
+			Date endDate = taskResult.getEndDate();
+			Boolean isFllow = taskResult.getIsfollow();
+
+			// 查询当前登录人是否是参与人
+			Boolean isParticipantsPerson = false;
+			TaskParticipants taskParticipants = new TaskParticipants();
+			taskParticipants.setSharedshowId(loginUser.getUserId());
+			taskParticipants.setType(OaConstant.SHAREDSHOW_TYPE0);
+			taskParticipants.setTaskId(updateParam.getTaskId());
+			List<TaskParticipants> taskParticipantsList = taskParticipantsMapper.queryList(taskParticipants);
+			if (taskParticipantsList.size() > 0) {
+				isParticipantsPerson = true;
+			}
+
+			// 查询提醒表
+			TaskRemind taskRemind = new TaskRemind();
+			taskRemind.setRemindId(taskResult.getRemindId());
+			TaskRemind taskRemindResult = taskRemindMapper.queryTaskRemindId(taskRemind);
+
+			// 删除所有任务信息
+			DeleteTaskParam deleteTaskParam = new DeleteTaskParam();
+			deleteTaskParam.setTaskId(updateParam.getTaskId());
+			deleteTask(deleteTaskParam, loginUser);
+
+			// 参与人-新建所有任务信息，如果传入字段不为空使用传入字段，如果为空，使用原数据
+			SaveTaskParam saveTaskParam = new SaveTaskParam();
+
+			logger.info("是否是参与人:{}", isParticipantsPerson);
+
+			if (isParticipantsPerson) {
+				saveTaskParam.setTaskName(!StringUtils.isBlank(updateParam.getTaskName()) ? updateParam.getTaskName() : taskResult.getTaskName());
+				saveTaskParam.setProjectId(!StringUtils.isBlank(updateParam.getProjectId()) ? updateParam.getProjectId() : taskResult.getProjectId());
+				saveTaskParam.setProjectstageId(!StringUtils.isBlank(updateParam.getProjectstageId()) ? updateParam.getProjectstageId() : taskResult.getProjectstageId());
+				saveTaskParam.setTaskLiableId(!StringUtils.isBlank(updateParam.getTaskLiableId()) ? updateParam.getTaskLiableId() : taskResult.getTaskLiableId());
+				saveTaskParam.setBeginDate(updateParam.getBeginDate() != null ? updateParam.getBeginDate() : taskResult.getBeginDate());
+				saveTaskParam.setEndDate(updateParam.getEndDate() != null ? updateParam.getEndDate() : taskResult.getEndDate());
+				saveTaskParam.setTaskParticipantsSharedListDto(updateParam.getTaskParticipantsSharedListDto() != null ? updateParam.getTaskParticipantsSharedListDto()
+						: taskParticipantsSharedListDto);
+				saveTaskParam.setTaskSharedListDto(updateParam.getTaskSharedListDto() != null ? updateParam.getTaskSharedListDto() : taskSharedListDto);
+				saveTaskParam.setTaskProgress(updateParam.getTaskProgress() != null ? updateParam.getTaskProgress() : taskResult.getTaskProgress());
+				saveTaskParam.setTaskUrgentFlag(!StringUtils.isBlank(updateParam.getTaskUrgentFlag()) ? updateParam.getTaskUrgentFlag() : taskResult.getTaskUrgentFlag());
+				saveTaskParam.setDescribe(!StringUtils.isBlank(updateParam.getDescribe()) ? updateParam.getDescribe() : taskResult.getTaskDescribe());
+				saveTaskParam.setAdvanceTime(updateParam.getAdvanceTime() != null ? updateParam.getAdvanceTime() : taskResult.getAdvanceTime());
+				saveTaskParam.setRemindTime(!StringUtils.isBlank(updateParam.getRemindTime()) ? updateParam.getRemindTime() : taskResult.getRemindTime());
+
+				
+				if (taskRemindResult != null) {
+					saveTaskParam.setIsremindCreateperson(updateParam.getIsremindCreateperson() != null ? updateParam.getIsremindCreateperson() : taskRemindResult
+							.getIsremindCreateperson());
+					saveTaskParam.setIsremindLiable(updateParam.getIsremindLiable() != null ? updateParam.getIsremindLiable() : taskRemindResult.getIsremindLiable());
+					saveTaskParam.setIsremindAffiliated(updateParam.getIsremindAffiliated() != null ? updateParam.getIsremindAffiliated() : taskRemindResult
+							.getIsremindAffiliated());
+				}else{
+					saveTaskParam.setIsremindCreateperson(updateParam.getIsremindCreateperson() != null ? updateParam.getIsremindCreateperson() : false);
+					saveTaskParam.setIsremindLiable(updateParam.getIsremindLiable() != null ? updateParam.getIsremindLiable() : false);
+					saveTaskParam.setIsremindAffiliated(updateParam.getIsremindAffiliated() != null ? updateParam.getIsremindAffiliated() : false);
+				}
+				
+			} else {
+				saveTaskParam.setTaskName(updateParam.getTaskName());
+				saveTaskParam.setProjectId(updateParam.getProjectId());
+				saveTaskParam.setProjectstageId(updateParam.getProjectstageId());
+				saveTaskParam.setTaskLiableId(updateParam.getTaskLiableId());
+				saveTaskParam.setBeginDate(updateParam.getBeginDate());
+				saveTaskParam.setEndDate(updateParam.getEndDate());
+				saveTaskParam.setTaskParticipantsSharedListDto(updateParam.getTaskParticipantsSharedListDto());
+				saveTaskParam.setTaskSharedListDto(updateParam.getTaskSharedListDto());
+				saveTaskParam.setTaskProgress(updateParam.getTaskProgress());
+				saveTaskParam.setTaskUrgentFlag(updateParam.getTaskUrgentFlag());
+				saveTaskParam.setDescribe(updateParam.getDescribe());
+				saveTaskParam.setAdvanceTime(updateParam.getAdvanceTime());
+				saveTaskParam.setRemindTime(updateParam.getRemindTime());
+				saveTaskParam.setIsremindCreateperson(updateParam.getIsremindCreateperson());
+				saveTaskParam.setIsremindLiable(updateParam.getIsremindLiable());
+				saveTaskParam.setIsremindAffiliated(updateParam.getIsremindAffiliated());
+			}
+
+			saveTaskParam.setTaskId(updateParam.getTaskId());
+			// 修改时判断是否已经超期，如果超期将状态改为超期
+			Date date = DateUtil.getDateToFormatStr(DateUtil.dateToDateString(new Date(), DateUtil.DATE_DEFAULT_FORMAT), DateUtil.DATAFORMAT_STR);
+			Date endDate1 = DateUtil.getDateToFormatStr(DateUtil.dateToDateString(saveTaskParam.getEndDate(), DateUtil.DATE_DEFAULT_FORMAT), DateUtil.DATAFORMAT_STR);
+			if (endDate1.compareTo(date) < 0) {// 超期
+				saveTaskParam.setTaskStatus(OaConstant.TASK_STATUS3);
+			} else {
+				String stauts = task1.getTaskStatus();
+				if (OaConstant.TASK_STATUS3.equals(stauts)) {// 日期修改为不超期，如果原来状态为超期改为未完成
+					saveTaskParam.setTaskStatus(OaConstant.TASK_STATUS0);
+				} else {
+					saveTaskParam.setTaskStatus(stauts);
+				}
+
+			}
+
+			saveTaskParam.setId(taskResult.getId());
+			saveTaskParam.setCreatePersonId(taskResult.getCreatePersonId());
+			saveTaskParam.setCreateDate(taskResult.getCreateDate());
+			saveTaskParam.setIsFllow(isFllow);
+
+			saveTask(saveTaskParam, loginUser, false);
+
+			logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>开始组装cc消息发送非外部联系人内容>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+
+			// 组装调用sys接口数据
+			OAUserParam oAUserParam = new OAUserParam();
+			oAUserParam.setUserIds(personIds);
+			oAUserParam.setRoleIds(roleIds);
+			oAUserParam.setOrganizationIds(organizationIds);
+			oAUserParam.setTendId(loginUser.getTendId());
+			oAUserParam.setContainsChildOrgUser(true);
+
+			// 组装消息内容
+			String taskName = updateParam.getTaskName();
+			String taskLiableName = oaUserUtil.selectUserName(updateParam.getTaskLiableId());
+
+			Map<String, Object> map = new HashMap<String, Object>();
+			map.put("moduleType", MessageEnum.TASK.getValue() + "_1");
+			map.put("message", taskName);
+			map.put("taskLiableName", taskLiableName);
+			map.put("beginDate", DateUtil.dateToDateString(beginDate, DateUtil.DATE_DEFAULT_FORMAT));
+			map.put("endDate", DateUtil.dateToDateString(endDate, DateUtil.DATE_DEFAULT_FORMAT));
+			map.put("pcUrl", "/ccdist/#/task/detail/" + updateParam.getTaskId() + "?tendId=" + loginUser.getTendId());
+			map.put("mobileUrl", "/mobiledist/#/m_task/m_details_task/" + updateParam.getTaskId() + "?tendId=" + loginUser.getTendId());
+
+			logger.info(">>>>>>>>>>>>>>>>>>>>>>>>开始调用sys服务获取角色、部门下所有人员>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+			CoreHeaderInterceptor.initHystrixRequestContext(CoreHeaderInterceptor.HEADER_LABEL);// 不设置框架会报错
+			ApiFeignResponse<List<OAUserDto>> apiFeignResponse = sysFeignService.queryUserByOrgAndRoleAndUser(oAUserParam);
+			if (apiFeignResponse != null) {
+				if (200 == apiFeignResponse.getStatus()) {
+					List<OAUserDto> list1 = apiFeignResponse.getResult();
+					for (OAUserDto oaUserDto : list1) {
+						sendMessageList.add(oaUserDto.getImUserId());
+					}
+				} else {
+					throw new HioException("调用queryNameByOrgAndRoleAndUser feign接口失败" + apiFeignResponse.getMessage());
+				}
+			}
+
+			ImNoticeMsgSendParam imNoticeMsgSendParam = new ImNoticeMsgSendParam();
+			List<ImNoticeMsgsParam> imNoticeMsgsList = new ArrayList<ImNoticeMsgsParam>();
+			List<IMToUserParam> iMToUserList = new ArrayList<IMToUserParam>();
+
+			Iterator<String> it = sendMessageList.iterator();
+			while (it.hasNext()) {
+				String str = it.next();
+				IMToUserParam iMToUserParam = new IMToUserParam();
+				iMToUserParam.setToUserId(str);
+				iMToUserList.add(iMToUserParam);
+			}
+
+			if (iMToUserList.size() > 0) {
+				ImNoticeMsgsParam imNoticeMsgsParam = new ImNoticeMsgsParam();
+				imNoticeMsgsParam.setToUsers(iMToUserList);
+				imNoticeMsgsParam.setMsg((String) map.get("message"));
+				imNoticeMsgsParam.setSendMsgType("text");
+				imNoticeMsgsParam.setFromUserId(updateParam.getImUserId());
+				imNoticeMsgsParam.setTendId(loginUser.getTendId());
+				imNoticeMsgsParam.setTendName(tendName);
+				imNoticeMsgsParam.setMsgType("msg");
+				imNoticeMsgsParam.setModuleType((String) map.get("moduleType"));
+				imNoticeMsgsParam.setModuleName(MessageEnum.TASK.getDes());
+				imNoticeMsgsParam.setExt(map);
+				imNoticeMsgsParam.setOpenStatus(1);
+				// imNoticeMsgsParam.setMobibleUrl(task_details_url + "/" + updateParam.getTaskId() + "/" + loginUser.getTendId());
+				imNoticeMsgsList.add(imNoticeMsgsParam);
+				imNoticeMsgSendParam.setMsgs(imNoticeMsgsList);
+
+				if (sendMessageList.size() > 0) {
+					messageFeignService.sendMessage(imNoticeMsgSendParam);
+				}
+			}
+			logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>结束组装cc消息发送非外部联系人内容>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+
+			logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>开始组装cc消息发送外部联系人内容>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+
+			Map<String, Object> map1 = new HashMap<String, Object>();
+			map1.put("tendName", tendName);
+			map1.put("moduleType", MessageEnum.TASK.getValue() + "_1");
+			map1.put("message", taskName);
+			map1.put("taskLiableName", taskLiableName);
+			map1.put("beginDate", DateUtil.dateToDateString(beginDate, DateUtil.DATE_DEFAULT_FORMAT));
+			map1.put("endDate", DateUtil.dateToDateString(endDate, DateUtil.DATE_DEFAULT_FORMAT));
+			map1.put("pcUrl", "/ccdist/#/task/detail/" + updateParam.getTaskId() + "?tendId=" + loginUser.getTendId());
+			map1.put("mobileUrl", "/mobiledist/#/m_details/m_task_detail?taskId=" + updateParam.getTaskId() + "&tendId=" + loginUser.getTendId());
+
+			ImNoticeMsgSendParam imNoticeMsgSendOutParam = new ImNoticeMsgSendParam();
+			List<ImNoticeMsgsParam> imNoticeMsgsOutList = new ArrayList<ImNoticeMsgsParam>();
+			List<IMToUserParam> iMToUserOutList = new ArrayList<IMToUserParam>();
+
+			logger.info("sendMessageOutList.size()>>>>>>>>>>>{}", sendMessageOutList.size());
+
+			Iterator<String> itOut = sendMessageOutList.iterator();
+			while (itOut.hasNext()) {
+				String str = itOut.next();
+				IMToUserParam iMToUserParam = new IMToUserParam();
+				iMToUserParam.setToUserId(str);
+				iMToUserOutList.add(iMToUserParam);
+			}
+
+			logger.info("iMToUserOutList.size()>>>>>>>>>>>{}", iMToUserOutList.size());
+
+			if (iMToUserOutList.size() > 0) {
+				ImNoticeMsgsParam imNoticeMsgsParam = new ImNoticeMsgsParam();
+				imNoticeMsgsParam.setToUsers(iMToUserOutList);
+				imNoticeMsgsParam.setMsg((String) map.get("message"));
+				imNoticeMsgsParam.setSendMsgType("text");
+				imNoticeMsgsParam.setFromUserId(updateParam.getImUserId());
+				imNoticeMsgsParam.setTendId("");
+				imNoticeMsgsParam.setTendName("合作企业");
+				imNoticeMsgsParam.setMsgType(MsgTypeEnum.OUT.getValue());
+				imNoticeMsgsParam.setModuleType((String) map.get("moduleType"));
+				imNoticeMsgsParam.setModuleName(MessageEnum.TASK.getDes());
+				imNoticeMsgsParam.setExt(map);
+				imNoticeMsgsParam.setOpenStatus(1);
+				// imNoticeMsgsParam.setMobibleUrl(task_details_url + "/" + updateParam.getTaskId() + "/" + loginUser.getTendId());
+				imNoticeMsgsOutList.add(imNoticeMsgsParam);
+				imNoticeMsgSendOutParam.setMsgs(imNoticeMsgsOutList);
+
+				if (sendMessageList.size() > 0) {
+					messageFeignService.sendMessage(imNoticeMsgSendOutParam);
+				}
+			}
+			logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>结束组装cc消息发送外部联系人内容>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+		}
+		return 1;
+	}
+
+	/**
+	 * 查询任务对应操作权限
+	 * 
+	 * @param queryTaskAuthParam
+	 *            查询任务对应操作权限输入对象
+	 */
+	@Override
+	public QueryTaskAuthDto queryTaskAuth(QueryTaskAuthParam queryTaskAuthParam, LoginUser loginUser, boolean admin) {
+
+		QueryTaskAuthDto queryTaskAuthDto = new QueryTaskAuthDto();
+
+		Boolean isCreatePerson = false;// 是否是创建人
+		Boolean isLiablePerson = false;// 是否是负责人
+		Boolean isParticipantsPerson = false;// 是否是参与人
+		Boolean isSharedPerson = false;// 是否是共享人
+		Boolean isFllow = false;// 是否关注
+
+		// 根据任务id，判断角色
+		// 是否是创建人
+		QueryTaskListParam isCreatePersonTask = new QueryTaskListParam();
+		isCreatePersonTask.setTaskId(queryTaskAuthParam.getTaskId());
+		isCreatePersonTask.setCreatePersonId(loginUser.getUserId());
+		List<QueryTaskListDto> isCreatePersonList = taskMapper.queryTaskList(isCreatePersonTask);
+		if (isCreatePersonList.size() > 0) {
+			isCreatePerson = true;
+		}
+
+		// 是否是负责人
+		QueryTaskListParam isCreatePersonTask1 = new QueryTaskListParam();
+		isCreatePersonTask1.setTaskId(queryTaskAuthParam.getTaskId());
+		isCreatePersonTask1.setTaskLiableId(loginUser.getUserId());
+		List<QueryTaskListDto> isLiablePersonList = taskMapper.queryTaskList(isCreatePersonTask1);
+		if (isLiablePersonList.size() > 0) {
+			isLiablePerson = true;
+		}
+
+		// 是否是参与人
+		TaskParticipants taskParticipants = new TaskParticipants();
+		taskParticipants.setSharedshowId(loginUser.getUserId());
+		taskParticipants.setType(OaConstant.SHAREDSHOW_TYPE0);
+		taskParticipants.setTaskId(queryTaskAuthParam.getTaskId());
+		List<TaskParticipants> taskParticipantsList = taskParticipantsMapper.queryList(taskParticipants);
+		if (taskParticipantsList.size() > 0) {
+			isParticipantsPerson = true;
+
+			// 移动端逻辑，外部联系人是参与人角色不能对任务做任何操作，只能查看、评论 add by wdy 2018-06-26
+			for (TaskParticipants taskParticipants2 : taskParticipantsList) {
+				if (OaConstant.OUTTYPE1.equals(taskParticipants2.getOutType())) {// 外部联系人
+
+					logger.info(">>>>>>参与人是外部联系人>>>>sharedshowId:{}>>>>", loginUser.getUserId());
+
+					return null;
+				}
+			}
+		}
+
+		// 是否是共享人
+		// 共享人员
+		TaskShared taskSharedPerson = new TaskShared();
+		taskSharedPerson.setSharedshowId(loginUser.getUserId());
+		taskSharedPerson.setType(OaConstant.SHAREDSHOW_TYPE0);
+		taskSharedPerson.setTaskId(queryTaskAuthParam.getTaskId());
+		List<TaskShared> personList = taskSharedMapper.queryTaskSharedList(taskSharedPerson);
+		if (personList.size() > 0) {
+			isSharedPerson = true;
+
+			// 移动端逻辑，外部联系人是参与人角色不能对任务做任何操作，只能查看、评论 add by wdy 2018-06-26
+			for (TaskShared taskShared : personList) {
+				if (OaConstant.OUTTYPE1.equals(taskShared.getOutType())) {// 外部联系人
+
+					logger.info(">>>>>>共享人是外部联系人>>>>sharedshowId:{}>>>>", loginUser.getUserId());
+
+					return null;
+				}
+			}
+
+		}
+
+		if (!isSharedPerson) {
+			// 共享角色
+			TaskShared taskSharedRole = new TaskShared();
+			List<String> getRoleIds = loginUser.getRoleIds();
+			if (getRoleIds.size() > 0) {
+				Iterator<String> it = getRoleIds.iterator();
+				while (it.hasNext()) {
+					String str = it.next();
+					taskSharedRole.setSharedshowId(str);
+					taskSharedRole.setType(OaConstant.SHAREDSHOW_TYPE1);
+					taskSharedRole.setTaskId(queryTaskAuthParam.getTaskId());
+					List<TaskShared> taskSharedList = taskSharedMapper.queryTaskSharedList(taskSharedRole);
+					if (taskSharedList.size() > 0) {
+						isSharedPerson = true;
+						break;
+					}
+				}
+			}
+
+		}
+
+		//获取登录人当前部门
+		Set<String> getOrgIds = new HashSet<String>();
+		getOrgIds = oaUserUtil.findAllOrgIdsToSet(loginUser.getTendId(),loginUser.getUserId());
+		
+		if (!isSharedPerson) {
+			// 共享部门
+			TaskShared taskSharedDepartment = new TaskShared();
+			
+			if (getOrgIds.size() > 0) {
+				Iterator<String> it = getOrgIds.iterator();
+				while (it.hasNext()) {
+					String str = it.next();
+					taskSharedDepartment.setSharedshowId(str);
+					taskSharedDepartment.setType(OaConstant.SHAREDSHOW_TYPE2);
+					taskSharedDepartment.setTaskId(queryTaskAuthParam.getTaskId());
+					List<TaskShared> taskSharedList = taskSharedMapper.queryTaskSharedList(taskSharedDepartment);
+					if (taskSharedList.size() > 0) {
+						isSharedPerson = true;
+						break;
+					}
+				}
+			}
+
+		}
+
+		logger.info("是否是创建人:{},是否是负责人:{},是否是参与人:{},是否是共享人:{},是否是管理员:{}", isCreatePerson, isLiablePerson, isParticipantsPerson, isSharedPerson, admin);
+
+		// 未完成状态
+		// 创建人、负责人——编辑、关注(如果已经关注显示为未关注)、任务完成、任务关闭、返回
+		// 参与人——编辑、关注(如果已经关注显示为未关注)、返回
+		// 共享人——关注(如果已经关注显示为未关注)、返回
+
+		// 已完成状态
+		// 创建人、负责人——关注(如果已经关注显示为未关注)、任务未完成、任务关闭、返回
+		// 参与人——关注(如果已经关注显示为未关注)、返回
+		// 共享人——关注(如果已经关注显示为未关注)、返回
+
+		// 已关闭状态
+		// 创建人、负责人——关注(如果已经关注显示为未关注)、任务激活、删除、返回
+		// 参与人——关注(如果已经关注显示为未关注)、返回
+		// 共享人——关注(如果已经关注显示为未关注)、返回
+
+		// 超期状态
+		// 创建人、负责人——编辑、关注(如果已经关注显示为未关注)、任务完成、任务关闭、返回
+		// 参与人——编辑、关注(如果已经关注显示为未关注)、返回
+		// 共享人——关注(如果已经关注显示为未关注)、返回
+
+		Task task = new Task();
+		task.setTaskId(queryTaskAuthParam.getTaskId());
+		Task taskResult = taskMapper.queryTaskId(task);
+
+		if (taskResult != null) {
+			if (OaConstant.TASK_STATUS0.equals(taskResult.getTaskStatus())) {// 未完成状态
+
+				if (isCreatePerson || isLiablePerson || admin) {// 创建人、负责人
+
+					// 查询任务是否关注
+					QueryTaskListParam queryTaskListParam1 = new QueryTaskListParam();
+					queryTaskListParam1.setUserId(loginUser.getUserId());
+					queryTaskListParam1.setRoleList(loginUser.getRoleIds());
+					queryTaskListParam1.setDepartmentList(getOrgIds);
+					queryTaskListParam1.setTaskId(queryTaskAuthParam.getTaskId());
+					List<QueryTaskListDto> followList = taskFollowMapper.queryTaskFollowList(queryTaskListParam1);
+					if (followList.size() > 0) {
+						isFllow = true;
+					}
+
+					queryTaskAuthDto.setUpdate(true);
+					queryTaskAuthDto.setFollow(isFllow ? true : false);
+					queryTaskAuthDto.setTaskFinish(true);
+					queryTaskAuthDto.setTaskClose(true);
+					queryTaskAuthDto.setTaskNotFinish(false);
+					queryTaskAuthDto.setTaskActivation(false);
+					queryTaskAuthDto.setTaskDelete(false);
+
+				} else if (isParticipantsPerson) {// 参与人
+
+					// 查询任务是否关注
+					QueryTaskListParam queryTaskListParam1 = new QueryTaskListParam();
+					queryTaskListParam1.setUserId(loginUser.getUserId());
+					queryTaskListParam1.setRoleList(loginUser.getRoleIds());
+					queryTaskListParam1.setDepartmentList(getOrgIds);
+					queryTaskListParam1.setTaskId(queryTaskAuthParam.getTaskId());
+					List<QueryTaskListDto> followList = taskFollowMapper.queryTaskFollowList(queryTaskListParam1);
+					if (followList.size() > 0) {
+						isFllow = true;
+					}
+
+					queryTaskAuthDto.setUpdate(true);
+					queryTaskAuthDto.setFollow(isFllow ? true : false);
+					queryTaskAuthDto.setTaskFinish(false);
+					queryTaskAuthDto.setTaskClose(false);
+					queryTaskAuthDto.setTaskNotFinish(false);
+					queryTaskAuthDto.setTaskActivation(false);
+					queryTaskAuthDto.setTaskDelete(false);
+
+				} else if (isSharedPerson) {// 共享人
+
+					// 查询任务是否关注
+					QueryTaskListParam queryTaskListParam1 = new QueryTaskListParam();
+					queryTaskListParam1.setUserId(loginUser.getUserId());
+					queryTaskListParam1.setRoleList(loginUser.getRoleIds());
+					queryTaskListParam1.setDepartmentList(getOrgIds);
+					queryTaskListParam1.setTaskId(queryTaskAuthParam.getTaskId());
+					List<QueryTaskListDto> followList = taskFollowMapper.queryTaskFollowList(queryTaskListParam1);
+					if (followList.size() > 0) {
+						isFllow = true;
+					}
+
+					queryTaskAuthDto.setUpdate(false);
+					queryTaskAuthDto.setFollow(isFllow ? true : false);
+					queryTaskAuthDto.setTaskFinish(false);
+					queryTaskAuthDto.setTaskClose(false);
+					queryTaskAuthDto.setTaskNotFinish(false);
+					queryTaskAuthDto.setTaskActivation(false);
+					queryTaskAuthDto.setTaskDelete(false);
+
+				} else {
+					logger.info(">>>>>>>>>>>>>>>>>>>>判断角色异常>>>>任务id:{}>>>>>>>>>>>>>>>>>>>>>>", queryTaskAuthParam.getTaskId());
+				}
+
+			} else if (OaConstant.TASK_STATUS1.equals(taskResult.getTaskStatus())) {// 已完成状态
+
+				if (isCreatePerson || isLiablePerson || admin) {// 创建人、负责人
+
+					// 查询任务是否关注
+					QueryTaskListParam queryTaskListParam1 = new QueryTaskListParam();
+					queryTaskListParam1.setUserId(loginUser.getUserId());
+					queryTaskListParam1.setRoleList(loginUser.getRoleIds());
+					queryTaskListParam1.setDepartmentList(getOrgIds);
+					queryTaskListParam1.setTaskId(queryTaskAuthParam.getTaskId());
+					List<QueryTaskListDto> followList = taskFollowMapper.queryTaskFollowList(queryTaskListParam1);
+					if (followList.size() > 0) {
+						isFllow = true;
+					}
+
+					queryTaskAuthDto.setUpdate(false);
+					queryTaskAuthDto.setFollow(isFllow ? true : false);
+					queryTaskAuthDto.setTaskFinish(false);
+					queryTaskAuthDto.setTaskClose(true);
+					queryTaskAuthDto.setTaskNotFinish(true);
+					queryTaskAuthDto.setTaskActivation(false);
+					queryTaskAuthDto.setTaskDelete(false);
+
+				} else if (isParticipantsPerson) {// 参与人
+
+					// 查询任务是否关注
+					QueryTaskListParam queryTaskListParam1 = new QueryTaskListParam();
+					queryTaskListParam1.setUserId(loginUser.getUserId());
+					queryTaskListParam1.setRoleList(loginUser.getRoleIds());
+					queryTaskListParam1.setDepartmentList(getOrgIds);
+					queryTaskListParam1.setTaskId(queryTaskAuthParam.getTaskId());
+					List<QueryTaskListDto> followList = taskFollowMapper.queryTaskFollowList(queryTaskListParam1);
+					if (followList.size() > 0) {
+						isFllow = true;
+					}
+
+					queryTaskAuthDto.setUpdate(false);
+					queryTaskAuthDto.setFollow(isFllow ? true : false);
+					queryTaskAuthDto.setTaskFinish(false);
+					queryTaskAuthDto.setTaskClose(false);
+					queryTaskAuthDto.setTaskNotFinish(false);
+					queryTaskAuthDto.setTaskActivation(false);
+					queryTaskAuthDto.setTaskDelete(false);
+
+				} else if (isSharedPerson) {// 共享人
+
+					// 查询任务是否关注
+					QueryTaskListParam queryTaskListParam1 = new QueryTaskListParam();
+					queryTaskListParam1.setUserId(loginUser.getUserId());
+					queryTaskListParam1.setRoleList(loginUser.getRoleIds());
+					queryTaskListParam1.setDepartmentList(getOrgIds);
+					queryTaskListParam1.setTaskId(queryTaskAuthParam.getTaskId());
+					List<QueryTaskListDto> followList = taskFollowMapper.queryTaskFollowList(queryTaskListParam1);
+					if (followList.size() > 0) {
+						isFllow = true;
+					}
+
+					queryTaskAuthDto.setUpdate(false);
+					queryTaskAuthDto.setFollow(isFllow ? true : false);
+					queryTaskAuthDto.setTaskFinish(false);
+					queryTaskAuthDto.setTaskClose(false);
+					queryTaskAuthDto.setTaskNotFinish(false);
+					queryTaskAuthDto.setTaskActivation(false);
+					queryTaskAuthDto.setTaskDelete(false);
+
+				} else {
+					logger.info(">>>>>>>>>>>>>>>>>>>>判断角色异常>>>>任务id:{}>>>>>>>>>>>>>>>>>>>>>>", queryTaskAuthParam.getTaskId());
+				}
+
+			} else if (OaConstant.TASK_STATUS2.equals(taskResult.getTaskStatus())) {// 已关闭状态
+
+				if (isCreatePerson || isLiablePerson || admin) {// 创建人、负责人
+
+					// 查询任务是否关注
+					QueryTaskListParam queryTaskListParam1 = new QueryTaskListParam();
+					queryTaskListParam1.setUserId(loginUser.getUserId());
+					queryTaskListParam1.setRoleList(loginUser.getRoleIds());
+					queryTaskListParam1.setDepartmentList(getOrgIds);
+					queryTaskListParam1.setTaskId(queryTaskAuthParam.getTaskId());
+					List<QueryTaskListDto> followList = taskFollowMapper.queryTaskFollowList(queryTaskListParam1);
+					if (followList.size() > 0) {
+						isFllow = true;
+					}
+
+					queryTaskAuthDto.setUpdate(false);
+					queryTaskAuthDto.setFollow(isFllow ? true : false);
+					queryTaskAuthDto.setTaskFinish(false);
+					queryTaskAuthDto.setTaskClose(false);
+					queryTaskAuthDto.setTaskNotFinish(false);
+					queryTaskAuthDto.setTaskActivation(true);
+					queryTaskAuthDto.setTaskDelete(true);
+
+				} else if (isParticipantsPerson) {// 参与人
+
+					// 查询任务是否关注
+					QueryTaskListParam queryTaskListParam1 = new QueryTaskListParam();
+					queryTaskListParam1.setUserId(loginUser.getUserId());
+					queryTaskListParam1.setRoleList(loginUser.getRoleIds());
+					queryTaskListParam1.setDepartmentList(getOrgIds);
+					queryTaskListParam1.setTaskId(queryTaskAuthParam.getTaskId());
+					List<QueryTaskListDto> followList = taskFollowMapper.queryTaskFollowList(queryTaskListParam1);
+					if (followList.size() > 0) {
+						isFllow = true;
+					}
+
+					queryTaskAuthDto.setUpdate(false);
+					queryTaskAuthDto.setFollow(isFllow ? true : false);
+					queryTaskAuthDto.setTaskFinish(false);
+					queryTaskAuthDto.setTaskClose(false);
+					queryTaskAuthDto.setTaskNotFinish(false);
+					queryTaskAuthDto.setTaskActivation(false);
+					queryTaskAuthDto.setTaskDelete(false);
+
+				} else if (isSharedPerson) {// 共享人
+
+					// 查询任务是否关注
+					QueryTaskListParam queryTaskListParam1 = new QueryTaskListParam();
+					queryTaskListParam1.setUserId(loginUser.getUserId());
+					queryTaskListParam1.setRoleList(loginUser.getRoleIds());
+					queryTaskListParam1.setDepartmentList(getOrgIds);
+					queryTaskListParam1.setTaskId(queryTaskAuthParam.getTaskId());
+					List<QueryTaskListDto> followList = taskFollowMapper.queryTaskFollowList(queryTaskListParam1);
+					if (followList.size() > 0) {
+						isFllow = true;
+					}
+
+					queryTaskAuthDto.setUpdate(false);
+					queryTaskAuthDto.setFollow(isFllow ? true : false);
+					queryTaskAuthDto.setTaskFinish(false);
+					queryTaskAuthDto.setTaskClose(false);
+					queryTaskAuthDto.setTaskNotFinish(false);
+					queryTaskAuthDto.setTaskActivation(false);
+					queryTaskAuthDto.setTaskDelete(false);
+
+				} else {
+					logger.info(">>>>>>>>>>>>>>>>>>>>判断角色异常>>>>任务id:{}>>>>>>>>>>>>>>>>>>>>>>", queryTaskAuthParam.getTaskId());
+				}
+
+			} else if (OaConstant.TASK_STATUS3.equals(taskResult.getTaskStatus())) {// 超期状态
+
+				if (isCreatePerson || isLiablePerson || admin) {// 创建人、负责人
+
+					// 查询任务是否关注
+					QueryTaskListParam queryTaskListParam1 = new QueryTaskListParam();
+					queryTaskListParam1.setUserId(loginUser.getUserId());
+					queryTaskListParam1.setRoleList(loginUser.getRoleIds());
+					queryTaskListParam1.setDepartmentList(getOrgIds);
+					queryTaskListParam1.setTaskId(queryTaskAuthParam.getTaskId());
+					List<QueryTaskListDto> followList = taskFollowMapper.queryTaskFollowList(queryTaskListParam1);
+					if (followList.size() > 0) {
+						isFllow = true;
+					}
+
+					queryTaskAuthDto.setUpdate(true);
+					queryTaskAuthDto.setFollow(isFllow ? true : false);
+					queryTaskAuthDto.setTaskFinish(true);
+					queryTaskAuthDto.setTaskClose(true);
+					queryTaskAuthDto.setTaskNotFinish(false);
+					queryTaskAuthDto.setTaskActivation(false);
+					queryTaskAuthDto.setTaskDelete(false);
+
+				} else if (isParticipantsPerson) {// 参与人
+
+					// 查询任务是否关注
+					QueryTaskListParam queryTaskListParam1 = new QueryTaskListParam();
+					queryTaskListParam1.setUserId(loginUser.getUserId());
+					queryTaskListParam1.setRoleList(loginUser.getRoleIds());
+					queryTaskListParam1.setDepartmentList(getOrgIds);
+					queryTaskListParam1.setTaskId(queryTaskAuthParam.getTaskId());
+					List<QueryTaskListDto> followList = taskFollowMapper.queryTaskFollowList(queryTaskListParam1);
+					if (followList.size() > 0) {
+						isFllow = true;
+					}
+
+					queryTaskAuthDto.setUpdate(true);
+					queryTaskAuthDto.setFollow(isFllow ? true : false);
+					queryTaskAuthDto.setTaskFinish(false);
+					queryTaskAuthDto.setTaskClose(false);
+					queryTaskAuthDto.setTaskNotFinish(false);
+					queryTaskAuthDto.setTaskActivation(false);
+					queryTaskAuthDto.setTaskDelete(false);
+
+				} else if (isSharedPerson) {// 共享人
+
+					// 查询任务是否关注
+					QueryTaskListParam queryTaskListParam1 = new QueryTaskListParam();
+					queryTaskListParam1.setUserId(loginUser.getUserId());
+					queryTaskListParam1.setRoleList(loginUser.getRoleIds());
+					queryTaskListParam1.setDepartmentList(getOrgIds);
+					queryTaskListParam1.setTaskId(queryTaskAuthParam.getTaskId());
+					List<QueryTaskListDto> followList = taskFollowMapper.queryTaskFollowList(queryTaskListParam1);
+					if (followList.size() > 0) {
+						isFllow = true;
+					}
+
+					queryTaskAuthDto.setUpdate(false);
+					queryTaskAuthDto.setFollow(isFllow ? true : false);
+					queryTaskAuthDto.setTaskFinish(false);
+					queryTaskAuthDto.setTaskClose(false);
+					queryTaskAuthDto.setTaskNotFinish(false);
+					queryTaskAuthDto.setTaskActivation(false);
+					queryTaskAuthDto.setTaskDelete(false);
+
+				} else {
+					logger.info(">>>>>>>>>>>>>>>>>>>>判断角色异常>>>>任务id:{}>>>>>>>>>>>>>>>>>>>>>>", queryTaskAuthParam.getTaskId());
+				}
+
+			} else {
+				logger.info(">>>>>>>>>>>>任务状态>>>>>>>>>>>>>{}", taskResult.getTaskStatus());
+			}
+		}
+		queryTaskAuthDto.setTaskReturn(true);
+		return queryTaskAuthDto;
+	}
+
+	/**
+	 * 查询任务列表
+	 * 
+	 * @author wdy
+	 *
+	 */
+	@Override
+	public List<QueryTaskListDto> queryTaskList(QueryTaskListParam queryTaskListParam) {
+
+		return taskMapper.queryTaskList(queryTaskListParam);
+	}
+
+	/**
+	 * 查询项目中任务列表
+	 */
+	@Override
+	public Page queryProjectTaskList(QueryProjectTaskParam queryProjectTaskParam) {
+
+		Page page = new Page();
+		Integer pageNum = queryProjectTaskParam.getPageNum();
+
+		Integer count = queryProjectTaskListMapper.queryCountProjectTaskList(queryProjectTaskParam);
+
+		List<QueryProjectTaskDto> list = new ArrayList<QueryProjectTaskDto>();
+
+		Integer start = queryProjectTaskParam.getPageNum().intValue() == 0 ? 1 : queryProjectTaskParam.getPageNum();
+		start = (start - 1) * queryProjectTaskParam.getPageCount().intValue();
+		queryProjectTaskParam.setPageNum(start);
+		queryProjectTaskParam.setPageCount(queryProjectTaskParam.getPageCount().intValue());
+
+		if (count.intValue() > 0) {
+			List<String> orderby = queryProjectTaskParam.getOrderby();
+			if (orderby != null) {
+				StringBuilder sql = new StringBuilder();
+				for (String key : orderby) {
+					if (sql.length() == 0) {
+						sql.append(" order by " + key.split(",")[0] + " " + key.split(",")[1]);
+					} else {
+						sql.append(" , " + key.split(",")[0] + " " + key.split(",")[1]);
+					}
+				}
+				queryProjectTaskParam.setDynamicSql(sql.toString());
+			}
+		}
+
+		List<QueryProjectTaskDto> listResult = queryProjectTaskListMapper.queryProjectTaskList(queryProjectTaskParam);
+		if (list != null) {
+			for (QueryProjectTaskDto queryProjectTaskDto : listResult) {
+				QueryProjectTaskDto queryProjectTaskDtoResult = new QueryProjectTaskDto();
+				queryProjectTaskDtoResult.setCreatePersonName(oaUserUtil.selectUserName(queryProjectTaskDto.getCreatePersonId()));
+				queryProjectTaskDtoResult.setTaskLiableName(oaUserUtil.selectUserName(queryProjectTaskDto.getTaskLiableId()));
+				queryProjectTaskDtoResult.setTaskId(queryProjectTaskDto.getTaskId());
+				queryProjectTaskDtoResult.setTaskName(queryProjectTaskDto.getTaskName());
+				queryProjectTaskDtoResult.setTaskProgress(queryProjectTaskDto.getTaskProgress());
+				queryProjectTaskDtoResult.setTaskStatus(queryProjectTaskDto.getTaskStatus());
+				queryProjectTaskDtoResult.setBeginDate(queryProjectTaskDto.getBeginDate());
+				queryProjectTaskDtoResult.setEndDate(queryProjectTaskDto.getEndDate());
+				queryProjectTaskDtoResult.setTaskLiableId(queryProjectTaskDto.getTaskLiableId());
+				queryProjectTaskDtoResult.setCreatePersonId(queryProjectTaskDto.getCreatePersonId());
+				queryProjectTaskDtoResult.setIsfollow(queryProjectTaskDto.getIsfollow());
+				queryProjectTaskDtoResult.setTaskUrgentFlag(queryProjectTaskDto.getTaskUrgentFlag());
+				list.add(queryProjectTaskDtoResult);
+			}
+
+		}
+
+		page.setPageNum(pageNum);
+		page.setPageCount(queryProjectTaskParam.getPageCount());
+		page.setTotal(count);
+		page.setPageTotal(count % queryProjectTaskParam.getPageCount() == 0 ? count / queryProjectTaskParam.getPageCount() : count / queryProjectTaskParam.getPageCount() + 1);
+		page.setList(list);
+
+		return page;
+	}
+
+	/**
+	 * 除删除发送cc消息（创建人、负责人、参与人、共享人）
+	 * 
+	 * @param taskId
+	 *            任务Id
+	 * @param message
+	 *            消息内容
+	 * @param userId
+	 *            用户id
+	 * @param isremindCreateperson
+	 *            是否提醒创建人
+	 * @param isremindLiable
+	 *            是否提醒负责人
+	 * @param isremindAffiliated
+	 *            是否提醒参与人
+	 * @param isremindshared
+	 *            是否提醒共享人
+	 */
+	public void sendMessage(String taskId, String message, LoginUser loginUser, Boolean isremindCreateperson, Boolean isremindLiable, Boolean isremindAffiliated,
+			Boolean isremindshared, String imUserId, Map<String, Object> map) {
+
+		String tendName = "";
+		TenantCompanyInfoDto tenantCompanyInfoDto = platformRedis.queryByTendId(loginUser.getTendId());
+		if (tenantCompanyInfoDto != null) {
+			tendName = tenantCompanyInfoDto.getName();
+		}
+
+		map.put("tendId", loginUser.getTendId());
+		map.put("tendName", tendName);
+		map.put("pcUrl", "/ccdist/#/task/detail/" + taskId + "?tendId=" + loginUser.getTendId());
+		map.put("mobileUrl", "/mobiledist/#/m_task/m_details_task/" + taskId + "?tendId=" + loginUser.getTendId());
+
+		if (StringUtils.isBlank(tendName)) {
+			tendName = "批量发送租户";
+		}
+
+		String createPersonId = "";
+		String taskLiableId = "";
+
+		Set<String> sendMessageList = new HashSet<String>();// 非外部联系人人员集合
+		Set<String> sendMessageOutList = new HashSet<String>();// 外部联系人人员集合
+
+		// 查询创建人、负责人
+		Task task = new Task();
+		task.setTaskId(taskId);
+		Task task1 = taskMapper.queryTaskId(task);
+		if (task1 != null) {
+			createPersonId = task1.getCreatePersonId();
+			taskLiableId = task1.getTaskLiableId();
+		}
+
+		if (isremindCreateperson) {// 发送创建人
+			String createPersonSendMessageId = oaUserUtil.queryImUserIdByOaUserId(createPersonId, loginUser.getTendId());
+			if (StringUtils.isNotBlank(createPersonSendMessageId) && (!imUserId.equals(createPersonSendMessageId))) {
+				sendMessageList.add(createPersonSendMessageId);// 创建人
+			}
+
+		}
+
+		if (isremindLiable) {// 发送负责人
+			String taskLiableSendMessageId = oaUserUtil.queryImUserIdByOaUserId(taskLiableId, loginUser.getTendId());
+			if (StringUtils.isNotBlank(taskLiableSendMessageId) && (!imUserId.equals(taskLiableSendMessageId))) {
+				sendMessageList.add(taskLiableSendMessageId);// 负责人
+			}
+
+		}
+
+		// List<String> personIds = new ArrayList<String>();
+		TaskShared TaskShared = new TaskShared();
+		List<String> roleIds = new ArrayList<String>();
+		List<String> organizationIds = new ArrayList<String>();
+
+		if (isremindAffiliated) {// 发送参与人
+			// 查询参与人员表人员id列表
+
+			QueryTaskListParam queryTaskListParam = new QueryTaskListParam();
+			queryTaskListParam.setTaskId(taskId);
+			queryTaskListParam.setType(OaConstant.SHAREDSHOW_TYPE0);
+			List<QueryTaskListDto> taskParticipantsList = taskParticipantsMapper.queryTaskParticipantsList(queryTaskListParam);
+			for (QueryTaskListDto queryTaskListDto : taskParticipantsList) {
+
+				if (StringUtils.isNotBlank(queryTaskListDto.getSharedshowImid()) && (!imUserId.equals(queryTaskListDto.getSharedshowImid()))) {
+					if (OaConstant.OUTTYPE0.equals(queryTaskListDto.getOutType())) {
+
+						sendMessageList.add(queryTaskListDto.getSharedshowImid());
+
+					} else if (OaConstant.OUTTYPE1.equals(queryTaskListDto.getOutType())) {
+
+						sendMessageOutList.add(queryTaskListDto.getSharedshowImid());
+
+					} else {
+						logger.info(">>>>OUTTYPE为空>>>>");
+					}
+
+				}
+
+			}
+		}
+
+		if (isremindshared) {// 发送共享人
+			// 查询共享人员表人员id列表
+			TaskShared.setTaskId(taskId);
+			TaskShared.setType(OaConstant.SHAREDSHOW_TYPE0);
+			List<TaskShared> personList = taskSharedMapper.queryTaskSharedList(TaskShared);
+			for (TaskShared taskShared2 : personList) {
+
+				if (StringUtils.isNotBlank(taskShared2.getSharedshowImid()) && (!imUserId.equals(taskShared2.getSharedshowImid()))) {
+
+					if (OaConstant.OUTTYPE0.equals(taskShared2.getOutType())) {
+
+						sendMessageList.add(taskShared2.getSharedshowImid());
+
+					} else if (OaConstant.OUTTYPE1.equals(taskShared2.getOutType())) {
+
+						sendMessageOutList.add(taskShared2.getSharedshowImid());
+
+					} else {
+						logger.info(">>>>OUTTYPE为空>>>>");
+					}
+
+				}
+			}
+
+			// 查询共享人员表角色id列表，调用sys查询角色id对应的人员
+			TaskShared TaskShared1 = new TaskShared();
+			TaskShared1.setTaskId(taskId);
+			TaskShared1.setType(OaConstant.SHAREDSHOW_TYPE1);
+			List<TaskShared> roleList = taskSharedMapper.queryTaskSharedList(TaskShared1);
+			for (TaskShared taskShared2 : roleList) {
+				String roleId = taskShared2.getSharedshowId();
+				if (StringUtils.isNotBlank(roleId)) {
+					roleIds.add(roleId);
+				}
+
+			}
+
+			// 查询共享人员表部门id列表，调用sys查询部门id对应的人员
+			TaskShared TaskShared2 = new TaskShared();
+			TaskShared2.setTaskId(taskId);
+			TaskShared2.setType(OaConstant.SHAREDSHOW_TYPE2);
+			List<TaskShared> departmentList = taskSharedMapper.queryTaskSharedList(TaskShared2);
+			for (TaskShared taskShared3 : departmentList) {
+				String departmentId = taskShared3.getSharedshowId();
+				if (StringUtils.isNotBlank(departmentId)) {
+					organizationIds.add(departmentId);
+				}
+
+			}
+		}
+		// 组装调用sys接口数据
+		OAUserParam oAUserParam = new OAUserParam();
+		// oAUserParam.setUserIds(personIds);
+		oAUserParam.setRoleIds(roleIds);
+		oAUserParam.setOrganizationIds(organizationIds);
+		oAUserParam.setTendId(loginUser.getTendId());
+		oAUserParam.setContainsChildOrgUser(true);
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>>>>>开始调用sys服务获取角色、部门下所有人员>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+		ApiFeignResponse<List<OAUserDto>> apiFeignResponse = sysFeignService.queryUserByOrgAndRoleAndUser(oAUserParam);
+		if (apiFeignResponse != null) {
+			if (200 == apiFeignResponse.getStatus()) {
+				List<OAUserDto> list = apiFeignResponse.getResult();
+				for (OAUserDto oaUserDto : list) {
+					sendMessageList.add(oaUserDto.getImUserId());
+				}
+			} else {
+				throw new HioException("调用queryNameByOrgAndRoleAndUser feign接口失败" + apiFeignResponse.getMessage());
+			}
+		}
+		logger.info(">>>>>>>>>>>>>>>>>>>>>>>>结束调用sys服务获取角色、部门下所有人员>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>开始调用cc服务发送非外部联系人cc消息>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+
+		ImNoticeMsgSendParam imNoticeMsgSendParam = new ImNoticeMsgSendParam();
+		List<ImNoticeMsgsParam> imNoticeMsgsList = new ArrayList<ImNoticeMsgsParam>();
+		List<IMToUserParam> iMToUserList = new ArrayList<IMToUserParam>();
+
+		Iterator<String> it = sendMessageList.iterator();
+		while (it.hasNext()) {
+			String str = it.next();
+			IMToUserParam iMToUserParam = new IMToUserParam();
+			iMToUserParam.setToUserId(str);
+			iMToUserList.add(iMToUserParam);
+		}
+
+		// 测试im用户
+		// IMToUserParam iMToUserParam = new IMToUserParam();
+		// iMToUserParam.setToUserId("3cc30cf2a2a143ae84bac17167c3174a");
+		// iMToUserList.add(iMToUserParam);
+		//
+
+		if (iMToUserList.size() > 0) {
+			ImNoticeMsgsParam imNoticeMsgsParam = new ImNoticeMsgsParam();
+			imNoticeMsgsParam.setToUsers(iMToUserList);
+			imNoticeMsgsParam.setMsg((String) map.get("message"));
+			imNoticeMsgsParam.setSendMsgType("text");
+			imNoticeMsgsParam.setOpenStatus(1);
+			if (isremindshared) {// 发送共享人
+				imNoticeMsgsParam.setFromUserId(imUserId);
+			} else {
+				imNoticeMsgsParam.setFromUserId(BaseConstants.HIO_IM_ADMIN + MessageEnum.TASK.getValue());
+			}
+
+			imNoticeMsgsParam.setTendId(loginUser.getTendId());
+			imNoticeMsgsParam.setTendName(tendName);
+			imNoticeMsgsParam.setMsgType("msg");
+			imNoticeMsgsParam.setModuleType((String) map.get("moduleType"));
+			imNoticeMsgsParam.setModuleName(MessageEnum.TASK.getDes());
+			imNoticeMsgsParam.setExt(map);
+			imNoticeMsgsList.add(imNoticeMsgsParam);
+			imNoticeMsgSendParam.setMsgs(imNoticeMsgsList);
+
+			ApiFeignResponse apiFeignResponse1 = messageFeignService.sendMessage(imNoticeMsgSendParam);
+
+			logger.info(">>>>>>>>>>>>>>>>>>吴飞接口结果>>>>>>>>>>>>>{}>>>结果>>{}", apiFeignResponse1.getStatus(), apiFeignResponse1.getMessage());
+		}
+		logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>结束调用cc服务发送非外部联系人cc消息>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>开始调用cc服务发送外部联系人cc消息>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+
+		ImNoticeMsgSendParam imNoticeMsgSendOutParam = new ImNoticeMsgSendParam();
+		List<ImNoticeMsgsParam> imNoticeMsgsOutList = new ArrayList<ImNoticeMsgsParam>();
+		List<IMToUserParam> iMToUserOutList = new ArrayList<IMToUserParam>();
+
+		logger.info("sendMessageOutList.size()>>>>" + sendMessageOutList.size());
+
+		Iterator<String> itOut = sendMessageOutList.iterator();
+		while (itOut.hasNext()) {
+			String str = itOut.next();
+			IMToUserParam iMToUserParam = new IMToUserParam();
+			iMToUserParam.setToUserId(str);
+			iMToUserOutList.add(iMToUserParam);
+		}
+
+		// 测试im用户
+		// IMToUserParam iMToUserParam = new IMToUserParam();
+		// iMToUserParam.setToUserId("3cc30cf2a2a143ae84bac17167c3174a");
+		// iMToUserList.add(iMToUserParam);
+		//
+
+		logger.info("iMToUserOutList.size()>>>>" + iMToUserOutList.size());
+
+		if (iMToUserOutList.size() > 0) {
+			ImNoticeMsgsParam imNoticeMsgsParam = new ImNoticeMsgsParam();
+			imNoticeMsgsParam.setToUsers(iMToUserOutList);
+			imNoticeMsgsParam.setMsg((String) map.get("message"));
+			imNoticeMsgsParam.setSendMsgType("text");
+			imNoticeMsgsParam.setOpenStatus(1);
+			if (isremindshared) {// 发送共享人
+				imNoticeMsgsParam.setFromUserId(imUserId);
+			} else {
+				imNoticeMsgsParam.setFromUserId(BaseConstants.HIO_IM_ADMIN + MessageEnum.TASK.getValue());
+			}
+			imNoticeMsgsParam.setTendId("");
+			imNoticeMsgsParam.setTendName("合作企业");
+			imNoticeMsgsParam.setMsgType(MsgTypeEnum.OUT.getValue());
+			imNoticeMsgsParam.setModuleType((String) map.get("moduleType"));
+			imNoticeMsgsParam.setModuleName(MessageEnum.TASK.getDes());
+			imNoticeMsgsParam.setExt(map);
+			imNoticeMsgsOutList.add(imNoticeMsgsParam);
+			imNoticeMsgSendOutParam.setMsgs(imNoticeMsgsOutList);
+
+			CoreHeaderInterceptor.initHystrixRequestContext(CoreHeaderInterceptor.HEADER_LABEL);// 不设置框架会报错
+			ApiFeignResponse apiFeignResponse1 = messageFeignService.sendMessage(imNoticeMsgSendOutParam);
+			logger.info(">>>>>>>>>>>>>>调用吴飞接口结果>>>>>>>>>{}>>>>>消息>>>>>>>{}", apiFeignResponse1.getStatus(), apiFeignResponse1.getMessage());
+		}
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>结束调用cc服务发送外部联系人cc消息>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+	}
+
+	/**
+	 * 删除发送cc消息（创建人、负责人、参与人、共享人）
+	 * 
+	 * @param taskId
+	 *            任务Id
+	 * @param message
+	 *            消息内容
+	 * @param userId
+	 *            用户id
+	 * @param isremindCreateperson
+	 *            是否提醒创建人
+	 * @param isremindLiable
+	 *            是否提醒负责人
+	 * @param isremindAffiliated
+	 *            是否提醒参与人
+	 * @param isremindshared
+	 *            是否提醒共享人
+	 */
+	public void deleteSendMessage(String taskId, String message, LoginUser loginUser, Boolean isremindCreateperson, Boolean isremindLiable, Boolean isremindAffiliated,
+			Boolean isremindshared, String imUserId, Map<String, Object> map, Set<String> sendMessageList, Set<String> sendMessageOutList) {
+
+		String json = JedisUtil.fetchRow(RedisKeyConstant.userTendList + imUserId, loginUser.getTendId());// 租户名称
+		JSONObject jsonObject = JSONObject.parseObject(json);
+		String tendName = jsonObject.getString("tendName");
+
+		map.put("tendId", loginUser.getTendId());
+		map.put("tendName", tendName);
+		// map.put("pcUrl", "/mobiledist/#/m_details/m_task_detail?taskId=" + taskId + "&tendId=" + loginUser.getTendId());
+		// map.put("mobileUrl", "/mobiledist/#/m_details/m_task_detail?taskId=" + taskId + "&tendId=" + loginUser.getTendId());
+
+		if (StringUtils.isBlank(tendName)) {
+			tendName = "批量发送租户";
+		}
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>开始调用cc服务发送非外部联系人cc消息>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+
+		ImNoticeMsgSendParam imNoticeMsgSendParam = new ImNoticeMsgSendParam();
+		List<ImNoticeMsgsParam> imNoticeMsgsList = new ArrayList<ImNoticeMsgsParam>();
+		List<IMToUserParam> iMToUserList = new ArrayList<IMToUserParam>();
+
+		Iterator<String> it = sendMessageList.iterator();
+		while (it.hasNext()) {
+			String str = it.next();
+			IMToUserParam iMToUserParam = new IMToUserParam();
+			iMToUserParam.setToUserId(str);
+			iMToUserList.add(iMToUserParam);
+		}
+
+		// 测试im用户
+		// IMToUserParam iMToUserParam = new IMToUserParam();
+		// iMToUserParam.setToUserId("3cc30cf2a2a143ae84bac17167c3174a");
+		// iMToUserList.add(iMToUserParam);
+		//
+		if (iMToUserList.size() > 0) {
+
+			ImNoticeMsgsParam imNoticeMsgsParam = new ImNoticeMsgsParam();
+			imNoticeMsgsParam.setToUsers(iMToUserList);
+			imNoticeMsgsParam.setMsg((String) map.get("message"));
+			imNoticeMsgsParam.setSendMsgType("text");
+			if (isremindshared) {// 发送共享人
+				imNoticeMsgsParam.setFromUserId(imUserId);
+			} else {
+				imNoticeMsgsParam.setFromUserId(BaseConstants.HIO_IM_ADMIN + MessageEnum.TASK.getValue());
+			}
+
+			imNoticeMsgsParam.setTendId(loginUser.getTendId());
+			imNoticeMsgsParam.setTendName(tendName);
+			imNoticeMsgsParam.setMsgType("msg");
+			imNoticeMsgsParam.setModuleType((String) map.get("moduleType"));
+			imNoticeMsgsParam.setModuleName(MessageEnum.TASK.getDes());
+			imNoticeMsgsParam.setOpenStatus(0);
+			imNoticeMsgsParam.setExt(map);
+			imNoticeMsgsList.add(imNoticeMsgsParam);
+			imNoticeMsgSendParam.setMsgs(imNoticeMsgsList);
+
+			ApiFeignResponse apiFeignResponse1 = messageFeignService.sendMessage(imNoticeMsgSendParam);
+			logger.info(">>>>>>>>>>>>>>>>>>吴飞接口结果>>>>>>>>>>>>>{}>>>结果>>{}", apiFeignResponse1.getStatus(), apiFeignResponse1.getMessage());
+
+			logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>结束调用cc服务发送非外部联系人cc消息>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+		}
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>开始调用cc服务发送外部联系人cc消息>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+
+		ImNoticeMsgSendParam imNoticeMsgSendOutParam = new ImNoticeMsgSendParam();
+		List<ImNoticeMsgsParam> imNoticeMsgsOutList = new ArrayList<ImNoticeMsgsParam>();
+		List<IMToUserParam> iMToUserOutList = new ArrayList<IMToUserParam>();
+
+		logger.info("sendMessageOutList.size()>>>>" + sendMessageOutList.size());
+
+		Iterator<String> itOut = sendMessageOutList.iterator();
+		while (itOut.hasNext()) {
+			String str = itOut.next();
+			IMToUserParam iMToUserParam = new IMToUserParam();
+			iMToUserParam.setToUserId(str);
+			iMToUserOutList.add(iMToUserParam);
+		}
+
+		// 测试im用户
+		// IMToUserParam iMToUserParam = new IMToUserParam();
+		// iMToUserParam.setToUserId("3cc30cf2a2a143ae84bac17167c3174a");
+		// iMToUserList.add(iMToUserParam);
+		//
+
+		logger.info("iMToUserOutList.size()>>>>" + iMToUserOutList.size());
+
+		if (iMToUserOutList.size() > 0) {
+			ImNoticeMsgsParam imNoticeMsgsParam = new ImNoticeMsgsParam();
+			imNoticeMsgsParam.setToUsers(iMToUserOutList);
+			imNoticeMsgsParam.setMsg((String) map.get("message"));
+			imNoticeMsgsParam.setSendMsgType("text");
+			imNoticeMsgsParam.setOpenStatus(1);
+			if (isremindshared) {// 发送共享人
+				imNoticeMsgsParam.setFromUserId(imUserId);
+			} else {
+				imNoticeMsgsParam.setFromUserId(BaseConstants.HIO_IM_ADMIN + MessageEnum.TASK.getValue());
+			}
+			imNoticeMsgsParam.setTendId("");
+			imNoticeMsgsParam.setTendName("合作企业");
+			imNoticeMsgsParam.setMsgType(MsgTypeEnum.OUT.getValue());
+			imNoticeMsgsParam.setModuleType((String) map.get("moduleType"));
+			imNoticeMsgsParam.setModuleName(MessageEnum.TASK.getDes());
+			imNoticeMsgsParam.setExt(map);
+			imNoticeMsgsOutList.add(imNoticeMsgsParam);
+			imNoticeMsgSendOutParam.setMsgs(imNoticeMsgsOutList);
+
+			CoreHeaderInterceptor.initHystrixRequestContext(CoreHeaderInterceptor.HEADER_LABEL);// 不设置框架会报错
+			ApiFeignResponse apiFeignResponse1 = messageFeignService.sendMessage(imNoticeMsgSendOutParam);
+			logger.info(">>>>>>>>>>>>>>调用吴飞接口结果>>>>>>>>>{}>>>>>消息>>>>>>>{}", apiFeignResponse1.getStatus(), apiFeignResponse1.getMessage());
+		}
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>结束调用cc服务发送外部联系人cc消息>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+
+	}
+
+	/**
+	 * 删除参与人表、共享人表、任务提醒表、任务表
+	 * 
+	 * @param deleteTaskParam
+	 * @param loginUser
+	 * @return
+	 */
+	public int deleteTask(DeleteTaskParam deleteTaskParam, LoginUser loginUser) {
+
+		// 删除参与人表
+		TaskParticipants taskParticipants = new TaskParticipants();
+		taskParticipants.setTaskId(deleteTaskParam.getTaskId());
+		taskParticipants.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+		taskParticipantsMapper.delete(taskParticipants);
+
+		// 删除共享人表
+		TaskShared taskShared = new TaskShared();
+		taskShared.setTaskId(deleteTaskParam.getTaskId());
+		taskShared.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+		taskSharedMapper.delete(taskShared);
+
+		// 删除任务提醒表
+		Task task1 = new Task();
+		task1.setTaskId(deleteTaskParam.getTaskId());
+		Task taskResult = taskMapper.queryTaskId(task1);
+		TaskRemind taskRemind = new TaskRemind();
+		taskRemind.setRemindId(taskResult.getRemindId());
+		taskRemind.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+		taskRemindMapper.delete(taskRemind);
+
+		// 删除任务表
+		Task task = new Task();
+		task.setTaskId(deleteTaskParam.getTaskId());
+		task.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+		taskMapper.delete(task);
+
+		return 1;
+
+	}
+
+	public boolean isField(Class<?> clazz, String fieldName) {
+		try {
+			clazz.getDeclaredField(fieldName);
+			return true;
+		} catch (NoSuchFieldException | SecurityException e) {
+			try {
+				clazz.getSuperclass().getDeclaredField(fieldName);
+				return true;
+			} catch (NoSuchFieldException | SecurityException e1) {
+				// ignore
+			}
+		}
+		return false;
+	}
+
+	public void pageStart(Map<String, Object> map) {
+		Object pageNumObj = map.get("pageNum");
+		Object pageCountObj = map.get("pageCount");
+		if (pageNumObj != null && pageCountObj != null) {
+			int pageNum = Integer.valueOf(pageNumObj + "");
+			int pageCount = Integer.valueOf(pageCountObj + "");
+			int pageStart = (pageNum - 1) * pageCount;
+			if (pageStart < 0) {
+				pageStart = 0;
+			}
+			PageHelper.startPage(pageStart, pageCount, true);
+		}
+	}
+
+	/**
+	 * 利用tk实现pt_task表分页
+	 * 
+	 * @param paramMap
+	 * @return
+	 */
+	public Example map2example(Map<String, Object> paramMap) {
+		Object limit = paramMap.get("pageCount");
+		// limit 为空 或者负值、表示查询全部
+		if (limit != null && Integer.valueOf(limit + "") > 0) {
+			Object pageNum = paramMap.get("pageNum");
+			if (pageNum == null) {
+				pageNum = 0;
+			}
+			int start = Integer.valueOf(pageNum + "").intValue() * Integer.valueOf(limit + "").intValue();
+			PageHelper.startPage(start, Integer.valueOf(limit + ""), true);
+		}
+
+		// 组装查询
+		Example example = new Example(Task.class);
+		Criteria criteria = example.createCriteria();
+		String orderBy = null;
+		Object fuzzy = paramMap.get("fuzzy");
+		for (String key : paramMap.keySet()) {
+			Object value = paramMap.get(key);
+			// 排序条件
+			if ("orderBy".equalsIgnoreCase(key)) {
+				orderBy = String.valueOf(value);
+			} else {
+				// 查询条件
+				if (isField(Task.class, key)) {
+					// 第一个参数是 Entity的Field名
+					if (fuzzy != null && String.valueOf(fuzzy).contains(key)) {
+						criteria.andLike(key, "%" + String.valueOf(value) + "%");
+					}
+					// 区间
+					else if (value.getClass().isArray()) {
+						String[] arr = (String[]) value;
+						criteria.andBetween(key, arr[0], arr[1]);
+					} else {
+						criteria.andEqualTo(key, value);
+					}
+
+				}
+			}
+		}
+		if (orderBy != null) {
+			example.setOrderByClause(orderBy);
+		}
+		return example;
+	}
+
+	public Page getResultPage(PageInfo<Task> currentPage) {
+		List<Task> list = currentPage.getList();
+		// 共多少条
+		long total = currentPage.getTotal();
+		// 当前页码
+		int pageNum = currentPage.getPageNum();
+		if (pageNum == 0) {
+			pageNum = 1;// 如果没查到数据 、结果为空、此时设置当前页码为1
+		}
+		// 分页大小
+		int pageCount = currentPage.getPageSize();
+		Page resultPage = new Page();
+		resultPage.setPageNum(pageNum);
+		resultPage.setPageCount(pageCount);
+		long totalPage = total % pageCount == 0 ? (total / pageCount) : (total / pageCount) + 1;
+		resultPage.setPageTotal((int) totalPage);
+		resultPage.setTotal((int) total);
+		resultPage.setList(list);
+		return resultPage;
+	}
+
+	/**
+	 * 自己实现分页
+	 * 
+	 * @param queryTaskListParam
+	 * @param totalCount
+	 * @return
+	 */
+	public Page getPage(QueryTaskListParam queryTaskListParam, Integer totalCount, List<QueryTaskListDto> list, Integer pageNum) {
+
+		Page page = new Page();
+
+		page.setPageNum(pageNum);
+		page.setPageCount(queryTaskListParam.getPageCount());
+		page.setTotal(totalCount);
+		page.setPageTotal(totalCount % queryTaskListParam.getPageCount() == 0 ? totalCount / queryTaskListParam.getPageCount() : totalCount / queryTaskListParam.getPageCount() + 1);
+		page.setList(list);
+		return page;
+	}
+
+	/**
+	 * 根据状态id获取
+	 * 
+	 * @return
+	 */
+	public String getStatusName(String statusId) {
+
+		String statusName = "";
+
+		if (OaEunm.TASK_STATUS0.getType().equals(statusId)) {
+
+			statusName = OaEunm.TASK_STATUS0.getName();
+
+		} else if (OaEunm.TASK_STATUS1.getType().equals(statusId)) {
+
+			statusName = OaEunm.TASK_STATUS1.getName();
+
+		} else if (OaEunm.TASK_STATUS2.getType().equals(statusId)) {
+
+			statusName = OaEunm.TASK_STATUS2.getName();
+
+		} else if (OaEunm.TASK_STATUS3.getType().equals(statusId)) {
+
+			statusName = OaEunm.TASK_STATUS3.getName();
+
+		} else {
+			logger.info(">>>>>>>>>>>>>>>>状态值异常>>>>>>>>>>{}>>>>>>>>", statusId);
+		}
+
+		return statusName;
+	}
+
+}

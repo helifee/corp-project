@@ -1,0 +1,634 @@
+package com.xinleju.sa.utils;
+
+import java.math.BigDecimal;
+import java.text.DecimalFormat;
+import java.util.HashMap;
+import java.util.Map;
+
+public class SafeCompute {
+
+	/**
+	 * Rounding mode to round away from zero. Always increments the digit prior
+	 * to a nonzero discarded fraction. Note that this rounding mode never
+	 * decreases the magnitude of the calculated value.
+	 */
+	public final static int ROUND_UP = 0;
+
+	/**
+	 * Rounding mode to round towards zero. Never increments the digit prior to
+	 * a discarded fraction (i.e., truncates). Note that this rounding mode
+	 * never increases the magnitude of the calculated value.
+	 */
+	public final static int ROUND_DOWN = 1;
+
+	/**
+	 * Rounding mode to round towards positive infinity. If the
+	 * {@code BigDecimal} is positive, behaves as for {@code ROUND_UP}; if
+	 * negative, behaves as for {@code ROUND_DOWN}. Note that this rounding mode
+	 * never decreases the calculated value.
+	 */
+	public final static int ROUND_CEILING = 2;
+
+	/**
+	 * Rounding mode to round towards negative infinity. If the
+	 * {@code BigDecimal} is positive, behave as for {@code ROUND_DOWN}; if
+	 * negative, behave as for {@code ROUND_UP}. Note that this rounding mode
+	 * never increases the calculated value.
+	 */
+	public final static int ROUND_FLOOR = 3;
+
+	/**
+	 * Rounding mode to round towards {@literal "nearest neighbor"} unless both
+	 * neighbors are equidistant, in which case round up. Behaves as for
+	 * {@code ROUND_UP} if the discarded fraction is &ge; 0.5; otherwise,
+	 * behaves as for {@code ROUND_DOWN}. Note that this is the rounding mode
+	 * that most of us were taught in grade school.
+	 */
+	public final static int ROUND_HALF_UP = 4;
+
+	/**
+	 * Rounding mode to round towards {@literal "nearest neighbor"} unless both
+	 * neighbors are equidistant, in which case round down. Behaves as for
+	 * {@code ROUND_UP} if the discarded fraction is {@literal >} 0.5;
+	 * otherwise, behaves as for {@code ROUND_DOWN}.
+	 */
+	public final static int ROUND_HALF_DOWN = 5;
+
+	/**
+	 * Rounding mode to round towards the {@literal "nearest neighbor"} unless
+	 * both neighbors are equidistant, in which case, round towards the even
+	 * neighbor. Behaves as for {@code ROUND_HALF_UP} if the digit to the left
+	 * of the discarded fraction is odd; behaves as for {@code ROUND_HALF_DOWN}
+	 * if it's even. Note that this is the rounding mode that minimizes
+	 * cumulative error when applied repeatedly over a sequence of calculations.
+	 */
+	public final static int ROUND_HALF_EVEN = 6;
+
+	/**
+	 * Rounding mode to assert that the requested operation has an exact result,
+	 * hence no rounding is necessary. If this rounding mode is specified on an
+	 * operation that yields an inexact result, an {@code ArithmeticException}
+	 * is thrown.
+	 */
+	public final static int ROUND_UNNECESSARY = 7;
+
+	/** 零壹贰叁肆伍陆柒捌玖 */
+	public final static String[] CHINESE_MNY = new String[] { "零", "壹", "贰",
+			"叁", "肆", "伍", "陆", "柒", "捌", "玖" };
+
+	public static Double ZERO_VLAUE = null;
+
+	/**
+	 * 0-->兆<br/>
+	 * 1-->亿 2-->万 3-->仟 4-->佰 5-->拾<br/>
+	 * 6-->元 7-->角 8-->分 9-->整
+	 */
+	public final static String[] CHINESE_CARRY = new String[] { "兆", "亿", "万",
+			"仟", "佰", "拾", "元", "角", "分", "整" };
+
+	public SafeCompute() {
+		super();
+	}
+
+	/**
+	 * 取绝对值
+	 *
+	 * @param n1
+	 * @return
+	 */
+	public static Double abs(Double n1) {
+		if (n1 == null)
+			return getZeroValue();
+		else
+			return n1.intValue() > 0 ? n1 : n1 * (-1);
+	}
+
+	/**
+	 * 比较
+	 *
+	 * @param n1
+	 * @param n2
+	 * @return
+	 */
+	public static int compare(Double n1, Double n2) {
+		if (n1 == null)
+			n1 = getZeroValue();
+		if (n2 == null)
+			n2 = getZeroValue();
+		return n1.compareTo(n2);
+	}
+
+	/**
+	 * 判断相等
+	 *
+	 * @param n1
+	 * @param n2
+	 * @return
+	 */
+	public static boolean isEqual(Double n1, Double n2) {
+		if (n1 == null)
+			n1 = getZeroValue();
+		if (n2 == null)
+			n2 = getZeroValue();
+		if (n1.compareTo(n2) != 0)
+			return false;
+		else
+			return true;
+	}
+
+	/**
+	 * 取较大数
+	 *
+	 * @param n1
+	 * @param n2
+	 * @return
+	 */
+	public static Double max(Double n1, Double n2) {
+		if (n1 == null)
+			n1 = getZeroValue();
+		if (n2 == null)
+			n2 = getZeroValue();
+
+		if (n1.doubleValue() >= n2.doubleValue())
+			return n1;
+		else
+			return n2;
+	}
+
+	/**
+	 * 取较小数
+	 *
+	 * @param n1
+	 * @param n2
+	 * @return
+	 */
+	public static Double min(Double n1, Double n2) {
+
+		if (n1 == null)
+			n1 = getZeroValue();
+		if (n2 == null)
+			n2 = getZeroValue();
+		if (n1.doubleValue() > n2.doubleValue())
+			return n2;
+		else
+			return n1;
+	}
+
+	/**
+	 * 取反
+	 *
+	 * @param n1
+	 * @return
+	 */
+	public static Double minus(Double n1) {
+		if (n1 == null)
+			return getZeroValue();
+		else
+			return n1 * (-1);
+	}
+
+	public static Double add(Double d1, Double d2) {
+		d1 = d1 != null ? d1 : new Double(0);
+		d2 = d2 != null ? d2 : new Double(0);
+		Double result = d1 + d2;
+		if(result==0){
+			return 0d;
+		}else{
+			return result;
+		}
+	}
+	
+	/**
+	 * 
+	 * Description: 精确的加法运算
+	 * 
+	 * @param v1
+	 * @param v2
+	 * @return
+	 */
+    public static Double accurateAdd(Double d1, Double d2) {  
+        BigDecimal b1 = new BigDecimal(Double.toString(d1));  
+        BigDecimal b2 = new BigDecimal(Double.toString(d2));  
+        return b1.add(b2).doubleValue();  
+   }
+
+
+	public static Integer add(Integer d1, Integer d2) {
+		d1 = d1 != null ? d1 : new Integer(0);
+		d2 = d2 != null ? d2 : new Integer(0);
+		Integer result = d1 + d2;
+		if(result==0){
+			return 0;
+		}else{
+			return result;
+		}
+	}
+
+	public static Double div(Double d1, Double d2) {
+		d1 = d1 != null ? d1 : getZeroValue();
+		d2 = d2 != null ? d2 : getZeroValue();
+		if (isEqual(0d, d2)) {
+			return null;
+		}
+		return d1 / d2;
+	}
+
+	public static Double multiply(Double d1, Double d2) {
+		// d1 = d1 != null ? d1 : new Double(0);
+		// d2 = d2 != null ? d2 : new Double(0);
+		// return d1 * d2;
+		BigDecimal b1 = d1 != null ? BigDecimal.valueOf(d1) : new BigDecimal(0);
+		BigDecimal b2 = d2 != null ? BigDecimal.valueOf(d2) : new BigDecimal(0);
+		BigDecimal result = b1.multiply(b2);
+
+		return result.setScale(8, BigDecimal.ROUND_HALF_UP).doubleValue();
+	}
+
+	public static Double sub(Double d1, Double d2) {
+		d1 = d1 != null ? d1 : getZeroValue();
+		d2 = d2 != null ? d2 : getZeroValue();
+		Double result = d1 - d2;
+		if(result==0){
+			return 0d;
+		}else{
+			return result;
+		}
+	}
+
+	/**
+	 * 设置精度、舍入方式
+	 *
+	 * @param value
+	 * @param scale
+	 * @param roundingMode
+	 *            如：四舍五入：BigDecimal.ROUND_HALF_UP <br/>
+	 *            ROUND_UP =0;ROUND_DOWN =1;ROUND_CEILING 2;
+	 *            ROUND_FLOOR=3;ROUND_HALF_UP =4;
+	 * @return
+	 */
+	public static Double setScale(Double value, int scale, int roundingMode) {
+		if (value == null || compare(value, 0d) == 0) {
+			return 0d;
+		}
+		BigDecimal bd = new BigDecimal(value);
+		bd = bd.setScale(scale, roundingMode);
+		double d = bd.doubleValue();
+		bd = null;
+		return d;
+	}
+
+	/**
+	 * @Description: 传入一个Double类型的值，返回一个保留两位小数的字符串
+	 * @param
+	 * @return void
+	 */
+	public static String setScale(Double value) {
+		DecimalFormat df = new DecimalFormat(",###,###.00");
+
+		if (value == null || compare(value, 0d) == 0) {
+			return null;
+		}
+		return df.format(value);
+	}
+	/**
+	 * @Description: 传入一个Double类型的值，返回一个保留两位小数的字符串
+	 * @param
+	 * @return void
+	 */
+	public static String setScale8(Double value) {
+
+		DecimalFormat df = new DecimalFormat(",###,###.00000000");
+
+		if (value == null || compare(value, 0d) == 0) {
+			return null;
+		}
+		return String.format("%.8f", value);
+	}
+
+	/**
+	 * 传入金额转化为大写 需要考虑科学计数法 如：1.38E9
+	 *
+	 * @param value
+	 * @return
+	 */
+	public static String convertChinese(Double value) {
+		if (value == null) {
+			return "";
+		}
+		if(SafeCompute.compare(value, 0d)<0){
+			value = SafeCompute.abs(value);
+		}
+		String douStr = value.toString();
+		if (douStr.contains("E") || douStr.contains("e")) {
+			douStr = convertScience(douStr);
+		}
+		StringBuffer result = new StringBuffer("");
+		String integerPart = null;// 整数部分
+		String decimalPart = null;// 小数部分
+		if (douStr.indexOf(".") > 0) {
+			String[] valueAry = douStr.split("\\.");
+			integerPart = valueAry[0];
+			decimalPart = valueAry[1];
+		} else {
+			integerPart = douStr;
+		}
+
+		// 56022
+		int length = integerPart.length();
+//		Boolean flag = false;
+		for (int i = 0; i < integerPart.length(); i++) {
+			String carryStr = getCarry(length);
+			String mnyStr = getMny(integerPart.charAt(i) + "");
+			result.append(mnyStr + carryStr);
+//			if (!CHINESE_MNY[0].equals(mnyStr) && flag) {
+//				result.append(CHINESE_MNY[0]+mnyStr + carryStr);
+//				flag = false;
+//			} else if(!CHINESE_MNY[0].equals(mnyStr) && !flag){
+//				result.append(mnyStr + carryStr);
+//			}else{
+//				flag = true;
+//			}
+//
+//			if (CHINESE_MNY[0].equals(mnyStr)
+//					&& (CHINESE_CARRY[1].equals(carryStr)
+//							|| CHINESE_CARRY[2].equals(carryStr) || CHINESE_CARRY[6]
+//								.equals(carryStr))) {
+//				result.append(carryStr);
+//			}
+			length--;
+		}
+		if (decimalPart != null && !"0".equals(decimalPart)
+				&& !"00".equals(decimalPart)) {
+			String mnyStr = getMny(decimalPart.charAt(0) + "");
+			if (!CHINESE_MNY[0].equals(mnyStr)) {
+				result.append(mnyStr + CHINESE_CARRY[7]);
+			}else{
+				result.append(CHINESE_MNY[0]);
+			}
+			if (decimalPart.length() >= 2) {
+				result.append(getMny(decimalPart.charAt(1) + "")
+						+ CHINESE_CARRY[8]);
+			}
+		} else {
+			result.append(CHINESE_CARRY[9]);
+		}
+		String str = result.toString();
+		result = null;
+		if (str.contains("亿万")) {
+			str = str.replaceAll("亿万", "亿");
+		}
+		while(str.contains("零万")
+				||str.contains("零仟")
+				||str.contains("零佰")
+				||str.contains("零拾")
+				||str.contains("零元")
+				||str.contains("零零")
+				||str.contains("零亿")){
+			str = str.replaceAll("零万", "万");
+			str = str.replaceAll("零仟", "零");
+			str = str.replaceAll("零佰", "零");
+			str = str.replaceAll("零拾", "零");
+			str = str.replaceAll("零元", "元");
+			str = str.replaceAll("零亿", "亿");
+			str = str.replaceAll("零零", "零");
+		}
+		return str;
+	}
+
+	// CHINESE_MNY 零壹贰叁肆伍陆柒捌玖
+	// CHINESE_CARRY 兆亿万仟佰拾角分整
+
+	/**
+	 * @param charAt
+	 * @return
+	 */
+	private static String getMny(String charAt) {
+		return CHINESE_MNY[Integer.parseInt(charAt)];
+	}
+
+	/**
+	 * @return
+	 */
+	private static String getCarry(int length) {
+		String result = "";
+		switch (length) {
+			case 1:
+				result = CHINESE_CARRY[6];
+				break;
+			case 2:
+				result = CHINESE_CARRY[5];
+				break;
+			case 3:
+				result = CHINESE_CARRY[4];
+				break;
+			case 4:
+				result = CHINESE_CARRY[3];
+				break;
+			case 5:
+				result = CHINESE_CARRY[2];
+				break;
+			case 6:
+				result = CHINESE_CARRY[5];
+				break;
+			case 7:
+				result = CHINESE_CARRY[4];
+				break;
+			case 8:
+				result = CHINESE_CARRY[3];
+				break;
+			case 9:
+				result = CHINESE_CARRY[1];
+				break;
+			case 10:
+				result = CHINESE_CARRY[5];
+				break;
+			case 11:
+				result = CHINESE_CARRY[4];
+				break;
+			case 12:
+				result = CHINESE_CARRY[3];
+				break;
+			case 13:
+				result = CHINESE_CARRY[2];
+				break;
+			case 14:
+				result = CHINESE_CARRY[5];
+				break;
+		}
+		return result;
+	}
+
+	/**
+	 * 传入大写转化为金额
+	 * @param chineseStr 中文大写       如：伍仟零贰拾元壹角捌分--->5020.18
+	 * 贰佰零玖万零柒佰陆拾贰元整-->7090760
+	 * @return
+	 */
+	public static Double convertDoubleByChinese(String chineseStr) {
+		if(chineseStr==null || chineseStr.trim().length()==0){
+			return null;
+		}
+		//先区分亿元、万元数、元数、小数
+		String[] carryAry = new String[]{"万亿","亿","万","元"};
+		Map<String,Double> valueMap = new HashMap<String,Double>();
+		for(int j=0;j<carryAry.length;j++){
+			if(chineseStr.indexOf(carryAry[j])>0){
+				String value = chineseStr.substring(0, chineseStr.indexOf(carryAry[j]));//叁佰零二
+				value = value.replaceAll("零", "");//叁佰二
+				Double dbl = 0d;
+				Double tempVal = 0d;
+				for(int i=0;i<value.length();i++){
+					if(bIsInCarry(value.charAt(i)+"")){
+						dbl = SafeCompute.add(dbl,
+								SafeCompute.multiply(tempVal,
+										getDouble(value.charAt(i)+"")));
+						tempVal = 0d;
+					}else{
+						tempVal = getDouble(value.charAt(i)+"");
+					}
+				}
+				dbl = SafeCompute.add(dbl,tempVal);
+				valueMap.put(carryAry[j],dbl);
+				chineseStr = chineseStr.substring(chineseStr.indexOf(carryAry[j])+1);
+			}
+		}
+
+		if(!"整".equals(chineseStr)){
+			chineseStr = chineseStr.replaceAll("零", "");//叁角贰分    叁分
+			if(chineseStr.indexOf("角")>0){
+				String value = chineseStr.substring(0,chineseStr.indexOf("角"));
+				valueMap.put("角", SafeCompute.multiply(getDouble(value),getDouble("角")));
+				chineseStr = chineseStr.substring(chineseStr.indexOf("角")+1);
+			}
+			if(chineseStr.indexOf("分")>0){
+				String value = chineseStr.substring(0,chineseStr.indexOf("分"));
+				valueMap.put("分", SafeCompute.multiply(getDouble(value),getDouble("分")));
+				chineseStr = chineseStr.substring(chineseStr.indexOf("分"));
+			}
+		}
+		Double mny = 0d;
+		for(String str:valueMap.keySet()){
+			if(str.equals("亿")){
+				mny = SafeCompute.add(mny, SafeCompute.multiply(valueMap.get(str),100000000d));
+			}else if(str.equals("万")){
+				mny = SafeCompute.add(mny, SafeCompute.multiply(valueMap.get(str),10000d));
+			}else{
+				mny = SafeCompute.add(mny, valueMap.get(str));
+			}
+		}
+
+		return mny;
+	}
+
+	/**
+	 * @param string
+	 * @return
+	 */
+	private static Double getDouble(String string) {
+		if(string==null){
+			return 0d;
+		}
+		for(int i=0;i<CHINESE_MNY.length;i++){
+			if(CHINESE_MNY[i].equals(string)){
+				return Double.valueOf(i);
+			}
+		}
+		//CHINESE_CARRY
+		if(CHINESE_CARRY[3].equals(string)){
+			return 1000d;
+		}else if(CHINESE_CARRY[4].equals(string)){
+			return 100d;
+		}else if(CHINESE_CARRY[5].equals(string)){
+			return 10d;
+		}else if(CHINESE_CARRY[7].equals(string)){
+			return 0.1d;
+		}else if(CHINESE_CARRY[8].equals(string)){
+			return 0.01d;
+		}
+		return null;
+	}
+
+	/**
+	 * 判断传入的字符是否是  位
+	 * @param string
+	 * @return
+	 */
+	private static boolean bIsInCarry(String string) {
+		if(string==null){
+			return false;
+		}
+		for(int i=0;i<CHINESE_CARRY.length;i++){
+			if(CHINESE_CARRY[i].equals(string)){
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * @param douStr
+	 * @return
+	 */
+	public static String convertScience(String douStr) {
+		DecimalFormat df = new DecimalFormat("#.00");
+		return df.format(new BigDecimal(douStr));
+	}
+	public static Double addToDouble(Double[] mnys){
+		if(mnys==null||mnys.length<=0){
+			return 0.0;
+		}
+		Double tota=0.0;
+		for(int i=0;i<mnys.length;i++){
+			tota+=(mnys[i]==null?0.0:mnys[i]);
+		}
+		return tota;
+	}
+	public static Integer addToInteger(Integer[] mnys){
+		if(mnys==null||mnys.length<=0){
+			return 0;
+		}
+		Integer tota=0;
+		for(int i=0;i<mnys.length;i++){
+			tota+=(mnys[i]==null?0:mnys[i]);
+		}
+		return tota;
+	}
+
+	private static Double getZeroValue(){
+		if(ZERO_VLAUE==null){
+			ZERO_VLAUE = new Double(0);
+		}
+		return ZERO_VLAUE;
+	}
+
+	public static String getPercent(Double bfb){
+		bfb = bfb != null ? bfb : new Double(0);
+		if(bfb==0.0){
+			return null;
+		}
+		return setScale(bfb*100,0, BigDecimal.ROUND_HALF_UP)+"%";
+	}
+
+	public static String getPercent2(Double bfb){
+		bfb = bfb != null ? bfb : new Double(0);
+		if(bfb==0.0){
+			return null;
+		}
+		return new java.text.DecimalFormat("#0.00").format(setScale(bfb*100,2, BigDecimal.ROUND_HALF_UP))+"%";
+	}
+	public static String getPercent1(Double bfb){
+		bfb = bfb != null ? bfb : new Double(0);
+		if(bfb==0.0){
+			return null;
+		}
+		return setScale(bfb,0, BigDecimal.ROUND_HALF_UP)+"%";
+	}
+
+	public static String getPercent3(Double bfb){
+		bfb = bfb != null ? bfb : new Double(0);
+		if(bfb==0.0){
+			return null;
+		}
+		return new java.text.DecimalFormat("#0.00").format(setScale(bfb,2, BigDecimal.ROUND_HALF_UP))+"%";
+	}
+}

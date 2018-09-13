@@ -1,0 +1,166 @@
+package com.xinleju.platform.flow.operation;
+
+import java.sql.Timestamp;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.collections.CollectionUtils;
+
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.flow.dto.ApprovalSubmitDto;
+import com.xinleju.platform.flow.dto.AssistDto;
+import com.xinleju.platform.flow.entity.SysNoticeMsg;
+import com.xinleju.platform.flow.enumeration.AutoPassType;
+import com.xinleju.platform.flow.enumeration.InstanceOperateType;
+import com.xinleju.platform.flow.enumeration.TaskStatus;
+import com.xinleju.platform.flow.enumeration.TaskType;
+import com.xinleju.platform.flow.model.ApproverUnit;
+import com.xinleju.platform.flow.model.InstanceUnit;
+import com.xinleju.platform.flow.model.TaskUnit;
+import com.xinleju.platform.flow.utils.JavaBeanCopier;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+/**
+ * 协办操作
+ * 1、职责不转换，最终还是本人审批
+ * 2、可同时指定多人协定
+ * 3、本人可以不用待协办人回复也可同意，流程往下走
+ * 
+ * @author daoqi
+ *
+ */
+public class AssistOperation extends DefaultOperation implements Operation {
+
+	public AssistOperation() {
+		super(OperationType.ASSIST);
+	}
+	
+	@Override
+	protected void operate(InstanceUnit instanceUnit, ApprovalSubmitDto approvalDto) throws Exception {
+		//3、跳过当前岗位中的竞争者
+		super.jumpOver();
+		
+		//1、插入协办人列表
+		insertAssisters(instanceUnit, approvalDto);
+		
+		//2、修改当前人的处理意见
+		updateUserNote(approvalDto);
+		
+		//3、协办添加当前协办人数和图标
+		assistMessageUpdate(approvalDto);
+		//记录操作日志
+		service.getInstanceLogService().saveLogData(instanceUnit.getId(), currentAc.getAcId(),
+				currentApprover.getId(), currentApprover.getTask().getTaskId(), 
+				InstanceOperateType.COOPERATE.getValue(), currentApprover.getApproverId() + "," 
+				+ approvalDto.getAssisters(), null, null);		
+	}
+
+	private void updateUserNote(ApprovalSubmitDto approvalDto) {
+		TaskUnit task = currentApprover.getTask();
+		StringBuilder taskComments = new StringBuilder("协办到【");
+		taskComments.append(approvalDto.getAssistersName()).append("】");
+		task.setTaskResult(approvalDto.getOperationType());
+		task.setTaskResultName(approvalDto.getOperationName());
+		task.setTaskComments(taskComments.toString() + ":" + approvalDto.getUserNote());
+		task.setEndTime(new Timestamp(System.currentTimeMillis()));
+		task.setTaskStatus(TaskStatus.FINISHED.getValue());
+	}
+
+	private void insertAssisters(InstanceUnit instanceUnit, ApprovalSubmitDto approvalDto) {
+		List<ApproverUnit> currentApproverList = currentPost.getApprovers();
+		if(CollectionUtils.isEmpty(currentApproverList)) {
+			return ;
+		}
+		
+		String[] assister = approvalDto.getAssisters().split(",");
+		String[] assisterName = approvalDto.getAssistersName().split(",");
+		for(int i=0; i<assister.length; i++) {
+			ApproverUnit newApprover = new ApproverUnit();
+			newApprover.setId(IDGenerator.getUUID());
+			newApprover.setApproverId(assister[i]);				//协办人userId, 32位!!!
+			newApprover.setApproverName(assisterName[i]);
+			newApprover.setDbAction(1);
+			newApprover.setAcPostId(currentApprover.getAcPostId());
+			newApprover.setOwner(currentApprover.getOwner());
+			newApprover.setAutoPass(AutoPassType.NOT_PASS.getValue());
+			
+			TaskUnit task = new TaskUnit();
+			task.setDbAction(1);
+			task.setTaskId(IDGenerator.getUUID());
+			task.setTaskStatus(TaskStatus.RUNNING.getValue());
+			task.setTaskType(TaskType.ASSIST.getValue());	//协办人
+			task.setStartTime(new Timestamp(System.currentTimeMillis()));
+			task.setFromId(currentApprover.getApproverId());
+			task.setFromName(currentApprover.getApproverName());
+			newApprover.setTask(task);
+//			currentApproverList.add(currentApprover.getApproverSeq() + 1, newApprover);
+			currentApproverList.add(newApprover);
+			
+//			newMessage(instanceUnit, task, currentAc.getApprovalTypeId());
+		}
+		
+		//新增协办人本身行
+		ApproverUnit newCurrentApprover = (ApproverUnit) JavaBeanCopier.copy(currentApprover);
+		newCurrentApprover.setId(IDGenerator.getUUID());
+		newCurrentApprover.setDbAction(1);
+		newCurrentApprover.getTask().setTaskId(IDGenerator.getUUID());
+		newCurrentApprover.getTask().setDbAction(1);
+		newCurrentApprover.getTask().setStartTime(new Timestamp(System.currentTimeMillis()));
+		newCurrentApprover.getTask().setFromId(currentApprover.getApproverId());	//本身增行也要设置来源，否则撤回任务时无法撤回
+		newCurrentApprover.getTask().setFromName(currentApprover.getApproverName());
+		newCurrentApprover.getTask().setMsgId(approvalDto.getMsgId());
+//				currentApproverList.add(currentApprover.getApproverSeq(), newCurrentApprover);
+		currentApproverList.add(newCurrentApprover);
+				
+		//重新排序
+		for(int i=0; i<currentApproverList.size(); i++) {
+			currentApproverList.get(i).setApproverSeq(i + 1);
+		}
+	}
+	
+	/**
+	 * 处理流程操作的消息
+	 * 1、发送待办消息
+	 * 2、待办转已办消息
+	 * 3、撤回消息
+	 * 
+	 * @param instanceUnit
+	 * @throws Exception
+	 */
+	public void handleMessages(InstanceUnit instanceUnit, ApprovalSubmitDto approvalDto) throws Exception {
+		sendMessages(instanceUnit.getMessages());
+		//协办情况下当前人的消息不置为已办
+//		completeMessage(instanceUnit, approvalDto.getMsgId());
+		withDrawMessage(instanceUnit);
+	}
+
+	/**
+	  * @Description:协办添加当前协办人数和图标
+	  * @author:zhangfangzhi
+	  * @date 2018年1月5日 下午4:46:16
+	  * @version V1.0
+	 */
+	private void assistMessageUpdate(ApprovalSubmitDto approvalDto) {
+		Map<String, Object> paramMap = new HashMap<String, Object>();
+		AssistDto assistDto=new AssistDto();
+		if(approvalDto.getAssisters()!=null){
+			Integer assistNum=approvalDto.getAssisters().split(",").length;
+			assistDto.setTotal(assistNum);
+			assistDto.setRemainder(assistNum);
+			assistDto.setRemainderNames(approvalDto.getAssistersName());
+			assistDto.setReplyNames("");
+			paramMap.put("operationTip", JacksonUtils.toJson(assistDto));
+			paramMap.put("msgId", approvalDto.getMsgId());
+			service.getMsgService().assistMessageUpdate(paramMap);
+		}
+	}
+
+//	@Override
+//	public void handleMessages(InstanceUnit instanceUnit, ApprovalSubmitDto approvalDto) throws Exception {
+//		super.sendMessages(instanceUnit.getMessages());
+//		super.withDrawMessage(instanceUnit.getMessagesToDel());
+//		completeMessage(approvalDto.getMsgId());	//协办不删除待办消息！！！
+//	}
+
+}

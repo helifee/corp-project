@@ -1,0 +1,404 @@
+/*
+ * @(#) K060041ServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 教育考试培训系统
+ *    SubSystem: 考试子系统
+ */
+package com.yds.tt.testing.service.impl;
+
+import java.io.File;
+import java.util.Date;
+
+import net.sf.json.JSONObject;
+
+import org.apache.commons.io.FileUtils;
+import org.springframework.stereotype.Service;
+
+import com.yds.base.service.AbstractBaseService;
+import com.yds.common.service.SessionConstants;
+import com.yds.tt.manager.service.AutoMarkedService;
+import com.yds.tt.manager.service.TtCommonUtil;
+import com.yds.tt.manager.service.TtConstants;
+import com.yds.tt.testing.bean.ExamEmployeeInfo;
+import com.yds.tt.testing.bean.K060031ExamPaperInfo;
+import com.yds.tt.testing.bean.K060031ExamQuestionInfo;
+import com.yds.tt.testing.bean.K060031SingleQuesInfo;
+import com.yds.tt.testing.bean.TestEmployeeAnswerInfo;
+import com.yds.tt.testing.dao.K060041Dao;
+import com.yds.tt.testing.service.K060031Service;
+import com.yds.tt.testing.service.K060041Service;
+import com.yds.util.service.Session;
+
+/**
+ * @see com.yds.tt.testing.service.K060041Service
+ * 
+ */
+@Service("k060041Service")
+public class K060041ServiceImpl extends AbstractBaseService implements
+		K060041Service {
+	private K060041Dao k060041Dao;
+
+	private AutoMarkedService autoMarkedService;
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public boolean checkTestEmployeePerm() {
+
+		ExamEmployeeInfo examEmployeeInfo = new ExamEmployeeInfo();
+
+		// 设置考试员工信息
+		setExamineInfo(examEmployeeInfo);
+
+		examEmployeeInfo = k060041Dao.getTestEmployeeInfo(examEmployeeInfo);
+		if (examEmployeeInfo == null) {
+			return false;
+		}
+
+		Integer empExamStatus = Integer.parseInt(TtConstants.R13.R13_4
+				.toString());
+
+		// 判断是否考试中
+		if (empExamStatus.compareTo(examEmployeeInfo.getEmpExamStatus()) != 0) {
+			return false;
+		}
+		// 判断考试是否已结束
+		Date currentTime = new Date();
+		if (currentTime.compareTo(examEmployeeInfo.getExamineEndTime()) >= 0) {
+			return false;
+		}
+		return true;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public TestEmployeeAnswerInfo getCurrentTestEmployeeAnswerInfo() {
+		TestEmployeeAnswerInfo testEmployeeAnswerInfo = new TestEmployeeAnswerInfo();
+
+		// 设置考试员工答案信息
+		setTestEmployeeAnswerInfo(testEmployeeAnswerInfo);
+
+		return k060041Dao
+				.getCurrentTestEmployeeAnswerInfo(testEmployeeAnswerInfo);
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public String getPaperInfo() {
+		// 取得考试试卷信息
+		K060031ExamPaperInfo examPaperInfo = (K060031ExamPaperInfo) Session
+				.get(SessionConstants.TT_K060031_EXAMPAPERINFO);
+
+		if (examPaperInfo != null) {
+			JSONObject json = JSONObject.fromObject(examPaperInfo);
+			return json.toString();
+		}
+
+		return null;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public boolean updateAnswerContent(
+			TestEmployeeAnswerInfo testEmployeeAnswerInfo) {
+
+		// 取得考试试卷信息
+		K060031ExamPaperInfo examPaperInfo = (K060031ExamPaperInfo) Session
+				.get(SessionConstants.TT_K060031_EXAMPAPERINFO);
+
+		// 取得画面模式
+		Integer mode = (Integer) Session.get(SessionConstants.TT_K060031_MODE);
+
+		// 若非参加考试模式
+		if (!K060031Service.TESTMODE.equals(mode)) {
+			// 将答案设置到Session对应试题中
+			setAnswerContentToSession(examPaperInfo, testEmployeeAnswerInfo);
+			return true;
+		}
+
+		// 是否超过大题答题时间检查
+		if (isOverTime(testEmployeeAnswerInfo.getBigquestionSerialNo(),
+				examPaperInfo)) {
+			return false;
+		}
+
+		// 设置考试员工答案信息
+		setTestEmployeeAnswerInfo(testEmployeeAnswerInfo);
+
+		// 将答案设置到Session对应试题中
+		setAnswerContentToSession(examPaperInfo, testEmployeeAnswerInfo);
+
+		// 检索考生答案信息,若为空,则插入
+		if (k060041Dao.getTestEmployeeAnswerInfo(testEmployeeAnswerInfo) == null) {
+
+			testEmployeeAnswerInfo.setMarkFlg(TtConstants.C18.C18_2.value());
+			k060041Dao.insertTestEmployeeAnswerInfo(testEmployeeAnswerInfo);
+			// 更新答案
+		} else {
+			k060041Dao.updateTestEmployeeAnswerInfo(testEmployeeAnswerInfo);
+		}
+
+		return true;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public boolean updateAnswerFileContent(File uploadFile,
+			String uploadFileName, TestEmployeeAnswerInfo testEmployeeAnswerInfo)
+			throws Exception {
+
+		// 取得考试试卷信息
+		K060031ExamPaperInfo examPaperInfo = (K060031ExamPaperInfo) Session
+				.get(SessionConstants.TT_K060031_EXAMPAPERINFO);
+
+		// 设置考试员工答案信息
+		setTestEmployeeAnswerInfo(testEmployeeAnswerInfo);
+
+		// 是否超过大题答题时间检查
+		if (isOverTime(testEmployeeAnswerInfo.getBigquestionSerialNo(),
+				examPaperInfo)) {
+			return false;
+		}
+
+		// 设置考生答案信息到Session中
+		setAnswerContentToSession(examPaperInfo, testEmployeeAnswerInfo);
+
+		// 检索考生答案信息
+		TestEmployeeAnswerInfo temp = k060041Dao
+				.getTestEmployeeAnswerInfo(testEmployeeAnswerInfo);
+
+		// 若非初次上传答案文件
+		if (temp != null) {
+			File deleteFile = new File(propMgr
+					.getParameter(TtConstants.FILE_PATH.QUESTION_USERANSWER
+							.value()), temp.getAnswerContent());
+			// 若文件存在
+			if (deleteFile.exists()) {
+				// 删除之前上传答案文件
+				FileUtils.forceDelete(deleteFile);
+			}
+
+		}
+		// 生成上传答案文件名
+		String targetFileName = TtCommonUtil.generateFileName(uploadFileName);
+		// 生成答案文件
+		File targetFile = new File(
+				propMgr.getParameter(TtConstants.FILE_PATH.QUESTION_USERANSWER
+						.value()), targetFileName);
+
+		// 上传文件
+		FileUtils.copyFile(uploadFile, targetFile);
+
+		// 设置问题答案
+		testEmployeeAnswerInfo.setAnswerContent(targetFileName);
+
+		// 若非初次上传答案文件
+		if (temp != null) {
+			// 更新答案信息
+			k060041Dao.updateTestEmployeeAnswerInfo(testEmployeeAnswerInfo);
+		} else {
+			// 设置评分区分
+			testEmployeeAnswerInfo.setMarkFlg(TtConstants.C18.C18_2.value());
+			// 插入考生答案信息
+			k060041Dao.insertTestEmployeeAnswerInfo(testEmployeeAnswerInfo);
+		}
+		return true;
+
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public ExamEmployeeInfo updateTestEmployeeInfoHandin() {
+		ExamEmployeeInfo examEmployeeInfo = new ExamEmployeeInfo();
+
+		// 取得考试标志
+		int examineFlg = k060041Dao.getExamFlg(examEmployeeInfo.getExamineId());
+
+		// 设置考试员工相关信息
+		setExamineInfo(examEmployeeInfo);
+		// 若考试为随时考试 则调用自动评分
+		if (TtConstants.C08.C08_2.value() == examineFlg) {
+			// 设置员工考试状态(成绩已发布)
+			examEmployeeInfo.setEmpExamStatus(TtConstants.R13.R13_8.value());
+		}
+		else {
+			// 设置员工考试状态(成绩未发布)
+			examEmployeeInfo.setEmpExamStatus(TtConstants.R13.R13_7.value());			
+		}
+		k060041Dao.updateTestEmployeeInfo(examEmployeeInfo);
+
+		// 若考试为随时考试 则调用自动评分
+		if (TtConstants.C08.C08_2.value() == examineFlg) {
+			int markCode = TtConstants.C39.C39_2.value();
+			String examId = examEmployeeInfo.getExamineId();
+			String emplyeesId = examEmployeeInfo.getEmployeesId();
+			int examJoinTimes = examEmployeeInfo.getExamineJoinTimes();
+			autoMarkedService.obtainUserAnswerInfo(markCode, null, examId,
+					emplyeesId, examJoinTimes);
+		}
+		return examEmployeeInfo;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public ExamEmployeeInfo updateTestEmployeeInfoDesert() {
+		ExamEmployeeInfo examEmployeeInfo = new ExamEmployeeInfo();
+
+		// 设置考试员工相关信息
+		setExamineInfo(examEmployeeInfo);
+
+		// 设置员工考试状态(放弃考试)
+		examEmployeeInfo.setEmpExamStatus(TtConstants.R13.R13_6.value());
+		k060041Dao.updateTestEmployeeInfo(examEmployeeInfo);
+		return examEmployeeInfo;
+	}
+
+	/**
+	 * 设置考试员工相关信息.
+	 * 
+	 * @param examEmployeeInfo
+	 *            考试员工信息
+	 * @return 考试员工信息
+	 */
+	private void setExamineInfo(ExamEmployeeInfo examEmployeeInfo) {
+		// 取得考试试卷信息
+		K060031ExamPaperInfo examPaperInfo = (K060031ExamPaperInfo) Session
+				.get(SessionConstants.TT_K060031_EXAMPAPERINFO);
+
+		// 设置考试ID
+		examEmployeeInfo.setExamineId(examPaperInfo.getExamineId());
+
+		// 设置参加次数
+		examEmployeeInfo.setExamineJoinTimes(examPaperInfo
+				.getExamineJoinTimes());
+		// 设置员工ID
+		examEmployeeInfo.setEmployeesId(TtCommonUtil.getLoginUserId());
+
+	}
+
+	/**
+	 * 设置考试员工答案相关信息.
+	 * 
+	 * @param testEmployeeAnswerInfo
+	 *            考试员工答案相关信息
+	 * @return 考试员工答案相关信息
+	 */
+	private TestEmployeeAnswerInfo setTestEmployeeAnswerInfo(
+			TestEmployeeAnswerInfo testEmployeeAnswerInfo) {
+		// 取得考试试卷信息
+		K060031ExamPaperInfo examPaperInfo = (K060031ExamPaperInfo) Session
+				.get(SessionConstants.TT_K060031_EXAMPAPERINFO);
+
+		testEmployeeAnswerInfo.setExamineId(examPaperInfo.getExamineId());
+		testEmployeeAnswerInfo.setExamineJoinTimes(examPaperInfo
+				.getExamineJoinTimes());
+		testEmployeeAnswerInfo.setEmployeesId(TtCommonUtil.getLoginUserId());
+
+		return testEmployeeAnswerInfo;
+	}
+
+	/**
+	 * 是否超出大题答题时间.
+	 * 
+	 * @param bigquestionSerialNo
+	 *            大题编号
+	 * @param ExamPaperInfo
+	 *            试卷信息
+	 * @return true/false
+	 */
+	private boolean isOverTime(Integer bigquestionSerialNo,
+			K060031ExamPaperInfo examPaperInfo) {
+
+		int totalTime = 0;
+		for (int i = 0; i < examPaperInfo.getBigQuestions().size(); i++) {
+			Integer currentBigquestionTime = examPaperInfo.getBigQuestions()
+					.get(i).getBigquestionTime();
+			if (currentBigquestionTime != null) {
+				totalTime = totalTime + currentBigquestionTime;
+			}
+			if (bigquestionSerialNo.compareTo(examPaperInfo.getBigQuestions()
+					.get(i).getBigquestionSerialNo()) == 0) {
+				// 若当前大题时间为null或0
+				if (currentBigquestionTime == null
+						|| currentBigquestionTime == 0) {
+					return false;
+				}
+				break;
+			}
+		}
+
+		// 取得当前时间
+		Date currentTime = new Date();
+
+		// 取得考试开始时间
+		Date examStartTime = examPaperInfo.getExamineStartTime();
+
+		// 是否超过大题大题时间检查
+		if (totalTime < (currentTime.getTime() - examStartTime.getTime())
+				/ THOUSANDMILISECOND) {
+			return true;
+		}
+
+		return false;
+	}
+
+	/**
+	 * 设置考生答案信息到Session试卷信息对应试题中.
+	 * 
+	 * @param ExamPaperInfo
+	 *            试卷信息
+	 * @param testEmployeeAnswerInfo
+	 */
+	private void setAnswerContentToSession(K060031ExamPaperInfo examPaperInfo,
+			TestEmployeeAnswerInfo testEmployeeAnswerInfo) {
+		for (K060031ExamQuestionInfo question : examPaperInfo
+				.getExamQuestions()) {
+			// 若试题ID相同
+			if (question.getQuestionId().equals(
+					testEmployeeAnswerInfo.getQuestionId())) {
+				for (K060031SingleQuesInfo singleQuesInfo : question
+						.getSingleQuestions()) {
+					// 若答案编号相同
+					if (singleQuesInfo.getAnswerSerialNo().compareTo(
+							testEmployeeAnswerInfo.getAnswerSerialNo()) == 0) {
+						// 设置答案内容
+						singleQuesInfo.setAnswerContent(testEmployeeAnswerInfo
+								.getAnswerContent());
+						return;
+					}
+				}
+			}
+		}
+	}
+
+	/**
+	 * @param dao
+	 *            the k060041Dao to set
+	 */
+	public void setK060041Dao(K060041Dao dao) {
+		k060041Dao = dao;
+	}
+
+	/**
+	 * @param autoMarkedService
+	 *            the autoMarkedService to set
+	 */
+	public void setAutoMarkedService(AutoMarkedService autoMarkedService) {
+		this.autoMarkedService = autoMarkedService;
+	}
+
+}

@@ -1,0 +1,92 @@
+package com.xinleju.platform.finance.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Table(value="PT_FI_CASH_FLOW_ITEM",desc="现金流量项目")
+public class CashFlowItem extends BaseEntity{
+	
+		
+	@Column(value="account_set_id",desc="财务系统公司id")
+	private String accountSetId;
+    
+  		
+	@Column(value="name",desc="现金流量名称")
+	private String name;
+    
+  		
+	@Column(value="code",desc="现金流量编码")
+	private String code;
+	
+	@Column(value="subject_codes",desc="科目编码")
+	private String subjectCodes;
+	
+	@Column(value="subject_names",desc="科目名称")
+	private String subjectNames;
+	
+	@Column(value="parent_id",desc="父级现金流量id")
+	private String parentId;
+	
+	@Column(value="node_level",desc="节点等级")
+	private String nodeLevel;
+  		
+		
+	public String getAccountSetId() {
+		return accountSetId;
+	}
+	public void setAccountSetId(String accountSetId) {
+		this.accountSetId = accountSetId;
+	}
+  		
+	public String getName() {
+		return name;
+	}
+	public void setName(String name) {
+		this.name = name;
+	}
+  		
+	public String getCode() {
+		return code;
+	}
+	public void setCode(String code) {
+		this.code = code;
+	}
+  		
+	public String getParentId() {
+		return parentId;
+	}
+	public void setParentId(String parentId) {
+		this.parentId = parentId;
+	}
+	
+	public String getSubjectCodes() {
+		return subjectCodes;
+	}
+	public void setSubjectCodes(String subjectCodes) {
+		this.subjectCodes = subjectCodes;
+	}
+	
+	public String getSubjectNames() {
+		return subjectNames;
+	}
+	public void setSubjectNames(String subjectNames) {
+		this.subjectNames = subjectNames;
+	}
+	
+	public String getNodeLevel() {
+		return nodeLevel;
+	}
+	public void setNodeLevel(String nodeLevel) {
+		this.nodeLevel = nodeLevel;
+	}
+  		
+	
+}

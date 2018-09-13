@@ -1,0 +1,24 @@
+package com.xinleju.platform.flow.dao.impl;
+
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.platform.base.dao.impl.BaseDaoImpl;
+import com.xinleju.platform.flow.dao.UploadAttachmentDao;
+import com.xinleju.platform.flow.entity.UploadAttachment;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Repository
+public class UploadAttachmentDaoImpl extends BaseDaoImpl<String,UploadAttachment> implements UploadAttachmentDao{
+
+	public UploadAttachmentDaoImpl() {
+		super();
+	}
+
+	
+	
+}

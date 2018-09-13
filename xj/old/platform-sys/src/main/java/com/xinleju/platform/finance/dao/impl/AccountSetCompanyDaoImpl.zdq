@@ -1,0 +1,44 @@
+package com.xinleju.platform.finance.dao.impl;
+
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.platform.base.dao.impl.BaseDaoImpl;
+import com.xinleju.platform.finance.dao.AccountSetCompanyDao;
+import com.xinleju.platform.finance.entity.AccountSetCompany;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Repository
+public class AccountSetCompanyDaoImpl extends BaseDaoImpl<String,AccountSetCompany> implements AccountSetCompanyDao{
+
+	public AccountSetCompanyDaoImpl() {
+		super();
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.finance.dao.AccountSetCompanyDao#getAccountSetCompanyTotal(java.util.Map)
+	 */
+	@Override
+	public Integer getAccountSetCompanyTotal(Map map) {
+         return getSqlSession().selectOne("com.xinleju.platform.finance.entity.AccountSetCompany.getAccountSetCompanyTotal", map);
+		
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.finance.dao.AccountSetCompanyDao#getAccountSetCompanypage(java.util.Map)
+	 */
+	@Override
+	public List<AccountSetCompany> getAccountSetCompanypage(Map map) {
+		return getSqlSession().selectList("com.xinleju.platform.finance.entity.AccountSetCompany.getAccountSetCompanypage", map);
+	}
+
+	
+	
+}

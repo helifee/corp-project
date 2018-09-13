@@ -1,0 +1,155 @@
+/**
+ * 
+ */
+package com.xinleju.platform.flow.utils;
+
+import java.io.IOException;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.http.HttpEntity;
+import org.apache.http.HttpResponse;
+import org.apache.http.client.ClientProtocolException;
+import org.apache.http.client.HttpClient;
+import org.apache.http.client.config.RequestConfig;
+import org.apache.http.client.config.RequestConfig.Builder;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.methods.HttpPut;
+import org.apache.http.entity.ContentType;
+import org.apache.http.entity.StringEntity;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.impl.conn.PoolingHttpClientConnectionManager;
+import org.apache.http.util.EntityUtils;
+
+import com.xinleju.platform.flow.exception.FlowException;
+
+public class HttpClientUtils {
+
+	private static final int connTimeout = 2 * 1000;
+	private static final int readTimeout = 2 * 1000;
+	private static final String mimeType = "application/json";
+	private static final String charset = "UTF-8";
+	private static HttpClient client = null;
+
+	static {
+		PoolingHttpClientConnectionManager cm = new PoolingHttpClientConnectionManager();
+		cm.setMaxTotal(400);
+		cm.setDefaultMaxPerRoute(2);
+		client = HttpClients.custom().setConnectionManager(cm).build();
+	}
+
+	/**
+	 * 发送Post请求
+	 * 
+	 * @param url
+	 * @param body
+	 * @return
+	 * @throws ClientProtocolException
+	 * @throws IOException
+	 */
+	public static String post(String url, String body) throws FlowException {
+		String result = "";
+		if (StringUtils.isNotBlank(url) && StringUtils.isNotBlank(body)) {
+			HttpPost httpPost = new HttpPost(url);
+			try {
+				// 请求内容
+				HttpEntity entity = new StringEntity(body, ContentType.create(mimeType, charset));
+				httpPost.setEntity(entity);
+
+				// 请求参数
+				Builder customReqConf = RequestConfig.custom();
+				customReqConf.setConnectTimeout(connTimeout);
+				customReqConf.setSocketTimeout(readTimeout);
+				httpPost.setConfig(customReqConf.build());
+
+				// 执行请求
+				HttpResponse httpResponse = client.execute(httpPost);
+
+				if (httpResponse.getStatusLine().getStatusCode() == 200) {
+					HttpEntity httpEntity = httpResponse.getEntity();
+					result = EntityUtils.toString(httpEntity, charset);
+				}
+			}catch (Exception e) {
+				throw new FlowException("发送HttpClient Post请示失败！", e);
+			} finally {
+				httpPost.releaseConnection();
+			}
+		}
+
+		return result;
+	}
+
+	/**
+	 * 发送Get请求
+	 * 
+	 * @param url
+	 * @return
+	 * @throws ClientProtocolException
+	 * @throws IOException
+	 */
+	public static String get(String url) throws FlowException {
+		String result = "";
+		if (StringUtils.isNotBlank(url)) {
+			HttpGet httpGet = new HttpGet(url);
+			try {
+
+				// 请求参数
+				Builder customReqConf = RequestConfig.custom();
+				customReqConf.setConnectTimeout(connTimeout);
+				customReqConf.setSocketTimeout(readTimeout);
+				httpGet.setConfig(customReqConf.build());
+
+				// 执行请求
+				HttpResponse httpResponse = client.execute(httpGet);
+
+				if (httpResponse.getStatusLine().getStatusCode() == 200) {
+					HttpEntity httpEntity = httpResponse.getEntity();
+					result = EntityUtils.toString(httpEntity, charset);
+				}
+			}catch (Exception e) {
+				throw new FlowException("发送HttpClient Get请示失败！", e);
+			}finally {
+				httpGet.releaseConnection();
+			}
+		}
+
+		return result;
+	}
+	
+	/**
+	 * 发送Put请求
+	 * 
+	 * @param url
+	 * @return
+	 * @throws ClientProtocolException
+	 * @throws IOException
+	 */
+	public static String put(String url) throws FlowException {
+		String result = "";
+		if (StringUtils.isNotBlank(url)) {
+			HttpPut httpPut = new HttpPut(url);
+			try {
+				
+				// 请求参数
+				Builder customReqConf = RequestConfig.custom();
+				customReqConf.setConnectTimeout(connTimeout);
+				customReqConf.setSocketTimeout(readTimeout);
+				httpPut.setConfig(customReqConf.build());
+				
+				// 执行请求
+				HttpResponse httpResponse = client.execute(httpPut);
+				
+				if (httpResponse.getStatusLine().getStatusCode() == 200) {
+					HttpEntity httpEntity = httpResponse.getEntity();
+					result = EntityUtils.toString(httpEntity, charset);
+				}
+			}catch (Exception e) {
+				throw new FlowException("发送HttpClient Put请示失败！", e);
+			}finally {
+				httpPut.releaseConnection();
+			}
+		}
+		
+		return result;
+	}
+}

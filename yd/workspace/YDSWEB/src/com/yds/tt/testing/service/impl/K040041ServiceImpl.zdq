@@ -1,0 +1,306 @@
+/*
+ * @(#)K040041ServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 教育考试培训系统
+ *    SubSystem: 教育子系统
+ */
+package com.yds.tt.testing.service.impl;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import org.springframework.stereotype.Service;
+
+import com.yds.base.service.AbstractBaseService;
+import com.yds.common.service.SessionConstants;
+import com.yds.tt.manager.service.TtConstants;
+import com.yds.tt.manager.service.TtException;
+import com.yds.tt.testing.bean.AnswerInfo;
+import com.yds.tt.testing.bean.QuestionInfo;
+import com.yds.tt.testing.bean.QuestionLibrary;
+import com.yds.tt.testing.service.K040041Service;
+import com.yds.util.service.BeanUtil;
+import com.yds.util.service.Session;
+
+/**
+ * @see com.yds.tt.testing.service.K040041Service
+ */
+@Service("k040041Service")
+public class K040041ServiceImpl extends AbstractBaseService implements
+		K040041Service {
+	private static final String BLANKLINE_QUESTION = "\r\n<p>\r\n\t&nbsp;</p>\r\n";
+	private static final String BLANKLINE_INSIDE_START = "<p>\r\n\t(&nbsp;)*<br />\r\n\t";
+	private static final String BLANKLINE_OUTSIDE_START = "<p>\r\n\t&nbsp;</p>\r\n<p>";
+	private static final String BLANKLINE_INSIDE_END = "<br />\r\n\t(&nbsp;)*</p>";
+	private static final String BLANKLINE_OUTSIDE_END = "</p>\r\n<p>\r\n\t&nbsp;</p>";
+	private static final String BLANKLINE_INSIDE_MIDDLE = "<br />\r\n\t(&nbsp;)*<br />\r\n\t";
+	private static final String BLANKLINE_OUTSIDE_MIDDLE = "</p>\r\n<p>\r\n\t&nbsp;</p>\r\n<p>";
+	private static final String BLANKLINE_ANSWER = "\r\n(&nbsp;)*\r\n";
+	private static final String OPTIONTYPEID_CHOICE = "E02";
+	private static final String OPTIONTYPEID_TRUEFALSE = "E03";
+	private static final String REGEX_CHOICE = "^([1-9]|10)$";
+	private static final String REGEX_TRUEFALSE = "^[0-1]$";
+	private static final String BLANKFILLING_SEPARATOR = "\r\n";
+	private static final Integer BLANKFILLING_WORDLIMIT = 10;
+	private static final Integer OPTION_LIMIT = 10;
+
+	/**
+	 * {@inheritDoc}
+	 * @throws Exception 
+	 */
+	@Override
+	public void setQuestionInfoToSession(QuestionInfo questionInfo,
+			AnswerInfo answerInfo) throws Exception {
+		
+		List<QuestionLibrary> questionInfos = new ArrayList<QuestionLibrary>();
+		
+		String[] questionContents = splitQuestionContent(questionInfo.getQuestionContent());
+		String[] answerContents = answerInfo.getAnswerContent().split(BLANKLINE_ANSWER);
+		
+		// 试题分类
+		if (questionInfo.getCategory2Id() == null){
+			questionInfo.setCategory2Id(0);
+		}
+		if (questionInfo.getCategory3Id() == null){
+			questionInfo.setCategory3Id(0);
+		}
+		
+		// 答案题型同试题题型
+		answerInfo.setAnswerType(questionInfo.getQuestionKind());
+		
+		// 选项类型ID
+		if (answerInfo.getAnswerType() == TtConstants.R03.R03_1.value() ||
+			answerInfo.getAnswerType() == TtConstants.R03.R03_2.value()){
+			answerInfo.setOptionTypeId(OPTIONTYPEID_CHOICE);
+		} else if (answerInfo.getAnswerType() == TtConstants.R03.R03_3.value()){
+			answerInfo.setOptionTypeId(OPTIONTYPEID_TRUEFALSE);
+		}
+		// 字数限制
+		if (answerInfo.getAnswerType() == TtConstants.R03.R03_4.value()){
+			answerInfo.setWordLimits(BLANKFILLING_WORDLIMIT);
+		}
+		
+		//Session内容编辑
+		for (int index = 0; index < questionContents.length; index++) {
+			
+			QuestionLibrary question = new QuestionLibrary();
+			AnswerInfo answer = new AnswerInfo();
+			
+			// 每道试题共享画面设定的试题信息
+			BeanUtil.copyBean(questionInfo, question);
+			
+			BeanUtil.copyBean(answerInfo, answer);
+			
+			// 答案内容
+			answer.setAnswerContent(formatAnswerContent(answerContents[index], answer.getAnswerType()));
+			// 填空数
+			if (answerInfo.getAnswerType() == TtConstants.R03.R03_4.value()){
+				answer.setBlankNumber(answer.getAnswerContent().split(TtConstants.BLANK_SEPARATER).length);
+			}
+			List<AnswerInfo> answerInfoList = new ArrayList<AnswerInfo>();
+			answerInfoList.add(answer);
+			
+			// 试题内容
+			question.setQuestionContent(questionContents[index]);
+			// 核对状态，未核对
+			question.setCheckFlg(1);
+			// 答案列表
+			question.setAnswerInfoList(answerInfoList);
+			// 试题分数
+			question.setQuestionScore(answer.getAnswerScore());
+			// 自动判题区分
+			if (question.getQuestionKind() == TtConstants.R03.R03_1.value() ||
+				question.getQuestionKind() == TtConstants.R03.R03_3.value()){
+				question.setAtuoMarkFlg(TtConstants.C02.C02_1.toString());
+			} else {
+				question.setAtuoMarkFlg(TtConstants.C02.C02_2.toString());
+			}
+			
+			questionInfos.add(question);
+		}
+		
+		Session.set(SessionConstants.TT_K040041_PAGEINFO, questionInfos);
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void checkQuestion(QuestionInfo questionInfo, AnswerInfo answerInfo) throws TtException{
+		
+		// 拆分试题内容，试题答案
+		String[] questionContents = splitQuestionContent(questionInfo.getQuestionContent());
+		String[] answerContents = answerInfo.getAnswerContent().split(BLANKLINE_ANSWER);
+
+		// 检查是否有试题内容为空
+		if (hasBlankItem(questionContents)) {
+			throw new TtException(propMgr.getMessage("yds.com.warning.0001", "试题内容"));
+		}
+		
+		// 检查是否有答案内容为空
+		if (hasBlankItem(answerContents)) {
+			throw new TtException(propMgr.getMessage("yds.com.warning.0001", "答案"));
+		}
+		
+		// 试题数和答案数一致性检查
+		if (questionContents.length != answerContents.length) {
+			throw new TtException(propMgr.getMessage("yds.tt.error.KSE06", 
+													questionContents.length,
+													answerContents.length));
+		}
+		
+		// 答案内容校验
+		answerContentValidate(questionInfo.getQuestionKind(), answerContents);
+	}
+
+	/**
+	 * 
+	 * @param answerType
+	 * @param answerContents
+	 */
+	private void answerContentValidate(Integer answerType, String[] answerContents) {
+		
+		if (answerType == TtConstants.R03.R03_1.value()) {
+			// 检查答案合法性
+			if (!answerIsValidNumber(answerContents, REGEX_CHOICE)){
+				throw new TtException(propMgr.getMessage("yds.tt.error.KSE07", "单选题"));
+			}
+		} else if (answerType == TtConstants.R03.R03_2.value()) {
+			
+			for (String answer : answerContents){		
+				// 容错处理，允许用全角逗号做答案选项分隔符
+				String[] options = answer.replaceAll("，", ",").split(",");
+				
+				// 选择题答案不能为空
+				if (hasBlankItem(options)){
+					throw new TtException(propMgr.getMessage("yds.com.warning.0001", "选择题答案"));
+				}
+				
+				// 选项不超过上限
+				if (options.length > OPTION_LIMIT){
+					throw new TtException(propMgr.getMessage("yds.tt.error.KSE07", "多选题"));
+				}
+				// 检查答案合法性
+				if (!answerIsValidNumber(answer.replaceAll("，", ",").split(","), REGEX_CHOICE)){
+					throw new TtException(propMgr.getMessage("yds.tt.error.KSE07", "多选题"));
+				}
+			}
+		} else if (answerType == TtConstants.R03.R03_3.value()) {
+			// 检查答案是否是0或1
+			if (!answerIsValidNumber(answerContents, REGEX_TRUEFALSE)){
+				throw new TtException(propMgr.getMessage("yds.tt.error.KSE07", "判断题"));
+			}
+			
+		} else if (answerType == TtConstants.R03.R03_4.value()) {
+			
+			for (String answer : answerContents) {
+				String[] options = answer.split(BLANKFILLING_SEPARATOR);
+				
+				// 填空题答案不能为空
+				if (hasBlankItem(options)){
+					throw new TtException(propMgr.getMessage("yds.com.warning.0001", "填空题答案"));
+				}
+				// 填空数不能超过上限
+				if (options.length > OPTION_LIMIT) {
+					throw new TtException(propMgr.getMessage("yds.tt.error.KSE09"));
+				}
+				// 每一空的答案字数不能超过字数上限
+				for (String option : options) {
+					if (option.length() > BLANKFILLING_WORDLIMIT) {
+						throw new TtException(propMgr.getMessage("yds.tt.error.KSE10"));
+					}
+				}
+			}
+		}
+	}
+
+	/**
+	 * 答案内容是否是有效数字验证
+	 * 
+	 * @param answerContents 答案内容
+	 * @param regex 数字验证正则表达式
+	 * 
+	 * @return 答案内容是否是有效数字
+	 */
+	private boolean answerIsValidNumber(String[] answers, String regex) {
+		
+		Pattern p = Pattern.compile(regex);
+		
+		for (String answer : answers){
+			
+			Matcher m = p.matcher(answer);
+			
+			if (!m.matches()){
+				return false;
+			}
+		}
+		
+		return true;
+	}
+	
+	/**
+	 * 格式化答案内容
+	 * 
+	 * @param answerContent 答案内容
+	 * @param answerType 答案题型
+	 * 
+	 * @return 格式化后的答案内容
+	 */
+	private String formatAnswerContent(String answerContent, Integer answerType){
+		
+		if (answerType == TtConstants.R03.R03_1.value()){
+
+			return String.valueOf(Integer.parseInt(answerContent) - 1);
+		}else if (answerType == TtConstants.R03.R03_2.value()){
+			String[] formatAnswers = answerContent.replaceAll("，", ",").split(",");
+			
+			for (int i = 0;i < formatAnswers.length; i++){
+				formatAnswers[i] = String.valueOf(Integer.parseInt(formatAnswers[i]) - 1);
+			}
+			
+			return Arrays.asList(formatAnswers).toString().replaceAll("\\[|\\]", "");
+		} else if (answerType == TtConstants.R03.R03_4.value()){
+			return answerContent.replaceAll(BLANKFILLING_SEPARATOR, TtConstants.BLANK_SEPARATER);
+		}
+		return answerContent;
+	}
+	
+	/**
+	 * 数组检查
+	 * 
+	 * @return 数组是否含有空项
+	 */
+	private boolean hasBlankItem(String[] array){
+		if (array.length == 0){
+			return true;
+		}
+		
+		for (String item : array){
+			if (item.trim().isEmpty())
+				return true;
+		}
+		
+		return false;
+	}
+	
+	/**
+	 * 拆分答案内容
+	 * 
+	 * @param content 答案内容
+	 * 
+	 * @return 拆分后的答案内容
+	 */
+	private String[] splitQuestionContent(String content){
+		// 容错处理，保证各种空白行都得到处理
+		String formatContent = content.replaceAll(BLANKLINE_INSIDE_START, BLANKLINE_OUTSIDE_START);
+		formatContent = formatContent.replaceAll(BLANKLINE_INSIDE_END, BLANKLINE_OUTSIDE_END);
+		formatContent = formatContent.replaceAll(BLANKLINE_INSIDE_MIDDLE, BLANKLINE_OUTSIDE_MIDDLE);
+		
+		return formatContent.split(BLANKLINE_QUESTION);
+	}
+
+}

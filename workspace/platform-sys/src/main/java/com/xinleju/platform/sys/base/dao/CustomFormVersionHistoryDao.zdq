@@ -1,0 +1,32 @@
+package com.xinleju.platform.sys.base.dao;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.dao.BaseDao;
+import com.xinleju.platform.sys.base.entity.CustomFormVersionHistory;
+
+/**
+ * @author admin
+ *
+ */
+
+public interface CustomFormVersionHistoryDao extends BaseDao<String, CustomFormVersionHistory> {
+
+	/**
+	  * @Description:分页查询（排序）
+	  * @author:zhangfangzhi
+	  * @date 2017年11月23日 下午1:56:43
+	  * @version V1.0
+	 */
+	List<CustomFormVersionHistory> getPageSort(Map map);
+
+	/**
+	  * @Description:分页查询（排序统计个数）
+	  * @author:zhangfangzhi
+	  * @date 2017年11月23日 下午1:56:50
+	  * @version V1.0
+	 */
+	Integer getPageSortCount(Map map);
+
+}

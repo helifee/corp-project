@@ -1,0 +1,65 @@
+package com.xinleju.platform.finance.service.impl;
+
+import java.sql.Timestamp;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.finance.dao.SysRegisterDao;
+import com.xinleju.platform.finance.entity.SysRegister;
+import com.xinleju.platform.finance.service.SysRegisterService;
+import com.xinleju.platform.finance.utils.StatusType;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class SysRegisterServiceImpl extends  BaseServiceImpl<String,SysRegister> implements SysRegisterService{
+	
+
+	@Autowired
+	private SysRegisterDao sysRegisterDao;
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.finance.service.SysRegisterService#getSystemRegisterpage(java.util.Map)
+	 */
+	@Override
+	public Page getSystemRegisterpage(Map map) throws Exception {
+	   Page page =new Page();
+	   List<SysRegister> list=sysRegisterDao.getpageList(map);
+	   Integer total=sysRegisterDao.getpageListCount(map);
+	   page.setLimit((Integer) map.get("limit"));
+	   page.setList(list);
+	   page.setStart((Integer) map.get("start"));
+	   page.setTotal(total);
+	   return page;
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.finance.service.SysRegisterService#updateStatus(com.xinleju.platform.finance.entity.SysRegister)
+	 */
+	@Override
+	public int updateStatus(SysRegister sysRegisterDtoBean) {
+		int i=0;
+		String status = sysRegisterDtoBean.getStatus();
+		if(StatusType.StatusOpen.getCode().equals(status)){//启用状态改为禁用
+			sysRegisterDtoBean.setStatus(StatusType.StatusClosed.getCode());
+			sysRegisterDtoBean.setUpdateDate(new Timestamp(System.currentTimeMillis()));
+			 i = sysRegisterDao.update(sysRegisterDtoBean);
+		}else if(StatusType.StatusClosed.getCode().equals(status)){//禁用状态改为启用
+			sysRegisterDtoBean.setStatus(StatusType.StatusOpen.getCode());
+			sysRegisterDtoBean.setUpdateDate(new Timestamp(System.currentTimeMillis()));
+			i=sysRegisterDao.update(sysRegisterDtoBean);
+		}
+		return i;
+	}
+	
+
+}

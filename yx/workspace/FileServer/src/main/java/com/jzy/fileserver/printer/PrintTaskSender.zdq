@@ -1,0 +1,104 @@
+package com.jzy.fileserver.printer;
+
+import java.util.List;
+
+import org.apache.thrift.TException;
+import org.apache.thrift.protocol.TBinaryProtocol;
+import org.apache.thrift.protocol.TProtocol;
+import org.apache.thrift.transport.TSocket;
+import org.apache.thrift.transport.TTransport;
+import org.apache.thrift.transport.TTransportException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+import com.jzy.fileserver.dao.PrinterDao;
+import com.jzy.fileserver.domain.Printer;
+import com.jzy.fileserver.utils.JacksonUtils;
+
+/**
+ * 打印任务发送工具类
+ *
+ * Created by daoqi on 2018年8月3日
+ */
+@Component
+public class PrintTaskSender {
+	private static final Logger logger = LoggerFactory.getLogger(PrintTaskSender.class);
+	
+	@Autowired
+	private PrinterDao printerDao;
+	
+	@Value("${printer.timeout}")
+	private int timeout;
+	
+	public void send(PrintTask task){
+		Printer fastestPrinter = getFastestPrinter();
+		TTransport transport = new TSocket(fastestPrinter.getHost(), fastestPrinter.getServicePort());
+        TProtocol protocol = new TBinaryProtocol(transport);
+        Serv.Client client = new Serv.Client(protocol);
+        
+        try {
+			transport.open();
+		} catch (TTransportException e) {
+			e.printStackTrace();
+		}
+        try {
+			client.put_task(task);
+		} catch (TException e) {
+			e.printStackTrace();
+		}
+        transport.close();
+        logger.info("打印任务【{}】发送成功:{}", task.getTask_id(), JacksonUtils.toJson(task));
+	}
+
+	public void cancelTask(int taskId, String printerHost) {
+		TTransport transport = new TSocket(printerHost, 9090);
+        TProtocol protocol = new TBinaryProtocol(transport);
+        Serv.Client client = new Serv.Client(protocol);
+        try {
+			transport.open();
+		} catch (TTransportException e) {
+			e.printStackTrace();
+		}
+        try {
+			client.cancel_task(taskId);
+		} catch (TException e) {
+			e.printStackTrace();
+		}
+        transport.close();
+        
+        logger.info("打印任务【{}】取消成功！", taskId);
+	}
+	
+	/**
+	 * 取得最快（当前处理任务数最少）的打印机
+	 * 
+	 * @return
+	 */
+	public Printer getFastestPrinter() {
+//		String pattern = FileServerConstants.TASK_COUNTER + "*";
+//		Map<String, String> taskCounterMap = RedisUtils.getValues(pattern);
+//		Iterator<Entry<String, String>> iter = taskCounterMap.entrySet().iterator();
+		
+		List<Printer> activePrinters = printerDao.getActivePrinters(timeout);
+		Printer fastestPrinter = null;
+		int taskMin = Integer.MAX_VALUE; 
+		for(Printer p : activePrinters) {
+			int taskCount = p.getTaskNum();
+			if(taskCount < taskMin) {
+				taskMin = taskCount;
+				fastestPrinter = p;
+			}
+		}
+		
+		if(fastestPrinter == null) {
+			logger.error("找不到可用的打印机！");
+		} else {
+			logger.info("最快打印机为：{}", fastestPrinter.getHost());
+		}
+		
+		return fastestPrinter;
+	}
+}

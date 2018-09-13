@@ -1,0 +1,129 @@
+package com.xinleju.platform.flow.dto;
+
+import com.xinleju.platform.base.dto.BaseDto;
+
+
+
+
+
+/**
+ * @author admin
+ * 
+ *
+ */
+public class MsgSendRecordDto extends BaseDto{
+
+		
+	//发送目标端: 0-微信; 1-安卓; 2-iOS; 3-PC
+	private String target;
+    
+  		
+	//消息主键
+	private String msgId;
+    
+  		
+	private String userId;//消息接收人Id
+	private String loginName;//消息接收人的登录账号
+    
+  		
+	//操作类型
+	private String opType;
+    
+  		
+	//消息标题
+	private String msgTitle;
+    
+  		
+	//所属模块
+	private String appCode;
+    
+  		
+	//发起时间
+	private String sendDate;
+    
+  		
+	//返回code
+	private String errCode;
+    
+  		
+	//返回消息
+	private String errMsg;
+    
+  		
+		
+	public String getTarget() {
+		return target;
+	}
+	public void setTarget(String target) {
+		this.target = target;
+	}
+    
+  		
+	public String getMsgId() {
+		return msgId;
+	}
+	public void setMsgId(String msgId) {
+		this.msgId = msgId;
+	}
+      		
+	public String getOpType() {
+		return opType;
+	}
+	public void setOpType(String opType) {
+		this.opType = opType;
+	}
+    
+  		
+	public String getMsgTitle() {
+		return msgTitle;
+	}
+	public void setMsgTitle(String msgTitle) {
+		this.msgTitle = msgTitle;
+	}
+    
+  		
+	public String getAppCode() {
+		return appCode;
+	}
+	public void setAppCode(String appCode) {
+		this.appCode = appCode;
+	}
+    
+  		
+	public String getSendDate() {
+		return sendDate;
+	}
+	public void setSendDate(String sendDate) {
+		this.sendDate = sendDate;
+	}
+    
+  		
+	public String getErrCode() {
+		return errCode;
+	}
+	public void setErrCode(String errCode) {
+		this.errCode = errCode;
+	}
+    
+  		
+	public String getErrMsg() {
+		return errMsg;
+	}
+	public void setErrMsg(String errMsg) {
+		this.errMsg = errMsg;
+	}
+	public String getUserId() {
+		return userId;
+	}
+	public void setUserId(String userId) {
+		this.userId = userId;
+	}
+	public String getLoginName() {
+		return loginName;
+	}
+	public void setLoginName(String loginName) {
+		this.loginName = loginName;
+	}
+    
+  		
+}

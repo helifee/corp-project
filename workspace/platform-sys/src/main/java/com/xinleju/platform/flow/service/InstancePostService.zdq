@@ -1,0 +1,16 @@
+package com.xinleju.platform.flow.service;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.flow.entity.InstancePost;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface InstancePostService extends  BaseService <String,InstancePost>{
+
+
+	
+}

@@ -1,0 +1,49 @@
+package com.xinleju.platform.flow.service;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.flow.dto.BusinessObjectVariableDto;
+import com.xinleju.platform.flow.entity.BusinessObject;
+import com.xinleju.platform.flow.entity.BusinessObjectVariable;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface BusinessObjectVariableService extends  BaseService <String,BusinessObjectVariable>{
+
+	List<BusinessObjectVariable> queryBusiVariableListByTemlateId(String flId);
+
+	List<BusinessObjectVariable> queryVariableUsedInExpressionBy(String businessObjectId);
+
+	void deleteVariableListByObjectId(String busiObjectId) throws Exception;
+
+	List<BusinessObjectVariableDto> queryListByCondition(Map paramMap) throws Exception;
+
+	List<String> selectAllParentId(Map paramMap) throws Exception;
+
+	List<BusinessObjectVariableDto> getVariableTreeByBusiObject(Map<String, String> map) throws Exception;
+
+	void prepareAndSaveData(BusinessObjectVariable businessObjectVariable) throws Exception;
+
+	int updateAllRelatedData(BusinessObjectVariable businessObjectVariable) throws Exception;
+
+	Integer queryRelatedCountByPrefixMap(Map paramMap) throws Exception;
+
+	Integer deleteObjectAndChileren(Map<String, String> paramMap) throws Exception;
+
+	List<BusinessObjectVariableDto> queryListByParamMap(Map<String, Object> map);
+
+	public int updateSort(BusinessObjectVariable object, Map<String, Object> map) throws Exception;
+	
+	public int saveBusinessObjectVariable(BusinessObjectVariable businessObjectVariable) throws Exception;
+
+	public int updateBusinessObjectVariable(BusinessObjectVariable businessObjectVariable) throws Exception;
+
+	void fixVariableData() throws Exception;
+	
+}

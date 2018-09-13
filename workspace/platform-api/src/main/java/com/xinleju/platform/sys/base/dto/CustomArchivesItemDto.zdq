@@ -1,0 +1,122 @@
+package com.xinleju.platform.sys.base.dto;
+
+import java.util.List;
+
+import com.xinleju.platform.base.dto.BaseDto;
+
+
+
+
+
+/**
+ * @author admin
+ * 
+ *
+ */
+public class CustomArchivesItemDto extends BaseDto{
+
+		
+	//编码
+	private String code;
+    
+  		
+	//名称
+	private String name;
+    
+  		
+	//父节点ID
+	private String parentId;
+	
+	//主表ID
+	private String mainId;
+    
+	//说明
+	private String description;
+    
+	//状态 1.启用  0.禁用
+	private String status;
+  		
+	//序号
+	private Long sort;
+
+	//父ID(zTree需要格式)
+	private String pId;  	
+	
+	private List<CustomArchivesItemDto> customItemList;
+		
+
+	private boolean codeExist=false;
+	
+	private boolean nameExist=false;
+	
+	public String getCode() {
+		return code;
+	}
+	public void setCode(String code) {
+		this.code = code;
+	}
+    
+  		
+	public String getName() {
+		return name;
+	}
+	public void setName(String name) {
+		this.name = name;
+	}
+    
+  		
+	public String getParentId() {
+		return parentId;
+	}
+	public void setParentId(String parentId) {
+		this.parentId = parentId;
+	}
+	public String getMainId() {
+		return mainId;
+	}
+	public void setMainId(String mainId) {
+		this.mainId = mainId;
+	}
+	public Long getSort() {
+		return sort;
+	}
+	public void setSort(Long sort) {
+		this.sort = sort;
+	}
+	public String getpId() {
+		return pId;
+	}
+	public void setpId(String pId) {
+		this.pId = pId;
+	}
+	public String getDescription() {
+		return description;
+	}
+	public void setDescription(String description) {
+		this.description = description;
+	}
+	public String getStatus() {
+		return status;
+	}
+	public void setStatus(String status) {
+		this.status = status;
+	}
+	public List<CustomArchivesItemDto> getCustomItemList() {
+		return customItemList;
+	}
+	public void setCustomItemList(List<CustomArchivesItemDto> customItemList) {
+		this.customItemList = customItemList;
+	}
+	public boolean isCodeExist() {
+		return codeExist;
+	}
+	public void setCodeExist(boolean codeExist) {
+		this.codeExist = codeExist;
+	}
+	public boolean isNameExist() {
+		return nameExist;
+	}
+	public void setNameExist(boolean nameExist) {
+		this.nameExist = nameExist;
+	}
+}

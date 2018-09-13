@@ -1,0 +1,412 @@
+package com.jzy.hio.sys.sys.base.service.impl;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.log4j.Logger;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataAccessException;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.base.utils.ErrorInfoCode;
+import com.jzy.hio.base.utils.IDGenerator;
+import com.jzy.hio.base.utils.MessageResult;
+import com.jzy.hio.base.utils.Page;
+import com.jzy.hio.sys.sys.base.dto.CustomArchivesItemDto;
+import com.jzy.hio.sys.sys.base.entity.CustomArchivesItem;
+import com.jzy.hio.sys.sys.base.mapper.CustomArchivesItemDao;
+import com.jzy.hio.sys.sys.base.service.CustomArchivesItemService;
+import com.jzy.tools.data.JacksonUtils;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class CustomArchivesItemServiceImpl extends BaseServiceImpl<String, CustomArchivesItem>
+		implements CustomArchivesItemService {
+	private static final Logger		logger	= Logger.getLogger(CustomArchivesServiceImpl.class);
+	@Autowired
+	private CustomArchivesItemDao	customArchivesItemDao;
+
+	@Override
+	public Integer getCurrentMaxSortByMainId(String mainId) {
+		return customArchivesItemDao.getCurrentMaxSortByMainId(mainId);
+	}
+
+	@Override
+	public List queryListSort(Map<String, Object> map) {
+		return customArchivesItemDao.queryListSort(map);
+	}
+
+	@Override
+	public Integer validateIsExist(CustomArchivesItem customArchivesItem, String type) {
+		return customArchivesItemDao.validateIsExist(customArchivesItem, type);
+	}
+
+	@Override
+	public MessageResult saveList(CustomArchivesItemDto customArchivesItemDto) {
+		MessageResult result = new MessageResult();
+		List<CustomArchivesItemDto> customArchivesItemList = customArchivesItemDto.getCustomItemList();
+		List<CustomArchivesItem> itemListAdd = new ArrayList<CustomArchivesItem>();
+		List<CustomArchivesItem> itemListUpdate = new ArrayList<CustomArchivesItem>();
+		Set<String> codeSet = new HashSet<String>();
+		Set<String> nameSet = new HashSet<String>();
+		Integer delCount = 0;
+		if (customArchivesItemList != null && customArchivesItemList.size() > 0) {
+			for (int i = 0; i < customArchivesItemList.size(); i++) {
+				CustomArchivesItemDto customArchivesItemDtoChild = customArchivesItemList.get(i);
+				if (customArchivesItemDtoChild.getDelflag()) {
+					delCount++;
+				} else {
+					codeSet.add(customArchivesItemDtoChild.getCode());
+					nameSet.add(customArchivesItemDtoChild.getName());
+				}
+				CustomArchivesItem customArchivesItem = new CustomArchivesItem();
+				BeanUtils.copyProperties(customArchivesItemDtoChild, customArchivesItem);
+				CustomArchivesItem customArchivesItemDb = customArchivesItemDao
+						.selectByPrimaryKey(customArchivesItem.getId());
+				customArchivesItem.setSort(Long.valueOf(i + 1));
+				if (customArchivesItemDb == null) {
+					itemListAdd.add(customArchivesItem);
+				} else {
+					customArchivesItem.setConcurrencyVersion(customArchivesItemDb.getConcurrencyVersion());
+					itemListUpdate.add(customArchivesItem);
+				}
+			}
+			if (codeSet.size() != customArchivesItemList.size() - delCount
+					|| nameSet.size() != customArchivesItemList.size() - delCount) {
+				result.setResult("false");
+				result.setSuccess(true);
+				result.setMsg("名称或编码重复，请重新输入!");
+			} else {
+				try {
+					if(itemListAdd!=null && itemListAdd.size()>0 && !"".equals(itemListAdd.get(0))){
+						saveBatch(itemListAdd);
+					}
+					if(itemListUpdate!=null && itemListUpdate.size()>0 && !"".equals(itemListUpdate.get(0))){
+						updateBatch(itemListUpdate);
+					}
+				} catch (Exception e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+				result.setResult("true");
+				result.setSuccess(true);
+				result.setMsg("批量操作成功!");
+			}
+		}
+		return result;
+	}
+
+	@Override
+	public MessageResult validateBeforeSave(CustomArchivesItemDto t) {
+		MessageResult result = new MessageResult();
+		t.setDelflag(false);
+		CustomArchivesItemDto customArchivesItemDtoVal = this.validateIsExist(t);
+		try {
+			if (customArchivesItemDtoVal.isCodeExist() || customArchivesItemDtoVal.isNameExist()) {
+				result.setResult(JacksonUtils.toJson(customArchivesItemDtoVal));
+				result.setSuccess(true);
+				result.setMsg("编码或名称重复！");
+			} else {
+				CustomArchivesItem customArchivesItem = JacksonUtils.fromJson(JacksonUtils.toJson(t),
+						CustomArchivesItem.class);
+				customArchivesItem.setId(IDGenerator.getUUID());
+				Integer sort = customArchivesItemDao.getCurrentMaxSortByMainId(customArchivesItem.getMainId());
+				customArchivesItem.setSort(sort == null ? 1 : Long.valueOf(sort + 1));
+				customArchivesItemDao.insertSelective(customArchivesItem);
+				BeanUtils.copyProperties(customArchivesItem, customArchivesItemDtoVal);
+				result.setResult(JacksonUtils.toJson(customArchivesItemDtoVal));
+				result.setSuccess(true);
+				result.setMsg("保存成功！");
+			}
+		} catch (DataAccessException e) {
+			logger.error(e);
+			result.setSuccess(false);
+			result.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+			result.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+		}
+		return result;
+	}
+
+	private CustomArchivesItemDto validateIsExist(CustomArchivesItemDto t) {
+		CustomArchivesItem customArchivesItem = JacksonUtils.fromJson(JacksonUtils.toJson(t), CustomArchivesItem.class);
+		Integer isExistCode = customArchivesItemDao.validateIsExist(customArchivesItem, "code");
+		Integer isExistName = customArchivesItemDao.validateIsExist(customArchivesItem, "name");
+		CustomArchivesItemDto customArchivesItemDto = new CustomArchivesItemDto();
+		if (isExistCode != null && isExistCode > 0) {
+			customArchivesItemDto.setCodeExist(true);
+		}
+		if (isExistName != null && isExistName > 0) {
+			customArchivesItemDto.setNameExist(true);
+		}
+		return customArchivesItemDto;
+	}
+
+	@Override
+	public MessageResult validateBeforeUpdate(CustomArchivesItemDto t) {
+		MessageResult result = new MessageResult();
+		CustomArchivesItemDto customArchivesItemDtoVal = this.validateIsExist(t);
+		try {
+			if (customArchivesItemDtoVal.isCodeExist() || customArchivesItemDtoVal.isNameExist()) {
+				result.setResult(JacksonUtils.toJson(customArchivesItemDtoVal));
+				result.setSuccess(true);
+				result.setMsg("编码或名称重复！");
+			} else {
+				CustomArchivesItem customArchivesItem = JacksonUtils.fromJson(JacksonUtils.toJson(t),
+						CustomArchivesItem.class);
+				int updateResult = customArchivesItemDao.updateByPrimaryKeySelective(customArchivesItem);
+				BeanUtils.copyProperties(customArchivesItem, customArchivesItemDtoVal);
+				result.setResult(JacksonUtils.toJson(customArchivesItemDtoVal));
+				result.setSuccess(true);
+				result.setMsg("更新对象成功!");
+			}
+		} catch (DataAccessException e) {
+			logger.error(e);
+			result.setSuccess(false);
+			result.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+			result.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+		}
+		return result;
+	}
+
+	@Override
+	public Page getPageSort(Map map) {
+		// 分页显示
+		Page page = new Page();
+		// 获取分页list 数据
+		List<Map<String, Object>> list = customArchivesItemDao.getPageSort(map);
+		// 获取条件的总数据量
+		Integer count = customArchivesItemDao.getPageSortCount(map);
+		page.setLimit((Integer) map.get("limit"));
+		page.setList(list);
+		page.setStart((Integer) map.get("start"));
+		page.setTotal(count);
+		// 封装成page对象 传到前台
+		return page;
+	}
+
+	@Override
+	public int updateCustomArchives(String id) {
+		return customArchivesItemDao.updateCustomArchives(id);
+	}
+
+	@Override
+	public MessageResult getBeanById(String id) {
+		MessageResult result = new MessageResult();
+		try {
+			CustomArchivesItem customArchivesItem = customArchivesItemDao.selectByPrimaryKey(id);
+			if (customArchivesItem != null) {
+				result.setResult(customArchivesItem);
+				result.setSuccess(true);
+			} else {
+				result.setSuccess(false);
+				result.setMsg(ErrorInfoCode.NULL_ERROR.getName());
+				result.setCode(ErrorInfoCode.NULL_ERROR.getValue());
+			}
+		} catch (Exception e) {
+			logger.error(e);
+			result.setSuccess(false);
+			result.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+			result.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+		}
+		return result;
+	}
+
+	@Override
+	public MessageResult getBeanPage(Map<String, Object> map) {
+		MessageResult result = new MessageResult();
+		try {
+			Page page = this.getPageSort(map);
+			result.setResult(page);
+			result.setSuccess(true);
+		} catch (Exception e) {
+			logger.error(e);
+			result.setSuccess(false);
+			result.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+			result.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+		}
+		return result;
+	}
+
+	@Override
+	public MessageResult queryBeanList(Map<String, Object> map) {
+		MessageResult result = new MessageResult();
+		try {
+			List list = this.queryListSort(map);
+			result.setSuccess(true);
+			result.setResult(list);
+		} catch (Exception e) {
+			logger.error(e);
+			result.setSuccess(false);
+			result.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+			result.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+		}
+		return result;
+	}
+
+	@Override
+	public MessageResult deleteBeanById(String id) {
+		MessageResult result = new MessageResult();
+		try {
+			int deleteResult = this.deleteObjectById(id);
+			if (deleteResult == 1) {
+				result.setSuccess(true);
+				result.setResult(deleteResult);
+			} else {
+				result.setSuccess(false);
+				result.setResult(deleteResult);
+				result.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+				result.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+			}
+		} catch (Exception e) {
+			logger.error(e);
+			result.setSuccess(false);
+			result.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+			result.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+		}
+		return result;
+	}
+
+	@Override
+	public MessageResult deleteAllBeanByIds(String ids) {
+		MessageResult result = new MessageResult();
+		try {
+			int deleteResult = this.deleteAllObjectByIds(Arrays.asList(ids.split(",")));
+			if (deleteResult > 0) {
+				result.setSuccess(true);
+				result.setResult(deleteResult);
+			} else {
+				result.setSuccess(false);
+				result.setResult(deleteResult);
+				result.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+				result.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+			}
+		} catch (Exception e) {
+			logger.error(e);
+			result.setSuccess(false);
+			result.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+			result.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+		}
+		return result;
+	}
+
+	@Override
+	public MessageResult updateBean(String id, Map<String, Object> map) {
+		MessageResult result = new MessageResult();
+		try {
+			CustomArchivesItem customArchivesItem = this.getObjectById(id);
+			if (customArchivesItem != null) {
+				Map<String, Object> oldMap = JacksonUtils.fromJson(JacksonUtils.toJson(customArchivesItem),
+						HashMap.class);
+				oldMap.putAll(map);
+				CustomArchivesItem updateCustomArchivesItem = JacksonUtils.fromJson(JacksonUtils.toJson(oldMap),
+						CustomArchivesItem.class);
+				int updateResult = this.update(updateCustomArchivesItem);
+				if (updateResult == 1) {
+					result.setSuccess(true);
+					result.setResult(updateResult);
+				} else {
+					result.setSuccess(false);
+					result.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+					result.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+				}
+			} else {
+				result.setSuccess(false);
+				result.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+				result.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+			}
+		} catch (Exception e) {
+			logger.error(e);
+			result.setSuccess(false);
+			result.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+			result.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+		}
+		return result;
+	}
+
+	@Override
+	public MessageResult deletePseudoBeanById(String id) {
+		MessageResult result = new MessageResult();
+		try {
+			int deleteResult = this.deletePseudoObjectById(id);
+			if (deleteResult == 1) {
+				result.setSuccess(true);
+				result.setResult(deleteResult);
+			} else {
+				result.setSuccess(false);
+				result.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+				result.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+			}
+		} catch (Exception e) {
+			logger.error(e);
+			result.setSuccess(false);
+			result.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+			result.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+		}
+		return result;
+	}
+
+	@Override
+	public MessageResult deletePseudoAllBeanByIds(String ids) {
+		MessageResult result = new MessageResult();
+		try {
+			int deleteResult = this.deletePseudoAllObjectByIds(Arrays.asList(ids.split(",")));
+			if (deleteResult > 0) {
+				result.setSuccess(true);
+				result.setResult(deleteResult);
+			} else {
+				result.setSuccess(false);
+				result.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+				result.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+			}
+		} catch (Exception e) {
+			logger.error(e);
+			result.setSuccess(false);
+			result.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+			result.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+		}
+		return result;
+	}
+
+	@Override
+	public MessageResult enableOrDisable(CustomArchivesItemDto t) {
+		MessageResult result = new MessageResult();
+		try {
+			CustomArchivesItem customArchivesItem = this.getObjectById(t.getId());
+			if (customArchivesItem != null) {
+				customArchivesItem.setStatus(t.getStatus());
+				int updateResult = this.update(customArchivesItem);
+				if (updateResult == 1) {
+					result.setSuccess(true);
+					result.setResult(updateResult);
+				} else {
+					result.setSuccess(false);
+					result.setResult(updateResult);
+					result.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+					result.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+				}
+			} else {
+				result.setSuccess(false);
+				result.setMsg(ErrorInfoCode.NULL_ERROR.getName());
+				result.setCode(ErrorInfoCode.NULL_ERROR.getValue());
+			}
+		} catch (Exception e) {
+			logger.error(e);
+			result.setSuccess(false);
+			result.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+			result.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+		}
+		return result;
+	}
+}

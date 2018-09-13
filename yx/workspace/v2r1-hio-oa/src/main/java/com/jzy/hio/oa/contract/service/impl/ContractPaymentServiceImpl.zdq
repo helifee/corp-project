@@ -1,0 +1,1154 @@
+package com.jzy.hio.oa.contract.service.impl;
+
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
+
+import javax.servlet.http.HttpServletResponse;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.BeansException;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.PartialUpdate;
+import org.springframework.stereotype.Service;
+
+import com.github.pagehelper.PageHelper;
+import com.github.pagehelper.PageInfo;
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.oa.OaConstant;
+import com.jzy.hio.entity.ContractPayment;
+import com.jzy.hio.exception.HioMybatisDeleteException;
+import com.jzy.hio.exception.HioMybatisGetException;
+import com.jzy.hio.exception.HioMybatisInsertException;
+import com.jzy.hio.exception.HioMybatisUpdateException;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.oa.contract.dto.ContractIdDto;
+import com.jzy.hio.oa.contract.dto.ContractAuthDto;
+import com.jzy.hio.oa.contract.dto.ContractInfoDto;
+import com.jzy.hio.oa.contract.dto.ContractLogDto;
+import com.jzy.hio.oa.contract.dto.ContractMobileListDto;
+import com.jzy.hio.oa.contract.dto.ContractPaymentDto;
+import com.jzy.hio.oa.contract.dto.ContractPaymentMobileDto;
+import com.jzy.hio.oa.contract.dto.ResultMsg;
+import com.jzy.hio.oa.contract.mapper.ContractInfoMapper;
+import com.jzy.hio.oa.contract.mapper.ContractPaymentMapper;
+import com.jzy.hio.oa.contract.service.ContractLogService;
+import com.jzy.hio.oa.contract.service.ContractPaymentService;
+import com.jzy.hio.oa.contract.util.ExcelData;
+import com.jzy.hio.oa.contract.util.ExportExcelUtils;
+import com.jzy.hio.sys.organization.dto.OrganizationDto;
+import com.jzy.hio.utils.DateUtil;
+import com.jzy.hio.utils.JacksonUtils;
+import com.jzy.hio.utils.LoginUser;
+import com.jzy.hio.utils.Page;
+
+@Service("contractPaymentService")
+public class ContractPaymentServiceImpl extends BaseServiceImpl<ContractPayment> implements ContractPaymentService {
+	
+	private static Logger logger = LoggerFactory.getLogger(ContractPaymentServiceImpl.class);
+	
+	@Autowired
+	private ContractPaymentMapper contractPaymentMapper;
+	
+	@Autowired
+	private ContractLogService contractLogService;
+	
+	@Autowired
+	private ContractInfoMapper contractInfoMapper;
+	
+	@Autowired
+	private SysFeignService sysFeignService;
+
+	@Override
+	public ContractPaymentDto getContractPaymentById(String id,LoginUser loginUser) throws HioMybatisGetException {
+		logger.debug(">>>>>>>>>>>>getContractPaymentById>>>>>>>>>id={}>>>>>>>>>>>>>>>>>>>>>",id);
+		//
+		ContractPaymentDto contractPaymentDto = null;
+		try {
+			
+			contractPaymentDto = contractPaymentMapper.getContractPaymentById(id);
+			//流程处删除后返回详细页面
+			if(Base.isNotEmpty(contractPaymentDto)){
+				//操作权限
+				ContractAuthDto authDto = this.getPyamentAuthForSingle(contractPaymentDto, loginUser,OaConstant.CONTRACT_AUTH_TYPE_SINGLE);
+				contractPaymentDto.setContractAuth(authDto);
+				//附件关联信息
+				ContractIdDto idDto = this.getContractPaymentGeneratePk(contractPaymentDto, loginUser);
+				contractPaymentDto.setFileIdDto(idDto);
+			}
+			
+			
+		} catch (Exception e) {
+			//
+			logger.error(">>>>>>>>>>>>>>>>>>>>>查询合同付款信息出错!id={}>>>>>>>>>>>>>>>>>>>>>",id);
+			throw new HioMybatisGetException(e);
+		}
+		if(Base.isEmpty(contractPaymentDto)){
+			throw new HioMybatisGetException("没有查询到数据!");
+		}
+		return contractPaymentDto;
+	}
+	
+	/**
+	 * 获取主键
+	 */
+	@Override
+	public ContractIdDto getContractPaymentGeneratePk(ContractPaymentDto contractPaymentDto,LoginUser loginUser) throws HioMybatisGetException{
+		ContractIdDto idDto = new ContractIdDto();
+		idDto.setAppId(BaseConstants.App.OA.getId());
+		idDto.setCategoryId(BaseConstants.AttachmentCategory.OA_CONTRACT_PAYMENT.getId());
+		if(Base.isNotEmpty(contractPaymentDto) && Base.isNotEmpty(contractPaymentDto.getId())){
+			
+			idDto.setBusinessId(contractPaymentDto.getId());
+		}else{
+			idDto.setBusinessId(generatePk());
+		}
+		return idDto;
+	}
+
+	/**
+	 * 保存
+	 */
+	@Override
+	public int saveContractPayment(ContractPaymentDto contractPaymentDto,LoginUser loginUser) throws HioMybatisInsertException {
+		
+		int count = 0;
+		ResultMsg resMsg = null;
+		try {
+			//保存前校验		
+			resMsg = this.checkBeforeSaveOrUpdate(contractPaymentDto,OaConstant.CONTRACT_UPDATE_OR_SAVE_1);
+		} catch (Exception e) {
+			//
+			logger.error(">>>>>>>>>>>>>保存合同付款校验出错!ContractTitle={}>>>>>>>>>>>>>",contractPaymentDto.getContractTitle());
+			throw new HioMybatisInsertException(e,"保存合同付款校验出错!");
+		}
+		if(Base.isEmpty(resMsg) || resMsg.isSuccess()){
+			try {
+				ContractPayment contractPayment = new ContractPayment();
+				
+				//对象复制方法
+				BeanUtils.copyProperties(contractPaymentDto,contractPayment);
+				contractPayment.setCreateDate(DateUtil.getDate(DateUtil.getCurDateTime()));
+				
+				if(Base.isEmpty(contractPayment.getId())){
+					contractPaymentDto.setId(generatePk());
+				}
+				
+				if(Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_2, contractPaymentDto.getApproveStatus())
+						|| Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_5, contractPaymentDto.getApproveStatus())){
+					//直接审批完成或业务提交(非暂存)
+					contractPayment.setStatus(OaConstant.CONTRACT_STATUS_2);
+				}else{
+					contractPayment.setStatus(OaConstant.CONTRACT_STATUS_0);
+				}
+				
+				//插入日志
+				ContractLogDto logDto = this.getContractLogDto(contractPaymentDto, OaConstant.CONTRACT_LOG_TYPE_19);
+				contractLogService.saveContractLog(logDto,null);
+				
+				//付款保存
+				count = save(contractPayment);
+			} catch (BeansException e) {
+				//
+				logger.error(">>>>>>>>>>>>>保存合同付款出错!ContractTitle={}>>>>>>>>>>>>>",contractPaymentDto.getContractTitle());
+				throw new HioMybatisInsertException(e,"保存合同付款出错!");
+			}
+		}else{
+			throw new HioMybatisInsertException(resMsg.getMsg());
+		}	
+		return count;
+	}
+	
+	
+
+	@Override
+	public int deleteContractPaymentById(ContractPaymentDto contractPaymentDto,
+			LoginUser loginUser) throws HioMybatisDeleteException {
+		//
+		int count = 0;
+		ResultMsg resMsg = null;
+		try {
+			//审批发起的删除
+			if(Base.isEmpty(contractPaymentDto.getId()) && Base.isNotEmpty(contractPaymentDto.getBusinessId())){
+				contractPaymentDto.setId(contractPaymentDto.getBusinessId());
+				logger.info(">>>>>>>>>>>>>>>>>>>>>删除付款!id={}>>>>>>>>>>>>>>>>>>>>>",contractPaymentDto.getBusinessId());
+			}
+			//校验
+			resMsg = this.checkBeforeDeletePayment(contractPaymentDto);
+			
+		} catch (Exception e) {
+			//
+			logger.error(">>>>>>>>>>>>>删除合同付款校验出错!id={}>>>>>>>>>>>>>",contractPaymentDto.getId());
+			throw new HioMybatisDeleteException("删除合同付款校验出错!");
+		}
+		if(Base.isEmpty(resMsg) || resMsg.isSuccess()){
+			
+			try {
+				contractPaymentDto.setUpdateDate(DateUtil.getDate(DateUtil.getCurDateTime()));
+				
+				//执行删除
+				count = contractPaymentMapper.deleteContractPaymentById(contractPaymentDto);
+				
+			} catch (Exception e) {
+				//
+				logger.error(">>>>>>>>>>>>>删除合同付款出错!id={}>>>>>>>>>>>>>",contractPaymentDto.getId());
+				throw new HioMybatisUpdateException(e,"删除合同付款出错!");
+			}
+		}else{
+			throw new HioMybatisDeleteException(resMsg.getMsg());
+		}
+		
+		
+		return count;
+	}
+
+	@Override
+	public int updateContractPayment(ContractPaymentDto contractPaymentDto,
+			LoginUser loginUser) throws HioMybatisUpdateException {
+		
+		int count = 0;
+		//更新付款信息前校验
+		ResultMsg resMsg = null;
+		try {
+			resMsg = this.checkBeforeSaveOrUpdate(contractPaymentDto,OaConstant.CONTRACT_UPDATE_OR_SAVE_2);
+		} catch (Exception e) {
+			//
+			logger.error(">>>>>>>>>>>>>更新合同付款校验出错!id={}>>>>>>>>>>>>>",contractPaymentDto.getId());
+			throw new HioMybatisUpdateException(e,"更新合同付款校验出错!");
+		}
+		
+		if(Base.isEmpty(resMsg) || resMsg.isSuccess()){
+			try {
+				ContractPayment contractPayment = new ContractPayment();
+				//对象复制方法
+				BeanUtils.copyProperties(contractPaymentDto,contractPayment);
+				contractPayment.setUpdateDate(DateUtil.getDate(DateUtil.getCurDateTime()));
+				
+				if(Base.isEmpty(contractPayment.getId())){
+					contractPaymentDto.setId(generatePk());
+				}
+				
+				if(Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_2, contractPaymentDto.getApproveStatus())
+						|| Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_5, contractPaymentDto.getApproveStatus())){
+					//直接审批完成或业务提交(非暂存)
+					contractPayment.setStatus(OaConstant.CONTRACT_STATUS_2);
+				}else{
+					contractPayment.setStatus(OaConstant.CONTRACT_STATUS_0);
+				}
+				
+				//执行更新
+				count = update(contractPayment);
+			} catch (BeansException e) {
+				//
+				logger.error(">>>>>>>>>>>>>更新合同付款出错!id={}>>>>>>>>>>>>>",contractPaymentDto.getId());
+				throw new HioMybatisUpdateException(e,"更新合同付款出错!");
+			}
+		}else{
+			throw new HioMybatisUpdateException(resMsg.getMsg());
+		}
+		
+		return count;
+	}
+
+	@Override
+	public Page getContractPaymentPage(ContractPaymentDto contractPaymentDto,LoginUser loginUser) throws HioMybatisGetException {
+		
+		try {
+			/*//查询部门及其子部门数据
+			if(Base.isNotEmpty(contractPaymentDto) && Base.isNotEmpty(contractPaymentDto.getOperatorDeptId())){
+				
+				List<String> deptIdList = new ArrayList<String>();
+				deptIdList.add(contractPaymentDto.getOperatorDeptId());
+				deptIdList.addAll(this.getDeptIdList(contractPaymentDto.getOperatorDeptId(),loginUser));
+				contractPaymentDto.setOperatorDeptIdList(deptIdList);
+			}*/
+			//分页页码、每页数据量初始化
+			pageStart(contractPaymentDto);
+			//查询
+			List<ContractPaymentDto> list = contractPaymentMapper.getContractPaymentList(contractPaymentDto);
+			//过滤删除、修改、作废操作
+			this.getContractAuthForList(list,loginUser,contractPaymentDto);
+			
+			return pageReturn(list);
+			
+		} catch (Exception e) {
+			//
+			logger.error(">>>>>>>>>>>>>分页查询合同付款出错!id={}>>>>>>>>>>>>>");
+			throw new HioMybatisGetException(e);
+		}
+	}
+	
+	@Override
+	public void getExportExcel(ContractPaymentDto contractPaymentDto,HttpServletResponse response,
+			LoginUser loginUser) throws HioMybatisGetException{
+		
+		try {
+			//组织导出数据
+			ExcelData data = this.getExcelData(contractPaymentDto,loginUser);
+			//导出操作
+			ExportExcelUtils.exportExcel(response,data);
+		} catch (Exception e) {
+			//
+			logger.error(">>>>>>>>>>>>>导出同付款出错!id={}>>>>>>>>>>>>>");
+			throw new HioMybatisGetException(e);
+		}
+	}
+	
+	@Override
+	public int updateApproveStatus(ContractPaymentDto contractPaymentDto,
+			LoginUser loginUser) throws HioMybatisUpdateException {
+		int count = 0;
+		
+		ResultMsg resMsg = null;
+		if(Base.isEmpty(contractPaymentDto) 
+				|| (Base.isEmpty(contractPaymentDto.getId()) && Base.isEmpty(contractPaymentDto.getBusinessId()))){
+			//
+			logger.error(">>>>>>>>>>>>>所传数据为空,请确认!>>>>>>>>>>>>>");
+			throw new HioMybatisUpdateException("所传数据为空,请确认!");
+		
+		}else{
+			logger.info(">>>>>>>>>>>>>>>>>>>>>更新付款审批状态校验通过!id={}>>>>>>>>>>>>>>>>>>>>>",contractPaymentDto.getBusinessId());
+			//主键
+			if(Base.isNotEmpty(contractPaymentDto.getBusinessId())){
+				contractPaymentDto.setId(contractPaymentDto.getBusinessId());
+			}
+			//审批和业务字段名不一致
+			if(Base.isNotEmpty(contractPaymentDto.getApprovalStatus())){
+				contractPaymentDto.setApproveStatus(contractPaymentDto.getApprovalStatus());
+			}
+			ContractPaymentDto dto = contractPaymentMapper.getContractPaymentById(contractPaymentDto.getId());
+			//没查询到数据
+			if(Base.isEmpty(dto)){
+				resMsg = new ResultMsg();
+				resMsg.setSuccess(false);
+				resMsg.setMsg("该付款信息不存在,请确认数据是否正确!");
+			}
+			
+			try {
+				//审批状态
+				dto.setApproveStatus(contractPaymentDto.getApproveStatus());
+				//校验
+				resMsg = this.checkBeforeUpdateApproveStatus(dto);
+			} catch (Exception e) {
+				//
+				logger.error(">>>>>>>>>>>>>更新合同付款审批状态校验出错!id={}>>>>>>>>>>>>>",contractPaymentDto.getId());
+				throw new HioMybatisUpdateException(e,"更新合同付款审批状态校验出错!");
+			}
+			if(Base.isEmpty(resMsg) || resMsg.isSuccess()){
+				try {
+					logger.info(">>>>>>>>>>>>>>>>>>>>>更新付款审批状态校验通过!id={}>>>>>>>>>>>>>>>>>>>>>",contractPaymentDto.getBusinessId());
+					//日志
+					ContractLogDto logDto = null;
+					
+					if(Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_2, contractPaymentDto.getApproveStatus()) 
+							|| Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_5, contractPaymentDto.getApproveStatus())){
+						//审批完成或跳过
+						dto.setStatus(OaConstant.CONTRACT_STATUS_2);
+						//获取日志对象
+						logDto = this.getContractLogDto(dto, OaConstant.CONTRACT_LOG_TYPE_20);
+						
+					}else if(Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_3, contractPaymentDto.getApproveStatus())
+							|| Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_6, contractPaymentDto.getApproveStatus())
+							|| Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_4, contractPaymentDto.getApproveStatus())){
+						
+						//审批退回或驳回
+						dto.setStatus(OaConstant.CONTRACT_STATUS_0);
+					}
+					
+					ContractPayment contractPayment = new ContractPayment();
+					//对象复制方法
+					BeanUtils.copyProperties(dto,contractPayment);
+					if(Base.isNotEmpty(logDto)){
+						//日志保存
+						contractLogService.saveContractLog(logDto,null);
+					}
+					logger.info(">>>>>>>>>>>>>>>>>>>>>更新付款审批状态执行更新!id={}>>>>>>>>>>>>>>>>>>>>>",contractPaymentDto.getBusinessId());
+					//执行更新
+					count = update(contractPayment);
+				} catch (HioMybatisInsertException e) {
+					//
+					logger.error(">>>>>>>>>>>>>更新合同付款审批状态出错!id={}>>>>>>>>>>>>>",contractPaymentDto.getId());
+					throw new HioMybatisUpdateException(e,"更新合同付款审批状态出错!");
+				}
+			}else{
+				throw new HioMybatisUpdateException(resMsg.getMsg());
+			}
+		}
+		
+		return count;
+	}
+	
+	@Override
+	public int updateStatusToCancel(ContractPaymentDto contractPaymentDto,
+			LoginUser loginUser) throws HioMybatisUpdateException{
+		int count = 0;
+		//作废前校验
+		ResultMsg resMsg = null;
+		try {
+			resMsg = this.checkBeforeUpdateStatusToCancel(contractPaymentDto);
+		} catch (Exception e) {
+			//
+			logger.error(">>>>>>>>>>>>>作废合同付款校验出错!id={}>>>>>>>>>>>>>",contractPaymentDto.getId());
+			throw new HioMybatisUpdateException(e,"作废合同付款校验出错!");
+		}
+		//作废付款
+		if(Base.isEmpty(resMsg) || resMsg.isSuccess()){
+			
+			try {
+				//插入日志
+				ContractLogDto logDto = this.getContractLogDto(contractPaymentDto, OaConstant.CONTRACT_LOG_TYPE_21);
+				contractLogService.saveContractLog(logDto,null);
+				
+				contractPaymentDto.setUpdateDate(DateUtil.getDate(DateUtil.getCurDateTime()));
+				//作废付款
+				count = contractPaymentMapper.updatePaymentStatus(contractPaymentDto);
+			}  catch (Exception e) {
+				//
+				logger.error(">>>>>>>>>>>>>作废合同付款出错!id={}>>>>>>>>>>>>>",contractPaymentDto.getId());
+				throw new HioMybatisUpdateException(e,"作废合同付款出错!");
+			}			
+		}
+		
+		return count;
+	}
+	
+	/**
+	   * 移动端查询付款信息，分页
+	   */
+	 public Page getContractPaymentMobileList(ContractPaymentDto contractPaymentDto,LoginUser loginUser) throws HioMybatisGetException{
+		  
+		 try {
+				//分页页码、每页数据量初始化
+				pageStart(contractPaymentDto);
+				//查询
+				List<ContractMobileListDto> list = contractPaymentMapper.getContractPaymentMobileList(contractPaymentDto);
+				
+				return pageReturn(list);
+				
+			} catch (Exception e) {
+				//
+				logger.error(">>>>>>>>>>>>>移动端分页查询合同付款出错!id={}>>>>>>>>>>>>>");
+				throw new HioMybatisGetException(e);
+			}
+	  }
+
+	  /**
+	   * 移动端根据id查询合同付款信息
+	   */
+	  public ContractPaymentMobileDto getContractPaymentMobileById(ContractPaymentDto contractPaymentDto,LoginUser loginUser) throws HioMybatisGetException{
+		  
+		  logger.debug(">>>>>>>>>>>>getContractPaymentMobileById>>>>>>>>>id={}>>>>>>>>>>>>>>>>>>>>>",contractPaymentDto.getId());
+			//
+		  ContractPaymentMobileDto paymentMobileDto = null;
+			try {
+				
+				paymentMobileDto = contractPaymentMapper.getContractPaymentMobileById(contractPaymentDto.getId());		
+				//附件关联信息				
+				ContractIdDto idDto = this.getContractPaymentGeneratePk(contractPaymentDto, loginUser);
+				paymentMobileDto.setFileIdDto(idDto);
+				
+			} catch (Exception e) {
+				//
+				logger.error(">>>>>>>>>>>>>>>>>>>>>移动端查询合同付款信息出错!id={}>>>>>>>>>>>>>>>>>>>>>",contractPaymentDto.getId());
+				throw new HioMybatisGetException(e);
+			}
+		  
+		  return paymentMobileDto;
+	  }
+	  
+	  /**
+		 * 保存
+		 */
+		@Override
+		public int saveContractPaymentForApprove(ContractPaymentDto contractPaymentDto,LoginUser loginUser) throws HioMybatisInsertException {
+			
+			int count = 0;
+			ResultMsg resMsg = null;
+			
+			if(Base.isEmpty(contractPaymentDto) || (
+					 Base.isEmpty(contractPaymentDto.getId()) && Base.isEmpty(contractPaymentDto.getBusinessId()))){
+					 
+				throw new HioMybatisInsertException("合同付款信息主键不能为空!");
+			}
+			
+			try {
+				//主键
+				if(Base.isNotEmpty(contractPaymentDto.getBusinessId())){
+					contractPaymentDto.setId(contractPaymentDto.getBusinessId());
+				}
+				//审批和业务字段名不一致
+				if(Base.isNotEmpty(contractPaymentDto.getApprovalStatus())){
+					contractPaymentDto.setApproveStatus(contractPaymentDto.getApprovalStatus());
+				}
+				//审批流程实例
+				if(Base.isNotEmpty(contractPaymentDto.getInstanceId())){
+					contractPaymentDto.setFiId(contractPaymentDto.getInstanceId());
+				}
+				logger.info(">>>>>>>>>>>>>>>审批付款!title={}>>>>>>>>>id={}>>>>>>>>>>>>",contractPaymentDto.getTitle(),contractPaymentDto.getId());
+				
+				//保存前校验		
+				resMsg = this.checkBeforeSaveOrUpdate(contractPaymentDto,OaConstant.CONTRACT_UPDATE_OR_SAVE_1);
+				
+			} catch (Exception e) {
+				//
+				logger.error(">>>>>>>>>>>>>保存合同付款校验出错!contractPaymentDto={}>>>>>>>>>>>>>>>>>>",JacksonUtils.toJson(contractPaymentDto));
+				throw new HioMybatisInsertException(e,"保存合同付款校验出错!");
+			}
+			if(Base.isEmpty(resMsg) || resMsg.isSuccess()){
+				try {
+					logger.info(">>>>>>>>>>>>>>>审批付款校验通过!title={}>>>>>>>>>id={}>>>>>>>>>>>>",contractPaymentDto.getTitle(),contractPaymentDto.getId());
+					
+					ContractPayment contractPayment = new ContractPayment();
+					
+					//对象复制方法
+					BeanUtils.copyProperties(contractPaymentDto,contractPayment);
+					//contractPayment.setCreateDate(DateUtil.getDate(DateUtil.getCurDateTime()));
+					
+					if(Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_2, contractPaymentDto.getApproveStatus())
+							|| Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_5, contractPaymentDto.getApproveStatus())){
+						//直接审批完成或业务提交(非暂存)
+						contractPayment.setStatus(OaConstant.CONTRACT_STATUS_2);
+					}else{
+						contractPayment.setStatus(OaConstant.CONTRACT_STATUS_0);
+					}
+					
+					//插入日志
+					ContractLogDto logDto = this.getContractLogDto(contractPaymentDto, OaConstant.CONTRACT_LOG_TYPE_19);
+					contractLogService.saveContractLog(logDto,null);
+					
+					//保存变更
+					if(Base.isEquals(OaConstant.CONTRACT_UPDATE_OR_SAVE_1, contractPaymentDto.getOperateType())){	
+					
+						count = save(contractPayment);
+					//修改
+					}else if(Base.isEquals(OaConstant.CONTRACT_UPDATE_OR_SAVE_2, contractPaymentDto.getOperateType())){
+						
+						count = update(contractPayment);
+					}
+					
+				} catch (BeansException e) {
+					//
+					logger.error(">>>>>>>>>>>>>保存合同付款出错!contractPaymentDto={}>>>>>>>>>>>>>>>>>>",JacksonUtils.toJson(contractPaymentDto));
+					throw new HioMybatisInsertException(e,"保存合同付款出错!");
+				}
+			}else{
+				throw new HioMybatisInsertException(resMsg.getMsg());
+			}	
+			return count;
+		}
+		
+	/**
+	 * 
+	 * <p>作废付款校验：
+	 * 1.审批中的业务不能作废
+	 * 2.付款对应的合同结算完成或已作废的,该付款不能作废
+	 * @author wliang
+	 * @date 2018年4月21日 下午3:20:46 
+	 * @param contractPaymentDto
+	 * @return
+	 */
+	private ResultMsg checkBeforeUpdateStatusToCancel(ContractPaymentDto contractPaymentDto) throws Exception{
+		ResultMsg resMsg = new ResultMsg();
+		resMsg.setSuccess(false);
+		//校验作废信息
+		if(Base.isEmpty(contractPaymentDto) || Base.isEmpty(contractPaymentDto.getId()) 
+				|| Base.isNotEquals(contractPaymentDto.getStatus(),OaConstant.CONTRACT_STATUS_9)){
+			
+			resMsg.setMsg("作废付款信息不正确,请确认数据!");
+		}else{
+			
+			ContractPaymentDto paymentDto = contractPaymentMapper.getContractPaymentById(contractPaymentDto.getId());
+			if(Base.isEmpty(contractPaymentDto.getContractId())){
+				contractPaymentDto.setContractId(paymentDto.getContractId());
+			}
+			//付款是否为审批中
+			if(Base.isEquals(paymentDto.getApproveStatus(),OaConstant.CONTRACT_APPROVE_STATUS_1)){
+				
+				resMsg.setMsg("该付款正在审批,不能作废!");
+				
+			//非生效状态,不能作废
+			}else if(Base.isNotEquals(paymentDto.getStatus(),OaConstant.CONTRACT_STATUS_2)){
+				
+				resMsg.setMsg("该付款非生效状态,不能作废!");		
+			}else{
+				
+				ContractInfoDto infoDto = contractInfoMapper.getContractInfoById(paymentDto.getContractId());
+				if(Base.isNotEmpty(infoDto)){
+					if(Base.isEquals(infoDto.getStatus(), OaConstant.CONTRACT_STATUS_9)){
+						
+						resMsg.setMsg("该付款对应的合同已作废,不能执行付款作废!");	
+					}else if(Base.isEquals(infoDto.getBalanceStatus(), OaConstant.CONTRACT_BALANCE_STATUS_2)){
+						
+						resMsg.setMsg("该付款对应的合同已结算,不能执行付款作废!");
+					}else{
+						//作废本次付款后，其余付款金额是否大于合同金额
+						//查询包含审批和审批发起的草稿
+						paymentDto.setApproveStatusOneAndFour(OaConstant.CONTRACT_ONE_FOUR_QUERY_1);
+						List<ContractPaymentDto> paymentDtos = contractPaymentMapper.getPaymentListByContractId(paymentDto);
+						if(Base.isNotEmpty(paymentDtos)){
+							//总付款金额 - 当前付款的金额
+							BigDecimal sumPayMoney = paymentDtos.get(0).getSumPaymentMoney().subtract(paymentDto.getPaymentMoney());
+							//
+							if(sumPayMoney.compareTo(infoDto.getMoney()) > 0){
+								resMsg.setMsg("作废本次付款后,总付款金额"+ sumPayMoney +"大于合同金额" + infoDto.getMoney() +"不能执行付款作废!");
+							}
+						}
+					}
+				}
+			}
+		}
+		
+		//校验通过
+		if(Base.isEmpty(resMsg.getMsg())){
+			resMsg.setSuccess(true);
+		}
+		
+		return resMsg;
+	}
+	 
+	 	/**
+		 * 
+		 * <p>删除前校验
+		 * @author wliang
+		 * @date 2018年4月16日 上午11:17:19 
+		 * @param contractPaymentDto
+		 * @return
+		 */
+		public ResultMsg checkBeforeDeletePayment(ContractPaymentDto contractPaymentDto) throws Exception {
+			ResultMsg resMsg = new ResultMsg();
+			resMsg.setSuccess(true);
+			
+			ContractPaymentDto pDto = contractPaymentMapper.getContractPaymentById(contractPaymentDto.getId());
+			
+			if(Base.isEmpty(pDto)){
+				
+				resMsg.setSuccess(false);
+				resMsg.setMsg("所需删除的付款不存在,请确认数据是否正确!");
+			}else if(Base.isNotEquals(OaConstant.CONTRACT_APPROVE_STATUS_4,pDto.getApproveStatus())
+					&& Base.isNotEquals(OaConstant.CONTRACT_APPROVE_STATUS_3,pDto.getApproveStatus())
+					&& Base.isNotEquals(OaConstant.CONTRACT_APPROVE_STATUS_6,pDto.getApproveStatus())){
+				
+				//校验规则：只有草稿状态的付款允许删除
+				resMsg.setSuccess(false);
+				resMsg.setMsg("只有草稿状态的付款才允许删除,请确认付款状态!");
+			}else if(Base.isNotEmpty(pDto.getFiId()) && Base.isEmpty(contractPaymentDto.getBusinessId())){
+				
+				//流程审批发起付款,需要流程审批处发起删除
+				resMsg.setSuccess(false);
+				resMsg.setMsg("付款来自审批应用，请到审批应用中进行操作!");
+			}else if(Base.isEmpty(pDto.getFiId()) && Base.isNotEmpty(contractPaymentDto.getBusinessId())){
+				
+				//流程审批发起的删除操作,不能删除业务发起的付款
+				resMsg.setSuccess(false);
+				resMsg.setMsg("该付款来自合同应用,请到合同应用进行操作!");
+			}else if(Base.isNotEmpty(contractPaymentDto.getFiId()) 
+					&& !Base.isEquals(pDto.getFiId(),contractPaymentDto.getFiId())){
+				
+				//流程审批发起付款,流程实例Id与付款Id是否匹配
+				resMsg.setSuccess(false);
+				resMsg.setMsg("该付款id与流程实例id不匹配,请确认数据是否正确!");	
+			}
+			
+			return resMsg;
+			
+		}
+		
+		/**
+		 * 
+		 * <p>更新审批状态前校验
+		 * @author wliang
+		 * @date 2018年4月16日 下午3:55:11 
+		 * @param contractPaymentDto
+		 * @return
+		 */
+		public ResultMsg checkBeforeUpdateApproveStatus(ContractPaymentDto contractPaymentDto) throws Exception {
+			ResultMsg resMsg = new ResultMsg();
+			resMsg.setSuccess(true);
+			//校验规则：
+			if(Base.isEmpty(contractPaymentDto)){
+				resMsg.setSuccess(false);
+				resMsg.setMsg("该付款不存在,请确认数据是否正确!");
+			}else if(Base.isEmpty(contractPaymentDto.getFiId())){
+				resMsg.setSuccess(false);
+				resMsg.setMsg("付款来自合同应用,请确认数据是否正确!");
+			}else if(Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_2, contractPaymentDto.getStatus()) 
+						|| Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_5, contractPaymentDto.getStatus())){
+				//校验当前金额是否满足本次付款金额
+				ContractInfoDto infoDto = contractInfoMapper.getContractInfoById(contractPaymentDto.getContractId());
+				BigDecimal canPayMoney = infoDto.getMoney();
+				//校验是否存在其他非生效状态的付款
+				ContractPaymentDto pDto = new ContractPaymentDto();
+				pDto.setContractId(contractPaymentDto.getContractId());
+				//查询包含审批和审批发起的草稿
+				pDto.setApproveStatusOneAndFour(OaConstant.CONTRACT_ONE_FOUR_QUERY_1);
+				List<ContractPaymentDto> paymentDtos = contractPaymentMapper.getPaymentListByContractId(pDto);
+				if(Base.isNotEmpty(infoDto)){
+					//paymentDtos.get(0).getSumPaymentMoney() 包含本次付款,因此之后可付款金额要跟0比较
+					canPayMoney = infoDto.getMoney().subtract(paymentDtos.get(0).getSumPaymentMoney());
+				}
+				
+				//可付款金额不能小于本次付款金额
+				if(new BigDecimal("0").compareTo(canPayMoney) > 0){
+					
+					canPayMoney = contractPaymentDto.getPaymentMoney().add(canPayMoney);
+					resMsg.setMsg("当前合同可付金额" + canPayMoney + "元小于合同本次付款金额" + contractPaymentDto.getPaymentMoney() +"元!");
+				}
+			}
+			
+			return resMsg;
+			
+		}
+		
+		/**
+		 * 
+		 * <p>非空校验
+		 * @author wliang
+		 * @date 2018年4月16日 下午3:55:11 
+		 * @param contractInfoDto
+		 * @return
+		 */
+		public ResultMsg checkNullBeforeSaveOrUpdate(ContractPaymentDto contractPaymentDto) throws Exception {
+			ResultMsg resMsg = new ResultMsg();
+			resMsg.setSuccess(false);
+			
+			//对应的合同主键
+			if(Base.isEmpty(contractPaymentDto.getContractId())){
+				resMsg.setMsg("付款对应的合同主键不能为空!");
+			
+			//主题单独校验
+			}else if(Base.isEmpty(contractPaymentDto.getTitle())){
+				resMsg.setMsg("付款主题不能为空!");
+				
+			}else if(Base.isEmpty(contractPaymentDto.getApproveStatus())){
+				resMsg.setMsg("付款审批状态不能为空!");
+			
+			//审批发起校验流程实例id
+			}else if(Base.isNotEmpty(contractPaymentDto.getOperateType())){
+				
+				if(Base.isEmpty(contractPaymentDto.getFiId())){
+					resMsg.setMsg("付款流程实例Id不能为空!");
+
+				}else if(Base.isEmpty(contractPaymentDto.getBusinessId())){
+					resMsg.setMsg("付款业务Id不能为空!");
+					
+				}
+			}
+			
+			//校验不通过时先返回信息
+			if(Base.isNotEmpty(resMsg.getMsg())){
+				return resMsg;
+			}
+			
+			if(Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_2, contractPaymentDto.getApproveStatus())
+					|| Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_5, contractPaymentDto.getApproveStatus())
+					|| Base.isNotEmpty(contractPaymentDto.getFiId())
+					){
+				
+				//非空校验
+				if(Base.isEmpty(contractPaymentDto)){
+					
+					resMsg.setMsg("该付款数据为空,不能保存!");
+				}else if(Base.isEmpty(contractPaymentDto.getFirstParty())){
+					
+					resMsg.setMsg("甲方单位不能为空!");
+				}else if(Base.isEmpty(contractPaymentDto.getSecondParty())){
+					
+					resMsg.setMsg("乙方单位不能为空!");
+				}else if(Base.isEmpty(contractPaymentDto.getPayee())){
+					
+					resMsg.setMsg("收款单位不能为空!");
+				}else if(Base.isEmpty(contractPaymentDto.getPayer())){
+					
+					resMsg.setMsg("付款单位不能为空!");
+				}else if(Base.isEmpty(contractPaymentDto.getOpeningBank())){
+					
+					resMsg.setMsg("开户行不能为空!");
+				}else if(Base.isEmpty(contractPaymentDto.getBankAccount())){
+					resMsg.setMsg("银行账号不能为空!");
+				}else if(Base.isEmpty(contractPaymentDto.getPaymentMoney())){
+					
+					resMsg.setMsg("本次付款金额不能为空!");
+				}else if(Base.isEmpty(contractPaymentDto.getPaymentDate())){
+					
+					resMsg.setMsg("付款日期不能为空!");
+				}else if(Base.isEmpty(contractPaymentDto.getOperatorId())){
+					
+					resMsg.setMsg("经办人不能为空!");
+				}else if(Base.isEmpty(contractPaymentDto.getOperatorDeptId())){
+					
+					resMsg.setMsg("经办部门不能为空!");
+				}/*else if(Base.isEmpty(contractPaymentDto.getPaymentExplain())){
+					
+					resMsg.setMsg("付款说明不能为空!");
+				}*/
+			}		
+			
+			//校验通过
+			if(Base.isEmpty(resMsg.getMsg())){
+				resMsg.setSuccess(true);
+			}
+			
+			return resMsg;
+			
+		}
+		
+		/**
+		 * 
+		 * <p>保存前校验
+		 * @author wliang
+		 * @date 2018年4月16日 下午3:55:11 
+		 * @param contractPaymentDto
+		 * @return
+		 */
+		public ResultMsg checkBeforeSaveOrUpdate(ContractPaymentDto contractPaymentDto,Integer type) throws Exception {
+			ResultMsg resMsg = new ResultMsg();
+			resMsg.setSuccess(false);
+			
+			//只有草稿状态才允许修改
+			if(Base.isEquals(OaConstant.CONTRACT_UPDATE_OR_SAVE_2, type)){
+				
+				ContractPaymentDto oldDto = contractPaymentMapper.getContractPaymentById(contractPaymentDto.getId());
+				//没查询到数据
+				if(Base.isEmpty(oldDto)){
+					resMsg.setSuccess(false);
+					resMsg.setMsg("该付款信息不存在,请确认数据是否正确!");
+				}else if(Base.isNotEquals(OaConstant.CONTRACT_APPROVE_STATUS_4,oldDto.getApproveStatus())){
+					resMsg.setMsg("只有草稿状态才允许修改,请确认付款状态!");
+					return resMsg;
+				}
+			}
+			
+			//提交 非空校验
+			ResultMsg resMsg2 = this.checkNullBeforeSaveOrUpdate(contractPaymentDto);
+			if(Base.isNotEmpty(resMsg2) && !resMsg2.isSuccess()){
+				return resMsg2;
+			}
+			
+			//合同信息
+			ContractInfoDto oldInfoDto = contractInfoMapper.getContractInfoById(contractPaymentDto.getContractId());
+			if(Base.isEmpty(oldInfoDto)){
+				
+				resMsg.setMsg("没有查询到对应合同信息!");
+				return resMsg;
+			
+			//合同未生效不能创建付款
+			}else if(Base.isNotEquals(oldInfoDto.getStatus(), OaConstant.CONTRACT_STATUS_2)){
+				resMsg.setMsg("对应合同未生效,不能创建付款!");
+				return resMsg;
+			}else if(Base.isEquals(oldInfoDto.getStatus(), OaConstant.CONTRACT_STATUS_9)){
+				resMsg.setMsg("对应合同已作废,不能创建付款!");
+				return resMsg;
+			}else if(Base.isEquals(oldInfoDto.getBalanceStatus(), OaConstant.CONTRACT_BALANCE_STATUS_2)){
+				resMsg.setMsg("对应合同已结算,不能创建付款!");
+				return resMsg;
+			}
+			
+			//合同金额不允许修改,从合同取值
+			contractPaymentDto.setMoney(oldInfoDto.getMoney());
+			
+			//可付款金额
+			BigDecimal canPayMoney = contractPaymentDto.getMoney();
+			//校验是否存在其他非生效状态的付款
+			ContractPaymentDto pDto = new ContractPaymentDto();
+			pDto.setContractId(contractPaymentDto.getContractId());
+			//查询所有非删除
+			pDto.setApproveStatusOneAndFour(OaConstant.CONTRACT_ONE_FOUR_QUERY_2);
+			List<ContractPaymentDto> paymentDtos = contractPaymentMapper.getPaymentListByContractId(pDto);
+			if(Base.isNotEmpty(paymentDtos)){
+				//本次付款 + 非（作废、草稿）状态的付款记录累加和
+				canPayMoney = contractPaymentDto.getMoney().subtract(paymentDtos.get(0).getSumPaymentMoney());
+				
+				//存在打回或退回的流程,合同应用不允许发起,只能在审批发起
+				if(Base.isEmpty(contractPaymentDto.getFiId()) 
+				 	&& Base.isEquals(paymentDtos.get(0).getApproveStatus(), OaConstant.CONTRACT_APPROVE_STATUS_3)){
+				
+				resMsg.setMsg("审批应用中合同存在为驳回的付款,请到审批应用中完成审批或者删除该流程!");
+				return resMsg;
+				}else if(Base.isEmpty(contractPaymentDto.getFiId()) 
+				 	&& Base.isEquals(paymentDtos.get(0).getApproveStatus(), OaConstant.CONTRACT_APPROVE_STATUS_6)){
+					
+					resMsg.setMsg("审批应用中合同存在为退回的付款,请到审批应用中完成审批或者删除该流程!");
+					return resMsg;
+				}
+				
+				for(ContractPaymentDto dto:paymentDtos){
+					if(Base.isNotEmpty(dto) && Base.isNotEquals(dto.getId(), contractPaymentDto.getId())){
+						
+						if(Base.isEquals(dto.getApproveStatus(), OaConstant.CONTRACT_APPROVE_STATUS_4)){							
+							
+							//审批
+							if (Base.isNotEmpty(dto.getFiId())){
+								resMsg.setMsg("审批应用中该合同存在草稿状态的付款,不能进行此次操作!");
+							}else{
+								resMsg.setMsg("合同应用中该合同存在草稿状态的付款,不能进行此次操作!");
+							}
+							
+							return resMsg;
+						}else if(Base.isEquals(dto.getApproveStatus(), OaConstant.CONTRACT_APPROVE_STATUS_1)){
+							
+							resMsg.setMsg("审批应用中该合同存在审批中的付款,不能进行此次操作!");
+							return resMsg;
+						}
+					}
+				}
+			}
+			if(Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_2, contractPaymentDto.getApproveStatus())
+					|| Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_5, contractPaymentDto.getApproveStatus())
+					|| Base.isNotEmpty(contractPaymentDto.getFiId())
+					){
+				
+				//可付款金额不能小于本次付款金额
+				if(Base.isNotEmpty(contractPaymentDto.getPaymentMoney()) 
+						&& canPayMoney.compareTo(contractPaymentDto.getPaymentMoney()) < 0){
+					resMsg.setMsg("当前合同可付金额" + canPayMoney + "元小于合同本次付款金额" + contractPaymentDto.getPaymentMoney() +"元!");
+					return resMsg;
+				}
+			}
+			
+			//校验通过
+			if(Base.isEmpty(resMsg.getMsg())){
+				resMsg.setSuccess(true);
+			}
+			return resMsg;
+			
+		}
+		
+		/**
+		 * 
+		 * <p>组织导出数据
+		 * @author wliang
+		 * @date 2018年4月17日 下午11:57:54 
+		 * @param contractInfoDto
+		 * @param loginUser
+		 * @return
+		 * @throws Exception
+		 */
+		private ExcelData getExcelData(ContractPaymentDto contractPaymentDto,LoginUser loginUser) throws Exception{
+			ExcelData data = new ExcelData();
+			//付款信息导出表头
+		    data.setTitles(OaConstant.CONTRACT_PAYMENT_EXCEL_TITTLE);
+		    data.setName("付款信息导出");
+		    
+			/*//查询部门及其子部门数据
+			if(Base.isNotEmpty(contractPaymentDto) && Base.isNotEmpty(contractPaymentDto.getOperatorDeptId())){
+				
+				List<String> deptIdList = new ArrayList<String>();
+				deptIdList.add(contractPaymentDto.getOperatorDeptId());
+				deptIdList.addAll(this.getDeptIdList(contractPaymentDto.getOperatorDeptId(),loginUser));
+				contractPaymentDto.setOperatorDeptIdList(deptIdList);
+			}*/
+			//执行查询
+			List<ContractPaymentDto> dtoList = contractPaymentMapper.getContractPaymentList(contractPaymentDto);
+			
+			List<List<Object>> rows = new ArrayList<List<Object>>();
+			int count = 1;
+			//
+			 if(Base.isNotEmpty(dtoList)){
+				 for(ContractPaymentDto dto:dtoList){
+					List<Object> row = new ArrayList<Object>();
+					//序号
+					row.add(count);
+					//付款主题
+					row.add(dto.getTitle());
+					//单据状态
+					if(Base.isEquals(OaConstant.CONTRACT_STATUS_0,dto.getStatus())){
+						row.add("未生效");
+					}else if(Base.isEquals(OaConstant.CONTRACT_STATUS_2,dto.getStatus())){
+						row.add("已生效");
+					}else if(Base.isEquals(OaConstant.CONTRACT_STATUS_9,dto.getStatus())){
+						row.add("作废");
+					}
+					//收款单位
+					row.add(dto.getPayee());
+					//付款金额
+					row.add(dto.getPaymentMoney());
+					//合同金额
+					row.add(dto.getMoney());
+					//经办人
+					row.add(dto.getOperatorName());
+					//经办部门
+					row.add(dto.getOperatorDeptName());
+					//付款日期
+					row.add(dto.getPaymentDate());
+					rows.add(row);
+					count++;
+				}
+			}	    
+		    data.setRows(rows);
+		    return data;
+		 }
+		
+		 /**
+		  * 
+		  * <p>调用部门接口,获取子部门信息
+		  * @author wliang
+		  * @date 2018年4月21日 下午12:36:14 
+		  * @param parentId
+		  * @param loginUser
+		  * @return
+		  * @throws Exception
+		  */
+		 private List<String> getDeptIdList(String parentId,LoginUser loginUser) throws Exception{
+			 List<String> ids = null;
+			 
+			 //调用接口
+			 ApiFeignResponse<List<OrganizationDto>> apiFeignResponse 
+			 	= sysFeignService.queryOrgChildById(loginUser.getTendId(),parentId,true);
+			 
+			 List<OrganizationDto> deptList = apiFeignResponse.getResult();
+			 if(Base.isNotEmpty(deptList) && deptList.size() >= 1){
+				 ids = new ArrayList<String>();
+				 for(OrganizationDto dto:deptList){
+					 ids.add(dto.getId());
+				 }
+			 }
+			 return ids;
+		 }
+		 
+		 private Page pageReturn(List<? extends Object> list) throws Exception{
+		     PageInfo<?> pageInfo = new PageInfo<>(list);
+		     Page resultPage = super.getResultPage(pageInfo);
+		     return resultPage;
+		 }
+		 
+		 /**
+		  * 
+		  * <p>本次翻页起始下标和每页数据量
+		  * @author wliang
+		  * @date 2018年4月18日 下午4:18:56 
+		  * @param contractPaymentDto
+		  */
+		 private void pageStart(ContractPaymentDto contractPaymentDto) throws Exception{
+		     int pageNum = contractPaymentDto.getPageNum();
+		     int pageCount = contractPaymentDto.getPageCount();
+		    /* int pageStart = (pageNum - 1) * pageCount;
+		     if (pageStart < 0) {
+		         pageStart = 0;
+		     }*/
+		     PageHelper.startPage(pageNum, pageCount, true, false, null);
+		 }
+		 
+		 /**
+		  * 
+		  * <p>组织日志信息
+		  * @author wliang
+		  * @date 2018年4月21日 下午1:42:59 
+		  * @param contractInfoDto
+		  * @param logType
+		  * @return
+		  */
+		 private ContractLogDto getContractLogDto(ContractPaymentDto contractPaymentDto,int logType){
+			 ContractLogDto logDto = new ContractLogDto();
+			 logDto.setContractId(contractPaymentDto.getContractId());
+			 logDto.setPaymentId(contractPaymentDto.getId());
+			 logDto.setDelflag(OaConstant.CONTRACT_DEL_FLAG_0);
+			 logDto.setConcurrencyVersion(OaConstant.CONTRACT_DEL_FLAG_0);
+			 logDto.setLogType(logType);
+			 String title = null;
+			 ContractPaymentDto paymentDto = contractPaymentMapper.getContractPaymentById(contractPaymentDto.getId());
+			 if(Base.isNotEmpty(contractPaymentDto.getTitle())){
+				 title = contractPaymentDto.getTitle();
+			 }else if(Base.isNotEmpty(paymentDto) && Base.isNotEmpty(paymentDto.getTitle())){
+				 title = paymentDto.getTitle();
+			 }
+			 //类型名称
+			 logDto.setLogTypeName(OaConstant.LOG_TYPE_TEXT_MAP.get(logType));
+			 //日志内容
+			 StringBuffer logText = new StringBuffer();
+			 //付款创建
+			 if(Base.isEquals(OaConstant.CONTRACT_LOG_TYPE_19, logType)){
+				 logText.append("创建付款").append("\"").append(title).append("\",付款金额");
+				 if(Base.isEmpty(contractPaymentDto.getPaymentMoney())){
+					 logText.append("0");
+				 }else{
+					 logText.append(contractPaymentDto.getPaymentMoney());
+				 }
+				 
+			 //付款审批通过
+			 }else if(Base.isEquals(OaConstant.CONTRACT_LOG_TYPE_20, logType)){
+				 logText.append("付款").append("\"").append(title).append("\"审批通过");
+				 
+			 //付款作废
+			 }else if(Base.isEquals(OaConstant.CONTRACT_LOG_TYPE_21, logType)){	 
+				 logText.append("对付款").append("\"").append(title).append("\"进行作废操作");
+				 if(Base.isNotEmpty(contractPaymentDto.getLogText())){
+					 logText.append("  作废说明:").append(contractPaymentDto.getLogText());
+				 }
+			 }
+			 //日志内容
+			 logDto.setLogText(logText.toString());
+			 logDto.setCreateDate(DateUtil.getDate(DateUtil.getCurDateTime()));		 
+			 return logDto;
+		 }
+		 
+		 /**
+		  * 
+		  * <p>查询列表删除\修改\作废操作的显示<br>
+		  * @author wliang
+		  * @date 2018年4月26日 下午3:48:31 
+		  * @param paymentDtoList
+		  */
+		 public void getContractAuthForList(List<ContractPaymentDto> paymentDtoList,
+				 LoginUser loginUser,ContractPaymentDto contractPaymentDto) throws Exception{
+			 
+			 //付款台账列表不需要获取操作菜单(不传contractId),具体合同下的付款列表才获取操作菜单(传contractId)
+			 if(Base.isNotEmpty(paymentDtoList)
+					 && Base.isNotEmpty(contractPaymentDto)
+					 && Base.isNotEmpty(contractPaymentDto.getContractId())){
+				
+				for(ContractPaymentDto dto:paymentDtoList){
+					
+					//type参数暂时没有用到
+					dto.setContractAuth(this.getPyamentAuthForSingle(dto, loginUser, OaConstant.CONTRACT_AUTH_TYPE_LIST));
+				}			 
+			 }
+		 }
+		 
+		 /**
+		  * <p>合同付款的操作权限<br>
+		  */
+		 @Override
+		 public ContractAuthDto getPyamentAuthForSingle(ContractPaymentDto contractPaymentDto,
+				 LoginUser loginUser,String type) throws HioMybatisGetException{
+			 
+			 //查询当前付款信息
+			 ContractAuthDto authDto = new ContractAuthDto();
+			 if(Base.isNotEmpty(contractPaymentDto)){
+				 
+				 //查看日志都有权限 日志只在合同信息中查看
+				 authDto.setContractSeeLog(false);
+				 //查看流程审批 流程发起的
+				 if(Base.isNotEmpty(contractPaymentDto.getFiId())){
+					 authDto.setContractSeeFlow(true);			
+				 }
+				 
+				 ContractInfoDto infoDto = contractInfoMapper.getContractInfoById(contractPaymentDto.getContractId());
+				 //对应的合同信息没有结算且也没有作废,才能有其他操作
+				 if(Base.isNotEmpty(infoDto) 
+						 && Base.isNotEquals(infoDto.getStatus(), OaConstant.CONTRACT_STATUS_9)
+						 && Base.isNotEquals(infoDto.getBalanceStatus(), OaConstant.CONTRACT_BALANCE_STATUS_2)){
+					 
+					//业务发起的、草稿状态的才能进行修改和删除操作
+					 if(Base.isEquals(OaConstant.CONTRACT_APPROVE_STATUS_4,contractPaymentDto.getApproveStatus())
+							&& Base.isEmpty(contractPaymentDto.getFiId())){
+						
+						authDto.setContractUpdate(true);
+						authDto.setContractDelete(true);		
+					 }else{				
+						//已生效才能作废
+						if(Base.isEquals(OaConstant.CONTRACT_STATUS_2,contractPaymentDto.getStatus())){
+							authDto.setContractCancel(true);
+						}
+					}			 
+					 
+				 }
+			 }			 
+			 return authDto;
+		 }
+
+}

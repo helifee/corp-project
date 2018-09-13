@@ -1,0 +1,111 @@
+package com.jzy.hio.flow.service.impl;
+
+import java.util.List;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.annotation.DataSource;
+import com.jzy.hio.base.entity.BaseEntity;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.flow.entity.dto.ApprovalDto;
+import com.jzy.hio.flow.entity.enums.InstanceNodeState;
+import com.jzy.hio.flow.entity.param.ApprovalParam;
+import com.jzy.hio.flow.mapper.FlowInstanceApprovalRecordDao;
+import com.jzy.hio.flow.service.FlowInstanceApprovalRecordService;
+import com.jzy.hio.flow.utils.FlowConstants;
+import com.jzy.hio.flow.utils.TransitionUserNameUtils;
+import com.jzy.hio.utils.Page;
+
+@Service
+public class FlowInstanceApprovalRecordServiceImpl extends BaseServiceImpl<BaseEntity>
+		implements FlowInstanceApprovalRecordService {
+
+	@Autowired
+	private FlowInstanceApprovalRecordDao flowInstanceApprovalRecordDao;
+	
+	@Autowired
+	private TransitionUserNameUtils transitionUserNameUtils;
+
+	@Override
+	public Page<ApprovalDto> getMyApprvoalList(ApprovalParam approvalParam) {
+		
+		//TODO 发起人单选 等待前端对应
+		List<String> userIds = approvalParam.getUserIds();
+		if(CollectionUtils.isNotEmpty(userIds)) {
+			approvalParam.setStarterId(userIds.get(0));
+		}
+		
+		String userId = getLoginUser().getUserId();
+
+		approvalParam.setApprovalUser(userId);
+		int totalCount = this.getMyApproveCount(approvalParam);
+		Page<ApprovalDto> page = new Page<ApprovalDto>();
+		page.setPageCount(approvalParam.getPageCount());
+		Integer start = approvalParam.getPageNum().intValue() == 0 ? 1 : approvalParam.getPageNum();
+		page.setPageNum(start);
+		start = (start - 1) * approvalParam.getPageCount().intValue();
+		List<ApprovalDto> list = null;
+		approvalParam.setPageNum(start);
+		approvalParam.setPageCount(approvalParam.getPageCount().intValue());
+
+		if (totalCount > 0) {
+			List<String> orderby = approvalParam.getOrderby();
+			if (CollectionUtils.isNotEmpty(orderby)) {
+				StringBuilder sql = new StringBuilder();
+				for (String key : orderby) {
+					if (sql.length() == 0) {
+						sql.append(" order by " + key.split(",")[0] + " " + key.split(",")[1]);
+					} else {
+						sql.append(" , " + key.split(",")[0] + " " + key.split(",")[1]);
+					}
+				}
+				approvalParam.setDynamicSql(sql.toString());
+			}
+
+			list = flowInstanceApprovalRecordDao.getMyApprvoalList(approvalParam);
+			for (ApprovalDto approvalDto : list) {
+				if (approvalDto.getApprovalState() == InstanceNodeState.NOT_THROUGH.getState()
+						&& approvalParam.getState() == FlowConstants.UNAPPROVAL) {
+					approvalDto.setApprovalPerson(userId);
+				}
+			}
+			list = transitionUserNameUtils.getList(list, getLoginUser().getTendId());
+			if(approvalParam.getState() == FlowConstants.UNAPPROVAL) {
+				transitionUserNameUtils.arrivalTimeCalculation(list);
+			}
+		}
+		page.setTotal(totalCount);
+		page.setPageTotal(totalCount % approvalParam.getPageCount() == 0 ? totalCount / approvalParam.getPageCount()
+				: totalCount / approvalParam.getPageCount() + 1);
+		page.setList(list);
+		return page;
+	}
+	
+	
+
+	@Override
+	public int getMyApproveCount(ApprovalParam approvalParam) {
+		List<String> totalCount = flowInstanceApprovalRecordDao.getCountMyApprvoalList(approvalParam);
+		if(CollectionUtils.isEmpty(totalCount)) {
+			return 0;
+		} else {
+			return totalCount.size();
+		}
+	}
+
+	@Override
+	public  Integer queryMyUnApprovalCount(@DataSource String tendId, String userIdOA){
+		ApprovalParam approvalParam = new ApprovalParam();
+		approvalParam.setState(1);
+		approvalParam.setApprovalUser(userIdOA);
+
+		List<String> totalCount = flowInstanceApprovalRecordDao.getCountMyApprvoalList(approvalParam);
+		if(CollectionUtils.isEmpty(totalCount)) {
+			return 0;
+		} else {
+			return totalCount.size();
+		}
+	}
+}

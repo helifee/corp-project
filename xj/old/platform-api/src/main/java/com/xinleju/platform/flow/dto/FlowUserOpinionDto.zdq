@@ -1,0 +1,52 @@
+package com.xinleju.platform.flow.dto;
+
+import com.xinleju.platform.base.dto.BaseDto;
+
+
+
+
+
+/**
+ * @author 
+ * 
+ *
+ */
+public class FlowUserOpinionDto extends BaseDto{
+
+		
+	//
+	private String opinion;
+    
+  		
+	//
+	private Long sort;
+    
+  		
+	//
+	private Boolean isDefault;
+    
+  		
+		
+	public String getOpinion() {
+		return opinion;
+	}
+	public void setOpinion(String opinion) {
+		this.opinion = opinion;
+	}
+    
+  		
+	public Long getSort() {
+		return sort;
+	}
+	public void setSort(Long sort) {
+		this.sort = sort;
+	}
+	public Boolean getIsDefault() {
+		return isDefault;
+	}
+	public void setIsDefault(Boolean isDefault) {
+		this.isDefault = isDefault;
+	}
+    
+  		
+}

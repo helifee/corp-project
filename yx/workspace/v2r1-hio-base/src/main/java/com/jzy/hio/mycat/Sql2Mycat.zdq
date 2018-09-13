@@ -1,0 +1,69 @@
+package com.jzy.hio.mycat;
+
+import org.apache.ibatis.mapping.BoundSql;
+import org.apache.ibatis.mapping.MappedStatement;
+import org.apache.ibatis.mapping.SqlSource;
+import org.apache.ibatis.scripting.defaults.RawSqlSource;
+import org.apache.ibatis.scripting.xmltags.DynamicSqlSource;
+import org.apache.ibatis.scripting.xmltags.SqlNode;
+import org.apache.ibatis.session.Configuration;
+
+import com.jzy.hio.database.DataSourceContextHolder;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.utils.ClassUtils;
+
+/**
+ * 把BoundSql改造成mycat需要的格式
+ * 
+ * @author wt.coffee
+ * @date 2018年4月9日下午8:38:00
+ */
+public class Sql2Mycat {
+
+	private static String getMycatSchema() {
+		String tendId = DataSourceContextHolder.getDataSourceType("Sql2Mycat");
+		// "/*#mycat:schema=" + tendId + "*/ ";
+		String mycatSchema = "/*!mycat:dataNode=" + tendId + "*/ ";
+		return mycatSchema;
+	}
+
+	/**
+	 * 改造BoundSql的sql字段、添加mycat:schema select走这里
+	 * 
+	 * @param boundSql
+	 */
+	public static void handleBoundSql(BoundSql boundSql) {
+		String sql = boundSql.getSql();
+		String newSql = getMycatSchema() + sql;
+		ClassUtils.setFieldValue(boundSql, "sql", newSql);
+	}
+
+	/**
+	 * <p>
+	 * 改造MappedStatement的sqlSource字段 <br>
+	 * 把其对象值替换成RowSqlSourceExt或DynamicSqlSourceExt <br>
+	 * <b>二者都重写了getBoundSql方法<b>
+	 * 
+	 * @param ms
+	 * @throws Exception
+	 */
+	public static void handleSqlSource(MappedStatement ms) throws Exception {
+		SqlSource sqlSource = ms.getSqlSource();
+		// delete
+		if (sqlSource instanceof RawSqlSource && sqlSource instanceof RowSqlSourceExt == false) {// 删除
+			RawSqlSource rawSqlSource = (RawSqlSource) sqlSource;
+			RowSqlSourceExt newSqlSource = new RowSqlSourceExt(rawSqlSource);
+			ClassUtils.setFieldValue(ms, "sqlSource", newSqlSource);
+		}
+		// update
+		else if (sqlSource instanceof DynamicSqlSource && sqlSource instanceof DynamicSqlSourceExt == false) {
+			Configuration configuration = (Configuration) ClassUtils.getFieldValue(sqlSource, "configuration");
+			SqlNode rootSqlNode = (SqlNode) ClassUtils.getFieldValue(sqlSource, "rootSqlNode");
+			if (configuration == null || rootSqlNode == null) {
+				throw new HioException("configuration == " + configuration + ", rootSqlNode == " + rootSqlNode);
+			}
+			DynamicSqlSourceExt newSqlSource = new DynamicSqlSourceExt(configuration, rootSqlNode);
+			ClassUtils.setFieldValue(ms, "sqlSource", newSqlSource);
+		}
+	}
+}

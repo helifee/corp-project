@@ -1,0 +1,317 @@
+/*
+ * @(#)Ye0070Action.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 共通系统
+ */
+package com.yds.att.action;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import net.sf.json.JSONArray;
+
+import org.springframework.beans.factory.config.BeanDefinition;
+import org.springframework.context.annotation.Scope;
+import org.springframework.stereotype.Controller;
+
+import com.opensymphony.xwork2.Preparable;
+import com.yds.att.bean.AttInfo;
+import com.yds.att.bean.AttOvertime;
+import com.yds.att.bean.OrgInfo;
+import com.yds.att.bean.Ye0070CondA;
+import com.yds.att.bean.Ye0071CondA;
+import com.yds.att.common.service.OrgRelationService;
+import com.yds.att.service.AttConstants;
+import com.yds.att.service.Ye0070Service;
+import com.yds.base.action.AbstractBaseAction;
+import com.yds.common.bean.ComCodeInfo;
+import com.yds.common.service.ComCodeInfoService;
+import com.yds.common.service.PeoOrgInfoService;
+import com.yds.common.service.SessionService;
+
+/**
+ * @author 远东) 共通组
+ * @version 1.0
+ */
+
+
+@Scope(BeanDefinition.SCOPE_PROTOTYPE)
+@Controller("ye0070Action")
+public class Ye0070Action extends AbstractBaseAction implements Preparable {
+	
+	private static final long serialVersionUID = 8123860218799617163L;
+
+	/** 注入Service. */
+	private Ye0070Service ye0070Service;
+	private PeoOrgInfoService peoOrgInfoService;
+	private ComCodeInfoService comCodeInfoService;
+	private OrgRelationService orgRelationService;
+	
+	/** 员工加班一览条件Bean */
+	private Ye0070CondA ye0070CondA;
+	
+	/** 组织信息一览 */
+	private List<OrgInfo> departList;
+	
+	/** 审批状态列表 */
+	private List<ComCodeInfo> confirmStatusList;
+	
+	/** 日期查询条件. */
+	private List<ComCodeInfo> dateOption;
+	
+	/** 统计方式. */
+	private List<ComCodeInfo> staticMode;
+	
+	/** 员工加班一览ListBean */
+	private List<Ye0071CondA> ye0071CondA;
+	
+	/** 项目加班一览信息JSON串. */	
+	private String prjOvertimeJSON;
+	
+	/** 员工加班一览DB */
+	private AttOvertime attOvertime;
+	
+	/** 考勤信息DB */
+	private AttInfo attInfo;
+	
+	private String userId;
+
+	
+	@Override
+	public void prepare() throws Exception {
+		
+		userId = SessionService.getLoginUserId();
+		
+		// 取得组织列表
+		
+		List<OrgInfo> departListbk = ye0070Service.getDepartInfo(userId);
+		
+		List<OrgInfo> dp = new ArrayList<OrgInfo>();
+		OrgInfo dpFirst = new OrgInfo();
+		dpFirst.setOrgId("9999999999");
+		dpFirst.setOrgNm("所辖全部");
+		dp.add(dpFirst);
+		for (OrgInfo departInfo : departListbk){
+			if (("2.0000").equals(departInfo.getOrgLevFlg())){
+				dp.add(departInfo);
+			} else if (("3.0000").equals(departInfo.getOrgLevFlg())){
+				departInfo.setOrgNm("　" + departInfo.getOrgNm());
+				dp.add(departInfo);
+			} else{
+				departInfo.setOrgNm("　　" + departInfo.getOrgNm());
+				dp.add(departInfo);
+			}
+		}
+
+		this.setDepartList(dp);
+		
+	}
+	
+	/**
+	 * 员工加班一览初期化
+	 * @return SUCCESS
+	 */
+	public String execute(){
+		
+		// 取得设置日期条件区分
+		dateOption = comCodeInfoService.getComCodeInfo("ATT","PERIOD_TYPE");
+		
+		// 取得统计方式区分
+		staticMode = searchStaticMode();
+		
+		
+		// 取得所有审批状态区分
+		confirmStatusList = comCodeInfoService.getComCodeInfo("ATT", "APP_STATE");
+		
+		// 待去除的状态区分
+		List<ComCodeInfo> comCodeInfoPreDelete = new ArrayList<ComCodeInfo>();
+		for (ComCodeInfo comCodeInfo : confirmStatusList) {
+			if (AttConstants.AppStatus.UN_APPLY.toString().equals(
+					comCodeInfo.getDiffNo())
+					|| AttConstants.AppStatus.APP_ING.toString()
+							.equals(comCodeInfo.getDiffNo())
+					|| AttConstants.AppStatus.EDIAT_DIRECT.toString()
+							.equals(comCodeInfo.getDiffNo())
+					|| AttConstants.AppStatus.REVOKEED.toString().equals(
+							comCodeInfo.getDiffNo())) {
+				comCodeInfoPreDelete.add(comCodeInfo);
+			}
+		}
+		// 编辑状态区分
+		confirmStatusList.removeAll(comCodeInfoPreDelete);
+		// 添加一个全部
+		ComCodeInfo allStatus  = new ComCodeInfo();
+		allStatus.setDiffNo(AttConstants.AppStatus.ALLSTATUS.toString());
+		allStatus.setDiffName(AttConstants.AppStatusText.ALLSTATUS.toString());
+		confirmStatusList.add(allStatus);
+		
+		
+		// 设置画面默认值
+		ye0070CondA = new Ye0070CondA();
+		ye0070CondA.setDateOptionType(AttConstants.PeriodType.THIS_MONTH.toString());
+		ye0070CondA.setStatisticMode(Ye0070Service.STATISTIC_MODE_BYPRJ);
+		ye0070CondA.setAttStateId(AttConstants.AppStatus.ALLSTATUS.toString());
+	
+		return SUCCESS;
+
+	}
+	
+	/**
+	 * 初期化
+	 * @return SUCCESS
+	 */
+	public String initDetail(){
+
+		this.ye0070CondA = new Ye0070CondA();	
+		return SUCCESS;
+		
+	}
+	/**
+	 * 由检索条件取得一览
+	 * @return SUCCESS
+	 */
+	public String searchOvertimeInfo(){
+		
+		ye0070CondA.setEmpId(userId);
+		ye0071CondA = this.ye0070Service.getAttOvertimeMainList(ye0070CondA);
+		JSONArray jsArr = JSONArray.fromObject(ye0071CondA);
+	    setPrjOvertimeJSON(jsArr.toString());
+
+		return SUCCESS;
+		
+	}
+	
+	/**
+	 * 临时取得统计方式区分
+	 * @return SUCCESS
+	 */
+	protected List<ComCodeInfo> searchStaticMode() {
+		List<ComCodeInfo> staticModelist = new ArrayList<ComCodeInfo>();
+		ComCodeInfo staticMode;
+		
+		staticMode = new ComCodeInfo();
+		staticMode.setDiffNo(Ye0070Service.STATISTIC_MODE_BYDATE);
+		staticMode.setDiffName("按年月");
+		staticModelist.add(staticMode);
+		
+		staticMode = new ComCodeInfo();
+		staticMode.setDiffNo(Ye0070Service.STATISTIC_MODE_BYPRJ);
+		staticMode.setDiffName("按项目");
+		staticModelist.add(staticMode);
+		
+		return staticModelist;
+	}
+	
+
+	/**
+	 * @param ye0070Service
+	 *            the ye0070Service to set
+	 */
+	public void setYe0070Service(Ye0070Service ye0070Service) {
+		this.ye0070Service = ye0070Service;
+	}	
+
+	/**
+	 * @param attOvertime
+	 *            the attOvertime to set
+	 */
+	public void setAttOvertime(AttOvertime attOvertime) {
+		this.attOvertime = attOvertime;
+	}	
+	
+	/**
+	 *  @return the attOvertime
+	 */
+	public AttOvertime getAttOvertime() {
+		return attOvertime;
+	}		
+
+	public void setYe0070CondA(Ye0070CondA ye0070CondA) {
+		this.ye0070CondA = ye0070CondA;
+	}
+
+	public Ye0070CondA getYe0070CondA() {
+		return ye0070CondA;
+	}
+
+	public void setAttInfo(AttInfo attInfo) {
+		this.attInfo = attInfo;
+	}
+
+	public AttInfo getAttInfo() {
+		return attInfo;
+	}
+
+	public void setConfirmStatusList(List<ComCodeInfo> confirmStatusList) {
+		this.confirmStatusList = confirmStatusList;
+	}
+
+	public List<ComCodeInfo> getConfirmStatusList() {
+		return confirmStatusList;
+	}
+
+	public void setYe0071CondA(List<Ye0071CondA> ye0071CondA) {
+		this.ye0071CondA = ye0071CondA;
+	}
+
+	public List<Ye0071CondA> getYe0071CondA() {
+		return ye0071CondA;
+	}
+
+
+	public void setOrgRelationService(OrgRelationService orgRelationService) {
+		this.orgRelationService = orgRelationService;
+	}
+
+	public OrgRelationService getOrgRelationService() {
+		return orgRelationService;
+	}
+
+	public void setPeoOrgInfoService(PeoOrgInfoService peoOrgInfoService) {
+		this.peoOrgInfoService = peoOrgInfoService;
+	}
+
+	public PeoOrgInfoService getPeoOrgInfoService() {
+		return peoOrgInfoService;
+	}
+
+	public void setDepartList(List<OrgInfo> departList) {
+		this.departList = departList;
+	}
+
+	public List<OrgInfo> getDepartList() {
+		return departList;
+	}
+
+	public void setComCodeInfoService(ComCodeInfoService comCodeInfoService) {
+		this.comCodeInfoService = comCodeInfoService;
+	}
+
+	public void setDateOption(List<ComCodeInfo> dateOption) {
+		this.dateOption = dateOption;
+	}
+
+	public List<ComCodeInfo> getDateOption() {
+		return dateOption;
+	}
+
+	public void setStaticMode(List<ComCodeInfo> staticMode) {
+		this.staticMode = staticMode;
+	}
+
+	public List<ComCodeInfo> getStaticMode() {
+		return staticMode;
+	}
+
+	public void setPrjOvertimeJSON(String prjOvertimeJSON) {
+		this.prjOvertimeJSON = prjOvertimeJSON;
+	}
+
+	public String getPrjOvertimeJSON() {
+		return prjOvertimeJSON;
+	}
+
+
+}

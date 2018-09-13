@@ -1,0 +1,86 @@
+package com.jzy.hio.base.init;
+
+import java.util.HashMap;
+import java.util.Map;
+
+import org.mybatis.spring.SqlSessionFactoryBean;
+import org.mybatis.spring.mapper.MapperScannerConfigurer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.MutablePropertyValues;
+import org.springframework.beans.factory.support.BeanDefinitionBuilder;
+import org.springframework.beans.factory.support.BeanDefinitionRegistry;
+import org.springframework.beans.factory.support.GenericBeanDefinition;
+import org.springframework.boot.bind.RelaxedPropertyResolver;
+import org.springframework.context.EnvironmentAware;
+import org.springframework.context.annotation.ImportBeanDefinitionRegistrar;
+import org.springframework.core.env.Environment;
+import org.springframework.core.type.AnnotationMetadata;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+
+import com.alibaba.druid.pool.DruidDataSource;
+import com.jzy.hio.base.datasource.DynamicDataSource;
+
+/**
+ *  手动初始化动态数据源
+ * Created by lrx
+ */
+
+
+public class DynamicDataSourceRegister implements ImportBeanDefinitionRegistrar,EnvironmentAware {
+
+    private static final Logger logger = LoggerFactory.getLogger(DynamicDataSourceRegister.class);
+    private Environment env;
+    @Override
+    public void registerBeanDefinitions(AnnotationMetadata importingClassMetadata, BeanDefinitionRegistry registry) {
+
+        GenericBeanDefinition beanDefinition = new GenericBeanDefinition();
+        beanDefinition.setBeanClass(DruidDataSource.class);
+        beanDefinition.setSynthetic(true);
+        beanDefinition.setDestroyMethodName("close");
+        beanDefinition.setInitMethodName("init");
+        beanDefinition.setPrimary(true);
+        Map<String, Object> rpr = new RelaxedPropertyResolver(env, "spring.datasource.druid").getSubProperties(".");
+        beanDefinition.setPropertyValues(new MutablePropertyValues(rpr));
+        registry.registerBeanDefinition("mainDataSource", beanDefinition);
+        logger.info("Dynamic mainDataSource Registry");
+
+        BeanDefinitionBuilder mapperScannerConfigurer = BeanDefinitionBuilder.rootBeanDefinition(MapperScannerConfigurer.class);
+        mapperScannerConfigurer.getBeanDefinition().setAttribute("id", "mapperScannerConfigurer");
+        mapperScannerConfigurer.addPropertyValue("sqlSessionFactoryBeanName", "sqlSessionFactory");
+        mapperScannerConfigurer.addPropertyValue("basePackage", env.getProperty("mapper.mappers"));
+        registry.registerBeanDefinition("mapperScannerConfigurer", mapperScannerConfigurer.getBeanDefinition());
+        logger.info("Dynamic mapperScannerConfigurer Registry");
+
+        BeanDefinitionBuilder dataSource = BeanDefinitionBuilder.rootBeanDefinition(DynamicDataSource.class);
+        dataSource.getBeanDefinition().setAttribute("id", "dataSource");
+        dataSource.addPropertyValue("targetDataSources",new HashMap<>());
+        dataSource.addPropertyValue("defaultTargetDataSource", beanDefinition);
+        registry.registerBeanDefinition("dataSource", dataSource.getBeanDefinition());
+        logger.info("Dynamic dataSource Registry");
+
+        BeanDefinitionBuilder transactionManager = BeanDefinitionBuilder.rootBeanDefinition(DataSourceTransactionManager.class);
+        transactionManager.getBeanDefinition().setAttribute("id", "transactionManager");
+        transactionManager.addPropertyReference("dataSource","mainDataSource");
+        registry.registerBeanDefinition("transactionManager", transactionManager.getBeanDefinition());
+        logger.info("Dynamic transactionManager Registry");
+        BeanDefinitionBuilder sqlSessionFactory = BeanDefinitionBuilder.rootBeanDefinition(SqlSessionFactoryBean.class);
+        sqlSessionFactory.getBeanDefinition().setAttribute("id", "sqlSessionFactory");
+        sqlSessionFactory.addPropertyReference("dataSource", "mainDataSource");
+        sqlSessionFactory.addPropertyValue("mapperLocations", env.getProperty("mybatis.mapper-locations"));
+        registry.registerBeanDefinition("sqlSessionFactory", sqlSessionFactory.getBeanDefinition());
+        logger.info("Dynamic sqlSessionFactory Registry");
+
+
+    }
+
+
+    @Override
+    public void setEnvironment(Environment env) {
+        this.env = env;
+    }
+
+
+
+
+}

@@ -1,0 +1,96 @@
+package com.jzy.hio.base.service.aop;
+
+import org.aspectj.lang.JoinPoint;
+import org.aspectj.lang.ProceedingJoinPoint;
+import org.aspectj.lang.annotation.Around;
+import org.aspectj.lang.annotation.Aspect;
+import org.aspectj.lang.annotation.Before;
+import org.aspectj.lang.annotation.Pointcut;
+import org.aspectj.lang.reflect.MethodSignature;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
+import org.springframework.jdbc.datasource.lookup.AbstractRoutingDataSource;
+
+import com.jzy.hio.base.annotation.DataSource;
+import com.jzy.hio.base.datasource.DataSourceContextHolder;
+import com.jzy.hio.base.utils.OrderValue;
+import com.jzy.hio.base.utils.SecurityUserBeanInfo;
+import com.jzy.tools.login.LoginUtils;
+
+/**
+ * spring的事务aop与数据源切换aop的关系<br/>
+ * 
+ * <pre>
+ * 假设  @Pointcut("execution(* com.jzy.hio..service.*.*(..) )")拦截所有service的方法
+ * spring事务默认会优先执行,即打开数据库连接---查找数据源
+ * 执行  {@link AbstractRoutingDataSource#determineTargetDataSource}
+ * 		{@linkDynamicDataSource#determineCurrentLookupKey()}
+ *  此时如果数据源没设置的话就会出错，所以数据源切换需要优先执行
+ * </pre>
+ * 
+ * @author coffee<br/>
+ *         2018年2月25日下午2:08:22
+ */
+@Aspect
+@Order(OrderValue.AOP_DATASOURCE)
+@Configuration
+public class DynamicDataSourceAop {
+
+	private Logger logger = LoggerFactory.getLogger(DynamicDataSourceAop.class);
+
+	@Pointcut("execution(* com.jzy.hio..service.impl.*.*(..) )")
+	public void excudeService() {
+	}
+
+	@Before("excudeService()")
+	public void before(JoinPoint thisJoinPoint) {
+		// 切换数据库
+		String datasource = switchCurrentSource(thisJoinPoint);
+		DataSourceContextHolder.setDataSourceType(datasource);
+	}
+
+	@Around("excudeService()")
+	public Object around(ProceedingJoinPoint thisJoinPoint) throws Throwable {
+		Object obj = null;
+		try {
+			logger.info("切库完成准备调用service");
+			obj = thisJoinPoint.proceed();
+			logger.info(" 调用service结束 ");
+		} catch (Throwable e) {
+			throw new RuntimeException();
+		}
+		return obj;
+	}
+
+	/**
+	 * //TODO 租户系统部门代码 在这边 目前暂时这么处理-查找方法是不是查询主数据库的方法mainLibrary
+	 *
+	 * @param pjp
+	 * @return
+	 */
+	private String switchCurrentSource(JoinPoint pjp) {
+		MethodSignature msig = (MethodSignature) pjp.getSignature();
+		// 方法上的注解
+		DataSource annotation = msig.getMethod().getAnnotation(DataSource.class);
+		if (annotation != null && annotation.value() != null) {
+			return annotation.value();
+		} else {
+			// 类上加注解
+			annotation = pjp.getTarget().getClass().getAnnotation(DataSource.class);
+			// 以下方法获取不到
+			// annotation = msig.getMethod().getDeclaringClass().getAnnotation(DataSource.class);
+			if (annotation != null && annotation.value() != null) {
+				return annotation.value();
+			} else {
+				return getTendCode();
+			}
+		}
+	}
+
+	private String getTendCode() {
+		SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+		return securityUserBeanInfo == null ? "" : securityUserBeanInfo.getTendCode();
+	}
+}

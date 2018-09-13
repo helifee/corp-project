@@ -1,0 +1,679 @@
+package com.xinleju.platform.flow.controller;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.xinleju.platform.base.utils.*;
+import com.xinleju.platform.flow.dto.BusinessObjectVariableDto;
+import com.xinleju.platform.flow.dto.service.BusinessObjectVariableDtoServiceCustomer;
+import com.xinleju.platform.tools.data.JacksonUtils;
+import com.xinleju.platform.uitls.LoginUtils;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Controller;
+import org.springframework.util.StringUtils;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+
+/**
+ * 业务对象变量控制层
+ * @author admin
+ *
+ */
+@Controller
+@RequestMapping("/flow/businessObjectVariable")
+public class BusinessObjectVariableController {
+
+	private static Logger log = Logger.getLogger(BusinessObjectVariableController.class);
+	
+	@Autowired
+	private BusinessObjectVariableDtoServiceCustomer businessObjectVariableDtoServiceCustomer;
+	/**
+	 * 根据Id获取业务对象
+	 * 
+	 * @param id  业务对象主键
+	 * 
+	 * @return     业务对象
+	 */
+	@RequestMapping(value="/get/{id}",method=RequestMethod.GET)
+	public @ResponseBody MessageResult get(@PathVariable("id")  String id){
+		MessageResult result=new MessageResult();
+		try {
+			SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userInfo = JacksonUtils.toJson(securityUserBeanInfo);
+			
+			String dubboResultInfo=businessObjectVariableDtoServiceCustomer.getObjectById(userInfo, "{\"id\":\""+id+"\"}");
+			DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+			if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				BusinessObjectVariableDto businessObjectVariableDto=JacksonUtils.fromJson(resultInfo, BusinessObjectVariableDto.class);
+				result.setResult(businessObjectVariableDto);
+				result.setSuccess(MessageInfo.GETSUCCESS.isResult());
+				result.setMsg(MessageInfo.GETSUCCESS.getMsg());
+			}else{
+				result.setSuccess(MessageInfo.GETERROR.isResult());
+				result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+			}
+		} catch (Exception e) {
+			////e.printStackTrace();
+		    log.error("调用get方法:  【参数"+id+"】======"+"【"+e.getMessage()+"】");
+			result.setSuccess(MessageInfo.GETERROR.isResult());
+			result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+e.getMessage()+"】");
+		}
+		return result;
+	}
+	
+	
+	/**
+	 * 返回分页对象
+	 * @param paramater
+	 * @return
+	 */
+	@RequestMapping(value="/page",method={RequestMethod.POST}, consumes="application/json")
+	public @ResponseBody MessageResult page(@RequestBody Map<String,Object> map){
+		MessageResult result=new MessageResult();
+		String paramaterJson = JacksonUtils.toJson(map);
+		try {
+			SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userInfo = JacksonUtils.toJson(securityUserBeanInfo);
+			
+		    String dubboResultInfo=businessObjectVariableDtoServiceCustomer.getPage(userInfo, paramaterJson);
+		    DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+			if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				PageBeanInfo pageInfo=JacksonUtils.fromJson(resultInfo, PageBeanInfo.class);
+				result.setResult(pageInfo);
+				result.setSuccess(MessageInfo.GETSUCCESS.isResult());
+				result.setMsg(MessageInfo.GETSUCCESS.getMsg());
+			}else{
+				result.setSuccess(MessageInfo.GETERROR.isResult());
+				result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+			}
+		} catch (Exception e) {
+			////e.printStackTrace();
+		    log.error("调用page方法:  【参数"+paramaterJson+"】======"+"【"+e.getMessage()+"】");
+			result.setSuccess(MessageInfo.GETERROR.isResult());
+			result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+e.getMessage()+"】");
+		}
+		return result;
+	}
+	/**
+	 * 返回符合条件的列表
+	 * @param paramater
+	 * @return
+	 */
+	@RequestMapping(value="/queryList",method={RequestMethod.POST}, consumes="application/json")
+	public @ResponseBody MessageResult queryList(@RequestBody Map<String,Object> map){
+		MessageResult result=new MessageResult();
+		String paramaterJson = JacksonUtils.toJson(map);
+		try {
+			SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userInfo = JacksonUtils.toJson(securityUserBeanInfo);
+			
+			String dubboResultInfo=businessObjectVariableDtoServiceCustomer.queryList(userInfo, paramaterJson);
+		    DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+		    if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				List<BusinessObjectVariableDto> list=JacksonUtils.fromJson(resultInfo, ArrayList.class,BusinessObjectVariableDto.class);
+				result.setResult(list);
+				result.setSuccess(MessageInfo.GETSUCCESS.isResult());
+				result.setMsg(MessageInfo.GETSUCCESS.getMsg());
+		    }else{
+		    	result.setSuccess(MessageInfo.GETERROR.isResult());
+				result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+		    }
+			
+		} catch (Exception e) {
+			////e.printStackTrace();
+			log.error("调用queryList方法:  【参数"+paramaterJson+"】======"+"【"+e.getMessage()+"】");
+			result.setSuccess(MessageInfo.GETERROR.isResult());
+			result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+e.getMessage()+"】");
+		}
+		return result;
+	}
+	
+	/**
+	 * 获取流程环节中的表单对象数组
+	 * @param paramater
+	 * @return  
+	 */
+	@RequestMapping(value="/queryBusiVariableListByTemlateId",method={RequestMethod.POST}, consumes="application/json")
+	public @ResponseBody MessageResult queryBusiVariableListByTemlateId(@RequestBody Map<String,Object> map){
+		MessageResult result=new MessageResult();
+		String paramaterJson = JacksonUtils.toJson(map);
+		try {
+			SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userInfo = JacksonUtils.toJson(securityUserBeanInfo);
+			
+			System.out.println("queryBusiVariableListByTemlateId--->>paramaterJson="+paramaterJson);
+			String dubboResultInfo=businessObjectVariableDtoServiceCustomer.queryBusiVariableListByTemlateId(userInfo, paramaterJson);
+		    DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+		    if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				List<BusinessObjectVariableDto> list=JacksonUtils.fromJson(resultInfo, ArrayList.class,BusinessObjectVariableDto.class);
+				result.setResult(list);
+				result.setSuccess(MessageInfo.GETSUCCESS.isResult());
+				result.setMsg(MessageInfo.GETSUCCESS.getMsg());
+		    }else{
+		    	result.setSuccess(MessageInfo.GETERROR.isResult());
+				result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+		    }
+			
+		} catch (Exception e) {
+			////e.printStackTrace();
+			log.error("调用queryList方法:  【参数"+paramaterJson+"】======"+"【"+e.getMessage()+"】");
+			result.setSuccess(MessageInfo.GETERROR.isResult());
+			result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+e.getMessage()+"】");
+		}
+		return result;
+	}
+
+
+	/**
+	 * 保存实体对象
+	 * @param t
+	 * @return
+	 */
+	@RequestMapping(value="/save",method=RequestMethod.POST, consumes="application/json")
+	public @ResponseBody MessageResult save(@RequestBody BusinessObjectVariableDto t){
+		MessageResult result=new MessageResult();
+		try {
+			SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userInfo = JacksonUtils.toJson(securityUserBeanInfo);
+			
+			String saveJson= JacksonUtils.toJson(t);
+			String dubboResultInfo=businessObjectVariableDtoServiceCustomer.save(userInfo, saveJson);
+		    DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+		    if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				BusinessObjectVariableDto businessObjectVariableDto=JacksonUtils.fromJson(resultInfo, BusinessObjectVariableDto.class);
+				result.setResult(businessObjectVariableDto);
+				result.setSuccess(MessageInfo.SAVESUCCESS.isResult());
+				result.setMsg(MessageInfo.SAVESUCCESS.getMsg());
+		    }else{
+		    	result.setSuccess(MessageInfo.SAVEERROR.isResult());
+				result.setMsg(MessageInfo.SAVEERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+		    }
+		} catch (Exception e) {
+			try {
+				////e.printStackTrace();
+			    ObjectMapper mapper = new ObjectMapper();
+				String  paramJson = mapper.writeValueAsString(t);
+				log.error("调用save方法:  【参数"+paramJson+"】======"+"【"+e.getMessage()+"】");
+				result.setSuccess(MessageInfo.SAVEERROR.isResult());
+				result.setMsg(MessageInfo.SAVEERROR.getMsg()+"【"+e.getMessage()+"】");
+			} catch (JsonProcessingException e1) {
+				// TODO Auto-generated catch block
+				////e1.printStackTrace();
+			}
+			
+		}
+		return result;
+	}
+	
+	/**
+	 * 删除实体对象
+	 * @param t
+	 * @return
+	 */
+	@RequestMapping(value="/delete/{id}",method=RequestMethod.DELETE)
+	public @ResponseBody MessageResult delete(@PathVariable("id")  String id){
+		MessageResult result=new MessageResult();
+		try {
+			SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userInfo = JacksonUtils.toJson(securityUserBeanInfo);
+			
+			String dubboResultInfo=businessObjectVariableDtoServiceCustomer.deleteObjectById(userInfo, "{\"id\":\""+id+"\"}");
+			DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+			if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				BusinessObjectVariableDto businessObjectVariableDto=JacksonUtils.fromJson(resultInfo, BusinessObjectVariableDto.class);
+				result.setResult(businessObjectVariableDto);
+				result.setSuccess(MessageInfo.DELETESUCCESS.isResult());
+				result.setMsg(MessageInfo.DELETESUCCESS.getMsg());
+			}else{
+				result.setSuccess(MessageInfo.DELETEERROR.isResult());
+				result.setMsg(MessageInfo.DELETEERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+			}
+		} catch (Exception e) {
+			////e.printStackTrace();
+		    log.error("调用delete方法:  【参数"+id+"】======"+"【"+e.getMessage()+"】");
+			result.setSuccess(MessageInfo.DELETEERROR.isResult());
+			result.setMsg(MessageInfo.DELETEERROR.getMsg()+"【"+e.getMessage()+"】");
+		}
+		
+		return result;
+	}
+	
+	
+	/**
+	 * 删除实体对象
+	 * @param t
+	 * @return
+	 */
+	@RequestMapping(value="/deleteBatch/{ids}",method=RequestMethod.DELETE)
+	public @ResponseBody MessageResult deleteBatch(@PathVariable("ids")  String ids){
+		MessageResult result=new MessageResult();
+		try {
+			SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userInfo = JacksonUtils.toJson(securityUserBeanInfo);
+			
+			String dubboResultInfo=businessObjectVariableDtoServiceCustomer.deleteAllObjectByIds(userInfo, "{\"id\":\""+ids+"\"}");
+			DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+			if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				BusinessObjectVariableDto businessObjectVariableDto=JacksonUtils.fromJson(resultInfo, BusinessObjectVariableDto.class);
+				result.setResult(businessObjectVariableDto);
+				result.setSuccess(MessageInfo.DELETESUCCESS.isResult());
+				result.setMsg(MessageInfo.DELETESUCCESS.getMsg());
+			}else{
+				result.setSuccess(MessageInfo.DELETEERROR.isResult());
+				result.setMsg(MessageInfo.DELETEERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+			}
+		} catch (Exception e) {
+			////e.printStackTrace();
+		    log.error("调用delete方法:  【参数"+ids+"】======"+"【"+e.getMessage()+"】");
+			result.setSuccess(MessageInfo.DELETEERROR.isResult());
+			result.setMsg(MessageInfo.DELETEERROR.getMsg()+"【"+e.getMessage()+"】");
+		}
+		
+		return result;
+	}
+	
+	/**
+	 * 修改修改实体对象
+	 * @param t
+	 * @return
+	 */
+	@RequestMapping(value="/update/{id}",method=RequestMethod.PUT,consumes="application/json")
+	public @ResponseBody MessageResult update(@PathVariable("id")  String id,   @RequestBody Map<String,Object> map){
+		MessageResult result=new MessageResult();
+		BusinessObjectVariableDto businessObjectVariableDto=null;
+		try {
+			SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userInfo = JacksonUtils.toJson(securityUserBeanInfo);
+			
+			String dubboResultInfo=businessObjectVariableDtoServiceCustomer.getObjectById(userInfo, "{\"id\":\""+id+"\"}");
+			DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+			if(dubboServiceResultInfo.isSucess()){
+				 String resultInfo= dubboServiceResultInfo.getResult();
+				 Map<String,Object> oldMap=JacksonUtils.fromJson(resultInfo, HashMap.class);
+				 oldMap.putAll(map);
+				 String updateJson= JacksonUtils.toJson(oldMap);
+				 String updateDubboResultInfo=businessObjectVariableDtoServiceCustomer.update(userInfo, updateJson);
+				 DubboServiceResultInfo updateDubboServiceResultInfo= JacksonUtils.fromJson(updateDubboResultInfo, DubboServiceResultInfo.class);
+				 if(updateDubboServiceResultInfo.isSucess()){
+					 Integer i=JacksonUtils.fromJson(updateDubboServiceResultInfo.getResult(), Integer.class);
+					 result.setResult(i);
+					 result.setSuccess(MessageInfo.UPDATESUCCESS.isResult());
+					 result.setMsg(MessageInfo.UPDATESUCCESS.getMsg());
+				 }else{
+					 result.setSuccess(MessageInfo.UPDATEERROR.isResult());
+					 result.setMsg(updateDubboServiceResultInfo.getMsg()+"【"+updateDubboServiceResultInfo.getExceptionMsg()+"】");
+				 }
+			}else{
+				 result.setSuccess(MessageInfo.UPDATEERROR.isResult());
+				 result.setMsg("不存在更新的对象");
+			}
+		} catch (Exception e) {
+			try{
+			 ////e.printStackTrace();
+			 ObjectMapper mapper = new ObjectMapper();
+			 String  paramJson = mapper.writeValueAsString(businessObjectVariableDto);
+			 log.error("调用update方法:  【参数"+id+","+paramJson+"】======"+"【"+e.getMessage()+"】");
+			 result.setSuccess(MessageInfo.UPDATEERROR.isResult());
+			 result.setMsg(MessageInfo.UPDATEERROR.getMsg()+"【"+e.getMessage()+"】");
+			}catch (JsonProcessingException e1) {
+				// TODO Auto-generated catch block
+				////e1.printStackTrace();
+			}
+			
+		}
+		return result;
+	}
+
+	/**
+	 * 伪删除实体对象
+	 * @param t
+	 * @return
+	 */
+	@RequestMapping(value="/deletePseudo/{id}",method=RequestMethod.DELETE)
+	public @ResponseBody MessageResult deletePseudo(@PathVariable("id")  String id){
+		MessageResult result=new MessageResult();
+		try {
+			SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userInfo = JacksonUtils.toJson(securityUserBeanInfo);
+			
+			String dubboResultInfo=businessObjectVariableDtoServiceCustomer.deletePseudoObjectById(userInfo, "{\"id\":\""+id+"\"}");
+			DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+			if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				BusinessObjectVariableDto businessObjectVariableDto=JacksonUtils.fromJson(resultInfo, BusinessObjectVariableDto.class);
+				result.setResult(businessObjectVariableDto);
+				result.setSuccess(MessageInfo.DELETESUCCESS.isResult());
+				result.setMsg(MessageInfo.DELETESUCCESS.getMsg());
+			}else{
+				result.setSuccess(MessageInfo.DELETEERROR.isResult());
+				result.setMsg(MessageInfo.DELETEERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+			}
+		} catch (Exception e) {
+			////e.printStackTrace();
+		    log.error("调用deletePseudo方法:  【参数"+id+"】======"+"【"+e.getMessage()+"】");
+			result.setSuccess(MessageInfo.DELETEERROR.isResult());
+			result.setMsg(MessageInfo.DELETEERROR.getMsg()+"【"+e.getMessage()+"】");
+		}
+		
+		return result;
+	}
+	
+	
+	/**
+	 * 伪删除实体对象
+	 * @param t
+	 * @return
+	 */
+	@RequestMapping(value="/deletePseudoBatch/{ids}",method=RequestMethod.DELETE)
+	public @ResponseBody MessageResult deletePseudoBatch(@PathVariable("ids")  String ids){
+		MessageResult result=new MessageResult();
+		try {
+			SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userInfo = JacksonUtils.toJson(securityUserBeanInfo);
+			
+			String dubboResultInfo=businessObjectVariableDtoServiceCustomer.deletePseudoAllObjectByIds(userInfo, "{\"id\":\""+ids+"\"}");
+			DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+			if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				BusinessObjectVariableDto businessObjectVariableDto=JacksonUtils.fromJson(resultInfo, BusinessObjectVariableDto.class);
+				result.setResult(businessObjectVariableDto);
+				result.setSuccess(MessageInfo.DELETESUCCESS.isResult());
+				result.setMsg(MessageInfo.DELETESUCCESS.getMsg());
+			}else{
+				result.setSuccess(MessageInfo.DELETEERROR.isResult());
+				result.setMsg(MessageInfo.DELETEERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+			}
+		} catch (Exception e) {
+			////e.printStackTrace();
+		    log.error("调用deletePseudoBatch方法:  【参数"+ids+"】======"+"【"+e.getMessage()+"】");
+			result.setSuccess(MessageInfo.DELETEERROR.isResult());
+			result.setMsg(MessageInfo.DELETEERROR.getMsg()+"【"+e.getMessage()+"】");
+		}
+		
+		return result;
+	}
+	
+	/**
+	 * 查询指定业务对象ID下的可用于流程分支条件的变量列表
+	 * 
+	 * @param businessObjectId： 业务对象ID
+	 * @return
+	 */
+	@RequestMapping(value="/queryVariableUsedInExpression")
+	public @ResponseBody MessageResult queryVariableUsedInExpression(String businessObjectId) {
+		MessageResult result = new MessageResult();
+		if(StringUtils.isEmpty(businessObjectId)) {
+			result.setSuccess(false);
+			result.setMsg("请求参数错误！");
+			return result;
+		}
+		
+		SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+		String userInfo = JacksonUtils.toJson(userBeanInfo);
+		String dubboResultInfo = businessObjectVariableDtoServiceCustomer.queryVariableUsedInExpressionBy(userInfo, businessObjectId);
+		DubboServiceResultInfo resultInfo = JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+		result.setSuccess(resultInfo.isSucess());
+		result.setResult(JacksonUtils.fromJson(resultInfo.getResult(), List.class,BusinessObjectVariableDto.class));
+		result.setMsg(resultInfo.getMsg());
+		return result;
+	}
+	
+	/**
+	 * 返回符合条件的列表
+	 * @param paramater
+	 * @return
+	 */
+	@RequestMapping(value="/queryListByCondition",method={RequestMethod.POST}, consumes="application/json")
+	public @ResponseBody MessageResult queryListByCondition(@RequestBody Map<String,Object> map){
+		MessageResult result=new MessageResult();
+		String paramaterJson = JacksonUtils.toJson(map);
+		try {
+			//当前登录用户
+			SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userJson = JacksonUtils.toJson(userBeanInfo);
+			if(map.get("isDeafultObject") != null && Boolean.valueOf(map.get("isDeafultObject").toString())){
+				List<BusinessObjectVariableDto> list = new ArrayList<>();
+				BusinessObjectVariableDto d1 = new BusinessObjectVariableDto();
+				d1.setId("1");
+				d1.setCode("flow_business_company_name");
+				d1.setName("经办公司");
+				d1.setType("1");
+				d1.setComment("流程的业务对象默认的变量");
+				BusinessObjectVariableDto d2 = new BusinessObjectVariableDto();
+				d2.setId("2");
+				d2.setCode("flow_business_dept_name");
+				d2.setName("经办部门");
+				d2.setType("1");
+				d2.setComment("流程的业务对象默认的变量");
+				BusinessObjectVariableDto d3 = new BusinessObjectVariableDto();
+				d3.setId("3");
+				d3.setCode("flow_business_project_name");
+				d3.setName("经办项目");
+				d3.setType("1");
+				d3.setComment("流程的业务对象默认的变量");
+				BusinessObjectVariableDto d4 = new BusinessObjectVariableDto();
+				d4.setId("4");
+				d4.setCode("flow_business_project_branch_name");
+				d4.setName("经办分期");
+				d4.setType("1");
+				d4.setComment("流程的业务对象默认的变量");
+				BusinessObjectVariableDto d5 = new BusinessObjectVariableDto();
+				d5.setId("5");
+				d5.setCode("business_object_name");
+				d5.setName("业务对象");
+				d5.setType("1");
+				d5.setComment("流程的业务对象默认的变量");
+				BusinessObjectVariableDto d6 = new BusinessObjectVariableDto();
+				d6.setId("6");
+				d6.setCode("start_user_name");
+				d6.setName("经办人");
+				d6.setType("1");
+				d6.setComment("流程的业务对象默认的变量");
+				list.add(d1);
+				list.add(d2);
+				list.add(d3);
+				list.add(d4);
+				list.add(d5);
+				list.add(d6);
+				result.setResult(list);
+				result.setSuccess(MessageInfo.GETSUCCESS.isResult());
+				result.setMsg(MessageInfo.GETSUCCESS.getMsg());
+			}else {
+				String dubboResultInfo=businessObjectVariableDtoServiceCustomer.queryListByCondition(userJson, paramaterJson);
+				DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+				if(dubboServiceResultInfo.isSucess()){
+					String resultInfo= dubboServiceResultInfo.getResult();
+					List<BusinessObjectVariableDto> list=JacksonUtils.fromJson(resultInfo, ArrayList.class,BusinessObjectVariableDto.class);
+					result.setResult(list);
+					result.setSuccess(MessageInfo.GETSUCCESS.isResult());
+					result.setMsg(MessageInfo.GETSUCCESS.getMsg());
+				}else{
+					result.setSuccess(MessageInfo.GETERROR.isResult());
+					result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+				}
+			}
+
+		} catch (Exception e) {
+			////e.printStackTrace();
+			log.error("调用queryList方法:  【参数"+paramaterJson+"】======"+"【"+e.getMessage()+"】");
+			result.setSuccess(MessageInfo.GETERROR.isResult());
+			result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+e.getMessage()+"】");
+		}
+		return result;
+	}
+	
+	
+	/**
+	 * 根据业务对象去获取业务变量上下级树
+	 * @param paramater
+	 * @return
+	 */
+	@RequestMapping(value="/getVariableTreeByBusiObject",method={RequestMethod.POST}, consumes="application/json")
+	public @ResponseBody MessageResult getVariableTreeByBusiObject(@RequestBody Map<String,Object> map){
+		MessageResult result=new MessageResult();
+		String paramaterJson = JacksonUtils.toJson(map);
+		try {
+			//当前登录用户
+			SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userJson = JacksonUtils.toJson(userBeanInfo);
+			
+			String dubboResultInfo=businessObjectVariableDtoServiceCustomer.getVariableTreeByBusiObject(userJson, paramaterJson);
+		    DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+		    if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				List<BusinessObjectVariableDto> list=JacksonUtils.fromJson(resultInfo, ArrayList.class,BusinessObjectVariableDto.class);
+				result.setResult(list);
+				result.setSuccess(MessageInfo.GETSUCCESS.isResult());
+				result.setMsg(MessageInfo.GETSUCCESS.getMsg());
+		    }else{
+		    	result.setSuccess(MessageInfo.GETERROR.isResult());
+				result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+		    }
+			
+		} catch (Exception e) {
+			////e.printStackTrace();
+			log.error("调用getTree方法:  【参数"+paramaterJson+"】======"+"【"+e.getMessage()+"】");
+			result.setSuccess(MessageInfo.GETERROR.isResult());
+			result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+e.getMessage()+"】");
+		}
+		return result;
+	}
+	
+	@RequestMapping(value="/queryRelatedCountByPrefixMap",method={RequestMethod.POST}, consumes="application/json")
+	public @ResponseBody MessageResult queryRelatedCountByPrefixMap(@RequestBody Map<String,Object> map){
+		MessageResult result=new MessageResult();
+		String paramaterJson = JacksonUtils.toJson(map);
+		try {
+			//当前登录用户
+			SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userJson = JacksonUtils.toJson(userBeanInfo);
+			System.out.println("\n-------------- paramaterJson="+paramaterJson);
+			String dubboResultInfo=businessObjectVariableDtoServiceCustomer.queryRelatedCountByPrefixMap(userJson, paramaterJson);
+			System.out.println("\n-------------- dubboResultInfo="+dubboResultInfo);
+			DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+		    if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				System.out.println("\n-------------- resultInfo="+resultInfo);
+				result.setResult(resultInfo);
+				result.setSuccess(MessageInfo.GETSUCCESS.isResult());
+				result.setMsg(MessageInfo.GETSUCCESS.getMsg());
+		    }else{
+		    	result.setSuccess(MessageInfo.GETERROR.isResult());
+				result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+		    }
+			
+		} catch (Exception e) {
+			////e.printStackTrace();
+			log.error("调用queryList方法:  【参数"+paramaterJson+"】======"+"【"+e.getMessage()+"】");
+			result.setSuccess(MessageInfo.GETERROR.isResult());
+			result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+e.getMessage()+"】");
+		}
+		return result;
+	}
+	
+	@RequestMapping(value="/queryListByParamMap",method={RequestMethod.POST}, consumes="application/json")
+	public @ResponseBody MessageResult queryListByParamMap(@RequestBody Map<String,Object> map){
+		MessageResult result=new MessageResult();
+		String paramaterJson = JacksonUtils.toJson(map);
+		try {
+			SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userInfo = JacksonUtils.toJson(securityUserBeanInfo);
+			
+			String dubboResultInfo=businessObjectVariableDtoServiceCustomer.queryListByParamMap(userInfo, paramaterJson);
+		    DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+		    if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				List<BusinessObjectVariableDto> list=JacksonUtils.fromJson(resultInfo, ArrayList.class,BusinessObjectVariableDto.class);
+				result.setResult(list);
+				result.setSuccess(MessageInfo.GETSUCCESS.isResult());
+				result.setMsg(MessageInfo.GETSUCCESS.getMsg());
+		    }else{
+		    	result.setSuccess(MessageInfo.GETERROR.isResult());
+				result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+		    }
+			
+		} catch (Exception e) {
+			////e.printStackTrace();
+			log.error("调用queryList方法:  【参数"+paramaterJson+"】======"+"【"+e.getMessage()+"】");
+			result.setSuccess(MessageInfo.GETERROR.isResult());
+			result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+e.getMessage()+"】");
+		}
+		return result;
+	}
+	
+	/**
+	 * 对业务对象排序(上移/下移/置顶/置底)
+	 * @param t
+	 * @return
+	 */
+	@RequestMapping(value="/updateSort/{id}",method=RequestMethod.PUT,consumes="application/json")
+	public @ResponseBody MessageResult updateSort(@PathVariable("id")  String id,   @RequestBody Map<String,Object> map){
+		MessageResult result=new MessageResult();
+		try {
+			SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userJson = JacksonUtils.toJson(userBeanInfo);
+			String dubboResultInfo = businessObjectVariableDtoServiceCustomer.updateSort(userJson, "{\"id\":\""+id+"\"}",map);
+			DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+			if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				int i=JacksonUtils.fromJson(dubboServiceResultInfo.getResult(), Integer.class);
+				result.setResult(i);
+				result.setSuccess(MessageInfo.UPDATESORTSUCCESS.isResult());
+				result.setMsg(MessageInfo.UPDATESORTSUCCESS.getMsg());
+			}else{
+				result.setSuccess(MessageInfo.UPDATESORTERROR.isResult());
+				result.setMsg(MessageInfo.UPDATESORTERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+			}
+		} catch (Exception e) {
+			////e.printStackTrace();
+		    log.error("调用修改状态方法:  【参数"+id+"】======"+"【"+e.getMessage()+"】");
+			result.setSuccess(MessageInfo.UPDATESORTERROR.isResult());
+			result.setMsg(MessageInfo.UPDATESORTERROR.getMsg()+"【"+e.getMessage()+"】");
+		}
+		
+		return result;	
+	}
+	
+	/**
+	 * 修复业务变量的数据
+	 * @param t
+	 * @return
+	 */
+	@RequestMapping(value="/fixVariableData",method=RequestMethod.POST, consumes="application/json")
+	public @ResponseBody MessageResult fixVariableData(@RequestBody BusinessObjectVariableDto t){
+		MessageResult result=new MessageResult();
+		try {
+			SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userInfo = JacksonUtils.toJson(securityUserBeanInfo);
+			
+			String saveJson= JacksonUtils.toJson(t);
+			String dubboResultInfo=businessObjectVariableDtoServiceCustomer.fixVariableData(userInfo, saveJson);
+		    DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+		    if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				BusinessObjectVariableDto businessObjectVariableDto=JacksonUtils.fromJson(resultInfo, BusinessObjectVariableDto.class);
+				result.setResult(businessObjectVariableDto);
+				result.setSuccess(MessageInfo.SAVESUCCESS.isResult());
+				result.setMsg(MessageInfo.SAVESUCCESS.getMsg());
+		    }else{
+		    	result.setSuccess(MessageInfo.SAVEERROR.isResult());
+				result.setMsg(MessageInfo.SAVEERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+		    }
+		} catch (Exception e) {
+			
+		}
+		return result;
+	}
+}

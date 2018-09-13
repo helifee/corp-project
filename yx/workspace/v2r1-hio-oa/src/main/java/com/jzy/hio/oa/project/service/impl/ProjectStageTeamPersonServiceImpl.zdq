@@ -1,0 +1,165 @@
+
+package com.jzy.hio.oa.project.service.impl;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+import com.jzy.hio.entity.ProjectStageTeamPerson;
+import com.jzy.hio.exception.*;
+import com.jzy.hio.oa.project.dto.ProjectStageTaskInfoParam;
+import com.jzy.hio.oa.project.dto.ProjectStageTeamPersonDto;
+import com.jzy.hio.oa.project.mapper.ProjectStageTeamPersonMapper;
+import com.jzy.hio.oa.project.service.ProjectStageTeamPersonService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.annotation.DataSource;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.entity.ProjectTeamPerson;
+import com.jzy.hio.oa.project.dto.ProjectTrendsDto;
+import com.jzy.hio.oa.project.mapper.ProjectTeamPersonMapper;
+import com.jzy.hio.oa.project.service.ProjectTeamPersonService;
+import com.jzy.hio.oa.project.service.ProjectTrendsService;
+
+/**
+ * 项目阶段团队
+ * @author yangning
+ */
+@Service("projectStageTeamPersonService")
+public class ProjectStageTeamPersonServiceImpl extends BaseServiceImpl<ProjectStageTeamPerson> implements ProjectStageTeamPersonService {
+
+	@Autowired
+	ProjectStageTeamPersonMapper projectStageTeamPersonMapper;
+	@Autowired
+	ProjectTrendsService projectTrendsService;
+
+	/**
+	 *  查询项目参与人信息
+	 * 
+	 * @param
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public List<ProjectStageTeamPerson> queryProjectStageTeamPerson(ProjectStageTeamPersonDto projectStageTeamPersonDto) throws HioMybatisQueryException {
+
+		try {
+			return projectStageTeamPersonMapper.queryProjectStageTeamPerson(projectStageTeamPersonDto);
+		} catch (Exception e) {
+			logger.error("根据项目ID获取项目参与人信息失败!" + e.getMessage());
+			throw new HioMybatisGetException(e);
+		}
+	}
+
+	/**
+	 * 根据项目id 查询项目团队人员数
+	 * 
+	 * @param
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public int queryProjectStageTeamPersonCountByProjectId(String id) throws HioMybatisQueryException {
+
+		try {
+			return projectStageTeamPersonMapper.queryProjectStageTeamPersonCountByProjectId(id);
+		} catch (Exception e) {
+			logger.error("根据项目ID获取项目参与人信息失败!" + e.getMessage());
+			throw new HioMybatisGetException(e);
+		}
+	}
+
+	/**
+	 * 更新项目团队信息
+	 * 
+	 * @param
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public int updateProjectStageTeamPerson(List<ProjectStageTeamPerson> projectTeamPersonDto, String stageId, String teamType) throws HioMybatisUpdateException {
+		try {
+			ProjectStageTeamPersonDto param = new ProjectStageTeamPersonDto();
+			param.setStageId(stageId);
+			param.setStageTeamType(teamType);
+
+			/**
+			 * 原团队人员
+			 */
+			List<ProjectStageTeamPerson> oldTeamPersonList = projectStageTeamPersonMapper.queryProjectStageTeamPerson(param);
+			/**
+			 * 新团队人员
+			 */
+			List<ProjectStageTeamPerson> newTeamPersonList = projectTeamPersonDto;
+
+			Map<String, List<ProjectStageTeamPerson>> map = this.compareList(oldTeamPersonList, newTeamPersonList);
+			List<ProjectStageTeamPerson> deleteList = (List<ProjectStageTeamPerson>) map.get("deleteList");
+			List<ProjectStageTeamPerson> addList = (List<ProjectStageTeamPerson>) map.get("addList");
+			try {
+				saveBatch(addList);
+			} catch (Exception eTrends) {
+				logger.error("新增阶段团队人员失败!=====参数：teamType=" + teamType + "=====" + eTrends.getMessage());
+				throw new HioMybatisInsertException(eTrends);
+			}
+			try {
+				for (ProjectStageTeamPerson projectTeamPerson : deleteList) {
+					projectStageTeamPersonMapper.deleteProjectStageTeamPersonByProjectIdAndUserIdAndTeamType(projectTeamPerson);
+				}
+			} catch (Exception eTrends) {
+				logger.error("移除阶段团队人员失败!=====参数：teamType=" + teamType + "=====" + eTrends.getMessage());
+				throw new HioMybatisDeleteException(eTrends);
+			}
+		} catch (Exception e) {
+			logger.error("修改阶段参与人失败!" + e.getMessage());
+			throw new HioMybatisInsertException(e);
+		}
+		return 0;
+	}
+
+	private Map<String, List<ProjectStageTeamPerson>> compareList(List<ProjectStageTeamPerson> oldList, List<ProjectStageTeamPerson> newList) throws Exception {
+
+		try {
+			Map<String, List<ProjectStageTeamPerson>> returnMap = new HashMap<String, List<ProjectStageTeamPerson>>();
+			/**
+			 * 差集 (oldList - newList) 移除人员列表
+			 */
+			List<ProjectStageTeamPerson> deleteList = oldList.stream().filter(u -> {
+				return newList.stream().filter(e -> isEquals(u.getStageTeamPersonId(),e.getStageTeamPersonId())).count() <= 0;
+			}).collect(Collectors.toList());
+
+			/**
+			 * 差集 (newList - oldList) 新增人员列表
+			 */
+			List<ProjectStageTeamPerson> addList = newList.stream().filter(u -> {
+				return oldList.stream().filter(e -> isEquals(u.getStageTeamPersonId(),e.getStageTeamPersonId())).count() <= 0;
+			}).collect(Collectors.toList());
+
+			returnMap.put("deleteList", deleteList);
+			returnMap.put("addList", addList);
+
+			return returnMap;
+		} catch (Exception e) {
+			logger.error("更新项目团队人列表失败!" + e.getMessage());
+			throw new HioMybatisUpdateException(e);
+		}
+
+	}
+
+
+	/**
+	 * 根据阶段id删除阶段下团队成员
+	 * @return
+	 * @throws HioMybatisDeleteException
+	 */
+	@Override
+	public int deleteProjectStageTeamPerson(String stageId) throws HioMybatisDeleteException{
+
+		return projectStageTeamPersonMapper.deleteProjectStageTeamPersonByStageId(stageId);
+	}
+	public static void main(String[] args) {
+
+	}
+
+}

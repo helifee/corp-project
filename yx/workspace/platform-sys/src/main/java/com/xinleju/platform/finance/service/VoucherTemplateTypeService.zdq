@@ -1,0 +1,35 @@
+package com.xinleju.platform.finance.service;
+
+import java.util.List;
+
+import com.xinleju.erp.sm.extend.dto.FinaData;
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.finance.entity.VoucherTemplateType;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface VoucherTemplateTypeService extends  BaseService <String,VoucherTemplateType>{
+	/**
+	 * 根据单据数据配置对应的模板
+	 * @param finaData
+	 * @return
+	 */
+	public FinaData setTempTemplate(FinaData finaData,String typeId,String appCode);
+	int saveTempAll(String saveJson)throws Exception;
+
+	int deleteTempAllObjectByIds(List<String> list)throws Exception;
+
+	
+	/**
+	 * 匹配分录规则
+	 * @param filter
+	 * @param finaData
+	 * @return
+	 */
+	public boolean macherEntry(String filter,FinaData finaData);
+	public int saveAllCopyTemp(String saveJson)throws Exception;
+}

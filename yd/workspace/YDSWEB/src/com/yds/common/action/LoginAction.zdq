@@ -1,0 +1,239 @@
+/*
+ * @(#)LoginAction.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 权限管理
+ */
+
+package com.yds.common.action;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.springframework.beans.factory.config.BeanDefinition;
+import org.springframework.context.annotation.Scope;
+import org.springframework.stereotype.Controller;
+
+import com.yds.base.action.AbstractBaseAction;
+import com.yds.common.bean.UserResult;
+import com.yds.common.service.CommonConstants;
+import com.yds.common.service.LoginService;
+import com.yds.common.service.SessionConstants;
+import com.yds.common.service.SessionService;
+import com.yds.common.service.ThemeService;
+import com.yds.common.service.UserPermitService;
+import com.yds.common.service.CommonConstants.DataSourceEnum;
+import com.yds.tt.manager.service.TtCommonService;
+import com.yds.util.service.DbContextHolder;
+import com.yds.util.service.StringUtil;
+
+/**
+ * 登录/注销处理(Action请求)
+ * 
+ * @author zhaodong
+ * @version 1.00 2009/09/22
+ */
+@Scope(BeanDefinition.SCOPE_PROTOTYPE)
+@Controller("loginAction")
+public class LoginAction extends AbstractBaseAction {
+
+	private static final long serialVersionUID = 205317527105089601L;
+	private LoginService loginService;
+	private UserPermitService userPermitService;
+	private TtCommonService ttCommonService;
+	private ThemeService themeService;
+	private String userId;
+	private String userName;
+	private String password;
+	private String errormsg;
+	private String destUrl;
+	private static final Log LOG = LogFactory.getLog(LoginAction.class);
+
+	/**
+	 * 重定向到重登录页面
+	 * 
+	 * @return SUCCESS
+	 */
+	public String relogin() throws Exception {
+
+		this.setErrormsg(propMgr.getMessage("yds.com.info.0016"));
+		return SUCCESS;
+
+	}
+
+	/**
+	 * 注销，清空session，重定向到重登录页面
+	 * 
+	 * @return SUCCESS
+	 */
+	public String logout() throws Exception {
+
+		SessionService.destroy();
+
+		return SUCCESS;
+
+	}
+
+	/**
+	 * 登录处理
+	 * 
+	 * @return SUCCESS:登录成功 ERROR:登录不成功(用户名、密码错误或无权限)
+	 */
+	public String login() throws Exception {
+		// 初期化,取得登录前访问的url
+		String url = (String) SessionService.get(SessionConstants.REQUESTURL);
+
+		this.setErrormsg("");
+		String userIdYd = StringUtil.leftPadYd(userId);
+
+		// 检查用户名、密码、权限(主处理)(旧系统数据库)
+		UserResult userResult = null;
+		// 检查新数据库中的密码版本
+		if ("0".equals(this.loginService.verCheck(userIdYd))) {
+			try {
+				// 使用旧数据库源
+				DbContextHolder.setDbType(DataSourceEnum.OLD.toString());
+				// 验证密码(旧数据库)
+				userResult = this.loginService.oldLogin(userIdYd, password);
+			} catch (Exception e) {
+				LOG.error("login error!", e);
+			} finally {
+				// 切换到默认数据库源
+				DbContextHolder.clearDbType();
+			}
+
+			if (userResult == null) {
+				loginService.logging(userIdYd, null, false);
+				return loginFail();
+			} else {
+				// 更改新数据库的密码版本及密码
+				if (!this.loginService.updatePWInfo(userResult, password)) {
+					return loginError();
+				}
+			}
+
+		} else {
+			// 检查用户名、密码、权限(主处理)（新系统数据库）
+			if (!(this.loginService.login(userIdYd, password, false))) {
+				return loginFail();
+			}
+		}
+
+		// 取得用户菜单
+		this.userPermitService.getUserMenu(userIdYd);
+
+		// 用户权限取得
+		this.userPermitService.getUserPerm(userIdYd);
+
+		// 取得用户主题
+		this.themeService.getThemeNm(userIdYd);
+
+		try {
+			// TT用户权限取得List
+			ttCommonService.getUserAuthorities();
+
+			// TT菜单初期化位置
+			ttCommonService.getMenuContorlInfo();
+		} catch (Exception e) {
+			LOG.warn("ttCommonService error!", e);
+		} finally {
+			if (null == url) {
+				setDestUrl("/" + CommonConstants.PAGE_INDEX);
+			} else {
+				// 重定向到登录前请求的URL
+				setDestUrl(url);
+			}
+
+		}
+		return SUCCESS;
+	}
+
+	/**
+	 * 使用域用户登录处理
+	 * 
+	 * @return SUCCESS:登录成功 ERROR:登录不成功(用户名、密码错误或无权限)
+	 */
+	public String domainLogin() throws Exception {
+
+		this.setErrormsg("");
+
+		// 检查用户名、密码、权限(主处理)
+		if (!(this.loginService.login(userId, password, true))) {
+			return loginFail();
+		}
+
+		return SUCCESS;
+	}
+
+	private String loginFail(){
+		setErrormsg(propMgr.getMessage("yds.com.error.0002"));
+		return ERROR;
+	}
+	private String loginError(){
+		setErrormsg(propMgr.getMessage("yds.com.error.0001"));
+		return ERROR;
+	}
+	public void setLoginService(LoginService loginService) {
+		this.loginService = loginService;
+	}
+
+	public UserPermitService getUserPermitService() {
+		return userPermitService;
+	}
+
+	public void setUserPermitService(UserPermitService userPermitService) {
+		this.userPermitService = userPermitService;
+	}
+
+	public ThemeService getThemeService() {
+		return themeService;
+	}
+
+	public void setThemeService(ThemeService themeService) {
+		this.themeService = themeService;
+	}
+
+	public String getUserId() {
+		return userId;
+	}
+
+	public void setUserId(String userId) {
+		this.userId = userId;
+	}
+
+	public String getUserName() {
+		return userName;
+	}
+
+	public void setUserName(String userName) {
+		this.userName = userName;
+	}
+
+	public String getPassword() {
+		return password;
+	}
+
+	public void setPassword(String password) {
+		this.password = password;
+	}
+
+	public String getErrormsg() {
+		return errormsg;
+	}
+
+	public void setErrormsg(String errormsg) {
+		this.errormsg = errormsg;
+	}
+
+	public String getDestUrl() {
+		return destUrl;
+	}
+
+	public void setDestUrl(String destUrl) {
+		this.destUrl = destUrl;
+	}
+
+	public void setTtCommonService(TtCommonService tCommonService) {
+		this.ttCommonService = tCommonService;
+	}
+}

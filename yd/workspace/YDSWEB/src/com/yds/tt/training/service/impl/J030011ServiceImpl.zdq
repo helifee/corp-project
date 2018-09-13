@@ -1,0 +1,208 @@
+/*
+ * @(#)J030011ServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 教育考试培训系统
+ *    SubSystem: 教育子系统
+ */
+package com.yds.tt.training.service.impl;
+
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Service;
+
+import com.yds.base.service.AbstractBaseService;
+import com.yds.tt.manager.service.TtCommonUtil;
+import com.yds.tt.manager.service.TtConstants;
+import com.yds.tt.manager.service.TtCommonService;
+import com.yds.tt.manager.service.TtExclusiveException;
+import com.yds.tt.training.bean.BookInfo;
+import com.yds.tt.manager.bean.AuthorityInfo;
+import com.yds.tt.manager.dao.TtCommonDao;
+import com.yds.tt.training.dao.J030011Dao;
+import com.yds.tt.training.service.J030011Service;
+import com.yds.util.service.StringUtil;
+
+/**
+ * @see com.yds.tt.training.service.j030011Service
+ */
+@Service("j030011Service")
+public class J030011ServiceImpl extends AbstractBaseService implements
+		J030011Service {
+	private J030011Dao j030011Dao;
+	private TtCommonDao ttCommonDao;
+	private TtCommonService ttCommonService;
+
+	/**
+	 * @param dao
+	 *            the j030011Dao to set
+	 */
+	public void setJ030011Dao(J030011Dao dao) {
+		this.j030011Dao = dao;
+	}
+
+	/**
+	 * @param ttCommonService
+	 *            the ttCommonService to set
+	 */
+	public void setTtCommonService(TtCommonService ttCommonService) {
+		this.ttCommonService = ttCommonService;
+	}
+
+	/**
+	 * @param ttCommonDao the ttCommonDao to set
+	 */
+	public void setTtCommonDao(TtCommonDao ttCommonDao) {
+		this.ttCommonDao = ttCommonDao;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public BookInfo getBookInfo(String bookId) {
+
+		// 取得教材信息
+		return j030011Dao.getBookInfo(bookId);
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void insertBook(BookInfo bookInfo, List<AuthorityInfo> editorList, String mode) {
+
+		// 取得用户ID
+		String userId = TtCommonUtil.getLoginUserId();
+		bookInfo.setCreateUserId(userId);
+		bookInfo.setUpdateUserId(userId);
+
+		// 取得教材ID
+		bookInfo.setBookId(ttCommonService.getSequence(TtConstants.SEQID.Book));
+
+		// 添加教材信息
+		j030011Dao.insertBook(bookInfo);
+		
+		// 接收审批者信息
+		AuthorityInfo approverInfo = new AuthorityInfo();
+		
+		// 登录审批者：设定关联对象ID，权限区分
+		approverInfo.setRelatedobjectId(bookInfo.getBookId());
+		approverInfo.setAuthorityId(TtConstants.C24.C24_11.value());
+		approverInfo.setCreateUserId(userId);
+		approverInfo.setUpdateUserId(userId);
+		approverInfo.setUserId(StringUtil.leftPadYd(bookInfo.getApproverUserId()));
+		ttCommonDao.insertAuthority(approverInfo);
+		
+		// 接收编辑者信息
+		AuthorityInfo authorityInfo;
+		if (null != editorList) {
+
+			for (int i = 0; i < editorList.size(); i++) {
+
+				// 将画面编辑者列表赋值给权限信息Bean
+				authorityInfo = editorList.get(i);				
+				authorityInfo.setRelatedobjectId(bookInfo.getBookId());
+				authorityInfo.setAuthorityId(TtConstants.C24.C24_7.value());
+				authorityInfo.setCreateUserId(userId);
+				authorityInfo.setUpdateUserId(userId);				
+				
+				// 添加编辑者
+				ttCommonDao.insertAuthority(authorityInfo);
+
+			}
+		}
+		
+		if ("1".equals(mode)){
+			// 添加课程教材关联信息
+			j030011Dao.insertCourseBook(bookInfo);
+		}
+		
+		// QIANGUORONG 7/26追加：更新全局Sesssion中的权限版本时间戳
+		ttCommonService.authrityTimestampUpdate();
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void updateBook(BookInfo bookInfo, List<AuthorityInfo> editorList) {
+
+		// 取得session用户ID
+		String userId = TtCommonUtil.getLoginUserId();
+		bookInfo.setCreateUserId(userId);
+		bookInfo.setUpdateUserId(userId);
+
+		// 获取最新修改时间
+		Date updateTime = j030011Dao.getUpdateTime(bookInfo);
+
+		// 排他检查
+		if (false == ttCommonService.checkTimeStamp(TtConstants.PageId.J030011, updateTime)) {
+
+			throw new TtExclusiveException();
+		}
+
+		// 修改教材信息
+		j030011Dao.updateBook(bookInfo);
+		
+		// 删除审批者
+		Map<String, String> paraMap2 = new HashMap<String, String>();
+		paraMap2.put("relatedobjectId", bookInfo.getBookId());
+		paraMap2.put("authorityId", TtConstants.C24.C24_11.toString());
+		ttCommonDao.deleteAuthority(paraMap2);
+		
+		// 接收审批者信息
+		AuthorityInfo approverInfo = new AuthorityInfo();
+		
+		// 更新审批者：设定关联对象ID，权限区分
+		approverInfo.setRelatedobjectId(bookInfo.getBookId());
+		approverInfo.setAuthorityId(TtConstants.C24.C24_11.value());
+		approverInfo.setCreateUserId(userId);
+		approverInfo.setUpdateUserId(userId);
+		approverInfo.setUserId(StringUtil.leftPadYd(bookInfo.getApproverUserId()));
+		ttCommonDao.insertAuthority(approverInfo);
+		
+		// 删除编辑者：设定关联对象ID，权限区分
+		Map<String, String> paraMap = new HashMap<String, String>();
+		paraMap.put("relatedobjectId", bookInfo.getBookId());
+		paraMap.put("authorityId", TtConstants.C24.C24_7.toString());
+		ttCommonDao.deleteAuthority(paraMap);
+
+		// 接收编辑者信息
+		AuthorityInfo authorityInfo;
+		if (null != editorList) {
+
+			for (int i = 0; i < editorList.size(); i++) {
+
+				// 将画面编辑者列表赋值给权限信息Bean
+				authorityInfo = editorList.get(i);				
+				authorityInfo.setRelatedobjectId(bookInfo.getBookId());
+				authorityInfo.setAuthorityId(TtConstants.C24.C24_7.value());
+				authorityInfo.setCreateUserId(userId);
+				authorityInfo.setUpdateUserId(userId);				
+				
+				// 添加编辑者
+				ttCommonDao.insertAuthority(authorityInfo);
+			}
+		}
+		
+		// QIANGUORONG 7/26追加：更新全局Sesssion中的权限版本时间戳
+		ttCommonService.authrityTimestampUpdate();
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public BookInfo getBelongCategory(String belongCourseId) {
+
+		// 检索创建课程所属分类信息
+		BookInfo bookInfo = j030011Dao.getBelongCategory(belongCourseId);
+
+		return bookInfo;
+	}
+
+}

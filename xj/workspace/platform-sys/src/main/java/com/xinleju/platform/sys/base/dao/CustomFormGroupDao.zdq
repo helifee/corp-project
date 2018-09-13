@@ -1,0 +1,93 @@
+package com.xinleju.platform.sys.base.dao;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.dao.BaseDao;
+import com.xinleju.platform.sys.base.dto.CustomFormDto;
+import com.xinleju.platform.sys.base.dto.CustomFormNodeDto;
+import com.xinleju.platform.sys.base.entity.CustomFormGroup;
+
+/**
+ * @author admin
+ *
+ */
+
+public interface CustomFormGroupDao extends BaseDao<String, CustomFormGroup> {
+
+	/**
+	  * @Description:查询对象树
+	  * @author:zhangfangzhi
+	  * @date 2017年3月8日 下午3:40:30
+	  * @version V1.0
+	 */
+	List<CustomFormDto> getTree(Map<String, Object> map);
+
+	/**
+	  * @Description:查询最大序号
+	  * @author:zhangfangzhi
+	  * @date 2017年3月9日 上午9:36:34
+	  * @version V1.0
+	 */
+	Integer queryMaxSort();
+
+	/**
+	  * @Description:查询自定义分类（排序）
+	  * @author:zhangfangzhi
+	  * @date 2017年3月9日 下午2:55:37
+	  * @version V1.0
+	 * @param map 
+	 */
+	List<CustomFormNodeDto> queryCustomGroupSort(Map map);
+
+	/**
+	  * @Description:查询自定义表单（排序）
+	  * @author:zhangfangzhi
+	  * @date 2017年3月9日 下午3:03:31
+	  * @version V1.0
+	 */
+	List<CustomFormNodeDto> queryCustomSort();
+
+	/**
+	  * @Description:查询该分类下是否有表单
+	  * @author:zhangfangzhi
+	  * @date 2017年3月17日 下午5:40:28
+	  * @version V1.0
+	 */
+	Integer getCustomFormCountByGroupId(String jsonString);
+
+	/**
+	  * @Description:校验是否重复
+	  * @author:zhangfangzhi
+	  * @date 2017年3月13日 上午9:55:04
+	  * @version V1.0
+	 */
+	Integer validateIsExist(CustomFormGroup customFormGroup, String string);
+
+	/**
+	  * @Description:查询一级表单分类下是否存在二级分类
+	  * @author:zhangfangzhi
+	  * @date 2017年7月10日 下午7:56:11
+	  * @version V1.0
+	 */
+	Integer getCustomFormGroupCountByPID(String id);
+
+	/**
+	  * @Description:快速入口查询接口
+	  * @author:zhangfangzhi
+	  * @date 2017年7月13日 下午7:54:54
+	  * @version V1.0
+	 */
+	List queryListForQuickEntry(Map map);
+
+	/**
+	  * @Description:上移下移
+	  * @author:zhangfangzhi
+	  * @date 2017年8月4日 上午10:18:07
+	  * @version V1.0
+	 */
+	void updateSort(CustomFormGroup customFormGroup);
+	
+	
+
+}

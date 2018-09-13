@@ -1,0 +1,300 @@
+package com.cnaps.hvps.action.transfer;
+
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.Enumeration;
+import java.util.List;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+import org.apache.struts.action.ActionForm;
+import org.apache.struts.action.ActionForward;
+import org.apache.struts.action.ActionMapping;
+
+import com.bancstone.action.BaseAction;
+import com.bancstone.common.exception.PicpMessageException;
+import com.bancstone.form.BaseActionForm;
+import com.bancstone.hibernate.systemManage.Systemrolesmanage;
+import com.bancstone.hibernate.systemManage.Systemusersmanage;
+import com.bancstone.service.systemManage.SystemrolesmanageServices;
+import com.bancstone.service.systemManage.SystemusersmanageServices;
+import com.bancstone.service.systemManage.impl.CommonServices;
+import com.cnaps.beps.form.realtime.HVPSsend141Form;
+import com.cnaps.hvps.form.transfer.PersonCrashSpanBankForm;
+import com.cnaps.hvps.persistence.messages.Hvpspartyinfo;
+import com.cnaps.hvps.persistence.transfer.PersonCrashSpanBank;
+
+import com.cnaps.coreservices.CommonXMLEntity;
+import com.cnaps.coreservices.TransCodeEntity;
+import com.cnaps.coreservices.TransServices;
+
+/**
+ * @包名   com.cnaps.beps.action
+ * @文件名 RealTimeCreditAction.java
+ * @作者   zcx
+ * @创建日期 Apr 11, 2011
+ * @版本 V 1.0
+ * @说明  实时贷记相关操作
+ */
+public class RealTimeCreditAction extends BaseAction {
+	/**
+	 * <ul>
+	 * <li>开发作者：zcx</li>
+	 * <li> 方法说明： 实时贷记查询  从后台查询  实时贷记相关信息,并以列表形式打印到页面上  </li>
+	 * </ul>
+	 * @param mapping
+	 * @param form
+	 * @param request
+	 * @param response
+	 * @return
+	 * @throws Exception
+	 */
+	public ActionForward queryCreditFromback(ActionMapping mapping,
+			ActionForm form, HttpServletRequest request,
+			HttpServletResponse response) throws Exception {
+
+	 
+
+		CommonXMLEntity commonXMLEntity = new CommonXMLEntity();
+
+		try {
+
+			String reslutmessage = "";//处理信息
+			HVPSsend141Form pvpform = (HVPSsend141Form) form;
+
+			EntitySetToXML(commonXMLEntity, "5141", "HVPS");
+			TransServices transServices = (TransServices) this
+					.getBean("transServices");
+
+			commonXMLEntity.setQueryCd("CX");
+			commonXMLEntity.setTurnPageBeginPos("0");
+			commonXMLEntity.setTurnPageShowNum("10");
+
+			this.setQueryPageValue(pvpform, true);
+			List<PersonCrashSpanBank> list = commonXMLEntity.getResults();
+
+			
+
+			PersonCrashSpanBank h141 = new PersonCrashSpanBank();
+			
+			this.setPageInfo(request, pvpform);
+			this.setObjectToRequest(request, "personalCrashList", list);
+			request.setAttribute("personalCrashList", list);//这里主要是指个人现金跨行通存业务
+			return mapping.findForward("RealTimeCreditlist");
+		} catch (Exception e) {
+			e.printStackTrace();
+			return toFailedPage(mapping, request, e.getMessage()
+					+ commonXMLEntity.getProcessCode());
+		}
+	}
+
+	/**
+	 * <ul>
+	 * <li>开发作者：zcx</li>
+	 * <li> 方法说明： 个人现金/个人卡折跨行通存 签发  
+	 *   由于卡折交易和现金交易用到的实体类是一样的
+	 * 
+	 * </li>
+	 * </ul>
+	 * @param mapping
+	 * @param form
+	 * @param request
+	 * @param response
+	 * @return
+	 * @throws Exception
+	 */
+	public ActionForward sendCredit(ActionMapping mapping, ActionForm form,
+			HttpServletRequest request, HttpServletResponse response)
+			throws Exception {
+		PersonCrashSpanBankForm pvpform = (PersonCrashSpanBankForm) form;
+		
+		CommonXMLEntity commonXMLEntity;
+		String cardcrash = (String) request.getParameter("cardcrash");
+		if ("crash".equals(cardcrash)) {
+			pvpform.getPo().setSignMd("01");//签发模式为现金
+		} else if ("card".equals(cardcrash)) {
+			pvpform.getPo().setSignMd("02");//签发模式为卡折
+		} else{
+			pvpform.getPo().setSignMd("");//签发模式为其他
+		}
+		pvpform.getPo().setDbamtnm(pvpform.getPo().getDbtrNm());//将付款人名称赋给扣款人名称。
+		pvpform.getPo().setDbtramtacctid(pvpform.getPo().getPayerNum());//将付款人账号赋给扣款人账号。
+		pvpform.setBusinesscode(TransCodeEntity.SEND_BEPS_REALTIMECREDIT);//7123
+		pvpform.setMsgcode("beps.123.001.01"); // 报文号
+		Systemusersmanage user = (Systemusersmanage)request.getSession().getAttribute("userentity");
+		pvpform.setOperTeller(user.getUsername());//签发柜员
+		//报文标识号
+		CommonServices commonService = (CommonServices)this.getBean("CommonServices");
+		String workdate=request.getSession().getAttribute("workDate").toString();//工作日期
+		String  msgId= commonService.getSEQMsgId(workdate);
+		//pvpform.setMsgId(msgId);
+		//网点号
+		//pvpform.setBrnchCd((String) request.getSession().getAttribute("bankCode"));
+		//终端号
+		//pvpform.setTermId("001");
+		//付款行信息
+		Hvpspartyinfo bankInfo =(Hvpspartyinfo)request.getSession().getAttribute("bankInfo");
+		pvpform.getPo().setDbtrMmbId(bankInfo.getDirectbankcode());//设置付款清算行行号
+		pvpform.getPo().setDbtrBrnchId(bankInfo.getBankcode());//设置付款行行号
+		pvpform.getPo().setDbtrBrnchN(bankInfo.getParticipantname());//设置付款行名
+		pvpform.getPo().setEndToEndId(msgId);//设置端到端标识号
+		pvpform.getPo().setDbtrAddr(pvpform.getPo().getAddress());
+		pvpform.getPo().setProposerAcctTp(pvpform.getPo().getPayAccountType());
+		pvpform.getPo().setSystemcd("BEPS");
+		pvpform.getPo().setProposerAcct(pvpform.getPo().getPayerNum());//申请人账号
+		
+		
+		
+		
+		
+		
+		
+		
+		//授权柜员
+		String username = request.getParameter("contrperson");
+		pvpform.getPo().setWarrantyId(username);//授权柜员
+		pvpform.setPmtGrpId(pvpform.getPo().getPaymentGroupNum());
+	
+		String reslutmessage = "";
+		//commSetToXML(pvpform, TransCodeEntity.SEND_BEPS_REALTIMECREDIT, "BEPS");
+		commSetToXML(pvpform, request,TransCodeEntity.SEND_BEPS_REALTIMECREDIT) ;
+		try {
+			TransServices transServices = (TransServices) this.getBean("transServices");
+			commonXMLEntity = transServices.transProcess(pvpform, TransCodeEntity.SEND_BEPS_REALTIMECREDIT, "transaction","");
+			
+			if (!commonXMLEntity.getProcessCode().equals("000000")) {
+				throw new PicpMessageException("错误码："
+						+ commonXMLEntity.getProcessCode() + "错误信息："
+						+ commonXMLEntity.getProcessDes());
+			} else {
+				if ("crash".equals(cardcrash)) {
+					reslutmessage = "个人现金通存签发成功。处理码:" + commonXMLEntity.getProcessCode()
+							+ ";处理描述：" + commonXMLEntity.getProcessDes()
+							+ ";";
+				} else if ("other".equals(cardcrash)) {
+					reslutmessage = "实时贷记业务签发成功。处理码:" + commonXMLEntity.getProcessCode()
+					+ ";处理描述：" + commonXMLEntity.getProcessDes()
+					+ ";";
+				}else{
+					reslutmessage = "个人卡折通存签发成功。处理码:" + commonXMLEntity.getProcessCode()
+							+ ";" + "处理描述:"
+							+ commonXMLEntity.getProcessDes() + ";";
+				}
+			}
+//			request.getSession().removeAttribute("cardcrash");
+//			request.getSession().removeAttribute("PersonCrashSpanBankForm");
+			return toAthorizationSuccessPage(mapping, request, reslutmessage
+					+ "支付交易组号： " + pvpform.getPo().getPaymentGroupNum());
+		} catch (Exception e) {
+			e.printStackTrace();
+			return toFailedPage(mapping, request, e.getMessage());
+		}
+
+	}
+
+	public ActionForward paymentGroupNumAjax(ActionMapping mapping,
+			ActionForm form, HttpServletRequest request,
+			HttpServletResponse response) throws Exception {
+
+		PrintWriter out = null;
+		FlushStart(response);
+		String strXml = "01";
+		response.setContentType("text/html");
+		response.setCharacterEncoding("gbk");
+		try {
+			CommonServices commonService = (CommonServices) this
+					.getBean("CommonServices");
+			String workdate = request.getSession().getAttribute("workDate")
+					.toString();// 工作日期
+			String paymentGroupNum = commonService.getSEQTransId(workdate); //支付组号
+			out = response.getWriter();
+
+			out.print(paymentGroupNum);
+
+//			System.out.println("  支付交易组号  " + paymentGroupNum);
+			if (paymentGroupNum == null) {
+				out.print(strXml);
+			}
+			FlushStop(out);
+		} catch (IOException e) {
+
+			e.printStackTrace();
+		}
+
+		//	
+
+		return null;
+	}
+
+	public ActionForward authorizationAjax(ActionMapping mapping,
+			ActionForm form, HttpServletRequest request,
+			HttpServletResponse response) throws Exception {
+
+		PrintWriter out = null;
+		FlushStart(response);
+		String strXml = "01";
+		response.setContentType("text/html");
+		response.setCharacterEncoding("gbk");
+		try {
+			String username = request.getParameter("name");
+			String password = request.getParameter("pass");
+			SystemusersmanageServices systemusersmanageServices = (SystemusersmanageServices) this
+					.getBean("SystemusersmanageServiceImpl");
+			Systemusersmanage user = systemusersmanageServices.getUser(
+					username, password);
+			out = response.getWriter();
+			System.out.println("user.getSystemRole() "
+					+ (user != null && user.getSystemRole() != null
+							&& "01".equals(user.getUserisactivity()) && "主管"
+							.equals(user.getSystemRole().getName()))
+					+ " user.getUserisactivity() " + user.getUserisactivity()
+					+ " user.getSystemRole()" + user.getSystemRole().getName());
+			if (user != null && user.getSystemRole() != null
+					&& "01".equals(user.getUserisactivity())
+					&& "主管".equals(user.getSystemRole().getName())) {
+
+				out.print("0");
+			} else {
+				out.print("0");
+				//out.print(strXml);
+			}
+
+			 
+
+			FlushStop(out);
+		} catch (IOException e) {
+
+			e.printStackTrace();
+		}
+
+		//	
+
+		return null;
+	}
+
+	private void FlushStart(HttpServletResponse response) {
+		response.reset();//去掉页面缓存
+		response.setHeader("Expires", "-1");//去掉页面缓存
+		//response.setHeader("Cache-Control","no-cache");
+
+	}
+
+	private void FlushStop(PrintWriter out) {
+		out.flush();//去掉页面缓存
+		out.close();//去掉页面缓存
+	}
+
+	public static void EntitySetToXML(CommonXMLEntity commonXMLEntity,
+			String transactionid, String business) {
+		SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd'T'hh:mm:ss");
+		commonXMLEntity.setSource("CNAPS2");
+		commonXMLEntity.setDestination(business);
+		commonXMLEntity.setTransactionId(transactionid);//交易代码
+		commonXMLEntity.setSendDateTime(sdf.format(new Date()));
+
+	}
+}

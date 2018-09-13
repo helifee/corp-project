@@ -1,0 +1,38 @@
+package com.xinleju.platform.flow.service;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.flow.entity.FlowUserOpinion;
+
+/**
+ * @author 
+ * 
+ * 
+ */
+
+public interface FlowUserOpinionService extends  BaseService <String,FlowUserOpinion>{
+
+	/**
+	 * 批量保存（增删改）
+	 * @param list
+	 * @return
+	 * @throws Exception
+	 */
+	public int saveUserOpinIons(List<FlowUserOpinion> list) throws Exception;
+	
+	/** 
+	 * 获取用户自定义意见
+	 * @param param
+	 * @return
+	 */
+	public List<FlowUserOpinion> queryUserOpinion(Map<String, Object> param) ;
+	
+	/**
+	 * 保存用户默认意见
+	 * @param param
+	 * @return
+	 */
+	public int saveDefaultOpinion(String userOpinionId);
+}

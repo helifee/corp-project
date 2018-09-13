@@ -1,0 +1,697 @@
+/*
+ * @(#)Ye0020Action.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 共通系统
+ */
+package com.yds.att.action;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import net.sf.json.JSONArray;
+import net.sf.json.JSONObject;
+
+import org.springframework.beans.factory.config.BeanDefinition;
+import org.springframework.context.annotation.Scope;
+import org.springframework.stereotype.Controller;
+
+import com.yds.att.bean.AttExamin;
+import com.yds.att.bean.AttInfo;
+import com.yds.att.bean.AttRestApp;
+import com.yds.att.bean.OrgInfo;
+import com.yds.att.bean.Ye0020AttInfo;
+import com.yds.att.common.service.AttComService;
+import com.yds.att.common.service.DateRelationService;
+import com.yds.att.common.service.OrgRelationService;
+import com.yds.att.service.Ye0020Service;
+import com.yds.att.service.AttConstants.AttRstMode;
+import com.yds.att.service.AttConstants.RestDayType;
+import com.yds.att.service.AttConstants.VacationType;
+import com.yds.base.action.AbstractBaseAction;
+import com.yds.common.bean.UserInfo;
+import com.yds.common.service.SessionConstants;
+import com.yds.common.service.UserService;
+import com.yds.util.service.DateUtil;
+import com.yds.util.service.Session;
+
+/**
+ * @author 远东) 共通组
+ * @version 1.0
+ */
+
+
+@Scope(BeanDefinition.SCOPE_PROTOTYPE)
+@Controller("ye0020Action")
+public class Ye0020Action extends AbstractBaseAction{
+	
+	private static final long serialVersionUID = -4469089103152184805L;
+
+	/** 注入Service. */
+	private Ye0020Service ye0020Service;
+	
+	/** 条件bean/单条明细bean. */
+	private AttInfo attInfo;
+	
+	/** 一览List. */
+	private List<AttInfo> attInfoList;
+	
+	/** 件数. */
+	private long count;
+	
+	/** 请假天数. */
+	private double leaveDays;
+	private int leaveTime;
+	
+	/** 条件bean */
+	private AttRestApp attRestApp;
+	private Ye0020AttInfo ye0020AttInfo;
+	
+	/** 申请编号 */
+	private String paraAppId;
+	
+	private UserService userService;
+	
+	/** 时间计算Service. */
+	private DateRelationService dateRelationService;
+	
+	/** 组织关系Service. */
+	private OrgRelationService orgRelationService;
+	
+	/** 组织信息一览 */
+	private List<List<OrgInfo>> orgList;
+	private List<Ye0020AttInfo> flowForLeaveList;
+	
+	/** 请假天数信息JSON串. */	
+	private String leaveDaysJSON;
+	
+	/** 审批流程信息JSON串. */	
+	private String flowForLeaveJSON;
+	
+	/** 组织关系Service. */
+	private AttComService attComService;
+	
+ 	/** 错误消息. */
+	private String errorMessage; 
+	/**
+	 * 初始化个人
+	 * @return SUCCESS
+	 */
+	public String init(){
+		
+		ye0020AttInfo = new Ye0020AttInfo();
+		UserInfo userInfo = (UserInfo) Session.get(SessionConstants.USERINFO);
+		ye0020AttInfo.setUserId(userInfo.getUserId());
+		ye0020AttInfo.setUserName(userInfo.getUserName());
+		ye0020AttInfo.setRestDayType(RestDayType.SINGLE.value());
+		//计算个人剩余换休时间,年休天数
+		//String year = DateUtil.dateToString(new Date(), "yyyy");
+		//try {
+			//ye0020AttInfo.setPtoDays(dateRelationService.getPtoDays(year, userInfo.getUserId()));
+			//ye0020AttInfo.setExrestTime(dateRelationService.getExrestTime(userInfo.getUserId()));
+		//} catch (Exception e) {
+		//	e.printStackTrace();
+		//}
+
+		ye0020AttInfo.setMode(AttRstMode.USERST.toString());
+		flowForLeaveList = new ArrayList<Ye0020AttInfo>();
+		// 取得组织列表
+		//this.orgList = orgRelationService.getFlowForLeave("YD200714",15,new Date());
+		
+		/*for (List<OrgInfo> orgInfoList : orgList)
+		{
+			this.flowForLeaveList.add(orgInfoList.get(0));
+			
+			//prjList.add(orgInfoList.get(0));
+			//departList.add(orgInfoList.get(1));
+		}*/
+		return SUCCESS;
+	}
+	
+	/**
+	 * 请假申请察看（审批者）
+	 * @return SUCCESS
+	 * @throws Exception 
+	 */
+	public String initViewExt() throws Exception{
+		
+		initView(AttRstMode.EXTVIEW.toString());
+		return SUCCESS;
+	}
+	
+	/**
+	 * 请假申请察看（个人）
+	 * @return SUCCESS
+	 * @throws Exception 
+	 */
+	public String initViewSelf() throws Exception{
+		initView(AttRstMode.USERVIEW.toString());
+		return SUCCESS;
+	}
+	
+	/**
+	 * 请假申请察看
+	 * @return SUCCESS
+	 * @throws Exception 
+	 */
+	public String initView(String mode) throws Exception{
+		
+		attRestApp = new AttRestApp();
+		attRestApp.setAppId(this.getParaAppId());
+		findById();
+		ye0020AttInfo = new Ye0020AttInfo();
+		ye0020AttInfo.setMode(mode);
+		ye0020AttInfo.setAppId(attRestApp.getAppId());
+		ye0020AttInfo.setUserId(attRestApp.getRestPerId());
+		ye0020AttInfo.setUserName(userService.getUserNm(attRestApp.getRestPerId()));
+		ye0020AttInfo.setRestStartDate(attRestApp.getRestStartDate());
+		
+		String restTypeView = attRestApp.getRestType();
+		if(restTypeView.length() == 2){
+			
+			ye0020AttInfo.setRestDayType(RestDayType.HALF.value());
+			ye0020AttInfo.setRestType(restTypeView.substring(0, 1));
+			ye0020AttInfo.setRestHalfDayType(restTypeView.substring(1));
+			
+		}else{
+			if(attRestApp.getRestStartDate().equals(attRestApp.getRestEndDate())){
+				ye0020AttInfo.setRestDayType(RestDayType.SINGLE.value());
+				ye0020AttInfo.setRestType(restTypeView);
+			}else{
+				ye0020AttInfo.setRestDayType(RestDayType.MULTI.value());
+				ye0020AttInfo.setRestType(restTypeView);
+				ye0020AttInfo.setRestEndDate(attRestApp.getRestEndDate());
+				getAttDays(ye0020AttInfo);
+				ye0020AttInfo.setLeaveDays(leaveDays);
+			}
+		}
+		
+		ye0020AttInfo.setRestReason(attRestApp.getRestReason());
+		
+		flowForLeaveList = new ArrayList<Ye0020AttInfo>();
+		
+		List<AttExamin> attExaminList = ye0020Service.getAttExaminInfoList(attRestApp.getAppId());
+		//审批流程
+		StringBuffer exaFlow = new StringBuffer();
+		//审批意见
+		StringBuffer exaSuggestion = new StringBuffer();
+		
+		for (AttExamin attExaminInfo : attExaminList){
+			
+			
+			//审批者名字
+			String exaUserName;
+			if(("".equals(attExaminInfo.getExaId())) || ((null == attExaminInfo.getExaId()))){
+				OrgInfo orgInfo = orgRelationService.getOrgInfoBy(attExaminInfo.getExaOrganizationId());
+				exaUserName = orgInfo.getOrgMngerName();
+			}else{
+				exaUserName = userService.getUserNm(attExaminInfo.getExaId());
+			}
+			
+			if((!"".equals(attExaminInfo.getExaSuggestion())) && ((null != attExaminInfo.getExaSuggestion()))){
+				exaSuggestion.append(exaUserName);
+				exaSuggestion.append(":");
+				exaSuggestion.append(attExaminInfo.getExaSuggestion());
+				exaSuggestion.append("\r");
+			}
+			
+			exaFlow.append(exaUserName);
+			exaFlow.append("(");
+			exaFlow.append(orgRelationService.getOrgInfoBy(attExaminInfo.getExaOrganizationId()).getOrgSnm());
+			exaFlow.append(")");
+			if(!attExaminInfo.getExaAppOrder().equals(attExaminInfo.getExaAppEnd())){
+				exaFlow.append("->");
+			}
+		}
+		ye0020AttInfo.setExaSuggestion(exaSuggestion.toString());
+		ye0020AttInfo.setFlowForLeaveName(exaFlow.toString());
+		//Ye0020AttInfo flowForLeave = new Ye0020AttInfo();
+		//flowForLeave.setFlowForLeaveId(1);
+		//flowForLeave.setFlowForLeaveName(exaFlow.toString());
+		
+		//flowForLeaveList.add(flowForLeave);
+		
+		return SUCCESS;
+	}
+	
+	/**
+	 * 取得审批状态
+	 * @return SUCCESS
+	 */
+	public String getAppStatusText(String appStatus){
+		
+		
+		return SUCCESS;
+	}
+	
+	/**
+	 * 由检索条件取得一览
+	 * @return SUCCESS
+	 */
+	public String execute(){
+		count = ye0020Service.getAttInfoCount(attInfo);
+		attInfoList = ye0020Service.getAttInfoList(attInfo);
+		return SUCCESS;
+	}
+	
+	/**
+	 * 取得明细
+	 * @return SUCCESS
+	 */
+	public String findById(){
+		attRestApp = ye0020Service.getAttRestAppByPk(attRestApp);
+		return SUCCESS;
+	}
+	
+	/**
+	 * 更新处理
+	 * @return SUCCESS
+	 */
+	public String update(){
+		ye0020Service.updateAttInfo(attInfo);
+		return SUCCESS;
+	}
+	
+	
+	/**
+	 * 插入处理
+	 * @return SUCCESS
+	 * @throws Exception 
+	 */
+	public String insertAttRestApp() throws Exception{
+		
+		ye0020Service.insertAttRestApp(ye0020AttInfo);
+		
+		return SUCCESS;
+	}
+	
+	/**
+	 * 插入处理校验
+	 * @throws Exception 
+	 */
+	public void validateInsertAttRestApp() throws Exception{
+		
+		if(RestDayType.HALF.value().equals(ye0020AttInfo.getRestDayType())){
+			if(null == ye0020AttInfo.getRestHalfDayType()){
+				setErrorMessage(propMgr.getMessage("yds.com.warning.0001", "上午下午"));
+				this.addFieldError("ye0020AttInfo.restReason", errorMessage);
+			}
+			if(!ye0020Service.oneDayTwoAppCheck(ye0020AttInfo)){
+				setErrorMessage("同一天上下午两次请假类型不可相同！");
+				this.addFieldError("ye0020AttInfo.restStartDate", errorMessage);
+			}
+		}else{
+			
+		}
+		
+		if("".equals(ye0020AttInfo.getRestReason())){
+			setErrorMessage(propMgr.getMessage("yds.com.warning.0001", "休假理由"));
+			this.addFieldError("ye0020AttInfo.restReason", errorMessage);
+		}
+		
+		if(null == ye0020AttInfo.getRestType()){
+			setErrorMessage(propMgr.getMessage("yds.com.warning.0001", "休假类型"));
+			this.addFieldError("ye0020AttInfo.restType", errorMessage);
+		}
+		
+		if(0 == ye0020AttInfo.getFlowForLeave()){
+			setErrorMessage(propMgr.getMessage("yds.com.warning.0001", "审批流程"));
+			this.addFieldError("ye0020AttInfo.flowForLeave", errorMessage);
+		}
+		
+		//检查剩余换休
+		if(VacationType.FOR_HUGH.value().equals(ye0020AttInfo.getRestType())){
+			getAttDays(ye0020AttInfo);
+			if(leaveTime > ye0020AttInfo.getExrestTime()){
+				setErrorMessage(propMgr.getMessage("yds.att.error.0008"));
+				this.addFieldError("ye0020AttInfo.restStartDate", errorMessage);
+			}
+		}
+		//检查年休
+		if(VacationType.ANNUAL_LEAVE.value().equals(ye0020AttInfo.getRestType())){
+			getAttDays(ye0020AttInfo);
+			if(leaveDays > ye0020AttInfo.getPtoDays()){
+				setErrorMessage(propMgr.getMessage("yds.att.error.0007"));
+				this.addFieldError("ye0020AttInfo.restStartDate", errorMessage);
+			}
+			//年休不能跨年
+			if((RestDayType.MULTI.value().equals(ye0020AttInfo.getRestDayType())) && 
+					(DateUtil.getYear(ye0020AttInfo.getRestEndDate()) - DateUtil.getYear(ye0020AttInfo.getRestStartDate()) > 0)){
+				setErrorMessage(propMgr.getMessage("yds.att.error.0009"));
+				this.addFieldError("ye0020AttInfo.restStartDate", errorMessage);
+			}
+		}
+		
+		//重复check
+		if(!ye0020Service.repeatCheck(ye0020AttInfo)){
+			setErrorMessage("请假时间段重复！");
+			this.addFieldError("ye0020AttInfo.restStartDate", errorMessage);
+		}
+		ye0020AttInfo.setMode(AttRstMode.VALIDATERETURN.toString());
+		flowForLeaveList = new ArrayList<Ye0020AttInfo>();
+	}
+	/**
+	 * 删除处理
+	 * @return SUCCESS
+	 */
+	public String delete(){
+		ye0020Service.deleteAttInfo(attInfo);
+		return SUCCESS;
+	}
+	
+	/**
+	 * 撤销处理
+	 * @return SUCCESS
+	 */
+	public String cancelAttRestApp(){
+		attRestApp = new AttRestApp();
+		attRestApp.setAppId(ye0020AttInfo.getAppId());
+		attRestApp = ye0020Service.getAttRestAppByPk(attRestApp);
+		if(ye0020Service.cancelAttRestAppCheck(attRestApp)){
+			ye0020Service.deleteAttRestApp(attRestApp);
+		}
+		return SUCCESS;
+	}
+	
+	/**
+	 * 计算请假天数Action
+	 * @return SUCCESS
+	 * @throws Exception 
+	 * @throws Exception 
+	 */
+	public String getAttDaysCnt() throws Exception{
+
+		getAttDays(ye0020AttInfo);
+		
+		Ye0020AttInfo ye0020AttInfoJson = new Ye0020AttInfo();
+		
+		ye0020AttInfoJson.setRestType(ye0020AttInfo.getRestType());
+		ye0020AttInfoJson.setLeaveDays(leaveDays);
+		
+		//计算个人剩余换休时间,年休天数
+		
+		ye0020AttInfoJson.setPtoDays(dateRelationService.getPtoDays(ye0020AttInfo.getUserId(), ye0020AttInfo.getRestStartDate(), ye0020AttInfo.getRestEndDate()));
+		ye0020AttInfoJson.setExrestTime(dateRelationService.getExrestTime(ye0020AttInfo.getUserId(), ye0020AttInfo.getRestStartDate()));
+		
+		
+		//ye0020AttInfoJson.setPtoDays(5);
+		//ye0020AttInfoJson.setExrestTime(30);
+		
+//		List<Ye0020AttInfo> ye0020AttInfoList = new ArrayList<Ye0020AttInfo>();
+//		ye0020AttInfoList.add(ye0020AttInfoJson);
+		
+		JSONObject json = JSONObject.fromObject(ye0020AttInfoJson);
+		setLeaveDaysJSON(json.toString());
+		
+		return SUCCESS;
+	}
+	
+	/**
+	 * 计算请假天数
+	 * @return SUCCESS
+	 * @throws Exception 
+	 */
+	public void getAttDays(Ye0020AttInfo ye0020AttInfo) throws Exception{
+
+		Map<String, Object> drs = new HashMap<String, Object>();
+		String paraRestType;
+		if(RestDayType.HALF.value().equals(ye0020AttInfo.getRestDayType())){
+			paraRestType = ye0020AttInfo.getRestType() + ye0020AttInfo.getRestHalfDayType();
+		}else{
+			paraRestType = ye0020AttInfo.getRestType();
+		}
+		
+		if(RestDayType.MULTI.value().equals(ye0020AttInfo.getRestDayType())){
+			drs = dateRelationService.getLeaveTime(ye0020AttInfo.getRestStartDate(), ye0020AttInfo.getRestEndDate(), paraRestType, ye0020AttInfo.getUserId());
+		}else{
+			drs = dateRelationService.getLeaveTime(ye0020AttInfo.getRestStartDate(), ye0020AttInfo.getRestStartDate(), paraRestType, ye0020AttInfo.getUserId());
+		}
+		
+		// 设置请假天数
+		this.leaveDays = (Double)drs.get("leaveDays");
+		this.leaveTime = (Integer)drs.get("leaveTime");
+		
+	}
+	
+	/**
+	 * 取得审批流程
+	 * @return SUCCESS
+	 */
+	public String getflowForLeave(){
+		
+		// 取得组织列表
+		flowForLeaveList = new ArrayList<Ye0020AttInfo>();
+		
+		this.orgList = orgRelationService.getFlowForLeave(ye0020AttInfo.getUserId(),(float) ye0020AttInfo.getLeaveDays(),ye0020AttInfo.getRestStartDate());
+		
+		//OrgInfo flowForLeave = new OrgInfo();
+		int orgId = 0;
+		for (List<OrgInfo> orgInfoList : orgList)
+		{
+			orgId ++;
+			StringBuffer tempOrgMngerName = new StringBuffer();
+			for (int i = 0; i < orgInfoList.size(); i++ ){
+				tempOrgMngerName.append(orgInfoList.get(i).getOrgMngerName());
+				tempOrgMngerName.append("(");
+				tempOrgMngerName.append(orgInfoList.get(i).getOrgSnm());
+				tempOrgMngerName.append(")");
+				if(i != orgInfoList.size()-1){
+					tempOrgMngerName.append("->");
+				}
+			}
+			
+			Ye0020AttInfo flowForLeave = new Ye0020AttInfo();
+			flowForLeave.setFlowForLeaveId(orgId);
+			flowForLeave.setFlowForLeaveName(tempOrgMngerName.toString());
+			
+			flowForLeaveList.add(flowForLeave);
+			
+		}
+		
+		JSONArray jsArr = JSONArray.fromObject(flowForLeaveList);
+		this.setFlowForLeaveJSON(jsArr.toString());
+		return SUCCESS;
+	}
+	
+	/**
+	 * @param ye0020Service
+	 *            the ye0020Service to set
+	 */
+	public void setYe0020Service(Ye0020Service ye0020Service) {
+		this.ye0020Service = ye0020Service;
+	}	
+
+	/**
+	 * @param attInfo
+	 *            the attInfo to set
+	 */
+	public void setAttInfo(AttInfo attInfo) {
+		this.attInfo = attInfo;
+	}	
+	
+	/**
+	 *  @return the attInfo
+	 */
+	public AttInfo getAttInfo() {
+		return attInfo;
+	}	
+	
+	/**
+	 *  @return the attInfoList
+	 */
+	public List<AttInfo> getAttInfoList() {
+		return attInfoList;
+	}	
+	
+	/**
+	 *  @return the count
+	 */
+	public long getCount() {
+		return count;
+	}
+
+	/**
+	 * @param attRestApp the attRestApp to set
+	 */
+	public void setAttRestApp(AttRestApp attRestApp) {
+		this.attRestApp = attRestApp;
+	}
+
+	/**
+	 * @return the attRestApp
+	 */
+	public AttRestApp getAttRestApp() {
+		return attRestApp;
+	}
+
+	/**
+	 * @param ye0020AttInfo the ye0020AttInfo to set
+	 */
+	public void setYe0020AttInfo(Ye0020AttInfo ye0020AttInfo) {
+		this.ye0020AttInfo = ye0020AttInfo;
+	}
+
+	/**
+	 * @return the ye0020AttInfo
+	 */
+	public Ye0020AttInfo getYe0020AttInfo() {
+		return ye0020AttInfo;
+	}
+
+	/**
+	 * @param leaveDays the leaveDays to set
+	 */
+	public void setLeaveDays(double leaveDays) {
+		this.leaveDays = leaveDays;
+	}
+
+	/**
+	 * @return the leaveDays
+	 */
+	public double getLeaveDays() {
+		return leaveDays;
+	}
+
+	/**
+	 * @param paraAppId the paraAppId to set
+	 */
+	public void setParaAppId(String paraAppId) {
+		this.paraAppId = paraAppId;
+	}
+
+	/**
+	 * @return the paraAppId
+	 */
+	public String getParaAppId() {
+		return paraAppId;
+	}
+
+	/**
+	 * @param dateRelationService the dateRelationService to set
+	 */
+	public void setDateRelationService(DateRelationService dateRelationService) {
+		this.dateRelationService = dateRelationService;
+	}
+
+	/**
+	 * @return the dateRelationService
+	 */
+	public DateRelationService getDateRelationService() {
+		return dateRelationService;
+	}
+
+	/**
+	 * @param orgRelationService the orgRelationService to set
+	 */
+	public void setOrgRelationService(OrgRelationService orgRelationService) {
+		this.orgRelationService = orgRelationService;
+	}
+
+	/**
+	 * @return the orgRelationService
+	 */
+	public OrgRelationService getOrgRelationService() {
+		return orgRelationService;
+	}
+
+	/**
+	 * @param leaveDaysJSON the leaveDaysJSON to set
+	 */
+	public void setLeaveDaysJSON(String leaveDaysJSON) {
+		this.leaveDaysJSON = leaveDaysJSON;
+	}
+
+	/**
+	 * @return the leaveDaysJSON
+	 */
+	public String getLeaveDaysJSON() {
+		return leaveDaysJSON;
+	}
+
+	/**
+	 * @param flowForLeaveJSON the flowForLeaveJSON to set
+	 */
+	public void setFlowForLeaveJSON(String flowForLeaveJSON) {
+		this.flowForLeaveJSON = flowForLeaveJSON;
+	}
+
+	/**
+	 * @return the flowForLeaveJSON
+	 */
+	public String getFlowForLeaveJSON() {
+		return flowForLeaveJSON;
+	}
+
+	/**
+	 * @return the flowForLeaveList
+	 */
+	public List<Ye0020AttInfo> getFlowForLeaveList() {
+		return flowForLeaveList;
+	}
+
+	/**
+	 * @param flowForLeaveList the flowForLeaveList to set
+	 */
+	public void setFlowForLeaveList(List<Ye0020AttInfo> flowForLeaveList) {
+		this.flowForLeaveList = flowForLeaveList;
+	}
+
+	/**
+	 * @return the userService
+	 */
+	public UserService getUserService() {
+		return userService;
+	}
+
+	/**
+	 * @param userService the userService to set
+	 */
+	public void setUserService(UserService userService) {
+		this.userService = userService;
+	}	
+	
+	/**
+	 * @return the attComService
+	 */
+	public AttComService getAttComService() {
+		return attComService;
+	}
+
+	/**
+	 * @param attComService the attComService to set
+	 */
+	public void setAttComService(AttComService attComService) {
+		this.attComService = attComService;
+	}
+
+	/**
+	 * @return the errorMessage
+	 */
+	public String getErrorMessage() {
+		return errorMessage;
+	}
+
+	/**
+	 * @param errorMessage the errorMessage to set
+	 */
+	public void setErrorMessage(String errorMessage) {
+		this.errorMessage = errorMessage;
+	}
+
+	/**
+	 * @param leaveTime the leaveTime to set
+	 */
+	public void setLeaveTime(int leaveTime) {
+		this.leaveTime = leaveTime;
+	}
+
+	/**
+	 * @return the leaveTime
+	 */
+	public int getLeaveTime() {
+		return leaveTime;
+	}
+}

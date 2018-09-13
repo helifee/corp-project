@@ -1,0 +1,242 @@
+/*
+ * @(#)RSS.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 共通系统
+ */
+package com.yds.util.service;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.dom4j.Attribute;
+import org.dom4j.Element;
+import org.springframework.web.util.HtmlUtils;
+
+import com.rsslibj.elements.Channel;
+import com.rsslibj.elements.Item;
+import com.rsslibj.elements.RSSReader;
+import com.yds.common.service.CommonConstants;
+import com.yds.common.service.GuideLinkContext;
+import com.yds.util.bean.RSSCfgBean;
+
+import electric.xml.ParseException;
+
+/**
+ * 读取RSS相关内容及配置
+ */
+
+public class RSS {
+	
+	/** LOG */
+	private static final Log LOG = LogFactory.getLog(RSS.class);
+	
+	/** RSS站点配置文件中的ID */
+	private static final String XML_ID="id";
+	
+	/** RSS站点配置文件中的编码 */
+	private static final String XML_ENCODE="encode";
+	
+	/** RSS站点配置文件中的RSS URL */
+	private static final String XML_RSSURL="rssurl";
+	
+	/** RSS站点配置文件中的站点URL */
+	private static final String XML_MOREURL="siteurl";
+
+	/** RSS站点配置文件中的站点名称 */
+	private static final String XML_NAME="name";
+
+	/** RSS站点配置文件中的站点分类 */
+	private static final String XML_TYPE="type";
+
+	/** 默认的编码 */
+	private static final String DEFAULT_ENCODE="utf-8";
+
+	/** XML文件路径. */
+	private static String xmlFilePath = GuideLinkContext.class.getClassLoader()
+			.getResource(CommonConstants.RSSFILENAME).getPath();
+	
+	/**
+	 * 读取指定URL地址的RSS内容
+	 * @param urlstr RSS地址的路径
+	 * @param readfromlocal urlstr是本地路径(true)还是一个URL(false)
+	 * @param encode 强制指定站点的编码
+	 * @return 读取的RSS的内容
+	 */
+	@SuppressWarnings("unchecked")
+	public static List<Item> grab(String urlstr, boolean readfromlocal, String ... encode) {
+
+		Channel channel = null;
+		List<Item> items = null;
+		BufferedReader reader = null;
+		HttpURLConnection connection = null;
+		// 默认编码为utf-8
+		String uencode = DEFAULT_ENCODE;
+		try {
+			RSSReader rssReader = new RSSReader();
+			// 自定义编码
+			if (encode.length != 0 && !"".equals(encode[0])) {
+				uencode = encode[0];
+			}
+			// 把字节流形式的数据转换成字符流
+			if (readfromlocal){
+				reader = new BufferedReader(new InputStreamReader(new FileInputStream(new File(urlstr)), uencode));
+			}else{
+				URL url = new URL(urlstr);
+				// 打开指定URL的输入流，即获取此URlRSS的内容
+				connection = (HttpURLConnection) url.openConnection(); 
+				connection.setRequestProperty("User-Agent", CommonConstants.USER_AGENT);
+				reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), uencode));
+			}
+//			if (LOG.isDebugEnabled()){
+//				while(reader.ready()){
+//					LOG.debug(reader.readLine());
+//				}
+//			}
+
+			// 把此RSS数据流的读取器set到RSSReader中去
+			rssReader.setReader(reader); 
+			// 获取RSS的Channel
+			channel = rssReader.getChannel(); 
+
+			items = channel.getItems();
+			for (Iterator<Item> iter = items.iterator(); iter.hasNext();) {
+				Item item = iter.next();
+				// 过滤Description的html代码
+				item.setDescription(HtmlUtils.htmlEscape(item.getDescription()));
+				LOG.debug(item.getTitle());
+				LOG.debug(item.getLink());
+				LOG.debug(item.getDescription());
+
+
+			}
+		} catch (ParseException e) {
+			LOG.error("ParseException",e);
+		} catch (MalformedURLException e) {
+			LOG.error("MalformedURLException",e);
+		} catch (IOException e) {
+			LOG.error("IOException",e);
+		}
+		return items;
+	}
+	
+	/**
+	 * 根据RSS的ID取得RSS的配置
+	 * @param id RSS的ID
+	 * @return RSS的配置
+	 * @throws Exception
+	 */
+	public static RSSCfgBean readRSSCfgById(String id) throws Exception{
+		// ID为空
+		if (null == id) {
+			return null;
+		}
+		// 读取配置
+		List<RSSCfgBean> resultList = readRSSCfg(false);
+		for (RSSCfgBean bean : resultList) {
+			if (id.equals(bean.getId())) {
+				return bean;
+			}
+		}
+		// 为匹配到对应ID的配置
+		return null;
+
+	}
+
+	/**
+	 * 根据RSS的type取得RSS的配置或内容
+	 * @param type RSS的ID
+	 * @param readContent 是否读取RSS的站点内容
+	 * @return RSS的配置或内容
+	 * @throws Exception
+	 */
+	public static List<RSSCfgBean> readRSSCfgByType(String type, boolean readContent) throws Exception{
+		// type为空
+		if (null == type) {
+			return null;
+		}
+		// 读取RSS的配置或内容
+		List<RSSCfgBean> resultList = readRSSCfg(readContent);
+		for (RSSCfgBean bean : resultList){
+			if (!type.equals(bean.getType())){
+				// 删除type不符合条件的bean
+				resultList.remove(bean);
+			}
+		}
+		return resultList;
+		
+	}
+	
+	/**
+	 * 取得RSS配置文件的配置或内容
+	 * @param readContent 是否读取RSS的站点内容
+	 * @return RSS的配置或内容
+	 * @throws Exception
+	 */
+
+	public static List<RSSCfgBean> readRSSCfg( boolean readContent) throws Exception {
+		// 读取XML文件
+		List<Element> allelement = null;
+		// 获得propMgr
+		PropertyManager propMgr= (PropertyManager)ApplicationContextHolder.getBean("propMgr");
+
+		allelement = new XmlOperator(xmlFilePath).getAllElement();
+		List<RSSCfgBean> resultList = new ArrayList<RSSCfgBean>();
+		if (null != allelement) {
+			for (Iterator<Element> iter = allelement.iterator(); iter.hasNext();) {
+				Element element = iter.next();
+				// ID
+				Attribute elementId = element.attribute(XML_ID);
+				if (elementId != null) {
+					RSSCfgBean resultBean = new RSSCfgBean();
+					resultBean.setId(elementId.getText());
+
+					// 编码
+					if (null != element.attribute(XML_ENCODE)) {
+						resultBean.setEncode(element.attribute(XML_ENCODE).getText());
+					} else {
+						resultBean.setEncode(DEFAULT_ENCODE);
+					}
+					// 站点名称
+					if (null != element.attribute(XML_NAME)) {
+						resultBean.setName(element.attribute(XML_NAME).getText());
+					}
+					// 站点类型
+					if (null != element.attribute(XML_TYPE)) {
+						resultBean.setType(element.attribute(XML_TYPE).getText());
+					}
+					// RSS地址
+					if (null != element.attribute(XML_RSSURL)) {
+						resultBean.setRssUrl(element.attribute(XML_RSSURL).getText());
+					}
+					// 站点的URL
+					if (null != element.attribute(XML_MOREURL)) {
+						resultBean.setMoreUrl(element.attribute(XML_MOREURL).getText());
+					}
+					// 读取RSS的内容
+					if (readContent){
+						resultBean.setContent(grab(propMgr.getParameter("yds.com.rss.filepath") + resultBean.getId()
+								+ CommonConstants.RSSFILENAME, true, resultBean.getEncode()));
+					}
+					resultList.add(resultBean);
+				}
+
+			}
+		}
+
+		return resultList;
+
+	}
+}

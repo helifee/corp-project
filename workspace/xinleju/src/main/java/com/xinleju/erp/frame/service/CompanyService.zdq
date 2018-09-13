@@ -1,0 +1,156 @@
+package com.xinleju.erp.frame.service;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.commons.lang3.StringUtils;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.Order;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.frame.dao.CompanyDao;
+import com.xinleju.erp.frame.dao.PartyStructDao;
+import com.xinleju.erp.frame.models.Company;
+import com.xinleju.erp.frame.models.Dept;
+import com.xinleju.erp.frame.models.PartyEntity;
+import com.xinleju.erp.frame.models.PartyType;
+
+@Service
+@Transactional
+public class CompanyService extends BaseService {
+
+	@Autowired
+	private CompanyDao companyDao;
+	@Autowired
+	private PartyStructDao partyStructDao;
+	@Autowired
+	private PartyEntityService partyEntityService;
+
+	public Company getById(Long id){
+		if (null != id){
+			return getDao().getById(Company.class, id);
+		}
+		return null;
+	}
+
+
+	public String getAreaNameFix(Long areaId){
+		String result = "";
+		Object[] objects = getAreaById(areaId);
+		if( objects!=null 
+				&& StringUtils.isNotBlank(String.valueOf(objects[0])) && !String.valueOf(objects[0]).equals("null")){
+			result += getAreaNameFix(Long.valueOf(String.valueOf(objects[0])))+"/";
+			result += String.valueOf(objects[1]);
+		}else{
+			result = String.valueOf(objects[1]);
+		}
+
+		return result;
+	}
+
+	public Object[] getAreaById(Long areaId){
+		Object[] result = null;
+
+		if(areaId!=null&&areaId!=0){
+			String sql = "select sd.parent_id as parentid,sd.name as name from sm_dict sd where sd.id = ?";
+			List<Object[]> mapList = (List<Object[]>) getDao().findListBySQL(sql, new Object[]{areaId});
+			if(mapList!=null&&mapList.size()>0){
+				result = mapList.get(0);
+			}
+		}
+		return result;
+	}
+
+	public boolean hasChildArea(Long areaId){
+		String sql = "select count(sd.id) as count from sm_dict sd where sd.parent_id = ?";
+		List<Object[]> mapList = (List<Object[]>) getDao().findListBySQL(sql, new Object[]{areaId});
+		if(mapList!=null&&mapList.size()!=0){
+			if(Integer.parseInt(String.valueOf(mapList.get(0))) == 0 ){
+				return false;
+			}else{
+				return true;
+			}
+		}  
+		return false;
+	}
+
+	public void changeStatus(Long companyId,Integer status){
+		companyDao.changeStatus(companyId, status);
+		PartyEntity pe = partyEntityService.findEntityByRefId(companyId, PartyType.TYPE_COMPANY);
+
+		if(pe!=null){
+			partyEntityService.changeStatus(pe.getId(), status);
+		}
+
+	}
+
+	public void save(Company company){
+		getDao().saveOrUpdate(company);
+		partyEntityService.changeEntityName(company.getId(), PartyType.TYPE_COMPANY, company.getName(), company.getShortName());
+	}
+
+	public List<Company> findUserCompany(Long userId){
+		// 人直接挂在部门下
+		List<Long> companyIds = partyStructDao.findParentRefIdsByChildRefId(userId,PartyType.TYPE_COMPANY);
+		// 人对应部门  部门所在公司
+		List<Dept> deptList = App.getBean(DeptService.class).findUserDept(userId);
+		for(Dept dept:deptList){
+			companyIds.addAll(findCompanyIdsByDeptId(dept.getId()));
+		}
+		return getCompanyListByIds(companyIds,null);
+	}
+
+
+	/**
+	 * 通过部门找公司
+	 * @author jdq
+	 * @param deptId
+	 * @return
+	 */
+	public List<Long> findCompanyIdsByDeptId(Long deptId){
+		List<Long> result = new ArrayList<Long>();
+		// 如果部门的上级为公司   直接添加
+		result.addAll(partyStructDao.findParentRefIdsByChildRefId(deptId,PartyType.TYPE_COMPANY));
+		// 如果部门的上级还为部门   递归查询到最上级的公司
+		List<Long> upDeptIds = partyStructDao.findParentRefIdsByChildRefId(deptId,PartyType.TYPE_DEPARTMENT);
+		for(Long upDeptId:upDeptIds){
+			result.addAll(findCompanyIdsByDeptId(upDeptId));
+		}
+		return result;
+	}
+
+	public List<Company> getCompanyListByIds(List<Long> companyIdList,String name){
+		DetachedCriteria c = DetachedCriteria.forClass(Company.class);
+		if(StringUtils.isNotBlank(name)){
+			c.add( Restrictions.like("name", "%"+name+"%") );
+		}
+		c.add(Restrictions.in("id", companyIdList));
+		c.addOrder(Order.asc("id"));
+		return getDao().findByCriteria(c);
+	}
+	
+	
+	/**
+	 * 获取所有的公司
+	 * @return
+	 */
+	public List<Company> getCompanyAll(){
+		DetachedCriteria c = DetachedCriteria.forClass(Company.class);
+		c.addOrder(Order.asc("id"));
+		List<Company> companys = getDao().findByCriteria(c);
+		return companys;
+	}
+	/**
+	 * 删除公司（逻辑删除）
+	 * @param companyId
+	 */
+	public void deleteCompany(Long companyId) {
+		companyDao.logicDelete(companyId);
+	}
+
+}

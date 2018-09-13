@@ -1,0 +1,68 @@
+package com.xinleju.platform.flow.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Table(value="PT_FLOW_UPLOAD_ATTACHMENT",desc="流程上传附件表")
+public class UploadAttachment extends BaseEntity{
+	
+		
+	@Column(value="category_id",desc="分类Id")
+	private String categoryId;
+    
+  		
+	@Column(value="business_id",desc="业务Id")
+	private String businessId;
+    
+  		
+	@Column(value="instance_id",desc="实例Id")
+	private String instanceId;
+    
+  		
+	@Column(value="read_type",desc="阅读类型: 1-通用, 2-PC端使用 3- 移动端使用 ")
+	private String readType;
+    
+  		
+		
+	public String getCategoryId() {
+		return categoryId;
+	}
+	public void setCategoryId(String categoryId) {
+		this.categoryId = categoryId;
+	}
+    
+  		
+	public String getBusinessId() {
+		return businessId;
+	}
+	public void setBusinessId(String businessId) {
+		this.businessId = businessId;
+	}
+    
+  		
+	public String getInstanceId() {
+		return instanceId;
+	}
+	public void setInstanceId(String instanceId) {
+		this.instanceId = instanceId;
+	}
+    
+  		
+	public String getReadType() {
+		return readType;
+	}
+	public void setReadType(String readType) {
+		this.readType = readType;
+	}
+    
+  		
+	
+}

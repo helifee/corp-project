@@ -1,0 +1,218 @@
+package com.jzy.hio.oa.content.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.dao.BaseMapper;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.oa.content.dto.ContentChildTreeData;
+import com.jzy.hio.oa.content.entity.ContentChild;
+import com.jzy.hio.oa.content.entity.ContentRowType;
+import com.jzy.hio.oa.content.entity.ContentType;
+import com.jzy.hio.oa.content.mapper.ContentChildDao;
+import com.jzy.hio.oa.content.mapper.ContentTypeDao;
+import com.jzy.hio.oa.content.service.ContentChildService;
+import com.jzy.hio.oa.content.service.ContentRowTypeService;
+import com.jzy.hio.oa.util.SortUtil;
+import com.jzy.tools.data.JacksonUtils;
+
+/**
+ * @author admin
+ */
+
+@Service
+public class ContentChildServiceImpl extends BaseServiceImpl<String, ContentChild> implements ContentChildService {
+
+	@Autowired
+	private ContentChildDao contentChildDao;
+
+	@Autowired
+	private ContentTypeDao contentTypeDao;
+
+	@Autowired
+	private ContentRowTypeService contentRowTypeService;
+
+	/**
+	 * 查询目录分类 Tree
+	 *
+	 * @param id
+	 * @return
+	 */
+	@Override
+	public List<ContentChildTreeData> getContentList(String id) {
+		// TODO Auto-generated method stub
+		return contentChildDao.getContentList(id);
+	}
+
+	@Override
+	public List<ContentChildTreeData> getContentChildTreeById(String id) {
+		// TODO Auto-generated method stub
+		return contentChildDao.getContentChildTreeById(id);
+	}
+
+	@Override
+	public int deleteContentChildByParentId(String parentId) {
+		// TODO Auto-generated method stub
+		int result = 0;
+		Map<String, Object> map = new HashMap<String, Object>();
+		map.put("parentId", parentId);
+		List<ContentChild> contentChildList = contentChildDao.selectByExample(map);
+		if (contentChildList.size() > 0) {
+			List<String> list = new ArrayList<String>();
+			for (ContentChild contentChild : contentChildList) {
+				list.add(contentChild.getId());
+				contentChildDao.deleteByPrimaryKey(contentChild.getId());
+			}
+			// result = contentChildDao.deleteAllObjectByIds(list);
+		}
+		return result;
+	}
+
+	@Override
+	public List<Map<String, Object>> queryTreeList(Map<String, Object> paramMap) throws Exception {
+		Map<String, Object> queryMap = new HashMap<String, Object>();
+		String contentTypeId = null;
+		if (paramMap != null) {
+			contentTypeId = (String) paramMap.get("contentTypeId");
+		}
+
+		queryMap.put("delflag", false);
+		if (contentTypeId != null) {
+			queryMap.put("id", contentTypeId);
+
+		}
+		// 按条件查询知识大类
+		List<ContentType> contentTypeList = contentTypeDao.selectByExample(map2example(queryMap));
+		List<Map<String, Object>> treeList = new ArrayList<Map<String, Object>>();
+		for (ContentType contentType : contentTypeList) {
+			Map<String, Object> treeMap = new HashMap<String, Object>();
+			treeMap.put("id", contentType.getId());
+			treeMap.put("pid", null);
+			treeMap.put("name", contentType.getName());
+			String contentTypeJson = JacksonUtils.toJson(contentType);
+			Map<String, Object> contentTypeMap = JacksonUtils.fromJson(contentTypeJson, HashMap.class);
+			contentTypeMap.put("contentTypeId", contentType.getId());
+			contentTypeMap.remove("id");
+
+			contentTypeMap.put("contentTypeName", contentType.getName());
+			contentTypeMap.remove("name");
+			treeMap.putAll(contentTypeMap);
+			treeList.add(treeMap);
+
+			// 根据知识大类id查找目录
+			Map<String, Object> childParamMap = new HashMap<String, Object>();
+			childParamMap.put("contentTypeId", contentType.getId());
+			childParamMap.put("delflag", false);
+			List<ContentChild> contentChildList = this.queryListByExample(childParamMap);
+			for (ContentChild contentChild : contentChildList) {
+				String contentChildJson = JacksonUtils.toJson(contentChild);
+				Map<String, Object> contentChildMap = JacksonUtils.fromJson(contentChildJson, HashMap.class);
+				contentChildMap.put("pid", contentChild.getParentId());
+				contentChildMap.put("contentChildId", contentChild.getId());
+				contentChildMap.put("businessObject", contentType.getBusinessObject());
+				contentChildMap.put("approvalProcess", contentType.getApprovalProcess());
+				contentChildMap.putAll(contentChildMap);
+				treeList.add(contentChildMap);
+			}
+
+		}
+
+		return treeList;
+	}
+
+	@Override
+	public int deleteAllObjectByIds(List<String> ids) {
+		for (String contentChildId : ids) {
+			Map<String, Object> paramMap = new HashMap<String, Object>();
+			paramMap.put("contentChildId", contentChildId);
+			paramMap.put("delflag", false);
+			List<ContentRowType> list = contentRowTypeService.queryListByExample(paramMap);
+			if (list != null && list.size() > 0) {
+				ContentChild contentChild = this.getObjectById(contentChildId);
+				// throw new Exception("知识目录【"+contentChild.getName()+"】下已有知识条目，请先删除对应的知识条目！");
+				return -1;
+			}
+
+			Map<String, Object> paramMap1 = new HashMap<String, Object>();
+			paramMap1.put("parentId", contentChildId);
+			paramMap1.put("delflag", false);
+			List<ContentChild> children = this.queryListByExample(paramMap1);
+			if (children != null && children.size() > 0) {
+				// ContentChild contentChild = this.getObjectById(contentChildId);
+				// throw new Exception("知识目录【"+contentChild.getName()+"】下已有子目录，请先删除对应的子目录！");
+				List<String> childIds = new ArrayList<String>();
+				for (ContentChild child : children) {
+					childIds.add(child.getId());
+				}
+				deleteAllObjectByIds(childIds);
+			}
+		}
+		return super.deleteAllObjectByIds(ids);
+	}
+
+	@Override
+	public List<ContentChild> queryChildList(Map<String, Object> paramMap) throws Exception {
+		List<ContentChild> list = this.contentChildDao.selectByExample(paramMap);
+		List<ContentChild> contentChildList = new ArrayList<ContentChild>();
+		if (list != null && list.size() > 0) {
+			for (int i = 0; i < list.size(); i++) {
+				Boolean flag = true;
+				ContentChild contentChild = list.get(i);
+				for (int j = 0; j < list.size(); j++) {
+					if (contentChild.getId().equals(list.get(j).getParentId())) {
+						flag = false;
+						break;
+					}
+				}
+				if (flag) {
+					contentChildList.add(contentChild);
+				}
+			}
+		}
+		return contentChildList;
+	}
+
+	@Override
+	public List<ContentChild> getContentChildByContentTypeId(String id) throws Exception {
+		Map<String, Object> paramMap = new HashMap<String, Object>();
+		paramMap.put("contentType", id);
+		List<ContentChild> list = this.queryListByExample(paramMap);
+		SortUtil.sortList(list, "createDate", true);
+		return list;
+	}
+
+	@Override
+	public List<ContentChildTreeData> getContentParentTreeById(String id) {
+		Map<String, Object> paramMap = new HashMap<String, Object>();
+		if (!"null".equals(id)) {
+			paramMap.put("id", id);
+		}
+		List<ContentType> contentTypeList = contentTypeDao.selectByExample(paramMap);
+		List<ContentChildTreeData> contentResultList = new ArrayList<ContentChildTreeData>();
+		if (contentTypeList.size() > 0) {
+			for (ContentType contentType : contentTypeList) {
+				ContentChildTreeData contentChildTreeData = new ContentChildTreeData();
+				contentChildTreeData.setId(contentType.getId());
+				contentChildTreeData.setName(contentType.getName());
+				contentChildTreeData.setParentName(contentType.getName());
+				contentChildTreeData.setParentId(contentType.getId());
+				contentChildTreeData.setpId("0");
+				contentResultList.add(contentChildTreeData);
+			}
+		}
+		return contentResultList;
+	}
+
+	public ContentChildDao getAcDao() {
+		return contentChildDao;
+	}
+
+	public BaseMapper<ContentChild> getMapper() {
+		return contentChildDao;
+	}
+}

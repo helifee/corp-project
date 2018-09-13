@@ -1,0 +1,187 @@
+package com.xinleju.platform.flow.service.impl;
+
+import java.sql.Timestamp;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.LoginUtils;
+import com.xinleju.platform.base.utils.SecurityUserDto;
+import com.xinleju.platform.flow.dao.InstanceTaskDao;
+import com.xinleju.platform.flow.dto.ApprovalSubmitDto;
+import com.xinleju.platform.flow.dto.InstanceTaskDto;
+import com.xinleju.platform.flow.entity.InstanceTask;
+import com.xinleju.platform.flow.enumeration.TaskStatus;
+import com.xinleju.platform.flow.service.InstanceTaskService;
+
+/**
+ * 流程任务服务
+ * 
+ * @author admin
+ * 
+ */
+
+@Service
+public class InstanceTaskServiceImpl extends  BaseServiceImpl<String,InstanceTask> implements InstanceTaskService{
+	
+
+	@Autowired
+	private InstanceTaskDao instanceTaskDao;
+
+	@Override
+	public boolean completeTask(Map<String, Object> approvalInfos) {
+		approvalInfos.put("status", TaskStatus.FINISHED.getValue());
+		approvalInfos.put("endDate", new Timestamp(System.currentTimeMillis()));
+		instanceTaskDao.completeTask(approvalInfos);
+		return true;
+	}
+
+	@Override
+	public int update(String statementName, Map<String, Object> params) {
+		return instanceTaskDao.update(statementName, params);
+	}
+
+	@Override
+	public List<InstanceTaskDto> queryCurrentPersonList(Map<String, String> paramMap) {
+		List<InstanceTaskDto> tempList = instanceTaskDao.queryCurrentPersonList(paramMap);
+		Map<String, InstanceTaskDto> dataMap = new HashMap<String, InstanceTaskDto>();
+		for(InstanceTaskDto taskDto : tempList){
+			String instanceId = taskDto.getInstanceId();
+			String approverId = taskDto.getApproverId();
+			String approverName = taskDto.getApproverName();
+			InstanceTaskDto dataItem = dataMap.get(instanceId);
+			if(dataItem == null ){//第一次读取到该对象
+				dataItem = taskDto;
+				dataItem.setCurrentPersonIdText(approverId);
+				dataItem.setCurrentPersonNameText(approverName);
+			}else{//不是第一次读取
+				String oldIdText = dataItem.getCurrentPersonIdText();
+				String oldNameText = dataItem.getCurrentPersonNameText();
+				dataItem.setCurrentPersonIdText(oldIdText+";"+approverId);
+				dataItem.setCurrentPersonNameText(oldNameText+";"+approverName);
+			}
+			dataMap.put(instanceId, dataItem);
+		}
+		List<InstanceTaskDto> resultList = new ArrayList<InstanceTaskDto>();
+		for (InstanceTaskDto taskDto : dataMap.values()) {  
+			resultList.add(taskDto);
+		}
+		return resultList;
+	}
+
+	@Override
+	public int queryFinishedTaskCount(String instanceId) {
+		return instanceTaskDao.queryFinishedTaskCount(instanceId);
+	}
+
+	@Override
+	public void updateMsgId(String taskId, String msgId) {
+		Map<String, Object> params = new HashMap<String, Object>();
+		params.put("taskId", taskId);
+		params.put("msgId", msgId);
+		instanceTaskDao.updateMsgId(params);
+	}
+
+	@Override
+	public void updateComment(String taskId, String taskComment) {
+		Map<String, Object> params = new HashMap<String, Object>();
+		params.put("taskId", taskId);
+		params.put("taskComment", taskComment);
+		instanceTaskDao.updateComment(params);
+	}
+
+	/**
+	 * 确定刚才任务完成时间t, 如果创建时间>t, 此任务集合中满足以下条件才能撤回
+	 * 1、全是正在运行中，没有已完成的任务
+	 * 2、尚未打开过（此标志在审批页面打开时自动更新）
+	 * 
+	 */
+	@Override
+	public List<InstanceTaskDto> checkWithdrawTask(String instanceId, String taskId,String approveId) {
+		boolean canWithdraw = true;
+		List<InstanceTaskDto> tasks = instanceTaskDao.queryTasksBy(instanceId, taskId);
+		
+		for(int i=0; i<tasks.size(); i++) {
+			InstanceTaskDto task = tasks.get(i);
+			//过滤掉当前操作人
+			if(approveId!=null && approveId.equals(task.getApproverId())){
+				continue;
+			}
+			//非运行中或打开过
+			if(!TaskStatus.RUNNING.getValue().equals(task.getStatus()) || task.getIsOpen() == 1) {
+				canWithdraw = false;
+				break;
+			}
+		}
+		
+		if(canWithdraw) {
+			return tasks;
+		} else {
+			return null;
+		}
+	}
+	
+	@Override
+	public List<InstanceTaskDto> checkWithdrawTask2(String instanceId, String taskId) {
+		boolean canWithdraw = true;
+		List<InstanceTaskDto> tasks = instanceTaskDao.queryTasksBy(instanceId, taskId);
+		
+		for(int i=0; i<tasks.size(); i++) {
+			InstanceTaskDto task = tasks.get(i);
+			//非运行中或打开过
+			if(!TaskStatus.RUNNING.getValue().equals(task.getStatus()) || task.getIsOpen() == 1) {
+				canWithdraw = false;
+				break;
+			}
+		}
+		
+		if(canWithdraw) {
+			return tasks;
+		} else {
+			return null;
+		}
+	}
+
+	@Override
+	public List<InstanceTaskDto> queryTaskIdByInstanceId(Map<String, String> paramMap) {
+		return instanceTaskDao.queryTaskIdByInstanceId(paramMap);
+	}
+
+	@Override
+	public boolean isFinished(ApprovalSubmitDto approvalDto) {
+		//存在两个环节是同一人情况，第一环节审批完后直接跳过第二环节，提示任务已完成
+//		String taskId = approvalDto.getTaskId();
+//		if(StringUtils.isNotEmpty(taskId)) {
+//			InstanceTask task = instanceTaskDao.getObjectById(taskId);
+//			if(task != null) {
+//				if(TaskStatus.FINISHED.getValue().equals(task.getStatus())
+//						|| task.getDelflag()) {
+//					return true;
+//				}
+//			}
+//		} else {
+			String instanceId = approvalDto.getInstanceId();
+			SecurityUserDto userDto = LoginUtils.getSecurityUserBeanInfo().getSecurityUserDto();
+			Map<String, String> paramMap = new HashMap<String, String>();
+			paramMap.put("instanceId", instanceId);
+			paramMap.put("userId", userDto.getId());
+			List<InstanceTaskDto> taskList = instanceTaskDao.queryTaskIdByInstanceId(paramMap);
+			if(CollectionUtils.isEmpty(taskList)) {
+				return true;
+			}
+//		}
+		return false;
+	}
+
+	@Override
+	public Integer queryListCountByFiId(Map<String, Object> paramMap) {
+		return instanceTaskDao.queryListCountByFiId(paramMap);
+	}
+}

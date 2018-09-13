@@ -1,0 +1,185 @@
+package com.jzy.hio.puInterface.service.impl;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.RedisKeyConstant;
+import com.jzy.hio.disk.directory.param.CreateCommonDirectoryParam;
+import com.jzy.hio.disk.directory.param.InitSpaceParam;
+import com.jzy.hio.entity.TenantCompanyInfo;
+import com.jzy.hio.exception.HioMybatisInsertException;
+import com.jzy.hio.feign.DiskFeignService;
+import com.jzy.hio.feign.PuSysFeignService;
+import com.jzy.hio.platform.param.PuCompanyParam;
+import com.jzy.hio.platform.tenantcompanyinfo.service.TenantCompanyInfoService;
+import com.jzy.hio.platform.tenduser.service.TendUserInfoService;
+import com.jzy.hio.puInterface.param.SyncCompanyParam;
+import com.jzy.hio.puInterface.param.SyncCompanyParam.SyncCompanyDto;
+import com.jzy.hio.puInterface.service.SyncCompanyService;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.springmvc.ApiResponse;
+
+/**
+ * 
+ * @author chc<br/>
+ *         2018年6月6日
+ */
+@Service
+public class SyncCompanyServiceImpl  implements SyncCompanyService {
+	protected Logger logger = LoggerFactory.getLogger(SyncCompanyServiceImpl.class);
+	
+	@Autowired
+    private TenantCompanyInfoService tenantCompanyInfoService;
+    @Autowired
+	private TendUserInfoService tendUserInfoService;
+    @Autowired
+	DiskFeignService diskFeignService;
+    @Autowired
+    private PuSysFeignService puSysFeign;
+    
+    private static final int TIME = 5;
+    
+	@Override
+	public ApiResponse<Map<String,Object>> syncCompany(SyncCompanyParam companyParam) throws Exception{
+		ApiResponse<Map<String,Object>> ares = new ApiResponse<Map<String,Object>>();
+		List<SyncCompanyDto> listParam = companyParam.getCompanyList();
+		logger.info("同步公司参数{}",Base.obj2json(companyParam));
+        try {
+        	if(listParam != null && listParam.size() > 20) {
+        		ares.setStatus(407);
+                ares.setMessage("每次最多创建20个！");
+                return ares;
+        	}
+        	List<Map<String,String>> result = new ArrayList<Map<String,String>>();
+        	Map<String,Object> resultMap = new HashMap<String,Object>();
+        	if(Base.isNotEmpty(listParam)) {
+        		for(SyncCompanyDto param : listParam) {
+        			Map<String,String> map = new HashMap<String,String>();
+        			try {
+        				String tendId = "";
+        				//如果招采传的参数有tendId，则更新公司名
+        				if(Base.isNotEmpty(param.getTendId())) {
+        					tendId = param.getTendId();
+	        				TenantCompanyInfo tenantParamByTendId = new TenantCompanyInfo();
+	        				tenantParamByTendId.setTendId(param.getTendId());
+	        				tenantParamByTendId.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+	        				List<TenantCompanyInfo> tenantList = tenantCompanyInfoService.queryList(tenantParamByTendId);
+	        				if(Base.isNotEmpty(tenantList)) {
+	        					TenantCompanyInfo dto = tenantList.get(0);
+	        					dto.setName(param.getCorpName());
+	        					tenantCompanyInfoService.update(dto);
+	        					JedisUtil.addIndexMobile(RedisKeyConstant.tenantToInfo, dto.getTendId(), dto.getId());
+			        			JedisUtil.addRow(dto);
+			        			//调用sys接口
+			        			PuCompanyParam apiParam = new PuCompanyParam();
+			                	apiParam.setCompanyName(param.getCorpName());
+			                	apiParam.setTendId(tendId);
+			                	ApiFeignResponse<Boolean> sysApiResponse = puSysFeign.organizationSave(apiParam);
+			                	if(200 != sysApiResponse.getStatus()) {
+			                		logger.info("创建企业失败！调用puSysFeign.organizationSave失败 {}", sysApiResponse.getMessage());
+			            			throw new Exception("创建企业组织失败！ ");
+			                	}
+	        					map.put("corpId", param.getCorpId());
+	    	        			map.put("tendId", tendId);
+	    	        			result.add(map);
+	    	        			resultMap.put("tendIdList", result);
+	    	        			continue;
+	        				}
+        				}
+//        				TenantCompanyInfo tenantParam = new TenantCompanyInfo();
+//        				tenantParam.setName(param.getCorpName());
+//        				tenantParam.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+//        				List<TenantCompanyInfo> tenantList = tenantCompanyInfoService.queryList(tenantParam);
+//        				if(Base.isNotEmpty(tenantList)) {
+//        					tendId = tenantList.get(0).getTendId();
+//        				}else {
+		        			TenantCompanyInfo entity = new TenantCompanyInfo();
+		                	String pk = Base.generatePk(TenantCompanyInfo.class);
+		                	//防止分布式并发情况下多团队使用同一个库
+		        			if(JedisUtil.tryLock("platFrom_save_tend","platFrom_save_tend",TIME)){
+		        				tendId = tendUserInfoService.getCompanyTendId();
+		        				entity.setId(pk);
+			                	entity.setName(param.getCorpName());
+			                	entity.setTendId(tendId);
+			                	entity.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+			        			entity.setCreateDate(new Date());
+			        			entity.setCreatePersonName("");
+			        			entity.setUpdatePersonName("招采");
+			        			entity.setCreatePersonId("");
+			        			entity.setUpdatePersonId("");
+			                	tenantCompanyInfoService.save(entity);
+			                	JedisUtil.addIndexMobile(RedisKeyConstant.tenantToInfo, entity.getTendId(), entity.getId());
+			        			JedisUtil.addRow(entity);
+		        			}else{
+		        				logger.info("上一次创建企业操作尚未完成，请勿重复操作，本次招采公司id{}",param.getCorpId());
+		        				continue;
+		        			}
+		                	
+//        				}
+	                	//创建企业空间
+	            		CreateCommonDirectoryParam directoryParam = new CreateCommonDirectoryParam();
+	            		directoryParam.setTendId(tendId);
+	            		directoryParam.setCreatePersonId("");
+	            		directoryParam.setCreatePersonName("招采");
+	            		ApiFeignResponse diskDireApiResponse =	diskFeignService.createCommonDirectory(directoryParam);
+	            		logger.info("diskFeignService.createCommonDirectory result:{} ",Base.obj2json(diskDireApiResponse));
+	            		if (200 != diskDireApiResponse.getStatus()) {
+	            			logger.info("创建企业失败！调用diskFeignService.createCommonDirectory接口 {}", diskDireApiResponse.getMessage());
+	            			throw new Exception("创建企业公共文件夹失败！");
+	            		}
+
+	            		InitSpaceParam initSpaceParam = new InitSpaceParam();
+	            		initSpaceParam.setTendId(tendId);
+	            		ApiFeignResponse diskSpaceApiResponse = diskFeignService.initializeSpace(initSpaceParam);
+	            		logger.info("diskFeignService.initializeSpace result:{} ",Base.obj2json(diskSpaceApiResponse));
+	            		if (200 != diskSpaceApiResponse.getStatus()) {
+	            			logger.info("创建企业失败！调用diskFeignService.initializeSpace {}", diskSpaceApiResponse.getMessage());
+	            			throw new Exception("创建企业网盘空间失败！ ");
+	            		}
+
+	                	PuCompanyParam apiParam = new PuCompanyParam();
+	                	apiParam.setCompanyName(param.getCorpName());
+	                	apiParam.setTendId(tendId);
+	                	ApiFeignResponse<Boolean> sysApiResponse = puSysFeign.organizationSave(apiParam);
+	                	if(200 != sysApiResponse.getStatus()) {
+	                		logger.info("创建企业失败！调用puSysFeign.organizationSave失败 {}", sysApiResponse.getMessage());
+	            			throw new Exception("创建企业组织失败！ ");
+	                	}
+	                	
+	        			map.put("corpId", param.getCorpId());
+	        			map.put("tendId", tendId);
+	        			result.add(map);
+	        			resultMap.put("tendIdList", result);
+        			}catch(Exception e) {
+        				e.printStackTrace();
+        				logger.error("同步公司失败corpid：{},{}",param.getCorpId(),e.getMessage());
+        			}finally {
+        				JedisUtil.unlock("platFrom_save_tend","platFrom_save_tend");
+        			}
+        		}
+        	}
+        	ares.setStatus(200);
+            ares.setMessage("同步成功！");
+            ares.setResult(resultMap);
+            logger.info("公司同步结果{}",Base.obj2json(resultMap));
+        } catch (Exception e) {
+            ares.setStatus(400);
+            ares.setMessage("同步失败！");
+            e.printStackTrace();
+            logger.info("同步公司信息失败{}",e.getMessage());
+            throw new HioMybatisInsertException("同步失败！");
+        }
+        return ares;
+	}
+}

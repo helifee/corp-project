@@ -1,0 +1,135 @@
+package com.xinleju.platform.flow.utils;
+
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.GregorianCalendar;
+import java.util.List;
+
+import com.xinleju.platform.flow.entity.CalendarDetail;
+
+public class CalenderUtils {
+
+    private int year;
+   
+    public static void main(String[] args) throws Exception {
+        // 设置为2014年
+        /*CalenderUtils hd = new CalenderUtils(2018);
+        for(int month =1; month<=12;month++){
+        	hd.simplePrintMonthOfYear(month);
+        }*/
+    	
+    	CalenderUtils utils = new CalenderUtils(2020);
+    	List<CalendarDetail> dataList = utils.getTotalDetailListFromYear();
+    	System.out.println("---->>> dataList.size="+dataList.size());
+    }
+    // 有参数，设置年份
+    public CalenderUtils(int year) {
+        this.year = year;
+    }
+    
+    public List<CalendarDetail> getTotalDetailListFromYear() throws Exception{
+    	List<CalendarDetail> yearList = new ArrayList<CalendarDetail>();
+        for(int month =1; month<=12;month++){
+        	yearList = addMonthDayIntoDataList(month, yearList);
+        } 
+        return yearList;
+    }
+    
+    public List<CalendarDetail> addMonthDayIntoDataList(int mon, List<CalendarDetail> dataList) throws Exception{
+    	GregorianCalendar calendar = new GregorianCalendar();
+        System.out.println("\n\n打印年和月="+year+"-"+mon);
+        // 获得一个Date对象
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+        Date date = sdf.parse(year+"-"+mon+"-01");
+        calendar.setTime(date);//设置当前时间
+        int month = calendar.get(Calendar.MONTH);//从日期中取得当前的月
+        calendar.set(Calendar.DAY_OF_MONTH, 1);//设置now的日期为1
+        int weekDay = calendar.get(Calendar.DAY_OF_WEEK);//得到now是一周的第几天
+        
+        // 打印日历主体
+        while (calendar.get(Calendar.MONTH) == month) {
+            int day = calendar.get(Calendar.DAY_OF_MONTH);
+            //DayBean dayBean = new DayBean(year, mon, day, week);
+            CalendarDetail detail = new CalendarDetail();
+            detail.setYear(year);
+            detail.setMonth(mon);
+            detail.setDay(day);
+            detail.setDayType("1");
+            detail.setWeekDay(weekDay);
+            String dayText = year+"-";
+            if(mon<10){
+            	dayText += "0"+mon+"-"; 
+            }else{
+            	dayText += mon+"-";
+            }
+            
+            if(day<10){
+            	dayText += "0"+day; 
+            }else{
+            	dayText += day;
+            }
+            
+            detail.setDayText(dayText);
+            if(weekDay==1 || weekDay==7){//1到7默认的是1-周日、2-周一、3-周二、4-周三、5-周四、6-周五、7-周六
+            	detail.setDayType("2");//默认周日和周六是节假日
+            }
+            System.out.println(detail);
+            // 每次输出日期后，将日期增加一天
+            calendar.add(Calendar.DAY_OF_MONTH, 1);
+            weekDay = calendar.get(Calendar.DAY_OF_WEEK);
+            dataList.add(detail);
+        }
+        return dataList;
+    }
+    
+    /**
+     * 打印某个月的所有日期
+     * 
+     * @param mon
+     *            月份
+     * @throws Exception
+     */
+    public void simplePrintMonthOfYear(int mon) throws Exception {
+        if (mon < 1 || mon > 12) {
+            System.out.println("你输入的月份[" + mon + "]不对，请检查在进行....");
+            return;
+        }
+        GregorianCalendar calendar = new GregorianCalendar();
+        //System.out.println("\n\n打印年和月="+year+"-"+mon);
+        // 获得一个Date对象
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+        Date date = sdf.parse(year+"-"+mon+"-01");
+        calendar.setTime(date);//设置当前时间
+        int month = calendar.get(Calendar.MONTH);//从日期中取得当前的月
+        calendar.set(Calendar.DAY_OF_MONTH, 1);//设置now的日期为1
+        int week = calendar.get(Calendar.DAY_OF_WEEK);//得到now是一周的第几天
+        
+        // 打印日历主体
+        while (calendar.get(Calendar.MONTH) == month) {
+            int day = calendar.get(Calendar.DAY_OF_MONTH);
+            //DayBean dayBean = new DayBean(year, mon, day, week);
+            CalendarDetail detail = new CalendarDetail();
+            detail.setYear(year);
+            detail.setMonth(month);
+            detail.setDay(day);
+            detail.setDayType("1");
+            if(week==1 || week==7){
+            	detail.setDayType("2");//默认周日和周六是节假日
+            }
+            //System.out.println(detail);
+            // 每次输出日期后，将日期增加一天
+            calendar.add(Calendar.DAY_OF_MONTH, 1);
+            week = calendar.get(Calendar.DAY_OF_WEEK);
+        }
+    }
+
+    public int getYear() {
+        return year;
+    }
+
+    public void setYear(int year) {
+        this.year = year;
+    }
+}

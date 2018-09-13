@@ -1,0 +1,214 @@
+package com.jzy.hio.aop;
+
+import java.io.UnsupportedEncodingException;
+import java.net.InetAddress;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.Hashtable;
+import java.util.Map;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+import org.aspectj.lang.ProceedingJoinPoint;
+import org.aspectj.lang.annotation.After;
+import org.aspectj.lang.annotation.Around;
+import org.aspectj.lang.annotation.Aspect;
+import org.aspectj.lang.annotation.Before;
+import org.aspectj.lang.annotation.Pointcut;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+import org.springframework.web.multipart.MultipartFile;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.config.YmlConfig;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.exception.HioHttpRequestDuplicateException;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.utils.OrderValue;
+
+/**
+ * 1、拦截controller的入参和出参、打印log<br>
+ * 2、处理防重复提交<br>
+ * feign接口不处理防重复提交
+ * 
+ * @author wt.coffee
+ * @date 2018年4月4日上午9:54:26
+ */
+@Aspect
+@Order(OrderValue.AOP_LOG)
+@Configuration
+@SuppressWarnings("unchecked")
+public class LogAop extends Base {
+	private Logger logger = LoggerFactory.getLogger("LogAop");
+
+	// 执行次数
+	private Map<String, Long> timesMap = new Hashtable<>();
+	// 执行总时长
+	private Map<String, Long> totalMap = new Hashtable<>();
+	@Autowired
+	private YmlConfig.Aop aopConfig;
+
+	@Pointcut("execution(* com.jzy.hio..controller.*.*(..) )")
+	public void handleReturn() {
+
+	}
+
+	public static String stringToMd5(String psw) {
+		try {
+			MessageDigest md5 = MessageDigest.getInstance("MD5");
+			md5.update(psw.getBytes("UTF-8"));
+			byte[] encryption = md5.digest();
+
+			StringBuffer strBuf = new StringBuffer();
+			for (int i = 0; i < encryption.length; i++) {
+				if (Integer.toHexString(0xff & encryption[i]).length() == 1) {
+					strBuf.append("0").append(Integer.toHexString(0xff & encryption[i]));
+				} else {
+					strBuf.append(Integer.toHexString(0xff & encryption[i]));
+				}
+			}
+
+			return strBuf.toString();
+		} catch (NoSuchAlgorithmException e) {
+			return "";
+		} catch (UnsupportedEncodingException e) {
+			return "";
+		}
+	}
+
+	@Before("handleReturn()")
+	public void before() {
+		logger.info("before");
+	}
+
+	@After("handleReturn()")
+	public void after() {
+		logger.info("after");
+	}
+
+	/**
+	 * 把Controller的返回值统一封装成ApiResponse
+	 * 
+	 * @param thisJoinPoint
+	 * @return
+	 * @throws Throwable
+	 * @throws HioException
+	 */
+	@Around("handleReturn()")
+	public Object around(ProceedingJoinPoint thisJoinPoint) throws Throwable, Exception {
+		String methodName = thisJoinPoint.getSignature().getDeclaringTypeName() + "." + thisJoinPoint.getSignature().getName();
+		long startTime = System.currentTimeMillis();
+		// 获取session
+		Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+		if (authentication == null) {
+			logger.warn("authentication == null");
+			return null;
+		}
+		String phone = authentication.getName();// 手机号
+		ServletRequestAttributes ra = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+		HttpServletRequest request = ra.getRequest();
+		String requestUri = request.getRequestURI();
+		// 获取requestUri的最后一级 ,即Controller方法级的RequestMapping -- /sys/redis/get 只取get
+		String methodRequestMapinng = requestUri;
+		if (methodRequestMapinng.contains("/")) {
+			methodRequestMapinng = requestUri.substring(requestUri.lastIndexOf("/") + 1);
+		}
+		//
+		StringBuilder argsSb = new StringBuilder();
+		String feignValue = request.getHeader(BaseConstants.HTTP_HEADER_FEIGN_KEY);
+		for (Object arg : thisJoinPoint.getArgs()) {
+			if (arg instanceof MultipartFile || arg instanceof HttpServletRequest || arg instanceof HttpServletResponse) {
+				// 数据量太大、不打印
+				continue;
+			} else {
+				String argsJson = Base.obj2json(arg);
+				logger.info("请求参数>> {}", argsJson);
+
+				if (Base.isEquals(feignValue, BaseConstants.HTTP_HEADER_FEIGN_VALUE)) {
+					// feign接口不做 防重复提交
+					continue;
+				} else {
+					// 包含save请求
+					if (aopConfig.getHttpDuplicateUrl() != null) {
+						for (String urlPath : aopConfig.getHttpDuplicateUrl()) {
+							if (methodRequestMapinng.contains(urlPath)) {
+								argsSb.append(argsJson);
+								// append只需要添加一次、所以break
+								break;
+							}
+						}
+					} else {
+						// 如果没配置httpDuplicateUrl -- 则不做处理
+					}
+				}
+			}
+		}
+		if (argsSb.length() > 0) {
+			String key = phone + "-" + requestUri + "-" + stringToMd5(argsSb.toString());
+
+			String status = JedisUtil.setNxExPx(key, requestUri,"px", aopConfig.getHttpDuplicateSeconds());
+			if (!"OK".equals(status)) {
+				logger.error("重复提交请求 {} {}", key, requestUri);
+				throw new HioHttpRequestDuplicateException("重复提交请求");
+
+			}
+
+			// String value = JedisUtil.get(key);
+			// if (value != null) {
+			// logger.warn("重复提交请求, {}", requestUri);
+			// try {
+			// throw new HioHttpRequestDuplicateException("重复提交请求");
+			// } catch (NullPointerException e) {
+			// // e.printStackTrace();
+			// }
+			// } else {
+			// JedisUtil.set(key, requestUri, aopConfig.getHttpDuplicateSeconds());
+			// }
+		} else {
+			// 等于0的时候 不处理
+		}
+
+		Map<String, String> session = JedisUtil.fetchSession(phone);
+		if (session != null) {
+			// 清除MDC数据
+			MDC.remove("USER_ID");
+			MDC.remove("TEND_ID");
+			MDC.remove("IM_ID");
+			MDC.remove("PHONE");
+			MDC.remove("IP");
+
+			// 添加MDC数据，用于业务日志使用
+			MDC.put("USER_ID", session.get(BaseConstants.SESSION_USERID_OA));// oa userId
+			MDC.put("TEND_ID", session.get(BaseConstants.SESSION_TENDID));// 租户id
+			MDC.put("IM_ID", session.get(BaseConstants.SESSION_USERID_IM));// im imId
+			MDC.put("PHONE", phone);// 手机号
+			String ip = InetAddress.getLocalHost().getHostAddress();
+			MDC.put("IP", ip);// 主机ip
+		}
+		// try {
+		Object returnValue = thisJoinPoint.proceed();
+		long time = System.currentTimeMillis() - startTime;
+
+		timesMap.put(methodName, timesMap.get(methodName) == null ? 1 : timesMap.get(methodName) + 1);
+		totalMap.put(methodName, totalMap.get(methodName) == null ? time : totalMap.get(methodName) + time);
+
+		logger.info("执行次数 {}==={}", methodName, timesMap.get(methodName));
+		logger.info("执行时间{}===总时间{} 平均时间{}", methodName, totalMap.get(methodName), totalMap.get(methodName) / timesMap.get(methodName));
+		return returnValue;
+		// } catch (NullPointerException e) {
+		// e.printStackTrace();
+		// return null;
+		// }
+
+	}
+}

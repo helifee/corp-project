@@ -1,0 +1,140 @@
+/*
+ * @(#)AbstractSeleniumTest.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 共通系统
+ */
+
+package com.yds.base.test;
+
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+
+import javax.annotation.Resource;
+import javax.sql.DataSource;
+
+import junit.framework.Assert;
+
+import org.dbunit.database.DatabaseConfig;
+import org.dbunit.database.DatabaseConnection;
+import org.dbunit.database.IDatabaseConnection;
+import org.dbunit.database.QueryDataSet;
+import org.dbunit.dataset.IDataSet;
+import org.dbunit.dataset.xml.FlatXmlDataSet;
+import org.dbunit.dataset.xml.FlatXmlDataSetBuilder;
+import org.dbunit.ext.mysql.MySqlDataTypeFactory;
+import org.dbunit.operation.DatabaseOperation;
+import org.junit.Ignore;
+import org.junit.Test;
+import org.springframework.jdbc.datasource.DataSourceUtils;
+import org.springframework.test.annotation.NotTransactional;
+import org.springframework.test.context.transaction.TransactionConfiguration;
+
+/**
+ * Selenium Web功能测试用例基类.
+ * 
+ * @author tianjian
+ */
+@SuppressWarnings("deprecation")
+@TransactionConfiguration(defaultRollback = false)
+public abstract class AbstractSeleniumTestCase extends CoreSeleniumTest {
+
+	protected static final String DB_BACKUP_PATH = "build\\report\\function_dbdata\\dbBack.xml";
+
+	/** 需要备份的表名. */
+	protected String[] tables;
+
+	@Resource
+	private DataSource dataSource;
+
+	private IDatabaseConnection conn;
+
+	/**
+	 * 测试初始化操作的test方法，数据不回滚.
+	 */
+	@Test
+	public void testInit() throws Exception {
+		conn = new DatabaseConnection(DataSourceUtils.getConnection(dataSource));
+		Assert.assertNotNull(conn);
+		DatabaseConfig config = conn.getConfig();
+		config.setProperty(DatabaseConfig.PROPERTY_DATATYPE_FACTORY, new MySqlDataTypeFactory());
+		backUpTables();
+		init();
+	}
+
+	/**
+	 * 测试画面功能操作的test方法.
+	 */
+	@Test
+	@Ignore
+	@NotTransactional
+	public void testRun() throws Exception {
+		run();
+	}
+
+	/**
+	 * 测试结束时还原数据库.
+	 */
+	@Test
+	public void testRollbackTables() throws Exception {
+		conn = new DatabaseConnection(DataSourceUtils.getConnection(dataSource));
+		Assert.assertNotNull(conn);
+		DatabaseConfig config = conn.getConfig();
+		config.setProperty(DatabaseConfig.PROPERTY_DATATYPE_FACTORY, new MySqlDataTypeFactory());
+		rollbackTables();
+	}
+
+	/**
+	 * 测试初始化操作.
+	 */
+	public abstract void init() throws Exception;
+
+	/**
+	 * 测试画面功能操作.
+	 */
+	public abstract void run() throws Exception;
+
+	/**
+	 * 设置需要备份的表名.
+	 */
+	public void setTables(String... tables) {
+		this.tables = tables;
+	}
+
+	/**
+	 * 测试前备份数据库.
+	 */
+	private void backUpTables() throws Exception {
+		QueryDataSet dataSet = new QueryDataSet(conn);
+		// 将整个表里的数据导出到 dbBack.xml文件里
+		for (String table : tables) {
+			dataSet.addTable(table);
+		}
+
+		// 如果想把某个数据库里的所有表里的数据全部导出到某个xml里,又不想通过addTable一个个来添加的话。则必须通过IDatabaseConnection的createDataSet()来创建IDataSet
+		// IDataSet dataSet = conn.createDataSet();
+
+		// 导出到dbunit.xml文件里
+		FlatXmlDataSet.write(dataSet, new FileOutputStream(DB_BACKUP_PATH));
+		DatabaseOperation.DELETE_ALL.execute(conn, dataSet);
+	}
+
+	/**
+	 * 结束时还原数据库.
+	 */
+	private void rollbackTables() throws Exception {
+		// 从dbBack.xml文件中把备份的表还原到数据库中
+		FileInputStream fi = null;
+		try {
+			fi = new FileInputStream(DB_BACKUP_PATH);
+			IDataSet dataSet = new FlatXmlDataSetBuilder().build(fi);
+			DatabaseOperation.CLEAN_INSERT.execute(conn, dataSet);
+		} finally {
+			if (fi != null) {
+				fi.close();
+			}
+		}
+	}
+
+}

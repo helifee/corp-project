@@ -1,0 +1,636 @@
+/*
+ * @(#) G080011ServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 教育考试培训系统
+ *    SubSystem: 管理
+ */
+package com.yds.tt.manager.service.impl;
+
+import java.text.DateFormat;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+
+import org.springframework.stereotype.Service;
+
+import com.yds.base.service.AbstractBaseService;
+import com.yds.common.bean.Node;
+import com.yds.common.bean.Tree;
+import com.yds.tt.manager.bean.G080011CategoryInfo;
+import com.yds.tt.manager.bean.G080011Differentiation;
+import com.yds.tt.manager.bean.G080011UnconformityDataInfo;
+import com.yds.tt.manager.bean.SystemMaintainInfo;
+import com.yds.tt.manager.dao.G080011Dao;
+import com.yds.tt.manager.service.G080011Service;
+import com.yds.tt.manager.service.TtCommonService;
+import com.yds.tt.manager.service.TtCommonUtil;
+import com.yds.tt.manager.service.TtConstants;
+import com.yds.tt.manager.service.TtExclusiveException;
+import com.yds.util.service.TreeUtil;
+
+/**
+ * @see com.yds.tt.manager.service.G080011Service
+ */
+@Service("g080011Service")
+public class G080011ServiceImpl extends AbstractBaseService implements
+		G080011Service {
+
+	private static final int CATEGORY_STATUS_NORMAL = 0;
+	private G080011Dao g080011Dao;
+	private TtCommonService ttCommonService;
+	private static final int UNIT_LENGTH = 11;
+	private static final String DIFFSTATUS_READONLY = "R";
+	private static final String DIFFSTATUS_EDITABLE = "E";
+	private static final String DATEFORMAT_PROTOTYPE = "yyyy-MM-dd HH:mm:ss";
+	private static final String DATEFORMAT_OUTPUT = "yyyy年MM月dd日HH时mm分ss秒";
+
+	/**
+	 * @param dao
+	 *            the g080011Dao to set
+	 */
+	public void setG080011Dao(G080011Dao dao) {
+		g080011Dao = dao;
+	}
+
+	/**
+	 * @param ttCommonService
+	 *            the ttCommonService to set
+	 */
+	public void setTtCommonService(TtCommonService ttCommonService) {
+		this.ttCommonService = ttCommonService;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public List<Tree> getTree() {
+
+		// 分类信息取得
+		G080011CategoryInfo pars = new G080011CategoryInfo();
+		pars.setCategory1Id(0);
+		pars.setCategory2Id(0);
+		pars.setCategory3Id(0);
+		List<G080011CategoryInfo> categoryList = g080011Dao
+				.getCategoryInfoList(pars);
+
+		List<Node> nodes = new ArrayList<Node>();
+
+		for (G080011CategoryInfo categoryInfo : categoryList) {
+			Node node = new Node();
+			node.setId(categoryInfo.getCategoryId());
+			node.setDispSeq(categoryInfo.getCategoryLevelCode());
+			node.setTxt(categoryInfo.getCategoryName());
+
+			nodes.add(node);
+		}
+
+		return TreeUtil.getTreeList(nodes, UNIT_LENGTH);
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public String addRootCategory(G080011CategoryInfo categoryInfo) {
+
+		// 最大一级分类Id取得
+		Integer maxId = g080011Dao.getMaxCategory1Id();
+		String userId = TtCommonUtil.getLoginUserId();
+
+		G080011CategoryInfo category = new G080011CategoryInfo();
+		category.setCategory1Id(maxId == null ? 1 : maxId + 1);
+		category.setCategory2Id(0);
+		category.setCategory3Id(0);
+		category.setCategoryLevel(1);
+		category.setCategoryName(categoryInfo.getCategoryName());
+		category.setCategoryStatus(CATEGORY_STATUS_NORMAL);
+		category.setCreateUserId(userId);
+		category.setUpdateUserId(userId);
+
+		// 登录一级分类
+		g080011Dao.insertCategory(category);
+
+		String returnValue = g080011Dao.getCategoryId(category);
+
+		if (maxId != null) {
+			category.setCategory1Id(maxId);
+			returnValue = returnValue + "&"
+					+ g080011Dao.getCategoryId(category);
+		}
+
+		// 返回“新建的一级分类组合ID&最末端的一级分类组合ID”
+		return returnValue;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public String addChildCategory(G080011CategoryInfo categoryInfo,
+			int submitFlag) {
+
+		// 待创建子类别
+		G080011CategoryInfo child = new G080011CategoryInfo();
+		String userId = TtCommonUtil.getLoginUserId();
+
+		// 取得画面.类别名称
+		child.setCategoryName(categoryInfo.getCategoryName());
+
+		// 分割分类组合ID，获取分类ID
+		G080011CategoryInfo ids = this.splitCategoryId(categoryInfo);
+
+		if (ids.getCategory2Id() == 0) {
+			child.setCategory1Id(ids.getCategory1Id());
+			child.setCategory2Id(g080011Dao.getMaxCategory2Id(ids
+					.getCategory1Id()) + 1);
+			child.setCategory3Id(0);
+			child.setCategoryLevel(2);
+		} else if (ids.getCategory3Id() == 0) {
+			child.setCategory1Id(ids.getCategory1Id());
+			child.setCategory2Id(ids.getCategory2Id());
+			child.setCategory3Id(g080011Dao.getMaxCategory3Id(ids) + 1);
+			child.setCategoryLevel(3);
+		}
+
+		child.setCategoryStatus(CATEGORY_STATUS_NORMAL);
+		child.setCreateUserId(userId);
+		child.setUpdateUserId(userId);
+
+		// 登录子分类
+		g080011Dao.insertCategory(child);
+
+		// 如果当前请求是确认提交，说明选择类别有不整合数据，要更改类别状态为“已细化”
+		if (submitFlag == 2) {
+			ids.setCategoryStatus(TtConstants.C31.C31_2.value());
+			ids.setUpdateUserId(TtCommonUtil.getLoginUserId());
+			g080011Dao.updateCategoryStatus(ids);
+		}
+
+		return g080011Dao.getCategoryId(child);
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void saveCategory(G080011CategoryInfo categoryInfo) {
+
+		categoryInfo.setUpdateUserId(TtCommonUtil.getLoginUserId());
+		g080011Dao.updateCategoryName(this.splitCategoryId(categoryInfo));
+
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void deleteCategory(G080011CategoryInfo categoryInfo) {
+
+		// 更新分类状态为“待删除”
+		G080011CategoryInfo ids = this.splitCategoryId(categoryInfo);
+		ids.setCategoryStatus(TtConstants.C31.C31_1.value());
+		ids.setUpdateUserId(TtCommonUtil.getLoginUserId());
+		g080011Dao.updateCategoryStatus(ids);
+
+		G080011CategoryInfo parent = this.getParent(ids);
+
+		if (parent != null
+				&& parent.getCategoryStatus() == TtConstants.C31.C31_2.value()
+				&& g080011Dao.getChildrenNumber(parent) == 0) {
+
+			//如果父类别状态为“已细化”，并且父类别已经没有子类别，则更新父类别状态为正常
+			parent.setCategoryStatus(CATEGORY_STATUS_NORMAL);
+			parent.setUpdateUserId(TtCommonUtil.getLoginUserId());
+			g080011Dao.updateCategoryStatus(parent);
+		}
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void deleteUndo(G080011CategoryInfo categoryInfo, int submitFlag) {
+		// 更新分类状态为“正常”
+		G080011CategoryInfo ids = this.splitCategoryId(categoryInfo);
+		ids.setCategoryStatus(CATEGORY_STATUS_NORMAL);
+		ids.setUpdateUserId(TtCommonUtil.getLoginUserId());
+		g080011Dao.updateCategoryStatus(ids);
+
+		// 如果当前请求是确认提交，说明选择类别的父类别有不整合数据，要更改父类别状态为“已细化”
+		if (submitFlag == 2) {
+			G080011CategoryInfo parent = this.getParent(ids);
+			parent.setCategoryStatus(TtConstants.C31.C31_2.value());
+			parent.setUpdateUserId(TtCommonUtil.getLoginUserId());
+			g080011Dao.updateCategoryStatus(parent);
+		}
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public List<G080011CategoryInfo> getUnconformityCountList(
+			G080011CategoryInfo categoryInfo) {
+
+		G080011CategoryInfo ids = null;
+
+		if (categoryInfo != null) {
+			ids = this.splitCategoryId(categoryInfo);
+		} else {
+			ids = new G080011CategoryInfo();
+			ids.setCategory1Id(0);
+			ids.setCategory2Id(0);
+			ids.setCategory3Id(0);
+		}
+
+		return g080011Dao.getUnconformityCountList(ids);
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public String getWarningMessageParams(G080011CategoryInfo categoryInfo,
+			int accessFlag) {
+
+		G080011CategoryInfo categoryUsage;
+
+		switch (accessFlag) {
+		case 1:
+			categoryUsage = g080011Dao.getCategoryInfo(this
+					.splitCategoryId(categoryInfo));
+
+			// 删除警告模式下，若类别使用记录不为0,即返回警告信息
+			int usageTotal = categoryUsage.getAuthority()
+					+ categoryUsage.getCourse() + categoryUsage.getBook()
+					+ categoryUsage.getExam() + categoryUsage.getPaper()
+					+ categoryUsage.getQuestion();
+
+			if (usageTotal > 0) {
+				return "权限" + categoryUsage.getAuthority() + "条、" + "课程"
+						+ categoryUsage.getCourse() + "条、" + "教材"
+						+ categoryUsage.getBook() + "条、" + "考试"
+						+ categoryUsage.getExam() + "条、" + "试卷"
+						+ categoryUsage.getPaper() + "条、" + "试题"
+						+ categoryUsage.getQuestion() + "条";
+			}
+			break;
+		case 2:
+			categoryUsage = g080011Dao.getCategoryInfo(this
+					.splitCategoryId(categoryInfo));
+
+			// 细化警告模式下，只有当选择类别在题库表中的使用记录不为0，并且状态不为已细化的时候，才返回警告信息
+			if (categoryUsage.getCategoryStatus() != TtConstants.C31.C31_2
+					.value()
+					&& categoryUsage.getQuestion() > 0) {
+				return "试题" + categoryUsage.getQuestion() + "条";
+			}
+			break;
+		case 3:
+
+			categoryUsage = this.getParent(splitCategoryId(categoryInfo));
+
+			// 细化警告模式下，只有当选择类别在题库表中的使用记录不为0，并且状态不为已细化的时候，才返回警告信息
+			if (categoryUsage != null
+					&& categoryUsage.getCategoryStatus() != TtConstants.C31.C31_2
+							.value() && categoryUsage.getQuestion() > 0) {
+				return "试题" + categoryUsage.getQuestion() + "条";
+			}
+		
+		default :
+			break;
+		}
+
+		return null;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public boolean canNotHaveChildren(G080011CategoryInfo categoryInfo) {
+
+		// 选择分类不能为空
+		if (categoryInfo == null || categoryInfo.getCategoryId() == null) {
+			return true;
+		}
+
+		G080011CategoryInfo category = splitCategoryId(categoryInfo);
+
+		// 选择分类不能为待删除，并且不能是第三层类别
+		if ((getStatusById(category.getCategoryId()) == TtConstants.C31.C31_1
+				.value())
+				|| (category.getCategory1Id() > 0
+						&& category.getCategory2Id() > 0 && category
+						.getCategory3Id() > 0)) {
+			return true;
+		}
+		return false;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public boolean canNotBeDeleted(G080011CategoryInfo categoryInfo) {
+		// 选择分类不能为空
+		if (categoryInfo == null || categoryInfo.getCategoryId() == null) {
+			return true;
+		}
+
+		// 选择分类不能为待删除，并且不能有子类别
+		if (getStatusById(categoryInfo.getCategoryId()) == TtConstants.C31.C31_1
+				.value()
+				|| g080011Dao.getChildrenNumber(splitCategoryId(categoryInfo)) > 0) {
+			return true;
+		}
+
+		return false;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public boolean canNotBeModified(G080011CategoryInfo categoryInfo) {
+		// 选择分类不能为空
+		if (categoryInfo == null || categoryInfo.getCategoryId() == null) {
+			return true;
+		}
+
+		// 选择分类不能为待删除
+		if (getStatusById(categoryInfo.getCategoryId()) == TtConstants.C31.C31_1
+				.value()) {
+			return true;
+		}
+		return false;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public boolean canNotBeUndone(G080011CategoryInfo categoryInfo) {
+		// 选择分类不能为空
+		if (categoryInfo == null || categoryInfo.getCategoryId() == null) {
+			return true;
+		}
+
+		// 选择分类必须是待删除状态
+		if (getStatusById(categoryInfo.getCategoryId()) != TtConstants.C31.C31_1
+				.value()) {
+			return true;
+		}
+
+		G080011CategoryInfo parent = getParent(this
+				.splitCategoryId(categoryInfo));
+
+		// 父类别状态不能为待删除
+		if (parent != null
+				&& parent.getCategoryStatus() == TtConstants.C31.C31_1.value()) {
+			return true;
+		}
+
+		return false;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public List<G080011Differentiation> getDiffDetailInfoList(String typeId) {
+
+		return g080011Dao.getDiffDetailInfoList(typeId);
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public List<G080011Differentiation> getDiffInfoList() {
+
+		return g080011Dao.getDiffInfoList();
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void saveDiff(String typeId, String typeName, String[] diffNo,
+			String[] diffName) {
+		if (DIFFSTATUS_READONLY.equals(typeId.substring(0, 1))) {
+			for (int i = 0; i < diffNo.length; i++) {
+				G080011Differentiation differentiation = new G080011Differentiation();
+				differentiation.setTypeId(typeId);
+				differentiation.setDiffNo(diffNo[i]);
+				differentiation.setDispSeq(i);
+				g080011Dao.updateDispSeq(differentiation);
+			}
+		} else if (DIFFSTATUS_EDITABLE.equals(typeId.substring(0, 1))) {
+			int maxDiffNo = g080011Dao.getMaxDiffNo(typeId);
+
+			// 删除要保存的区分
+			g080011Dao.deleteDiff(typeId);
+
+			for (int i = 0; i < diffNo.length; i++) {
+				G080011Differentiation differentiation = new G080011Differentiation();
+				differentiation.setTypeId(typeId);
+				differentiation.setTypeName(typeName);
+
+				// 画面上新建的区分，区分No采番
+				if (diffNo[i] == null || "".equals(diffNo[i])) {
+					differentiation.setDiffNo(String.valueOf(++maxDiffNo));
+				} else {
+					differentiation.setDiffNo(diffNo[i]);
+				}
+
+				differentiation.setDiffName(diffName[i]);
+				differentiation.setDispSeq(i);
+				differentiation.setSubSys(TtConstants.PREVTT);
+
+				// 登录画面上提交的区分
+				g080011Dao.insertDiff(differentiation);
+			}
+		}
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public Long getUnconformityDataCount() {
+		Long count = g080011Dao.getUnconformityDataCount();
+		return count == null ? 0L : count;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public List<G080011UnconformityDataInfo> getUnconformityDataList(
+			int offset, int perCounts) {
+		return g080011Dao.getUnconformityDataList(offset, perCounts);
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public String getSystemStatus() {
+		SystemMaintainInfo smInfo = this.getSystemMaintainInfo();
+
+		// 系统维护中时，检查系统维护登陆者和登录时间是否和session中值吻合
+		if (TtConstants.SYSTEM_STATUS.CLOSED.value().equals(
+				smInfo.getMaintainFlag())) {
+			if (!TtCommonUtil.getLoginUserId().equals(smInfo.getMaintainer())
+					|| !ttCommonService.checkTimeStamp(
+							TtConstants.PageId.G080011, smInfo
+									.getMaintainerLoginTime())) {
+				// 不吻合时，抛出排他异常
+				String loginTime = new SimpleDateFormat(DATEFORMAT_OUTPUT)
+						.format(smInfo.getMaintainerLoginTime());
+				String userName = g080011Dao.getUserName(smInfo.getMaintainer());
+				throw new TtExclusiveException(propMgr.getMessage("yds.tt.warn.GLW13", userName, loginTime));
+			}
+		}
+		return smInfo.getMaintainFlag();
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void updateSysMaintInfoForStart() {
+		SystemMaintainInfo systemMaintainInfo = new SystemMaintainInfo();
+		systemMaintainInfo.setMaintainFlag(TtConstants.SYSTEM_STATUS.CLOSED
+				.value());
+		systemMaintainInfo.setMaintainer(TtCommonUtil.getLoginUserId());
+		
+		// 把系统维护登录时间记入session
+		Date loginTime = new Date();
+		systemMaintainInfo.setUserLoginTime(new SimpleDateFormat(DATEFORMAT_PROTOTYPE).format(loginTime));
+		ttCommonService.setTimestamp(TtConstants.PageId.G080011, loginTime);
+		
+		g080011Dao.updateSystemMaintainInfo(systemMaintainInfo);
+
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void updateSysMaintInfoForStop() {
+		SystemMaintainInfo systemMaintainInfo = new SystemMaintainInfo();
+		systemMaintainInfo.setMaintainFlag(TtConstants.SYSTEM_STATUS.OPENING
+				.value());
+		systemMaintainInfo.setMaintainer("");
+		
+		systemMaintainInfo.setUserLoginTime("");
+		
+		g080011Dao.updateSystemMaintainInfo(systemMaintainInfo);
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void checkSystemStatus() {
+		SystemMaintainInfo smInfo = this.getSystemMaintainInfo();
+
+		// 系统维护中时，检查系统维护登陆者和登录时间是否和session中值吻合
+		if (TtConstants.SYSTEM_STATUS.CLOSED.value().equals(
+				smInfo.getMaintainFlag())) {
+			if (!TtCommonUtil.getLoginUserId().equals(smInfo.getMaintainer())
+					|| !ttCommonService.checkTimeStamp(
+							TtConstants.PageId.G080011, smInfo
+									.getMaintainerLoginTime())) {
+				// 不吻合时，返回错误信息
+				throw new TtExclusiveException(propMgr.getMessage("yds.tt.error.GLE13"));
+			}
+		} else {
+			// 系统非维护状态下，返回错误信息
+			throw new TtExclusiveException(propMgr.getMessage("yds.tt.error.GLE14"));
+		}
+		
+	}
+
+	/**
+	 * 系统维护信息取得
+	 * 
+	 * @return SystemMaintainInfo 系统维护信息
+	 */
+	private SystemMaintainInfo getSystemMaintainInfo() {
+		List<String> systemMaintainInfoList = g080011Dao
+				.getSystemMaintainInfo();
+		SystemMaintainInfo systemMaintainInfo = new SystemMaintainInfo();
+		systemMaintainInfo.setMaintainFlag(systemMaintainInfoList.get(0));
+		systemMaintainInfo.setMaintainer(systemMaintainInfoList.get(2));
+		String loginTime = systemMaintainInfoList.get(1);
+		if (loginTime.isEmpty()) {
+			systemMaintainInfo.setMaintainerLoginTime(null);
+		} else {
+			DateFormat df = new SimpleDateFormat(DATEFORMAT_PROTOTYPE);
+			try {
+				systemMaintainInfo.setMaintainerLoginTime(df.parse(loginTime));
+			} catch (ParseException e) {
+				systemMaintainInfo.setMaintainerLoginTime(null);
+			}
+		}
+
+		return systemMaintainInfo;
+	}
+	
+	/**
+	 * 拆分组合ID
+	 * 
+	 * @param String
+	 *            类别ID
+	 * @return G080011CategoryInfo 分类信息
+	 */
+	private G080011CategoryInfo splitCategoryId(G080011CategoryInfo categoryInfo) {
+
+		String[] arr = categoryInfo.getCategoryId().split("_");
+		categoryInfo.setCategory1Id(Integer.parseInt(arr[0].substring(0, 11)));
+		categoryInfo.setCategory2Id(Integer.parseInt(arr[0].substring(11, 22)));
+		categoryInfo.setCategory3Id(Integer.parseInt(arr[0].substring(22)));
+
+		return categoryInfo;
+	}
+
+	/**
+	 * 取得组合ID中的类别状态
+	 * 
+	 * @param String
+	 *            类别组合ID
+	 * @return Integer 分类状态
+	 */
+	private Integer getStatusById(String categoryId) {
+
+		return Integer.parseInt(categoryId.split("_")[1]);
+	}
+
+	/**
+	 * 父类别信息取得
+	 * 
+	 * @param G080011CategoryInfo
+	 *            类别信息
+	 * @return G080011CategoryInfo 父类别信息
+	 */
+	private G080011CategoryInfo getParent(G080011CategoryInfo categoryInfo) {
+
+		if (categoryInfo.getCategory3Id() > 0) {
+			categoryInfo.setCategory3Id(0);
+		} else if (categoryInfo.getCategory2Id() > 0) {
+			categoryInfo.setCategory2Id(0);
+		} else {
+			return null;
+		}
+
+		return g080011Dao.getCategoryInfo(categoryInfo);
+	}
+
+}

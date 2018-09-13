@@ -1,0 +1,697 @@
+
+package com.jzy.hio.oa.news.service.impl;
+
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cloud.context.config.annotation.RefreshScope;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.annotation.DataSource;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.RedisKeyConstant;
+import com.jzy.hio.base.service.impl.BaseOaServiceImpl;
+import com.jzy.hio.entity.News;
+import com.jzy.hio.entity.NewsAllowedScope;
+import com.jzy.hio.entity.NewsType;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.exception.HioMybatisDeleteException;
+import com.jzy.hio.exception.HioMybatisInsertException;
+import com.jzy.hio.exception.HioMybatisUpdateException;
+import com.jzy.hio.feign.PlatformFeignService;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.oa.OaConstant;
+import com.jzy.hio.oa.contract.dto.ResultMsg;
+import com.jzy.hio.oa.journal.dto.ShareDto;
+import com.jzy.hio.oa.news.dto.NewsDto;
+import com.jzy.hio.oa.news.dto.NewsListParam;
+import com.jzy.hio.oa.news.mapper.NewsMapper;
+import com.jzy.hio.oa.news.service.NewsAllowedScopeService;
+import com.jzy.hio.oa.news.service.NewsService;
+import com.jzy.hio.oa.news.service.NewsTypeService;
+import com.jzy.hio.platform.dto.tenantcompanyinfo.TenantCompanyInfoDto;
+import com.jzy.hio.platform.message.MessageFeignService;
+import com.jzy.hio.platform.message.param.IMToUserParam;
+import com.jzy.hio.platform.message.param.ImNoticeMsgsParam;
+import com.jzy.hio.platform.message.param.MessageEnum;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.sys.user.dto.OAUserDto;
+import com.jzy.hio.sys.user.param.OAUserParam;
+import com.jzy.hio.utils.HtmlUtil;
+import com.jzy.hio.utils.LoginUser;
+import com.jzy.hio.utils.OaUserUtil;
+import com.jzy.hio.utils.Page;
+
+@Service("newsService")
+@RefreshScope
+public class NewsServiceImpl extends BaseOaServiceImpl<News> implements NewsService {
+	
+	//private static final ExecutorService syncNewsCountThreadPool = Executors.newFixedThreadPool(5);
+
+	@Autowired
+	private NewsMapper newsMapper;
+	
+	@Autowired
+	private SysFeignService sysFeignService;
+	
+	@Autowired
+	private NewsTypeService newsTypeService;
+	
+	@Autowired
+	private NewsAllowedScopeService newsAllowedScopeService;
+	
+	@Autowired
+	private OaUserUtil oaUserUtil;
+	
+	@Autowired
+	private PlatformFeignService platformFeignService;
+	
+	//@Autowired
+	//private NewsReadRecordService newsReadRecordService;
+	
+	//发送cc消息服务
+	@Autowired
+	private MessageFeignService messageFeignService;
+	
+	@Value("${newsMobileUrl}")
+	private String newsMobileUrl;// 新闻移动端 url
+	
+	@Value("${newsPcUrl}")
+	private String newsPcUrl;// 新闻PC客户端 url
+	
+	@Override
+	public NewsDto readNewsById(@DataSource String tendId, String newsId) {
+		NewsDto newsDto = new NewsDto();
+		News news = super.getObjectById(newsId);
+		if(news == null || news.getDelflag() == 1) {
+			return null;
+		}
+		BeanUtils.copyProperties(news, newsDto);
+		// 栏目ID
+		String typeId = news.getTypeId();
+		NewsType newsType = newsTypeService.getObjectById(typeId);
+		if (newsType != null) {
+			newsDto.setNewsTypeName(newsType.getName());
+		}
+		if(news.getStatus() == 1) {
+			// 增加点击量
+			newsMapper.addHitNum(newsId);
+			newsDto.setHitNum(newsDto.getHitNum()+1);
+		}
+		return addAttachmentInfo(newsDto);
+	}
+	
+	@Override
+	public void topNewsById(String newsId) {
+		newsMapper.topNewsById(newsId);
+	}
+	
+	@Override
+	public void cancelTopNewsById(String newsId) {
+		newsMapper.cancelTopNewsById(newsId);
+	}
+
+	@Override
+	public NewsDto getNewsById(String id, @DataSource String tendId) {
+		NewsDto newsDto = new NewsDto();
+		News news = super.getObjectById(id);
+		if(news.getDelflag() == 1) {
+			return null;
+		}
+		BeanUtils.copyProperties(news, newsDto);
+		
+		String typeId = news.getTypeId();// 栏目ID
+		NewsType newsType = newsTypeService.getObjectById(typeId);
+		if (newsType != null) {
+			newsDto.setNewsTypeName(newsType.getName());
+		}
+		
+		// 附件相关字段-------------------------------------
+		
+		// 可见范围
+		NewsAllowedScope newsAllowedScope = new NewsAllowedScope();
+		newsAllowedScope.setNewsId(id);
+		List<NewsAllowedScope> newsAllowedScopeList = newsAllowedScopeService.findNewsAllowedScope(tendId, newsAllowedScope);
+		if (newsAllowedScopeList != null && newsAllowedScopeList.size() > 0) {
+			List<ShareDto> userShareDtoList = new ArrayList<ShareDto>();// 用户共享
+			List<ShareDto> roleShareDtoList = new ArrayList<ShareDto>();// 角色用户共享
+			List<ShareDto> orgShareDtoList = new ArrayList<ShareDto>();// 组织用户共享
+			for (NewsAllowedScope scope : newsAllowedScopeList) {
+				String allowedId = scope.getAllowedId();
+				String allowedType = scope.getAllowedType();// 共享范围ID:0部门ID，1人员ID，2角色ID
+				if (OaConstant.ALLOWED_TYPE_ORG.equals(allowedType)) {
+					ShareDto orgShareDto = new ShareDto();
+					orgShareDto.setId(allowedId);
+					String name = oaUserUtil.queryOrgNameById(allowedId,tendId);
+					if(StringUtils.isBlank(name)) {
+						continue;
+					}
+					// 调用sys方法------------------------------------------------------
+					//String name = sysFeignService.queryOrganizationNameById(tendId,allowedId).getResult().getName();
+					orgShareDto.setName(name);
+					orgShareDtoList.add(orgShareDto);
+				} else if (OaConstant.ALLOWED_TYPE_USER.equals(allowedType)) {
+					ShareDto userShareDto = new ShareDto();
+					userShareDto.setId(allowedId);
+					// 调用sys方法------------------------------------------------------
+					//包含离职、删除人员
+					String name = oaUserUtil.selectUserNameByTendIdAndStatus(allowedId,tendId,OaConstant.OA_USER_QUERY_STATUS_3);
+					if(StringUtils.isBlank(name)) {
+						continue;
+					}
+					//String name = sysFeignService.queryOrganizationNameById(tendId,allowedId).getResult().getName();
+					userShareDto.setName(name);
+					userShareDtoList.add(userShareDto);
+				} else {
+					ShareDto roleShareDto = new ShareDto();
+					roleShareDto.setId(allowedId);
+					// 调用sys方法------------------------------------------------------
+					String name = oaUserUtil.queryRoleNameById(allowedId,tendId);
+					if(StringUtils.isBlank(name)) {
+						continue;
+					}
+					//String name = sysFeignService.queryOrganizationNameById(tendId,allowedId).getResult().getName();
+					roleShareDto.setName(name);
+					roleShareDtoList.add(roleShareDto);
+				}
+			}
+			newsDto.setOrgShareList(orgShareDtoList);
+			newsDto.setUserShareList(userShareDtoList);
+			newsDto.setRoleShareList(roleShareDtoList);
+		}
+		return addAttachmentInfo(newsDto);
+	}
+	
+
+	@Override
+	public Integer saveNews(LoginUser user, NewsDto newsDto) throws HioMybatisInsertException{
+		
+		// 用户id
+		List<String> userIdList = newsDto.getUserIdList();
+		//校验保存信息是否包含离职/删除人员
+		ResultMsg resultMsg = oaUserUtil.checkUserEffective(userIdList, user.getTendId());
+		if(Base.isNotEmpty(resultMsg) && !resultMsg.isSuccess()){
+			throw new HioMybatisInsertException(resultMsg.getMsg());
+		}
+		
+		News news = new News();
+		BeanUtils.copyProperties(newsDto, news);
+		news.setPublishDate(new Date());
+		news.setId(newsDto.getBusinessId());
+		// 处理新闻摘要，这种做法不合理，但是所有人都决定让后端来这样处理，心有余而力不足！
+		String content = news.getNewsContent();
+		int index = content.indexOf("<table");
+		String noTableStr = content;
+		if(index >= 0) {
+			//去table
+			noTableStr = HtmlUtil.delTableTag(content);		
+		}
+		//去标签
+		String text = HtmlUtil.getTextFromHtml(noTableStr);
+		if(text.length() > 150) {
+			news.setHeadline(text.substring(0, 150));
+		} else {
+			news.setHeadline(text);
+		}
+		
+		// 保存新闻
+		Integer count = super.save(news);
+		
+		List<String> roleIdList = newsDto.getRoleIdList();//角色id
+		List<String> orgIdList = newsDto.getOrgIdList();//所有部门id
+		String newsId = news.getId();
+		
+		// 保存新闻可阅范围
+		saveNewsAllowedScopeByUserIdRoleIdOrgId(userIdList,roleIdList,orgIdList,newsId);
+		
+		if(news.getStatus() == 1) {// 文档状态：0草稿，1已发布
+			if (news.getMsgReminding() == 1) {// 消息提醒设置：0不提醒，1消息提醒
+				NewsType newsType = newsTypeService.getObjectById(news.getTypeId());
+				SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+				String publishTime = sdf.format(news.getPublishDate());
+				// 发送新闻消息提醒
+				sendNewsMessage(user, news.getTitle(), newsType.getName(), news.getUpdatePersonName(), publishTime, userIdList, roleIdList, orgIdList, newsId);
+			}
+			
+			// 修改该新闻栏目下新闻条数
+			newsTypeService.addNewsCount(user.getTendId(), news.getTypeId());
+			/*syncNewsCountThreadPool.execute(new Runnable() {
+				@Override
+				public void run() {
+					newsTypeService.addNewsCount(user.getTendId(), news.getTypeId());
+				}
+			});*/
+		}
+		return count;
+	}
+	
+	/**
+	 * 发送新闻消息提醒
+	 * @param loginUser
+	 * @param newsTitle
+	 * @param typeName
+	 * @param publishUser
+	 * @param publishTime
+	 * @param userIdList
+	 * @param roleIdList
+	 * @param orgIdList
+	 * @param newsId
+	 */
+	private void sendNewsMessage(LoginUser loginUser, String newsTitle, String typeName, String publishUser, String publishTime, List<String> userIdList, List<String> roleIdList, 
+			List<String> orgIdList, String newsId) {
+		String tendId = loginUser.getTendId();
+		//租户名称
+		String tenantId = JedisUtil.fetchIndexMobile(RedisKeyConstant.tenantToInfo, tendId);
+		TenantCompanyInfoDto tenantCompanyInfo = null;
+		if(StringUtils.isBlank(tenantId)) {
+			TenantCompanyInfoDto tend = new TenantCompanyInfoDto();
+			tend.setTendId(tendId);
+			tenantCompanyInfo = platformFeignService.queryTenantCompanyInfoByTendId(tend).getResult();
+		}else {
+			String tenantJson = JedisUtil.fetchRow("tenant_company_info", tenantId);
+			tenantCompanyInfo = Base.json2obj(tenantJson,TenantCompanyInfoDto.class);
+		}
+		String tendName = tenantCompanyInfo.getName();
+		
+		List<IMToUserParam> receiverList = new ArrayList<IMToUserParam>();
+		
+		//组装调用sys接口数据
+		OAUserParam oAUserParam = new OAUserParam();
+		if(userIdList != null && userIdList.size() > 0) {
+			oAUserParam.setUserIds(userIdList);
+		}
+		if(roleIdList != null && roleIdList.size() > 0) {
+			oAUserParam.setRoleIds(roleIdList);
+		}
+		if(orgIdList != null && orgIdList.size() > 0) {
+			oAUserParam.setOrganizationIds(orgIdList);
+		}
+		oAUserParam.setTendId(loginUser.getTendId());
+		oAUserParam.setContainsChildOrgUser(true);
+		List<String> userList = new ArrayList<String>();
+		logger.info(">>>>>>>>>>>>>>>>>>>>>>>>开始调用sys服务获取角色、部门下所有人员>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+		ApiFeignResponse<List<OAUserDto>> apiFeignResponse= sysFeignService.queryUserByOrgAndRoleAndUser(oAUserParam);
+		if(apiFeignResponse != null){
+			if(200 == apiFeignResponse.getStatus()){
+				List<OAUserDto> list = apiFeignResponse.getResult();
+				for (OAUserDto oaUserDto : list) {
+					userList.add(oaUserDto.getImUserId());
+				}
+			}else{
+				throw new HioException("调用queryNameByOrgAndRoleAndUser feign接口失败"+apiFeignResponse.getMessage());
+			}
+		}
+		logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>开始调用cc服务发送新闻提醒>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+		
+		if (userList != null && userList.size() > 0) {
+			Set<String> ccUserIdSet = new HashSet<String>();// 需要发送cc消息的userID的set
+			ccUserIdSet.addAll(userList);
+			List<String> lastUserIdList = new ArrayList<String>();
+			lastUserIdList.addAll(ccUserIdSet);
+			if (lastUserIdList != null && lastUserIdList.size() > 0) {
+				if (lastUserIdList.contains(getUserIdIM())) {
+					lastUserIdList.remove(getUserIdIM());
+				}
+			}
+			if (lastUserIdList != null && lastUserIdList.size() > 0) {
+				for (String ccUserId : lastUserIdList) {
+					IMToUserParam imToUserParam  = new IMToUserParam();// 消息接受人
+			        imToUserParam.setToUserId(ccUserId);
+			        receiverList.add(imToUserParam);
+				}
+				
+				// 发送消息
+				ImNoticeMsgsParam noticeMsg = new ImNoticeMsgsParam();
+				noticeMsg.setToUsers(receiverList);
+				String fromUserId = BaseConstants.HIO_IM_ADMIN+String.valueOf(MessageEnum.NEWS.getValue());
+				noticeMsg.setFromUserId(fromUserId);// 发送用户id
+				noticeMsg.setTendId(tendId);// 租户id
+		        noticeMsg.setTendName(tendName);// 租户名称
+				noticeMsg.setMsg(newsTitle);
+				noticeMsg.setModuleType(MessageEnum.NEWS.getValue()+"_0");
+				noticeMsg.setModuleName(MessageEnum.NEWS.getDes());
+				noticeMsg.setSendMsgType("text");
+				noticeMsg.setMsgType("msg");
+				noticeMsg.setOpenStatus(1);
+				// 扩展属性
+				Map<String, Object> map = new HashMap<String,Object>();
+				map.put("typeName", typeName);
+				map.put("publishUser", publishUser);
+				map.put("publishTime", publishTime);
+				map.put("pcUrl", newsPcUrl+newsId+"?tendId="+tendId);
+				map.put("mobileUrl", newsMobileUrl+newsId+"&tendId="+tendId);
+				
+				noticeMsg.setExt(map);// 业务自定义扩展字段 比如发送透彻时，公告消息的，标题，内容，时间，地点等等属性
+				
+				messageFeignService.sendMessageSingle(noticeMsg);
+				logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>新闻提醒消息发送成功>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+			} else {
+				logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>新闻提醒消息发送失败>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+			}
+		} else {
+			logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>新闻提醒消息发送失败>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+		}
+	}
+
+	@Override
+	public Integer updateNewsDto(NewsDto newsDto) throws HioMybatisUpdateException{
+		
+		LoginUser loginUser = getLoginUser();
+		// 用户id
+		List<String> userIdList = newsDto.getUserIdList();
+		//校验保存信息是否包含离职/删除人员
+		ResultMsg resultMsg = oaUserUtil.checkUserEffective(userIdList, loginUser.getTendId());
+		if(Base.isNotEmpty(resultMsg) && !resultMsg.isSuccess()){
+			throw new HioMybatisUpdateException(resultMsg.getMsg());
+		}		
+		News news = new News();
+		BeanUtils.copyProperties(newsDto, news);
+		news.setPublishDate(new Date());
+		// 处理新闻摘要，这种做法不合理，但是所有人都决定让后端来这样处理，心有余而力不足！
+		String content = news.getNewsContent();
+		int index = content.indexOf("<table");
+		String noTableStr = content;
+		if(index >= 0) {
+			//去table
+			noTableStr = HtmlUtil.delTableTag(content);		
+		}
+		//去标签
+		String text = HtmlUtil.getTextFromHtml(noTableStr);
+		if(text.length() > 150) {
+			news.setHeadline(text.substring(0, 150));
+		} else {
+			news.setHeadline(text);
+		}
+		
+		Integer count = super.update(news);
+		
+		String newsId = newsDto.getId();
+		
+		// 当前新闻发布范围
+		List<String> roleIdList = newsDto.getRoleIdList();//角色id
+		List<String> orgIdList = newsDto.getOrgIdList();//所有部门id
+		
+		NewsType newsType = newsTypeService.getObjectById(newsDto.getTypeId());
+		SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+		String publishTime = sdf.format(news.getPublishDate());
+		if(newsDto.getStatus() == 1 && newsDto.getMsgReminding() == 1) {
+			if(newsDto.getOldStatus() == 0) {
+				// 原状态为草稿状态
+				sendNewsMessage(getLoginUser(), news.getTitle(), newsType.getName(), news.getUpdatePersonName(), publishTime, userIdList, roleIdList, orgIdList, news.getId());
+			} else {
+				// 新增发布范围
+				List<String> newUserList = new ArrayList<String>();
+				List<String> newOrgList = new ArrayList<String>();
+				List<String> newRoleList = new ArrayList<String>();
+				
+				NewsAllowedScope newsAllowedScope = new NewsAllowedScope();
+				newsAllowedScope.setNewsId(newsDto.getId());
+				// 原新闻发布范围
+				List<NewsAllowedScope> oldScopeList = newsAllowedScopeService.queryList(newsAllowedScope);
+				List<String> oldUserList = new ArrayList<String>();
+				List<String> oldOrgList = new ArrayList<String>();
+				List<String> oldRoleList = new ArrayList<String>();
+				if(oldScopeList != null && oldScopeList.size() > 0) {
+					for(NewsAllowedScope scope : oldScopeList) {
+						if(OaConstant.ALLOWED_TYPE_USER.equals(scope.getAllowedType())) {
+							oldUserList.add(scope.getAllowedId());
+						}
+						if(OaConstant.ALLOWED_TYPE_ORG.equals(scope.getAllowedType())) {
+							oldOrgList.add(scope.getAllowedId());
+						}
+						if(OaConstant.ALLOWED_TYPE_ROLE.equals(scope.getAllowedType())) {
+							oldRoleList.add(scope.getAllowedId());
+						}
+					}
+				}
+				
+				if(userIdList != null && userIdList.size() > 0) {
+					if(oldUserList.size() == 0) {
+						newUserList.addAll(userIdList);
+					}else {
+						for(String userId : userIdList) {
+							if(!oldUserList.contains(userId)) {
+								newUserList.add(userId);
+							}
+						}
+					}
+				}
+				if(orgIdList != null && orgIdList.size() > 0) {
+					if(oldOrgList.size() == 0) {
+						newOrgList.addAll(orgIdList);
+					}else {
+						for(String orgId : orgIdList) {
+							if(!oldOrgList.contains(orgId)) {
+								newOrgList.add(orgId);
+							}
+						}
+					}
+				}
+				if(roleIdList != null && roleIdList.size() > 0) {
+					if(oldRoleList.size() == 0) {
+						newRoleList.addAll(roleIdList);
+					}else {
+						for(String roleId : roleIdList) {
+							if(!oldRoleList.contains(roleId)) {
+								newRoleList.add(roleId);
+							}
+						}
+					}
+				}
+				// 新增发布范围发送CC消息
+				if(newsDto.getStatus() == 1 && newsDto.getMsgReminding() == 1) {
+					sendNewsMessage(getLoginUser(), news.getTitle(), newsType.getName(), news.getUpdatePersonName(), publishTime, newUserList, newRoleList, newOrgList, newsId);
+				}
+			}
+		}
+		// 根据新闻id物理删除新闻可阅范围
+		deleteNewsAllowedScopeByNewsId(newsId);
+		// 保存新闻可阅范围
+		saveNewsAllowedScopeByUserIdRoleIdOrgId(userIdList,roleIdList,orgIdList,newsId);
+		return count;
+	}
+	
+	/**
+	 * 根据新闻id物理删除新闻可阅范围
+	 * 
+	 * @author shangb
+	 * @date 2018年4月11日 上午11:08:29
+	 * @param newsId
+	 */
+	public void deleteNewsAllowedScopeByNewsId(String newsId) {
+		NewsAllowedScope journalAllowedScope = new NewsAllowedScope();
+		journalAllowedScope.setNewsId(newsId);
+		List<NewsAllowedScope> newsAllowedScopeList = newsAllowedScopeService.queryList(journalAllowedScope);// 新闻可阅范围
+		if (newsAllowedScopeList != null && newsAllowedScopeList.size() > 0) {
+			for (NewsAllowedScope delNewsAllowedScope : newsAllowedScopeList) {
+				newsAllowedScopeService.deleteObjectById(delNewsAllowedScope.getId());
+			}
+		}
+	}
+	
+	/**
+	 * 通过userIdList,roleIdList,orgIdList保存新闻可阅范围
+	 * 
+	 * @author shangb
+	 * @date 2018年4月8日 下午6:46:01
+	 * @param userIdList
+	 * @param roleIdList
+	 * @param orgIdList
+	 */
+	private void saveNewsAllowedScopeByUserIdRoleIdOrgId(List<String> userIdList,
+			List<String> roleIdList,List<String> orgIdList,String newsId) {
+		if (userIdList != null && userIdList.size() > 0) {
+			for (String userId : userIdList) {
+				NewsAllowedScope newsAllowedScope = new NewsAllowedScope();
+				newsAllowedScope.setNewsId(newsId);
+				newsAllowedScope.setAllowedType(OaConstant.ALLOWED_TYPE_USER);
+				newsAllowedScope.setAllowedId(userId);
+				newsAllowedScopeService.save(newsAllowedScope);
+			}
+		}
+		if (roleIdList != null && roleIdList.size() > 0) {
+			for (String roleId : roleIdList) {
+				NewsAllowedScope journalAllowedScope = new NewsAllowedScope();
+				journalAllowedScope.setNewsId(newsId);
+				journalAllowedScope.setAllowedType(OaConstant.ALLOWED_TYPE_ROLE);
+				journalAllowedScope.setAllowedId(roleId);
+				newsAllowedScopeService.save(journalAllowedScope);
+			}
+		}
+		if (orgIdList != null && orgIdList.size() > 0) {
+			for (String orgId : orgIdList) {
+				NewsAllowedScope journalAllowedScope = new NewsAllowedScope();
+				journalAllowedScope.setNewsId(newsId);
+				journalAllowedScope.setAllowedType(OaConstant.ALLOWED_TYPE_ORG);
+				journalAllowedScope.setAllowedId(orgId);
+				newsAllowedScopeService.save(journalAllowedScope);
+			}
+		}
+	}
+	
+	/*逻辑删除新闻，物理删除新闻可阅范围*/
+	@Override
+	public Object deleteNewsDto(LoginUser loginUser, String id) throws HioMybatisDeleteException{
+		News news = super.getObjectById(id);
+		if(Base.isEmpty(news)){
+			throw new HioMybatisDeleteException("当前新闻已不存在!");
+		}else if(Base.isEquals(news.getDelflag(), OaConstant.OA_DELETE_FLAG_1)){
+			throw new HioMybatisDeleteException("当前新闻已删除!");
+		}
+		Integer count = super.deletePseudoObjectById(id);
+		//根据新闻id物理删除新闻可阅范围
+		deleteNewsAllowedScopeByNewsId(id);
+		if(Base.isEquals(news.getStatus(), OaConstant.OA_NEWS_STATUS_1)) {
+			// 修改该新闻栏目下新闻条数
+			newsTypeService.minusNewsCount(loginUser.getTendId(), news.getTypeId());
+			/*syncNewsCountThreadPool.execute(new Runnable() {
+				@Override
+				public void run() {
+					newsTypeService.minusNewsCount(loginUser.getTendId(), news.getTypeId());
+				}
+			});*/
+		}
+		return count;
+	}
+
+	@Override
+	public Page<NewsDto> queryList(NewsListParam newsParam, String userId, List<String> orgIds, List<String> roleIds) {
+		Map<String, Object> map = new HashMap<String, Object>();
+		map.put("pageNum", newsParam.getPageNum());
+		map.put("pageCount", newsParam.getPageCount());
+		pageStart(map);
+		List<NewsDto> newsList = null;
+		if(newsParam.getNewsStatus() == 0) {
+			// 获取草稿状态新闻
+			newsList = newsMapper.findDraftNews(newsParam.getNewsTitle(), newsParam.getNewsTypeId(), userId);
+		} else if(newsParam.getNewsStatus() == 1){
+			// 获取发布状态新闻
+			newsList = newsMapper.findPublishedNews(newsParam.getNewsTitle(), newsParam.getNewsTypeId(), userId, orgIds, roleIds);
+		} else {
+			// 获取我的新闻+他人分享给我的新闻
+			newsList = newsMapper.queryNewsList(newsParam.getNewsTitle(), newsParam.getNewsTypeId(), newsParam.getNewsStatus()+"", userId, orgIds, roleIds);
+		}
+		Page<NewsDto> newsPage = super.pageReturn(newsList);
+		/*List<NewsDto> newsResult = new ArrayList<NewsDto>();
+		if(newsList != null) {
+			for(News news : newsList) {
+				NewsDto newsDto = new NewsDto();
+				BeanUtils.copyProperties(news, newsDto);
+				NewsType newsType = newsTypeService.getObjectById(news.getTypeId());
+				if (newsType != null) {
+					newsDto.setNewsTypeName(newsType.getName());
+				}
+				newsResult.add(newsDto);
+			}
+			
+		}
+		Page<NewsDto> newsDtoPage = new Page<NewsDto>();
+		newsDtoPage.setList(newsResult);
+		newsDtoPage.setPageCount(newsPage.getPageCount());
+		newsDtoPage.setPageNum(newsPage.getPageNum());
+		newsDtoPage.setPageTotal(newsPage.getPageTotal());
+		newsDtoPage.setTotal(newsPage.getTotal());
+		return newsDtoPage;*/
+		
+		return newsPage;
+	}
+	
+	@Override
+	public Page<NewsDto> findAllNews(NewsListParam newsParam, LoginUser loginUser) {
+		Map<String, Object> map = new HashMap<String, Object>();
+		map.put("pageNum", newsParam.getPageNum());
+		map.put("pageCount", newsParam.getPageCount());
+		pageStart(map);
+		List<NewsDto> newsList = newsMapper.findAllNews(newsParam.getNewsTitle(), newsParam.getNewsTypeId(), loginUser.getUserId(), newsParam.getNewsStatus()+"");
+		Page<NewsDto> newsPage = super.pageReturn(newsList);
+		/*List<NewsDto> newsResult = new ArrayList<NewsDto>();
+		if(newsList != null) {
+			for(News news : newsList) {
+				NewsDto newsDto = new NewsDto();
+				BeanUtils.copyProperties(news, newsDto);
+				NewsType newsType = newsTypeService.getObjectById(news.getTypeId());
+				if (newsType != null) {
+					newsDto.setNewsTypeName(newsType.getName());
+				}
+				newsResult.add(newsDto);
+			}
+			
+		}
+		Page<NewsDto> newsDtoPage = new Page<NewsDto>();
+		newsDtoPage.setList(newsResult);
+		newsDtoPage.setPageCount(newsPage.getPageCount());
+		newsDtoPage.setPageNum(newsPage.getPageNum());
+		newsDtoPage.setPageTotal(newsPage.getPageTotal());
+		newsDtoPage.setTotal(newsPage.getTotal());*/
+		
+		return newsPage;
+	}
+
+	/*@Override
+	public Object addReadRecord(String id, String loginUserId) {
+		NewsReadRecord newsReadRecord = new NewsReadRecord();
+		newsReadRecord.setNewsId(id);
+		newsReadRecord.setUserId(loginUserId);
+		return newsReadRecordService.save(newsReadRecord);
+	}*/
+
+	@Override
+	public void cancelPublishNews(LoginUser loginUser, String newsId) throws HioMybatisUpdateException{
+		//查询新闻
+		News news = super.getObjectById(newsId);
+		if(Base.isEmpty(news)){
+			throw new HioMybatisUpdateException("取消发布的新闻不存在!");
+		}else if(Base.isEquals(news.getStatus(), OaConstant.OA_NEWS_STATUS_0)){
+			throw new HioMybatisUpdateException("当前新闻已是草稿状态,请刷新页面!");
+		}
+		//取消发布
+		newsMapper.cancelPublishNews(newsId);
+		NewsType nt = newsTypeService.getObjectById(news.getTypeId());
+		if(Base.isNotEmpty(nt) && Base.isNotEmpty(nt.getNewsCount()) && nt.getNewsCount().compareTo(0) > 0){
+			//
+			newsTypeService.minusNewsCount(loginUser.getTendId(), news.getTypeId());
+		}
+		// 异步修改该新闻栏目下新闻条数
+		/*syncNewsCountThreadPool.execute(new Runnable() {
+			@Override
+			public void run() {
+				newsTypeService.minusNewsCount(loginUser.getTendId(), news.getTypeId());
+			}
+		});*/
+	}
+	
+	private NewsDto addAttachmentInfo(NewsDto newsDto) {
+		String appId = BaseConstants.App.OA.getId();
+		String categoryId = BaseConstants.AttachmentCategory.OA_NEWS.getId();
+		if(newsDto != null && StringUtils.isNotBlank(newsDto.getId())) {
+			newsDto.setAppId(appId);
+			newsDto.setCategoryId(categoryId);
+			newsDto.setBusinessId(newsDto.getId());
+		}else {
+			if(newsDto != null) {
+				newsDto.setAppId(appId);
+				newsDto.setCategoryId(categoryId);
+				newsDto.setBusinessId(generatePk());
+			}else {
+				newsDto = new NewsDto();
+				newsDto.setAppId(appId);
+				newsDto.setCategoryId(categoryId);
+				newsDto.setBusinessId(generatePk());
+			}
+		}
+		return newsDto;
+	}
+	
+}

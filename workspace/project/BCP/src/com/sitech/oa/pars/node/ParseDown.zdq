@@ -1,0 +1,425 @@
+package com.sitech.oa.pars.node;
+/*
+ * 递归下降法分析，并构建语法树
+ */
+import java.util.ArrayList;
+import java.util.List;
+
+import com.sitech.oa.pars.LexType;
+import com.sitech.oa.pars.PreReadHead;
+import com.sitech.oa.pars.Scanner;
+import com.sitech.oa.pars.Token;
+
+public class ParseDown {
+	private Scanner scanner;
+	private Scanner mainScanner;
+	private Token expect;
+	private List funList;
+	private String filterType;
+	private String path;//保存当前解析文件得目录文件名
+	public ParseDown(Scanner scanner,String filterType,Scanner mainScanner,String path){
+		this.scanner=scanner;
+		this.expect=scanner.getNextToken();
+		funList=new ArrayList();
+		this.filterType=filterType;
+		this.mainScanner=mainScanner;
+		this.path=path;
+	}
+	public List getFunDec(){
+		FunctionDec functionDec=null;
+		while(!match(expect,LexType.ENDFILE)){
+			switch(expect.getLex()){
+			case LexType.INT:
+			case LexType.VOID:
+			case LexType.DOUBLE:
+			case LexType.FLOAT:
+			case LexType.UTYPE:
+			case LexType.CHAR://函数定义或声明
+			case LexType.UNSIGNED:
+			case LexType.LONG:
+				functionDec=(FunctionDec)newFunctionDec();
+				if(functionDec!=null){
+					funList.add(functionDec);
+					scanner.upDateFunctionDec(functionDec.function.functionName.tokenString,functionDec.path);
+				}
+				break;
+			case LexType.POUND:
+				//由于习惯问题，预编译包含文件都写在头部，相当代码之前，省去预编译处理的代码。
+				PreComplie preComplie=(PreComplie)newPreComplie();
+				if(preComplie!=null){
+					String fileName=preComplie.token.tokenString.replaceAll("\"", "");
+					PreReadHead head=new PreReadHead(fileName,filterType,mainScanner);
+					List list=head.readFunDec();
+					if(list!=null){
+						scanner.upDateFunctionDec(list);
+					}
+					head=null;
+					list=null;
+				}
+				break;
+			case LexType.TYPEDEF:
+				Struct s=(Struct)newStruct();
+				if(s!=null){
+					mainScanner.upDateType(s.id.tokenString);
+				}
+				break;
+			case LexType.STRUCT:
+				Struct sd=(Struct)newStructDef();
+				if(sd!=null){
+					scanner.upDateType(sd.id.tokenString);
+				}
+				break;
+			default:
+				expect=scanner.getNextToken();
+				break;
+			}
+		}
+		return funList;
+	}
+	/*
+	 *  产生式 function:=typeDef ID|FUN ( paramList )
+	 * 
+	 */
+	public Node newFunction(){
+		NodeToken token1=null;
+		TypeDef typeDef=(TypeDef)newTypeDef();
+		ParamList paramList=null;
+		if(typeDef!=null){
+			if(match(expect,LexType.ID) || match(expect,LexType.FUN)){
+				token1=new NodeToken(expect.getSem(),expect.getLex(),expect.getLineNum());
+				expect=scanner.getNextToken();
+				if(match(expect,LexType.LPAREN)){
+					expect=scanner.getNextToken();
+					paramList=(ParamList)newParamList();
+					if(match(expect,LexType.RPAREN)){
+						expect=scanner.getNextToken();
+						return new Function(typeDef,paramList,token1);
+					}
+				}
+			}
+		}
+		return null;
+	}
+	/*
+	 * 产生式 typeDef:=type[{*}]
+	 */
+	public Node newTypeDef(){
+
+		NodeToken token=null;
+		Type type=(Type)newType();
+		if(type!=null){
+			while(match(expect,LexType.TIMES)){
+				token=new NodeToken(expect.getSem(),expect.getLex(),expect.getLineNum());
+				expect=scanner.getNextToken();
+			}
+			return new TypeDef(token,type);
+		}
+		return null;
+	}
+	/*
+	 *  产生式 type:=[STRUCT]|[UNSIGNED] INT | FLOAT | DOUBLE |UTYPE|CHAR
+	 */
+	public Node newType(){
+		NodeToken struct=null;
+		NodeToken unsigned=null;
+		if(match(expect,LexType.STRUCT)){
+			struct=new NodeToken(expect.getSem(),expect.getLex(),expect.getLineNum());
+			expect=scanner.getNextToken();
+		}else if(match(expect,LexType.UNSIGNED)){
+			expect=scanner.getNextToken();
+			unsigned=new NodeToken(expect.getSem(),expect.getLex(),expect.getLineNum());
+		}
+		switch(expect.getLex()){
+		case LexType.INT:
+		case LexType.VOID:
+		case LexType.DOUBLE:
+		case LexType.FLOAT:
+		case LexType.UTYPE:
+		case LexType.CHAR:
+		case LexType.LONG:
+			NodeToken token=new NodeToken(expect.getSem(),expect.getLex(),expect.getLineNum());
+			expect=scanner.getNextToken();
+			return new Type(token,struct,unsigned);
+		default:
+			error();
+			break;
+		}
+		return null;
+	}
+	/*
+	 *  产生式 paramList:=# | param[,param]
+	 */
+	public Node newParamList(){
+		NodeList list=new NodeList();
+		Param param=(Param)newParam();
+		if(param!=null){
+			list.addNode(param);
+			while(match(expect,LexType.COMMA)){
+				expect=scanner.getNextToken();
+				param=(Param)newParam();
+				list.addNode(param);
+			}
+		}
+		return new ParamList(list);
+	}
+	/*
+	 *  产生式 param:=typeDef paramId| paramId |functioncall
+	 */
+	public Node newParam(){
+		TypeDef typeDef=null;
+		FunctionCall fc=null;
+		ParamId paramId=null;
+		if(match(expect,LexType.FUN)){
+			fc=(FunctionCall)newFunctionCall();
+		}else{
+			switch(expect.getLex()){
+			case LexType.INT:
+			case LexType.VOID:
+			case LexType.DOUBLE:
+			case LexType.FLOAT:
+			case LexType.UTYPE:
+			case LexType.CHAR:
+			case LexType.LONG:
+				typeDef=(TypeDef)newTypeDef();
+				paramId=(ParamId)newParamId();
+				break;
+			case LexType.ID:
+			case LexType.CHARC:
+			case LexType.INTC:
+				paramId=(ParamId)newParamId();
+				break;
+			default:
+				return null;
+			}
+		}
+		return new Param(typeDef,paramId,fc);
+
+	}
+	/*
+	 *  产生式 functionDec:=function body|;
+	 */
+	public Node newFunctionDec(){
+		Function function=(Function)newFunction();
+		Body body=null;
+		if(function!=null){
+			if(match(expect,LexType.SENTENCEEND)){
+				expect=scanner.getNextToken();
+				return new FunctionDec(function,body,path);
+			}else if(match(expect,LexType.LBIGPAREN)){
+				body=(Body)newBody();
+				return new FunctionDec(function,body,path);
+			}
+		}
+		return null;
+	}
+	/*
+	 *  产生式 body:= '{' bodyContent '}'
+	 */
+	//几天要修改的内容：已经进入body，可以使用过滤手段，碰到的单词是函数，过滤出来，这样写简单很多哦。
+	public Node newBody(){
+		BodyContent bodyContent=null;
+		if(match(expect,LexType.LBIGPAREN)){
+			expect=scanner.getNextToken();
+			bodyContent=(BodyContent)newBodyContent();
+			if(match(expect,LexType.RBIGPAREN)){
+				expect=scanner.getNextToken();
+				return new Body(bodyContent);
+			}
+		}
+		return null;
+	}
+	/*
+	 *  产生式 bodyContent:={functionCall | str | body |其他}
+	 */
+	public Node newBodyContent(){
+		FunctionCall functionCall=null;
+		SqlStr sqlStr=null;
+		Body body=null;
+		NodeList list=new NodeList();
+		NodeList list2=new NodeList();
+		NodeList list3=new NodeList();
+		//如果是函数开始，说明有调用函数，如果大括号开始，进入下个循环，如果大括号结束，跳出循环
+		while(!match(expect,LexType.RBIGPAREN)){
+			if(match(expect,LexType.FUN)){
+				functionCall=(FunctionCall)newFunctionCall();
+				list.addNode(functionCall);
+			}else if(match(expect,LexType.CHARC)){
+				sqlStr=(SqlStr)newSqlStr();
+				if(sqlStr!=null){
+					list2.addNode(sqlStr);
+				}
+			}else if(match(expect,LexType.LBIGPAREN)){
+				body=(Body)newBody();
+				list3.addNode(body);
+				continue;
+			}else if(match(expect,LexType.ENDFILE)){
+				break;
+			}
+			expect=scanner.getNextToken();
+		}
+		return new BodyContent(list,list3,list2);
+	}
+	/*
+	 * 产生式sqlStr:=CHARC
+	 */
+	public Node newSqlStr(){
+		String temp=expect.getSem().toUpperCase();
+		if(temp.startsWith("\"SELECT") || temp.startsWith("\"UPDATE") || temp.startsWith("\"DELETE") 
+				|| temp.startsWith("\"INSERT")){
+			NodeToken sqlStr=new NodeToken(expect.getSem(),expect.getLex(),expect.getLineNum());
+			return new SqlStr(sqlStr);
+		}
+		return null;
+	}
+	/*
+	 *  产生式 functionCall:=FUN['('paramList')'];
+	 */
+	public Node newFunctionCall(){
+		NodeToken functionName=null;
+		ParamList paramList=null;
+		String path=null;
+		if(match(expect,LexType.FUN)){
+			path=scanner.getFunPath(expect.getSem());
+			functionName=new NodeToken(expect.getSem(),expect.getLex(),expect.getLineNum());
+			expect=scanner.getNextToken();
+			if(match(expect,LexType.LPAREN)){
+				expect=scanner.getNextToken();
+				paramList=(ParamList)newParamList();
+				if(match(expect,LexType.RPAREN)){
+					expect=scanner.getNextToken();
+					return new FunctionCall(functionName,paramList,path);
+				}
+				
+			}else{
+				return new FunctionCall(functionName,paramList,path);
+			}
+		}
+		return null;
+	}
+	/*
+	 * 产生式 preComplie:=#INCLUDE (CHARC | <  ID.ID   >)
+	 */
+	public Node newPreComplie(){
+		NodeToken token=null;
+		if(match(expect,LexType.POUND)){
+			expect=scanner.getNextToken();
+			if(match(expect,LexType.INCLUDE)){
+				expect=scanner.getNextToken();
+				switch(expect.getLex()){
+				case LexType.CHARC:
+					token=new NodeToken(expect.getSem(),expect.getLex(),expect.getLineNum());
+					expect=scanner.getNextToken();
+					return new PreComplie(token);
+				default:
+					break;
+				}
+			}
+			
+		}
+		return null;
+	}
+	/*
+	 * paramId:=ID | ID'['other']'
+	 */
+	public Node newParamId(){
+		NodeToken token=null;
+		if(match(expect,LexType.ID) || match(expect,LexType.CHARC) || match(expect,LexType.INTC)){
+			token=new NodeToken(expect.getSem(),expect.getLex(),expect.getLineNum());
+			expect=scanner.getNextToken();
+			if(match(expect,LexType.LMIDPAREN)){
+				do{expect=scanner.getNextToken();}while(!match(expect,LexType.RMIDPAREN));
+				expect=scanner.getNextToken();
+				return new ParamId(token);
+			}else{
+				return new ParamId(token);
+			}
+		}
+		return null;
+	}
+	/*
+	 * 产生式 struct:=TYPEDEF STRUCT [ID] { paramList } ID
+	 */
+	public Node newStruct(){
+		StructParamList paramList=null;
+		NodeToken id=null;
+		if(match(expect,LexType.TYPEDEF)){
+			expect=scanner.getNextToken();
+			if(match(expect,LexType.STRUCT)){
+				expect=scanner.getNextToken();
+				if(match(expect,LexType.ID)){
+					expect=scanner.getNextToken();	
+					if(match(expect,LexType.LBIGPAREN)){
+						expect=scanner.getNextToken();
+						paramList=(StructParamList)newStructParamList();
+						if(paramList!=null && match(expect,LexType.RBIGPAREN)){
+							expect=scanner.getNextToken();
+							if(match(expect,LexType.ID)){
+								id=new NodeToken(expect.getSem(),expect.getLex(),expect.getLineNum());
+								expect=scanner.getNextToken();
+								return new Struct(id,paramList);
+							}
+						}
+					}
+				}
+			}
+		}else if(match(expect,LexType.STRUCT)){
+			expect=scanner.getNextToken();
+			expect=scanner.getNextToken();
+			id=new NodeToken(expect.getSem(),expect.getLex(),expect.getLineNum());
+			return new Struct(id,paramList);
+			
+		}
+		return null;
+	}
+	/*
+	 * structparamlist:={param;}
+	 */
+	public Node newStructParamList(){
+		NodeList list=new NodeList();
+		Param param=(Param)newParam();
+		do{
+			if(param!=null){
+				expect=scanner.getNextToken();
+				if(match(expect,LexType.LBIGPAREN)) break;
+				list.addNode(param);
+				param=(Param)newParam();
+			}
+		}while(param!=null);
+		return new StructParamList(list);
+	}
+	/*
+	 * structdef:=STRUCT ID { structparamlist } ;
+	 */
+	public Node newStructDef(){
+		NodeToken id=null;
+		StructParamList paramList;
+		if(match(expect,LexType.STRUCT)){
+			expect=scanner.getNextToken();
+			if(match(expect,LexType.ID)){
+				id=new NodeToken(expect.getSem(),expect.getLex(),expect.getLineNum());
+				expect=scanner.getNextToken();
+				if(match(expect,LexType.LBIGPAREN)){
+					expect=scanner.getNextToken();
+					paramList=(StructParamList)newStructParamList();
+					if(paramList!=null && match(expect,LexType.RBIGPAREN)){
+						expect=scanner.getNextToken();
+						if(match(expect,LexType.SENTENCEEND)){
+							return new Struct(id,paramList);
+						}
+					}
+				}
+			}
+		}
+		return null;
+	}
+	private boolean match(Token expected, int lexType) {
+		if (expected.getLex() == lexType)
+			return true;
+		else 
+			error();
+			return false;
+	}
+	private void error(){
+		
+	}
+}

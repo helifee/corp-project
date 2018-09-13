@@ -1,0 +1,942 @@
+/*
+ * @(#)Ye8021ServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 考勤系统
+ */
+package com.yds.att.service.impl;
+
+import java.util.*;
+
+import org.springframework.stereotype.Service;
+import com.yds.base.service.AbstractBaseService;
+import com.yds.util.service.DateUtil;
+import com.yds.util.service.NumberUtil;
+import com.yds.att.bean.AttExrestInfo;
+import com.yds.att.bean.AttInfo;
+import com.yds.att.bean.AttInfoUncor;
+import com.yds.att.bean.AttMonReport;
+import com.yds.att.bean.Ye8021AttInfo;
+import com.yds.att.bean.Ye8021CondA;
+import com.yds.att.common.service.AttComService;
+import com.yds.att.common.service.AttInfoService;
+import com.yds.att.common.service.DateRelationService;
+import com.yds.att.dao.Ye8021Dao;
+import com.yds.att.service.AttConstants;
+import com.yds.att.service.Ye8021Service;
+
+
+/**
+ * @see com.yds.att.service.Ye0070Service
+ */
+@Service("ye8021Service")
+public class Ye8021ServiceImpl extends AbstractBaseService implements Ye8021Service{
+
+	private Ye8021Dao ye8021Dao;
+	private AttComService attComService;              // att共通子程序
+	private DateRelationService dateRelationService;
+	private AttInfoService attInfoService;
+	/**
+	 * @param ye8021Dao the ye8021Dao to set
+	 */
+	public void setYe8021Dao(Ye8021Dao ye8021Dao) {
+		this.ye8021Dao = ye8021Dao;
+	}
+	/**
+	 * @param attComService the attComService to set
+	 */
+	public void setAttComService(AttComService attComService) {
+		this.attComService = attComService;
+	}
+	/**
+	 * @param dateRelationService the dateRelationService to set
+	 */
+	public void setDateRelationService(DateRelationService dateRelationService) {
+		this.dateRelationService = dateRelationService;
+	}
+
+	/**
+	 * @param attInfoService the attInfoService to set
+	 */
+	public void setAttInfoService(AttInfoService attInfoService) {
+		this.attInfoService = attInfoService;
+	}
+	
+	
+	@Override
+	public List<AttInfo> getAttInfos(Ye8021CondA ye8021CondA) {
+
+		return ye8021Dao.getAttInfos(ye8021CondA);
+	}
+	@Override
+	public List<Ye8021AttInfo> getYe8021AttInfo(Ye8021CondA ye8021CondA) {
+		
+		return ye8021Dao.getYe8021AttInfo(ye8021CondA);
+	}	
+	
+	
+	@Override
+	public boolean chkAttInfos(AttInfo ai) {
+		boolean modFlg = false;
+		/* 实出勤，实退勤null检查更新 */
+		if( null == ai.getRstartTime()
+				&&  null != ai.getRendTime()){
+			ai.setRstartTime(ai.getRendTime());
+			modFlg = true;
+		}else if(null != ai.getRstartTime() && null == ai.getRendTime()){
+			ai.setRendTime(ai.getRstartTime());
+			modFlg = true;
+		}
+		// 更新考勤信息表
+		if(modFlg){
+			ai.setUpdateUser(AttConstants.ATT_BATCH_UPUSER);
+			// 更新考勤信息
+			if(ye8021Dao.updateAttInfoRTime(ai) <= 0){
+				return false;
+			}
+		}
+
+		return true;
+	}
+	@Override
+	public boolean accAttInfo(Ye8021CondA ye8021CondA) {
+		
+		String tmpEmpId = "";
+		AttMonReport attMonReport = null;
+		AttMonReport attYearReport = null;
+		int tmpMin = 0;
+		// 取得考勤数据
+		List<AttInfo> ais = this.getAttInfos(ye8021CondA);
+		
+		if(null == ais ){
+			return true;
+		}
+		
+		for(AttInfo ai : ais){
+			String aiGetTypeFlg = (null == ai.getTypeFlg()? "":ai.getTypeFlg());
+			String aiGetRestType = (null == ai.getRestType()? "":ai.getRestType());
+			String aiGetAppStatus = (null == ai.getAppStatus()? "":ai.getAppStatus());
+			String aiGetRestTypeAddi = (null == ai.getRestTypeAddi()? "":ai.getRestTypeAddi());
+			String aiGetAppStatusAddi = (null == ai.getAppStatusAddi()? "":ai.getAppStatusAddi());
+			String aiGetAttStatusOt = (null == ai.getAttStatusOt()? "":ai.getAttStatusOt());
+			String aiGetOtBenefit = (null == ai.getOtBenefit()? "":ai.getOtBenefit());
+			
+			/* 统计前,月次统计数据准备 */
+			if(!tmpEmpId.equals(ai.getEmpId())){
+				
+				// 更新上一个员工的月次统计数据
+				if(!"".equals(tmpEmpId)){
+					// 月次统计数据存在
+					if(null != ye8021Dao.selectAttMonReport(attMonReport) ){
+						ye8021Dao.updateAttMonReport(attMonReport);
+					}else{
+						ye8021Dao.insertAttMonReport(attMonReport);
+					}
+					/*年数据统计*/
+					attYearReport = ye8021Dao.getAttMonReportY(attMonReport);
+					//用统计完的年次数据更新DB表
+					if(null != ye8021Dao.selectAttMonReport(attYearReport)  ){
+						ye8021Dao.updateAttMonReport(attYearReport);
+					}else{
+						ye8021Dao.insertAttMonReport(attYearReport);
+					}
+				}
+				tmpEmpId = ai.getEmpId();
+				attMonReport = new AttMonReport();
+				attMonReport.setEmpId(tmpEmpId);
+				attMonReport.setYear(ai.getYear());
+				attMonReport.setMonth(ai.getMonth());
+				attMonReport.setSattendDays(0);
+				attMonReport.setAttendDays(0);
+				attMonReport.setAnnRestDays(0);
+				attMonReport.setSpecialDays(0);
+				attMonReport.setSickDays(0);
+				attMonReport.setPerDays(0);
+				attMonReport.setOutDays(0);
+				attMonReport.setDutyMin(0);
+				attMonReport.setDutyCnt(0);
+				attMonReport.setSickMin(0);
+				attMonReport.setSickCnt(0);
+				attMonReport.setPerMin(0);
+				attMonReport.setPerCnt(0);
+				attMonReport.setBelateMin(0);
+				attMonReport.setBelateCnt(0);
+				attMonReport.setLveEarlyMin(0);
+				attMonReport.setLveEarlyCnt(0);
+				attMonReport.setWorkdayOtMin(0);
+				attMonReport.setWorkdayOtCnt(0);
+				attMonReport.setDeepOtMin(0);
+				attMonReport.setDeepOtCnt(0);
+				attMonReport.setErestMin(0);
+				attMonReport.setUsedErestMin(0);
+				attMonReport.setSickMinDay(0.0);
+				attMonReport.setPerMinDay(0.0);
+				attMonReport.setBelateMinDay(0.0);
+				attMonReport.setLveEarlyMinDay(0.0);
+			}
+			/* 按条统计*/
+			// TODO 临时班型情况不统计待以后处理
+			if(aiGetTypeFlg.equals(AttConstants.TypeFlg.TEM_TYPEFALG.toString())){
+				continue;
+			}
+
+			// 日期类型为上班的情况
+			if(ai.getDayFlg().equals(AttConstants.DateTypeEnum.WORK.toString())){
+				
+				// 应出日数
+				attMonReport.setSattendDays(attMonReport.getSattendDays() + 1);
+				
+				// 年休日数
+				if(aiGetRestType.equals(AttConstants.VacationType.ANNUAL_LEAVE.value())
+						&&  aiGetAppStatus.equals(AttConstants.AppStatus.APPROVED.value())){
+					
+					attMonReport.setAnnRestDays(attMonReport.getAnnRestDays() + 1);
+				}
+				// 特休日数
+				if(aiGetRestType.equals(AttConstants.VacationType.SPECIAL_LEAVE.value())
+						&&  aiGetAppStatus.equals(AttConstants.AppStatus.APPROVED.value())){
+						attMonReport.setSpecialDays(attMonReport.getSpecialDays() + 1);
+				}
+				// 病休日数
+				if(aiGetRestType.equals(AttConstants.VacationType.SICK_LEAVE.value())
+						&&  aiGetAppStatus.equals(AttConstants.AppStatus.APPROVED.value())){
+						attMonReport.setSickDays(attMonReport.getSickDays() + 1);
+				}
+				// 事休日数
+				if(aiGetRestType.equals(AttConstants.VacationType.LEAVE.value())
+						&&  aiGetAppStatus.equals(AttConstants.AppStatus.APPROVED.value())){
+						attMonReport.setPerDays(attMonReport.getPerDays() + 1);
+				}
+				// 公出时间
+				// 公出次数
+				if( aiGetRestType.contains(AttConstants.VacationType.BUSINESS_TRIP.value())
+						&& aiGetAppStatus.equals(AttConstants.AppStatus.APPROVED.value())){
+					
+					attMonReport.setDutyMin( attMonReport.getDutyMin() + getOwenMin(ai, aiGetRestType)); 
+					attMonReport.setDutyCnt(attMonReport.getDutyCnt() + 1);
+					
+				}else if(aiGetRestTypeAddi.contains(AttConstants.VacationType.BUSINESS_TRIP.value())
+						&& aiGetAppStatusAddi.equals(AttConstants.AppStatus.APPROVED.value())){
+					
+					attMonReport.setDutyMin( attMonReport.getDutyMin() + getOwenMin(ai, aiGetRestTypeAddi)); 
+					attMonReport.setDutyCnt( attMonReport.getDutyCnt() + 1);
+				}else{
+					
+				}
+				// 病欠时间
+				// 病欠天数
+				// 病欠次数
+				if( (aiGetRestType.equals(AttConstants.VacationType.SICK_LEAVE_S.value())
+						|| aiGetRestType.equals(AttConstants.VacationType.SICK_LEAVE_X.value())
+				     )
+					&& aiGetAppStatus.equals(AttConstants.AppStatus.APPROVED.value())){
+					
+					attMonReport.setSickCnt(attMonReport.getSickCnt() + 1);
+					tmpMin = getOwenMin(ai, aiGetRestType);
+					attMonReport.setSickMin(attMonReport.getSickMin() + tmpMin);
+					attMonReport.setSickMinDay(attMonReport.getSickMinDay() + min2Day(ai, tmpMin));
+					
+				}else if((aiGetRestTypeAddi.equals(AttConstants.VacationType.SICK_LEAVE_S.value())
+							 || aiGetRestTypeAddi.equals(AttConstants.VacationType.SICK_LEAVE_X.value())
+			              )
+			              && aiGetAppStatusAddi.equals(AttConstants.AppStatus.APPROVED.value())){
+					
+					attMonReport.setSickCnt(attMonReport.getSickCnt() + 1);
+					tmpMin = getOwenMin(ai, aiGetRestTypeAddi);
+					attMonReport.setSickMin(attMonReport.getSickMin() + tmpMin);
+					attMonReport.setSickMinDay(attMonReport.getSickMinDay() + min2Day(ai, tmpMin));
+				}
+				// 事欠时间
+				// 事欠天数
+				// 事欠次数
+				if( (aiGetRestType.equals(AttConstants.VacationType.LEAVE_S.value())
+						|| aiGetRestType.equals(AttConstants.VacationType.LEAVE_X.value())
+				     )
+					&& aiGetAppStatus.equals(AttConstants.AppStatus.APPROVED.value())){
+					
+					attMonReport.setPerCnt(attMonReport.getPerCnt() + 1);
+					tmpMin = getOwenMin(ai, aiGetRestType);
+					attMonReport.setPerMin(attMonReport.getPerMin() + tmpMin);
+					attMonReport.setPerMinDay(attMonReport.getPerMinDay() + min2Day(ai, tmpMin));
+					
+				}else if((aiGetRestTypeAddi.equals(AttConstants.VacationType.LEAVE_S.value())
+							 || aiGetRestTypeAddi.equals(AttConstants.VacationType.LEAVE_X.value())
+			              )
+			              && aiGetAppStatusAddi.equals(AttConstants.AppStatus.APPROVED.value())){
+					
+					attMonReport.setPerCnt(attMonReport.getPerCnt() + 1);
+					tmpMin = getOwenMin(ai, aiGetRestTypeAddi);
+					attMonReport.setPerMin(attMonReport.getPerMin() + tmpMin);
+					attMonReport.setPerMinDay(attMonReport.getPerMinDay() + min2Day(ai, tmpMin));
+				}
+				
+				/* 考勤实际出退勤时间不是null的情况下*/
+				if( null != ai.getRstartTime() && null != ai.getRendTime()){
+					// 实出天数
+					if(ai.getRendTime().getTime() != ai.getRstartTime().getTime()
+						&& aiGetRestType.trim().length() != 1){
+						attMonReport.setAttendDays(attMonReport.getAttendDays() + 1);
+					}
+					// 旷勤日数
+					if(( ai.getRstartTime().getTime() != ai.getRendTime().getTime()
+							&& ai.getRstartTime().getTime() >= ai.getPendTime().getTime()
+							&& ( !aiGetAppStatus.equals(AttConstants.AppStatus.APPROVED.value())
+								  && 
+								  !aiGetAppStatusAddi.equals(AttConstants.AppStatus.APPROVED.value())
+								)  
+					     )
+					     ||
+					     ( ai.getRstartTime().getTime() != ai.getRendTime().getTime()
+									&& ai.getRendTime().getTime() <= ai.getPstartTime().getTime()
+									&& ( !aiGetAppStatus.equals(AttConstants.AppStatus.APPROVED.value())
+										  && 
+										  !aiGetAppStatusAddi.equals(AttConstants.AppStatus.APPROVED.value())
+										)  
+							     )
+					     ||
+					     (ai.getRstartTime().getTime() == ai.getRendTime().getTime()
+					     )
+					    ){
+						attMonReport.setOutDays(attMonReport.getOutDays() + 1);
+					}
+					// 迟到时间
+					// 迟到天数
+					// 迟到次数
+					if( ai.getRstartTime().getTime() != ai.getRendTime().getTime()
+						&& ai.getRstartTime().getTime() > ai.getPstartTime().getTime()){
+						
+						// 出勤时间在上午
+						if(ai.getRstartTime().getTime() <= ai.getLunchTimeEnd().getTime()){
+							// 上午请假
+							if( (aiGetAppStatus.equals(AttConstants.AppStatus.APPROVED.value())
+								&& aiGetRestType.trim().length() == 2
+								&& aiGetRestType.substring(1, 2).equals(AttConstants.LEAVE_AM)
+								)
+								||(aiGetAppStatusAddi.equals(AttConstants.AppStatus.APPROVED.value())
+										&& aiGetRestTypeAddi.trim().length() == 2
+										&& aiGetRestTypeAddi.substring(1, 2).equals(AttConstants.LEAVE_AM)
+								   ) 
+							   ){
+								// donothig
+							}else{
+								int tmp = (int) (DateUtil.dateDiff(ai.getRstartTime(), ai.getPstartTime())/60);
+								attMonReport.setBelateMinDay(attMonReport.getBelateMinDay() + min2Day(ai, tmp));
+								attMonReport.setBelateMin(attMonReport.getBelateMin()+ tmp);
+								attMonReport.setBelateCnt(attMonReport.getBelateCnt() + 1);
+							}
+						}else if (ai.getRstartTime().getTime() > ai.getLunchTimeEnd().getTime() 
+								&& ai.getRstartTime().getTime() <= ai.getPendTime().getTime()){
+							// 出勤时间在下午
+							int tmp = 0;
+							// 上午请假
+							if( (aiGetAppStatus.equals(AttConstants.AppStatus.APPROVED.value())
+									&& aiGetRestType.trim().length() == 2
+									&& aiGetRestType.substring(1, 2).equals(AttConstants.LEAVE_AM)
+								)
+								||(aiGetAppStatusAddi.equals(AttConstants.AppStatus.APPROVED.value())
+										&& aiGetRestTypeAddi.trim().length() == 2
+										&& aiGetRestTypeAddi.substring(1, 2).equals(AttConstants.LEAVE_AM)
+								   ) 
+							   ){
+								// donothing
+							}else{
+								tmp = (int) (DateUtil.dateDiff(ai.getLunchTimeSt(), ai.getPstartTime())/60);
+							}
+							// 下午请假的情况
+							if( (aiGetAppStatus.equals(AttConstants.AppStatus.APPROVED.value())
+									&& aiGetRestType.trim().length() == 2
+									&& aiGetRestType.substring(1, 2).equals(AttConstants.LEAVE_PM)
+								)
+								||(aiGetAppStatusAddi.equals(AttConstants.AppStatus.APPROVED.value())
+										&& aiGetRestTypeAddi.trim().length() == 2
+										&& aiGetRestTypeAddi.substring(1, 2).equals(AttConstants.LEAVE_PM)
+								   ) 
+							   ){
+								// donothing
+							}else{
+								tmp += (int) (DateUtil.dateDiff(ai.getRstartTime(), ai.getLunchTimeEnd())/60);
+							}
+							// 总的处理
+							if(tmp > 0){
+								attMonReport.setBelateMinDay(attMonReport.getBelateMinDay() + min2Day(ai, tmp));
+								attMonReport.setBelateMin(attMonReport.getBelateMin() + tmp);
+								attMonReport.setBelateCnt(attMonReport.getBelateCnt() + 1);
+							}
+						}
+					}//end 迟到
+					
+					// 早退时间
+					// 早退天数 
+					// 早退次数 
+					if( ai.getRstartTime().getTime() != ai.getRendTime().getTime()
+							&& ai.getRendTime().getTime() < ai.getPendTime().getTime()){
+							
+							// 退勤时间在下午
+							if(ai.getRendTime().getTime() > ai.getLunchTimeEnd().getTime()){
+								// 下午请假
+								if( (aiGetAppStatus.equals(AttConstants.AppStatus.APPROVED.value())
+									&& aiGetRestType.trim().length() == 2
+									&& aiGetRestType.substring(1, 2).equals(AttConstants.LEAVE_PM)
+									)
+									||(aiGetAppStatusAddi.equals(AttConstants.AppStatus.APPROVED.value())
+											&& aiGetRestTypeAddi.trim().length() == 2
+											&& aiGetRestTypeAddi.substring(1, 2).equals(AttConstants.LEAVE_PM)
+									   ) 
+								   ){
+									// donothig
+								}else{
+									int tmp = (int) (DateUtil.dateDiff(ai.getRendTime(), ai.getPendTime())/60);
+									attMonReport.setLveEarlyMinDay(attMonReport.getLveEarlyMinDay() + min2Day(ai, tmp));
+									attMonReport.setLveEarlyMin(attMonReport.getLveEarlyMin()+ tmp);
+									attMonReport.setLveEarlyCnt(attMonReport.getLveEarlyCnt() + 1);
+								}
+							}else if (ai.getRendTime().getTime() > ai.getPstartTime().getTime() 
+									&& ai.getRendTime().getTime() < ai.getLunchTimeSt().getTime()){
+								// 退勤时间在上午
+								int tmp = 0;
+								// 上午请假
+								if( (aiGetAppStatus.equals(AttConstants.AppStatus.APPROVED.value())
+										&& aiGetRestType.trim().length() == 2
+										&& aiGetRestType.substring(1, 2).equals(AttConstants.LEAVE_AM)
+									)
+									||(aiGetAppStatusAddi.equals(AttConstants.AppStatus.APPROVED.value())
+											&& aiGetRestTypeAddi.trim().length() == 2
+											&& aiGetRestTypeAddi.substring(1, 2).equals(AttConstants.LEAVE_AM)
+									   ) 
+								   ){
+									// donothing
+								}else{
+									tmp = (int) (DateUtil.dateDiff(ai.getRendTime(), ai.getLunchTimeSt())/60);
+								}
+								// 下午请假的情况
+								if( (aiGetAppStatus.equals(AttConstants.AppStatus.APPROVED.value())
+										&& aiGetRestType.trim().length() == 2
+										&& aiGetRestType.substring(1, 2).equals(AttConstants.LEAVE_PM)
+									)
+									||(aiGetAppStatusAddi.equals(AttConstants.AppStatus.APPROVED.value())
+											&& aiGetRestTypeAddi.trim().length() == 2
+											&& aiGetRestTypeAddi.substring(1, 2).equals(AttConstants.LEAVE_PM)
+									   ) 
+								   ){
+									// donothing
+								}else{
+									tmp += (int) (DateUtil.dateDiff(ai.getPendTime(), ai.getLunchTimeEnd())/60);
+								}
+								// 总的处理
+								if(tmp > 0){
+									attMonReport.setLveEarlyMinDay(attMonReport.getLveEarlyMinDay() + min2Day(ai, tmp));
+									attMonReport.setLveEarlyMin(attMonReport.getLveEarlyMin() + tmp);
+									attMonReport.setLveEarlyCnt(attMonReport.getLveEarlyCnt() + 1);
+								}
+							}
+						}//end 早退
+				}else{
+					/* 考勤实际出退勤时间是null的情况下*/
+					
+					// 旷勤日数
+					if( !aiGetAppStatus.equals(AttConstants.AppStatus.APPROVED.value())
+						  && 
+						  !aiGetAppStatusAddi.equals(AttConstants.AppStatus.APPROVED.value())
+					   ){
+						attMonReport.setOutDays(attMonReport.getOutDays() + 1);
+					}
+				}
+			}// end 日期类型是上班
+
+			// 有料加班时间 
+			// 有料加班次数 
+			if(aiGetAttStatusOt.equals(AttConstants.AppStatus.APPROVED.value())
+				&& aiGetOtBenefit.equals(AttConstants.BenefitFlagEnum.FOR_MONEY.toString())
+			   ){
+				/* 考勤实际出退勤时间不是null 不相等的情况下*/
+				if( null != ai.getRstartTime() && null != ai.getRendTime()
+					&& ai.getRstartTime().getTime() != ai.getRendTime().getTime()){
+					// 有实际加班时
+					if( ai.getRendTime().getTime() > ai.getOtStTime().getTime()
+						&& ai.getRstartTime().getTime() < ai.getOtEdTime().getTime()){
+						int tmp = 0;
+						// 出勤日时在计划开始之前 退勤在计划结束之前
+						if(ai.getRstartTime().getTime() <= ai.getOtStTime().getTime()
+							&& ai.getRendTime().getTime() < ai.getOtEdTime().getTime()
+							){
+							 tmp = (int)DateUtil.dateDiff(ai.getOtStTime(), ai.getRendTime())/60;
+						}else if(ai.getRstartTime().getTime() <= ai.getOtStTime().getTime()
+								  && ai.getRendTime().getTime() >= ai.getOtEdTime().getTime()
+						         ){
+							tmp = (int)DateUtil.dateDiff(ai.getOtStTime(), ai.getOtEdTime())/60;
+						}else if(ai.getRstartTime().getTime() > ai.getOtStTime().getTime()
+								&& ai.getRendTime().getTime() < ai.getOtEdTime().getTime()){
+							tmp = (int)DateUtil.dateDiff(ai.getRstartTime(), ai.getRendTime())/60;
+						}else if(ai.getRstartTime().getTime() > ai.getOtStTime().getTime()
+								  && ai.getRendTime().getTime() >= ai.getOtEdTime().getTime()){
+							tmp = (int)DateUtil.dateDiff(ai.getRstartTime(), ai.getOtEdTime())/60;
+						}
+						if(tmp > 0){
+							attMonReport.setWorkdayOtMin(attMonReport.getWorkdayOtMin() + tmp);
+							attMonReport.setWorkdayOtCnt(attMonReport.getWorkdayOtCnt() + 1);
+							
+						}
+					}
+				}
+			}
+			// 深夜加班时间 不用处理
+			// 深夜加班次数 不用处理
+			
+			// 换休产生时间 
+			if(aiGetAttStatusOt.equals(AttConstants.AppStatus.APPROVED.value())
+				&& aiGetOtBenefit.equals(AttConstants.BenefitFlagEnum.FOR_DAY.toString())){
+				int tmp = (int)this.getOtWorkMin(ai.getDayFlg()
+							                    , ai.getPstartTime()
+							                    , ai.getPendTime()
+							                    , ai.getLunchTimeSt()
+							                    , ai.getLunchTimeEnd()
+							                    , ai.getDinnerTimeEnd()
+							                    , ai.getRstartTime()
+							                    , ai.getRendTime()
+							                    , ai.getOtStTime()
+							                    , ai.getOtEdTime());
+				if(tmp > 0){
+					attMonReport.setErestMin(attMonReport.getErestMin() + tmp);
+				}
+			}
+			// 换休使用时间 
+			if( (aiGetRestType.equals(AttConstants.VacationType.FOR_HUGH.value())
+					&& aiGetAppStatus.equals(AttConstants.AppStatus.APPROVED.value())
+					)
+				   ||
+				   (aiGetRestType.equals(AttConstants.VacationType.FOR_HUGH_S.value())
+				    && aiGetAppStatus.equals(AttConstants.AppStatus.APPROVED.value())
+				    )
+			       ||
+				    (aiGetRestType.equals(AttConstants.VacationType.FOR_HUGH_X.value())
+						    && aiGetAppStatus.equals(AttConstants.AppStatus.APPROVED.value())
+				    )
+		        ){
+				//上午半天换休
+				
+				int tmp = 0;
+				// 调用子程序计算实际时间
+				tmp = getOwenMin(ai, aiGetRestType);
+				if(tmp > 0){
+					attMonReport.setUsedErestMin(attMonReport.getUsedErestMin() + tmp);
+				}
+			}else if((aiGetRestTypeAddi.equals(AttConstants.VacationType.FOR_HUGH_S.value())
+					&& aiGetAppStatusAddi.equals(AttConstants.AppStatus.APPROVED.value())
+		              )
+		             || 
+		             (aiGetRestTypeAddi.equals(AttConstants.VacationType.FOR_HUGH_X.value())
+								&& aiGetAppStatusAddi.equals(AttConstants.AppStatus.APPROVED.value())
+						    )
+		             ){
+				int tmp = 0;
+				// 调用子程序计算实际时间
+				tmp = getOwenMin(ai, aiGetRestTypeAddi);
+				if(tmp > 0){
+					attMonReport.setUsedErestMin(attMonReport.getUsedErestMin() + tmp);
+				}
+			}
+		}//end for 
+		
+		// for循环最后一条数据更新
+		// 更新上一个员工的月次统计数据
+		if(!"".equals(tmpEmpId)){
+			// 月次统计数据存在
+			if(null != ye8021Dao.selectAttMonReport(attMonReport) ){
+				ye8021Dao.updateAttMonReport(attMonReport);
+			}else{
+				ye8021Dao.insertAttMonReport(attMonReport);
+			}
+			/*年数据统计*/
+			attYearReport = ye8021Dao.getAttMonReportY(attMonReport);
+			//用统计完的年次数据更新DB表
+			if(null != ye8021Dao.selectAttMonReport(attYearReport)  ){
+				ye8021Dao.updateAttMonReport(attYearReport);
+			}else{
+				ye8021Dao.insertAttMonReport(attYearReport);
+			}
+		}
+		
+		return true;
+	}
+	@Override
+	public boolean chkAttExrestInfos(Ye8021AttInfo ai) throws Exception {
+		
+		double dOtTime = 0;                                // 换休加班时间
+		
+		/*换休明细检查（仅已批准的加班产生的换休）*/
+		// 初始化
+		dOtTime = 0;
+		// 计算实际加班时间
+		dOtTime = this.getOtWorkMin(ai.getDayFlg()
+				                    , ai.getPstartTime()
+				                    , ai.getPendTime()
+				                    , ai.getLunchTimeSt()
+				                    , ai.getLunchTimeEnd()
+				                    , ai.getDinnerTimeEnd()
+				                    , ai.getRstartTime()
+				                    , ai.getRendTime()
+				                    , ai.getOtStTime()
+				                    , ai.getOtEdTime());
+		
+		/* 换休明细数据的时间和实际加班时间不等情况下*/
+		if( dOtTime - Integer.parseInt(ai.getAddRestMin()) != 0 ){
+			
+			// 删除换休明细表的加班数据
+			if(Double.parseDouble(ai.getAddRestMin()) != 0){
+				if(ye8021Dao.deleteAttExrestInfo(ai) < 0){
+					return false;
+				}
+			}
+			
+			// 追加新的换休数据
+			if(dOtTime > 0){
+				// 换休明细数据设定	
+				AttExrestInfo aei = new AttExrestInfo();
+				aei.setEmpId(ai.getEmpId());
+				aei.setCalYear(ai.getYear());
+				aei.setCalMonth(ai.getMonth());
+				String tmp = ai.getYear()+ai.getMonth()+ai.getDay();
+				aei.setHappenDate(DateUtil.parse(tmp));
+				aei.setHappenReason(AttConstants.HappenReason.PRO_REASON.toString());
+				String usefullife = attComService.getParameter("com.yds.att.usefullife");
+				tmp = DateUtil.dateAdd(ai.getYear()+ai.getMonth()+"01", Integer.parseInt(usefullife)+1, 1);
+				tmp = DateUtil.dateAdd(tmp, -1, 2);
+				aei.setUsefulDate(DateUtil.parse(tmp));
+				aei.setHappenTime((int)dOtTime);
+				// 追加数据
+				ye8021Dao.insertAttExrestInfo(aei);
+			}
+		}
+		return true;
+	}
+
+	@Override
+	public boolean crtAttInfo(Date stDate) {
+		Date edDate;
+		
+		try {
+			/* 临时删除
+//			stDate = DateUtil.dateAdd(stDate ,5 , 1);
+//			edDate = stDate;
+//			// 未来日期a的下一天是工作日的话，日期a作为生成考勤数据的截止日
+//			while(dateRelationService.getDateType(DateUtil.dateAdd(edDate ,5 , 1)) 
+//					!= AttConstants.DateTypeEnum.WORK){
+//				edDate = DateUtil.dateAdd(edDate ,5 , 1);
+//				
+//				while(dateRelationService.getDateType(edDate) 
+//						!= AttConstants.DateTypeEnum.WORK){
+//					edDate = DateUtil.dateAdd(edDate ,5 , 1);
+//				}
+//			}
+ */
+			//TODO 临时更改生成的日期
+			edDate = DateUtil.dateAdd(stDate ,5 , 30);
+			
+			Date someDay=edDate;
+			
+			// 按日期循环生成考勤数据
+			for(int i = DateUtil.dateBetween(DateUtil.setDateFormat(stDate, "yyyyMMdd")
+					                         , DateUtil.setDateFormat(edDate, "yyyyMMdd"))
+					                         ; i >= 0
+					                         ; i--){
+				
+				// 检索员工班型表取得考勤对象人员list
+				List<String> empIdList = ye8021Dao.getEmpIds(someDay);
+				
+				// 调用子程序生成考勤信息数据
+				for(int j=0;j<empIdList.size();j++){
+					attInfoService.updateAttInfo(empIdList.get(j), someDay);							
+				}
+									
+				// 日期递減
+				someDay = DateUtil.dateAdd(someDay, 5, -1);				
+			}
+		} catch (Exception e) {
+
+			e.printStackTrace();
+			return false;
+		}
+		
+		return true;
+	}
+
+	@Override
+	public boolean lockTables(List<String> lockTbls) {
+		if(ye8021Dao.lockTables(lockTbls) >= 0){
+			return true;
+		}
+		return false;
+	}
+
+	@Override
+	public boolean unlockTables(List<String> lockTbls) {
+		if(ye8021Dao.unlockTables() >= 0){
+			return true;
+		}
+		return false;
+	}
+
+	@Override
+	public boolean chkUnCorAtt(Ye8021CondA ye8021CondA) {
+		// 年月
+		String ym = ye8021CondA.getStYmd().substring(0, 6);
+		
+		try {
+			/* 删除结果表的相关数据*/
+			ye8021Dao.deleteAttUnCorAtt(ym);
+
+			/*检索,登录  漏考和未审批完的数据*/
+			// 包括  0：漏考 1：考勤更正未审批
+			//     2:请假未审批  3：加班未审批
+			ye8021Dao.insertAttUnCorAtt(ye8021CondA);
+			
+		} catch (Exception e) {
+			e.printStackTrace();
+			return false;
+		}
+		
+		return true;
+	}
+	
+	/**
+	 * 根据给的考勤信息（实出勤退勤时间等）和休假的类型算出该天实际使用的休假时间
+	 * @param ai 考勤信息
+	 * @param restType 休假类型
+	 * @return 分钟
+	 */
+	private int getOwenMin(AttInfo ai, String restType){
+		int tmp = 0;
+
+		// 全天的情况
+		if(restType.length() == 1){
+			tmp = (int) ((DateUtil.dateDiff(ai.getLunchTimeSt(), ai.getPstartTime()) 
+			      + DateUtil.dateDiff(ai.getLunchTimeEnd(), ai.getPendTime())) / 60); 
+			return tmp;
+		}else if(restType.length() == 2
+				&& (null == ai.getRstartTime()
+					&& null == ai.getRendTime())){
+			if(restType.substring(1, 2).equals(AttConstants.LEAVE_AM)){
+				tmp = (int) ((DateUtil.dateDiff(ai.getLunchTimeSt(), ai.getPstartTime())) / 60); 
+			}else{
+				tmp = (int) ((DateUtil.dateDiff(ai.getLunchTimeEnd(), ai.getPendTime())) / 60); 
+			}
+			return tmp;
+		}
+		ai.setRestType(restType);
+		ai.setAppStatus(AttConstants.AppStatus.APPROVED.value());
+		ai.setRestTypeAddi("");
+		ai.setAppStatusAddi("");
+		
+		try {
+			// 调用子程序计算实际时间
+			Map<String, Object> hm = dateRelationService.getExactLeaveTime(ai);
+			tmp =  (Integer) hm.get("leaveTime");
+			
+			return tmp;
+		} catch (Exception e) {
+			e.printStackTrace();
+			return 0;
+		}
+	}
+	/**
+	 * 根据给的考勤信息和给的时间 算出该时间对应的
+	 * 天数（小数保留3位）
+	 * @param ai 考勤信息
+	 * @param min 时间分钟
+	 * @param double 天数
+	 */
+	private double min2Day(AttInfo ai, int min) {
+
+		if(null == ai ){
+			return 0;
+		}
+		double oneDayMin = (
+				DateUtil.dateDiff(ai.getLunchTimeSt(), ai.getPstartTime())
+				+ DateUtil.dateDiff(ai.getPendTime(), ai.getLunchTimeEnd())
+				            )/(double)60;  
+		if(oneDayMin == 0){
+			return 0;
+		}
+		return NumberUtil.round(min/oneDayMin, 3);
+	}
+	/**
+	 * 根据给的考勤信息算出该天的换休加班时间
+	 * @param dayFlg 日期类型
+	 * @param dayType 考勤信息用到的项目 9个必须 顺序参看详细
+	 * @return double 分钟
+	 */
+	private double getOtWorkMin(String dayFlg, Date... aDate){
+		/** 应出勤日时. */
+		Date pstartTime = aDate[0];
+		/** 应退勤日时. */
+		Date pendTime= aDate[1];
+		/** 午休开始日时. */
+		Date lunchTimeSt= aDate[2];
+		/** 午休结束日时. */
+		Date lunchTimeEnd= aDate[3];
+		/** 晚休结束日时. */
+		Date dinnerTimeEnd= aDate[4];
+		/** 实际出勤日时. */
+		Date rstartTime= aDate[5];
+		/** 实际退勤日时. */
+		Date rendTime= aDate[6];
+		/** 计划开始日时. */
+		Date otStTime= aDate[7];
+		/** 计划结束日时. */
+		Date otEdTime= aDate[8];
+		double dOtTime = 0;                                // 换休加班时间
+		double iWorkDayTime = 0;                           // 一天工作时间
+		boolean dFlg = false;                              // 迟到标志
+		Date tmpStDate;                                    // 计算用日期
+		Date tmpEdDate;                                    // 计算用日期
+
+		/*换休明细检查（仅已批准的加班产生的换休）*/
+		// 初始化
+		dOtTime = 0;
+		// 计算实际加班时间
+		// 根据日期类型来分别计算
+		if(dayFlg.equals(AttConstants.DateTypeEnum.WORK.toString())){
+			/*正常上班情况*/
+			// 实际退勤时间比计划开始时间大
+			if( rendTime.getTime() > otStTime.getTime()){
+				//实际出勤时间比加班开始时间小
+				if( rstartTime.getTime() <= otStTime.getTime() ){
+					// 加班秒数取得
+					if(rendTime.getTime() <= otEdTime.getTime() ){
+						dOtTime = DateUtil.dateDiff(otStTime, rendTime);
+					}else{
+						dOtTime = DateUtil.dateDiff(otStTime, otEdTime);
+					}
+				}else {
+					// 加班秒数取得
+					if( rendTime.getTime()  <= otEdTime.getTime()){
+						dOtTime = DateUtil.dateDiff(rstartTime, rendTime);
+					}else{
+						dOtTime = DateUtil.dateDiff(rstartTime, otEdTime);
+					}
+				}
+				//分钟换算
+				dOtTime = dOtTime / (double)60;
+			}
+		}else{
+			/*法定假日 周末的情况*/
+			// 有加班时的加班时间
+			if( rendTime.getTime() > otStTime.getTime() 
+					&& rstartTime.getTime()  < otEdTime.getTime()){
+				
+				// 实际出勤时间比计划开始时间小
+				if(rstartTime.getTime() <= otStTime.getTime() ){
+					tmpStDate = otStTime;
+				}else{
+					// 出勤迟到
+					dFlg = true;
+					tmpStDate = rstartTime;
+				}
+				// 实际退勤时间比计划结束时间小
+				if(rendTime.getTime() <= otEdTime.getTime() ){
+					tmpEdDate = rendTime;
+				}else{
+					tmpEdDate = otEdTime;
+				}
+				// 当天出勤时间总共的包含休息的
+				dOtTime = DateUtil.dateDiff(tmpStDate, tmpEdDate);
+				// 有加班的情况
+				if(dOtTime > 0){
+					/* 该天的一天应工作时间 */
+					iWorkDayTime = DateUtil.dateDiff(pstartTime, pendTime);
+					iWorkDayTime = iWorkDayTime - DateUtil.dateDiff(lunchTimeSt, lunchTimeEnd);
+					
+					// 当天出勤时间减去午休时间 晚休时间
+					if(tmpStDate.getTime() < lunchTimeSt.getTime()
+							&& tmpEdDate.getTime() >= lunchTimeSt.getTime() 
+							&& tmpEdDate.getTime() <= lunchTimeEnd.getTime() ){
+						dFlg = true;
+						dOtTime = dOtTime - DateUtil.dateDiff(tmpEdDate, lunchTimeSt);  
+					}else if(tmpStDate.getTime() < lunchTimeSt.getTime()
+							&& tmpEdDate.getTime() > lunchTimeEnd.getTime() 
+							&& tmpEdDate.getTime() < pendTime.getTime()){
+						dFlg = true;
+						dOtTime = dOtTime - DateUtil.dateDiff(lunchTimeEnd, lunchTimeSt);  
+					}else if(tmpStDate.getTime() < lunchTimeSt.getTime()
+							&& tmpEdDate.getTime() >= pendTime.getTime() 
+							&& tmpEdDate.getTime() <= dinnerTimeEnd.getTime()){
+						
+						dOtTime = dOtTime - DateUtil.dateDiff(lunchTimeEnd, lunchTimeSt);  
+						dOtTime = dOtTime - DateUtil.dateDiff(tmpEdDate, pendTime); 
+					}else if(tmpStDate.getTime() < lunchTimeSt.getTime()
+							&& tmpEdDate.getTime() > dinnerTimeEnd.getTime()){
+						
+						dOtTime = dOtTime - DateUtil.dateDiff(lunchTimeEnd, lunchTimeSt);
+						
+						dOtTime = dOtTime - DateUtil.dateDiff(dinnerTimeEnd, pendTime);
+					}else if(tmpStDate.getTime() >= lunchTimeSt.getTime()
+							&& tmpStDate.getTime() <= lunchTimeEnd.getTime() 
+							&& tmpEdDate.getTime() >= lunchTimeSt.getTime() 
+							&& tmpEdDate.getTime() <= lunchTimeEnd.getTime()){
+						dOtTime = 0;
+					}else if(tmpStDate.getTime() >= lunchTimeSt.getTime()
+							&& tmpStDate.getTime() <= lunchTimeEnd.getTime()
+							&& tmpEdDate.getTime() > lunchTimeEnd.getTime() 
+							&& tmpEdDate.getTime() <= pendTime.getTime()){
+						
+						dOtTime = dOtTime - DateUtil.dateDiff(lunchTimeEnd, tmpStDate);  
+					}else if(tmpStDate.getTime() >= lunchTimeSt.getTime()
+							&& tmpStDate.getTime() <= lunchTimeEnd.getTime()
+							&& tmpEdDate.getTime() > pendTime.getTime() 
+							&& tmpEdDate.getTime() <= dinnerTimeEnd.getTime()){
+						
+						dOtTime = dOtTime - DateUtil.dateDiff(lunchTimeEnd, tmpStDate);  
+						dOtTime = dOtTime - DateUtil.dateDiff(tmpEdDate, pendTime);  
+					}else if(tmpStDate.getTime() >= lunchTimeSt.getTime()
+							&& tmpStDate.getTime() <= lunchTimeEnd.getTime()
+							&& tmpEdDate.getTime() > dinnerTimeEnd.getTime()){
+						
+						dOtTime = dOtTime - DateUtil.dateDiff(lunchTimeEnd, tmpStDate);
+						dOtTime = dOtTime - DateUtil.dateDiff(dinnerTimeEnd, pendTime);  
+					}else if(tmpStDate.getTime() > lunchTimeEnd.getTime()
+							&& tmpStDate.getTime() <= pendTime.getTime()
+							&& tmpEdDate.getTime() > pendTime.getTime() 
+							&& tmpEdDate.getTime() <= dinnerTimeEnd.getTime()){
+						
+						dOtTime = dOtTime - DateUtil.dateDiff(tmpEdDate, pendTime);  
+					}else if(tmpStDate.getTime() > lunchTimeEnd.getTime()
+							&& tmpStDate.getTime() <= pendTime.getTime()
+							&& tmpEdDate.getTime() > dinnerTimeEnd.getTime()){
+						
+						dOtTime = dOtTime - DateUtil.dateDiff(dinnerTimeEnd, pendTime);  
+					}else if(tmpStDate.getTime() > pendTime.getTime()
+							&& tmpStDate.getTime() <= dinnerTimeEnd.getTime()
+							&& tmpEdDate.getTime() > pendTime.getTime() 
+							&& tmpEdDate.getTime() <= dinnerTimeEnd.getTime() ){
+						dOtTime = 0;
+					}else if(tmpStDate.getTime() > pendTime.getTime()
+							&& tmpStDate.getTime() <= dinnerTimeEnd.getTime()
+							&& tmpEdDate.getTime() > dinnerTimeEnd.getTime()){
+						dOtTime = dOtTime - DateUtil.dateDiff(dinnerTimeEnd, tmpStDate);  
+					}
+					// 周末白天满勤的情况自动补时间
+					if(dOtTime > 0 && !dFlg){
+						dOtTime = dOtTime 
+						  + ( Double.parseDouble(attComService.getParameter("com.yds.att.dayworktime"))*3600 
+								 - iWorkDayTime);
+					}
+					// 转成分钟
+					dOtTime = dOtTime / (double)60;
+				}
+			}
+		}
+		
+		return dOtTime;
+	}
+
+	//-- test-todel - 
+	@Override
+	public List<AttInfoUncor> getUncor() {
+		return ye8021Dao.getUncor();
+	}
+	@Override
+	public AttMonReport getMonthRep(AttMonReport attMonReport){
+		return ye8021Dao.selectAttMonReport(attMonReport);
+	}
+}

@@ -1,0 +1,479 @@
+package com.xinleju.erp.flow.action;
+
+import java.awt.Color;
+import java.awt.image.BufferedImage;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import javax.imageio.ImageIO;
+import javax.servlet.ServletOutputStream;
+
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.w3c.dom.Document;
+
+import com.mxgraph.io.mxCodec;
+import com.mxgraph.model.mxCell;
+import com.mxgraph.model.mxGraphModel;
+import com.mxgraph.model.mxICell;
+import com.mxgraph.swing.mxGraphComponent;
+import com.mxgraph.util.mxCellRenderer;
+import com.mxgraph.util.mxPoint;
+import com.mxgraph.util.mxXmlUtils;
+import com.mxgraph.view.mxGraph;
+import com.mxgraph.view.mxStylesheet;
+import com.xinleju.erp.base.app.action.BaseAction;
+import com.xinleju.erp.base.utils.CollectionUtils;
+import com.xinleju.erp.base.utils.DateUtils;
+import com.xinleju.erp.base.utils.NumberUtils;
+import com.xinleju.erp.base.utils.StringHelper;
+import com.xinleju.erp.flow.models.Ai;
+import com.xinleju.erp.flow.models.Fl;
+import com.xinleju.erp.flow.models.Wi;
+import com.xinleju.erp.flow.service.AiService;
+import com.xinleju.erp.flow.service.ParticipantService;
+import com.xinleju.erp.flow.utils.DesignerUtils;
+import com.xinleju.erp.flow.utils.FlowUtils;
+import com.xinleju.erp.flow.utils.IdNameUtils;
+
+/**
+ * 
+ * <简述> <详细描述>
+ * 
+ * @author 孙朝辉
+ * @version $Id: GraphAction.java 749 2014-06-30 09:59:01Z sunchaohui $
+ * @since
+ * 
+ */
+public class GraphAction extends BaseAction {
+
+    /**
+     * 流程样式
+     */
+    private static mxStylesheet STYLESHEET = new mxStylesheet();
+    /**
+     * 节点名最大长度
+     */
+    private static final int NODE_NAME_MAX_LENGTH = 14;
+
+    /**
+     * 环节实例Service
+     */
+    @Autowired
+    private AiService aiService;
+
+    /**
+     * 参与人Service
+     */
+    @Autowired
+    private ParticipantService participantService;
+
+    /**
+     * 
+     * <p>
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @return String JSP
+     */
+    public String index() {
+
+        Long fiId = getParameterLong("fiId");
+
+        List<Ai> aiList = getCommonService().findAll(Ai.class, "fiId = ?", new Object[] { fiId }, "ac.outCode asc", new String[] { "ac" });
+        getRequest().setAttribute("aiList", aiList);
+
+        return "index";
+    }
+
+    /**
+     * 
+     * <p>
+     * 流程实例节点元信息
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @return String JSP
+     */
+    public String iframe() {
+
+        Long fiId = getParameterLong("fiId");
+
+        List<Object[]> pointList = getMeta(fiId);
+        getRequest().setAttribute("pointList", pointList);
+
+        return "iframe";
+    }
+
+    /**
+     * 
+     * <p>
+     * 流程实例图形化显示
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     */
+    public void show() {
+
+        Long fiId = getParameterLong("fiId");
+
+        String xml = getCommonService().findString("select fl.xml from Fi where id=?", fiId);
+        Document doc = mxXmlUtils.parseXml(xml);
+        mxCodec codec = new mxCodec(doc);
+        mxGraphModel model = (mxGraphModel) codec.decode(doc.getDocumentElement());
+
+        mxCell root = (mxCell) model.getRoot();
+        String flowCode = root.getAttribute("flowCode");
+        String flowVersion = root.getAttribute("flowVersion");
+
+        Map<String, Object> cells = model.getCells();
+        mxGraph graph = new mxGraph(model);
+
+        graph.setStylesheet(STYLESHEET);
+
+        graph.getModel().beginUpdate();
+
+        for (Object cellv : cells.values()) {
+            mxCell cell = (mxCell) cellv;
+
+            if (cell.isVertex()) {
+                boolean isTask = DesignerUtils.isTask(model, cell);
+                String styleString = cell.getStyle();
+                // 颜色配置
+
+                if (isTask) {
+                    String nodeId = cell.getId();
+
+                    Ai ai = getCommonService().findFirstByHQL(Ai.class,
+                            "from Ai ai where ai.ac.nodeId=? and ai.fl.flowCode=? and ai.fl.flowVersion=? and ai.fiId=?",
+                            new Object[] { nodeId, flowCode, flowVersion, fiId });
+
+                    String color = "";
+                    if (ai != null) {
+
+                        int status = ai.getStatus();
+                        boolean isSuspend = (ai.getIsSuspend() != null && 1 == ai.getIsSuspend());
+
+                        if (isSuspend) {
+                            color = "fillColor=" + RColor.SUSPEND.code;
+                        } else if (status == Ai.STATUS_COMPLETE) {
+                            color = "fillColor=" + RColor.COMPLETE.code;
+                        } else if (status == Ai.STATUS_RUNNING) {
+                            color = "fillColor=" + RColor.RUNNING.code;
+                        } else if (status == Ai.STATUS_CREATED) {
+                            color = "fillColor=" + RColor.CREATE.code;
+                        } else if (status == Ai.STATUS_OVERDUE) {
+                            color = "fillColor=" + RColor.OVERDU.code;
+                        }
+
+                    }
+
+                    styleString = StringUtils.isNotEmpty(styleString) ? (styleString + ";" + color) : color;
+
+                }
+
+                // 去除环节上的名称
+                mxICell icell = cell;
+                // String s = cell.getAttribute("label");
+                icell.setValue("");
+                icell.setStyle(styleString);
+            } else if (cell.isEdge()) {
+
+                mxICell icell = cell;
+                String s = cell.getAttribute("label");
+
+                icell.setValue(s);
+
+            }
+        }
+
+        graph.getModel().endUpdate();
+
+        mxGraphComponent graphComponent = new mxGraphComponent(graph);
+        BufferedImage image = mxCellRenderer.createBufferedImage(graph, null, 1, Color.WHITE, graphComponent.isAntiAlias(), null, graphComponent.getCanvas());
+        if (image != null) {
+
+            try {
+                ServletOutputStream os = response.getOutputStream();
+                response.addHeader("Content-Disposition", "attachment;filename=\"" + fiId + ".png\"");
+                ImageIO.write(image, "png", os);
+                os.flush();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    /**
+     * 
+     * <p>
+     * 获取流程实例元信息
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param fiId
+     *            Long 流程实例ID
+     * @return List
+     */
+    private List<Object[]> getMeta(Long fiId) {
+
+        Fl fl = getCommonService().findFirstByHQL(Fl.class, "select t.fl from Fi t where t.id = ?", fiId);
+        String xml = getCommonService().findString("select t.fl.xml from Fi t where t.id=?", fiId);
+        Document doc = mxXmlUtils.parseXml(xml);
+        mxCodec codec = new mxCodec(doc);
+        mxGraphModel model = (mxGraphModel) codec.decode(doc.getDocumentElement());
+
+        mxCell root = (mxCell) model.getRoot();
+        String flowCode = root.getAttribute("flowCode");
+        String flowVersion = root.getAttribute("flowVersion");
+
+        Map<String, Object> cellMap = model.getCells();
+        mxGraph graph = new mxGraph();
+        graph.getModel().beginUpdate();
+        double leftMin = Double.MAX_VALUE;
+        double topMin = Double.MAX_VALUE;
+        List<Object[]> pointList = new ArrayList<Object[]>();
+        for (Object vv : cellMap.values()) {
+
+            mxCell cell = (mxCell) vv;
+
+            if (cell != null && cell.isVertex()) {
+
+                boolean isTask = DesignerUtils.isTask(model, cell);
+
+                String nodeName = cell.getAttribute("label");
+                String nodeId = cell.getId();
+
+                String color = "";
+                String participantString = "";
+                String completeAt = "";
+                String startAt = "";
+                String interval = "";
+                String psShow = "";
+                String aiiid = "";
+                int status = 0;
+                String timelimit = "无";
+                Ai ai = null;
+
+                // 任务属性
+                if (isTask) {
+                    ai = getCommonService().findFirst(Ai.class, "ac.nodeId=? and fl.flowCode=? and fl.flowVersion=? and fiId=?",
+                            new Object[] { nodeId, flowCode, flowVersion, fiId }, new String[] { "ac" });
+
+                    if (ai != null) {
+                        if (ai.getAc().getTimeLimit() != null) {
+                            timelimit = NumberUtils.format(ai.getAc().getTimeLimit().toPlainString(), 0);
+                        }
+
+                        status = ai.getStatus();
+                        aiiid = "" + ai.getId();
+                        if (status == Ai.STATUS_COMPLETE) {
+                            color = "fillColor=" + RColor.COMPLETE.code;
+                            if (FlowUtils.isAuto(ai.getAc())) {
+                                List<String> completors = getCommonService().findByHQL(String.class,
+                                        "select completeUserName from Wi where status = ? and fiId = ?", new Object[] { Wi.STATUS_COMPLETE, ai.getFiId() });
+                                participantString = StringHelper.join(completors, ",");
+
+                            } else {
+                                participantString = "自动";
+                            }
+                            startAt = DateUtils.formatDate(ai.getRs(), "yyyy-MM-dd HH:mm:ss");
+                            completeAt = DateUtils.formatDate(ai.getRe(), "yyyy-MM-dd HH:mm:ss");
+                            interval = DateUtils.getTimeDesc(ai.getRs(), ai.getRe());
+
+                        } else if (status == Ai.STATUS_RUNNING) {
+                            color = "fillColor=" + RColor.RUNNING.code;
+                            List<String> pList = getCommonService().findByHQL(String.class,
+                                    "select distinct participantUserName from Wi where aiId=? and status=?", ai.getId(), Wi.STATUS_RUNNING);
+                            participantString = CollectionUtils.collectAsString(pList, ",");
+                            startAt = DateUtils.formatDate(ai.getRs(), "yyyy-MM-dd HH:mm:ss");
+
+                        } else if (status == Ai.STATUS_CREATED) {
+                            color = "fillColor=" + RColor.CREATE.code;
+                            participantString = participantService.getParticipantString(ai);
+                            participantString = IdNameUtils.getJoinedName(participantString);
+                        } else if (status == Ai.STATUS_OVERDUE) {
+                            color = "fillColor=" + RColor.OVERDU.code;
+                            participantString = participantService.getParticipantString(ai);
+                            participantString = IdNameUtils.getJoinedName(participantString);
+                        }
+
+                        if (StringUtils.isEmpty(participantString)) {
+                            psShow = "未确定";
+                            participantString = "未确定";
+                        } else {
+                            psShow = StringHelper.truncate(participantString, NODE_NAME_MAX_LENGTH, "...");
+                        }
+                    }
+                }
+
+                // 递归运算坐标值
+                double x = 0d;
+                double y = 0d;
+                mxICell workCell = cell;
+                while (workCell.getGeometry() != null) {
+                    x += workCell.getGeometry().getX();
+                    y += workCell.getGeometry().getY();
+                    workCell = workCell.getParent();
+                    break;
+                }
+                pointList.add(new Object[] { x, y, cell.getGeometry().getWidth(), cell.getGeometry().getHeight(), nodeName, psShow, participantString, startAt,
+                    completeAt, interval, color, aiiid, status + "", // 12
+                    ai, // 13
+                    ai != null && FlowUtils.isAuto(ai.getAc()), // 14
+                    timelimit });
+            } else if (cell != null && cell.isEdge()) {
+                List<mxPoint> points = cell.getGeometry().getPoints();
+                if (points != null) {
+                    for (mxPoint p : points) {
+                        if (leftMin > p.getX()) {
+                            leftMin = p.getX();
+                        }
+                        if (topMin > p.getY()) {
+                            topMin = p.getY();
+                        }
+                    }
+                }
+            }
+        }
+
+        double leftFix = StringUtils.isNotBlank(fl.getFixLeft()) && StringUtils.isNumeric(fl.getFixLeft()) ? Double.parseDouble(fl.getFixLeft()) : 0;
+        double topFix = StringUtils.isNotBlank(fl.getFixTop()) && StringUtils.isNumeric(fl.getFixTop()) ? Double.parseDouble(fl.getFixTop()) : 0;
+        for (Object[] item : pointList) {
+            if (((Double) item[0]).doubleValue() < leftMin) {
+                leftMin = ((Double) item[0]).doubleValue();
+            }
+            if (((Double) item[1]).doubleValue() < topMin) {
+                topMin = ((Double) item[1]).doubleValue();
+            }
+        }
+
+        for (Object[] item : pointList) {
+            double left = ((Double) item[0]).doubleValue() - leftMin;
+            double top = ((Double) item[1]).doubleValue() - topMin;
+            item[0] = left + leftFix;
+            item[1] = top + topFix;
+            item[4] = item[4];
+        }
+
+        return pointList;
+    }
+
+    static {
+
+        Map<String, Object> defaultVertex = new HashMap<String, Object>();
+        defaultVertex.put("shape", "label");
+        defaultVertex.put("perimeter", "rectanglePerimeter");
+        defaultVertex.put("labelBackgroundColor", "white");
+        defaultVertex.put("fontSize", "13");
+        defaultVertex.put("align", "center");
+        defaultVertex.put("verticalAlign", "middle");
+        defaultVertex.put("strokeColor", "black");
+        STYLESHEET.putCellStyle("defaultVertex", defaultVertex);
+
+        Map<String, Object> ellipse = new HashMap<String, Object>();
+        ellipse.put("shape", "ellipse");
+        ellipse.put("perimeter", "ellipsePerimeter");
+        STYLESHEET.putCellStyle("ellipse", ellipse);
+
+        Map<String, Object> rhombus = new HashMap<String, Object>();
+        rhombus.put("shape", "rhombus");
+        rhombus.put("perimeter", "rhombusPerimeter");
+        STYLESHEET.putCellStyle("rhombus", rhombus);
+
+        Map<String, Object> defaultEdge = new HashMap<String, Object>();
+        defaultEdge.put("shape", "connector");
+        defaultEdge.put("labelBackgroundColor", "white");
+        defaultEdge.put("rounded", "1");
+        defaultEdge.put("edgeStyle", "none");
+        defaultEdge.put("endArrow", "classic");
+        defaultEdge.put("fontSize", "13");
+        defaultEdge.put("align", "center");
+        defaultEdge.put("verticalAlign", "middle");
+        defaultEdge.put("strokeColor", "black");
+        STYLESHEET.putCellStyle("defaultEdge", defaultEdge);
+
+        STYLESHEET.putCellStyle("straightEdge", defaultEdge);
+
+        Map<String, Object> verticalEdge = new HashMap<String, Object>();
+
+        verticalEdge.put("shape", "connector");
+        verticalEdge.put("labelBackgroundColor", "white");
+        verticalEdge.put("rounded", "1");
+        verticalEdge.put("edgeStyle", "elbowEdgeStyle");
+        verticalEdge.put("elbow", "vertical");
+        verticalEdge.put("endArrow", "classic");
+        verticalEdge.put("fontSize", "13");
+        verticalEdge.put("align", "center");
+        verticalEdge.put("verticalAlign", "middle");
+        verticalEdge.put("strokeColor", "black");
+
+        STYLESHEET.putCellStyle("verticalEdge", verticalEdge);
+
+        Map<String, Object> orthogonalEdge = new HashMap<String, Object>();
+        ;
+        orthogonalEdge.put("shape", "connector");
+        orthogonalEdge.put("labelBackgroundColor", "white");
+        orthogonalEdge.put("rounded", "0");
+        orthogonalEdge.put("edgeStyle", "orthogonalEdgeStyle");
+        orthogonalEdge.put("elbow", "vertical");
+        orthogonalEdge.put("endArrow", "classic");
+        orthogonalEdge.put("fontSize", "13");
+        orthogonalEdge.put("align", "center");
+        orthogonalEdge.put("verticalAlign", "middle");
+        orthogonalEdge.put("strokeColor", "black");
+
+        STYLESHEET.putCellStyle("orthogonalEdge", orthogonalEdge);
+
+        STYLESHEET.setDefaultVertexStyle(defaultVertex);
+        STYLESHEET.setDefaultEdgeStyle(defaultEdge);
+    }
+
+    enum RColor {
+        /**
+         * 
+         */
+        SUSPEND("", "#FF0000"), OVERDU("", "red"), RUNNING("", "#fc0"), COMPLETE("", "#690"), CREATE("", "#e4e4e4");
+        private RColor(String name, String code) {
+            this.name = name;
+            this.code = code;
+        }
+
+        /**
+         * 名称
+         */
+        private String name;
+
+        /**
+         * 编码
+         */
+        private String code;
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+
+        public String getCode() {
+            return code;
+        }
+
+        public void setCode(String code) {
+            this.code = code;
+        }
+    }
+}

@@ -1,0 +1,518 @@
+package com.xinleju.erp.flow.service;
+
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.Future;
+
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.annotation.AsyncResult;
+import org.springframework.stereotype.Service;
+import org.w3c.dom.Document;
+import org.w3c.dom.Node;
+
+import com.mxgraph.io.mxCodec;
+import com.mxgraph.model.mxCell;
+import com.mxgraph.model.mxGraphModel;
+import com.mxgraph.util.mxUtils;
+import com.mxgraph.util.mxXmlUtils;
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.base.utils.DateUtils;
+import com.xinleju.erp.base.utils.StringHelper;
+import com.xinleju.erp.flow.bean.IdName;
+import com.xinleju.erp.flow.config.XmlConfig;
+import com.xinleju.erp.flow.dao.impl.ACMonitorSettingDao;
+import com.xinleju.erp.flow.dao.impl.FlMonitorSettingDao;
+import com.xinleju.erp.flow.models.Ac;
+import com.xinleju.erp.flow.models.AcMonitorSetting;
+import com.xinleju.erp.flow.models.Fl;
+import com.xinleju.erp.flow.models.FlGraph;
+import com.xinleju.erp.flow.models.FlMonitorSetting;
+import com.xinleju.erp.flow.models.Tr;
+import com.xinleju.erp.flow.service.api.CondCateService;
+import com.xinleju.erp.flow.utils.DesignerUtils;
+
+/**
+ * 
+ * 
+ * <p>
+ * </p>
+ * <p>
+ * </p>
+ * 
+ * @author 孙朝辉
+ * @version $Id: DesignerService.java 2337 2015-01-23 08:16:23Z zhongjun $
+ * @since
+ * 
+ */
+@Service
+public class DesignerService extends BaseService {
+
+    /**
+     * outCode数据服务
+     */
+    @Autowired
+    private XmlConfig xmlConfig;
+
+    /**
+     * 条件目录Service
+     */
+    @Autowired
+    private CondCateService condCateService;
+
+    
+    @Autowired
+    private OpRelationInsService opRelationInsService;
+    
+    @Autowired
+    private FlMonitorSettingDao flMonitorSettingDao;
+    @Autowired
+    private ACMonitorSettingDao acMonitorSettingDao;
+    /**
+     * 
+     * <p>
+     * 保存/发布工作流设计
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param xml
+     *            保存流程设计XML
+     * @param isCommited
+     *            是否发布
+     * 
+     * @return Future
+     */
+//    @Async
+    public Future<Integer> save(String xml, boolean isCommited, IdName idName) {
+        Document doc = mxXmlUtils.parseXml(xml);
+        mxCodec codec = new mxCodec(doc);
+        mxGraphModel model = (mxGraphModel) codec.decode(doc.getDocumentElement());
+
+        mxCell root = (mxCell) model.getRoot();
+        String flowCode = root.getAttribute("flowCode");
+        String flowVersion = root.getAttribute("flowVersion");
+        String ctId = root.getAttribute("ctId");
+        if (StringUtils.isNotBlank(ctId) && "null".equals(ctId)){
+            ctId = "";
+        }
+        String serviceObjectDefineId = root.getAttribute("serviceObjectDefineId");
+        if (StringUtils.isNotBlank(serviceObjectDefineId) && "null".equals(serviceObjectDefineId)){
+            serviceObjectDefineId = "";
+        }
+        String flowName = root.getAttribute("flowName");
+        String isFlowTimeLimit = root.getAttribute("isFlowTimeLimit");
+        String jqStrategy = root.getAttribute("jqStrategy");
+        String flowTimeLimit = root.getAttribute("flowTimeLimit");
+        String flowTimeUnit = root.getAttribute("flowTimeUnit");
+        String fixTop = root.getAttribute("fix_top");
+        String fixLeft = root.getAttribute("fix_left");
+        String doWhenRepeatInAcs = root.getAttribute("doWhenRepeatInAcs");
+        String doWhenNoUsersAtWp = root.getAttribute("doWhenNoUsersAtWp");
+        
+        String remark = root.getAttribute("flRemark");
+        String sort = root.getAttribute("flSort");
+        String startType = root.getAttribute("startType");
+        String isDisabled = root.getAttribute("isDisabled");
+
+        String codePrefix = root.getAttribute("codePrefix");
+        String codeTypeCode = root.getAttribute("codeTypeCode");
+        String titleType = root.getAttribute("titleType");
+        
+        String canChangeTitle = root.getAttribute("canChangeTitle");
+        String showGraph = root.getAttribute("showGraph");
+        String showRelationFile = root.getAttribute("showRelationFile");
+        String wisSortType = root.getAttribute("wisSortType");
+        
+
+        String createUserId = root.getAttribute("createUserId");
+        String createUserLoginName = root.getAttribute("createUserLoginName");
+        String createUserName = root.getAttribute("createUserName");
+        
+        String editUserId = root.getAttribute("editUserId");
+        String editUserLoginName = root.getAttribute("editUserLoginName");
+        String editUserName = root.getAttribute("editUserName");
+        
+        //当前操作人的IdName对象
+        if (null != idName){
+            editUserId = null != idName.getId() ? idName.getId() + "" : "";
+            editUserLoginName = StringUtils.isNotBlank(idName.getCode()) ? idName.getCode() : "";
+            editUserName = StringUtils.isNotBlank(idName.getName()) ? idName.getName() : "";
+        }
+        
+        String createTime = root.getAttribute("createTime");
+        String updateTime = DateUtils.formatDate(new Date(), DateUtils.DATE_FORMAT_YYYY_MM_DD_HH_MM_SS);
+        
+        String isBizFl = root.getAttribute("isBizFl");
+        
+        String kyList = root.getAttribute("kyList");
+        String fqList = root.getAttribute("fqList");
+
+        FlGraph newfl = null;
+        if (0 == getDao().execute(
+                "update FlGraph set xml=?,flowName=?,isTimeLimit=?,jqStrategy=?,timeLimit=?,timeUnit=?,fix_top=?,fix_left=?"
+                + ",doWhenRepeatInAcs=?,doWhenNoUsersAtWp=?,kyList = ?,fqList = ? "
+                + ",flSort=?,startType=?,isDisabled = ?,canChangeTitle = ?,showGraph = ?,showRelationFile = ?"
+                + ",wisSortType = ?,serviceObjectDefineId = ?,flRemark = ?"
+                + ",createUserId = ?,createUserLoginName = ?,createUserName = ?"
+                + ",editUserId = ?,editUserLoginName = ?,editUserName = ?"
+                + ",codePrefix = ?,codeTypeCode = ?,titleType = ?,isBizFl = ?"
+                + " where flowCode=? and flowVersion=?",
+                xml, flowName, (StringHelper.parseBoolean(isFlowTimeLimit) ? 1 : 0),
+                (StringUtils.isEmpty(jqStrategy) ? 0 : Integer.parseInt(jqStrategy)),
+                (StringUtils.isNotEmpty(flowTimeLimit) ? new BigDecimal(flowTimeLimit) : new BigDecimal(0)),
+                (StringUtils.isNotEmpty(flowTimeUnit) ? new Integer(flowTimeUnit) : 0), StringUtils.isEmpty(fixLeft) ? "0" : fixTop,
+                StringUtils.isEmpty(fixLeft) ? "0" : fixLeft, 
+                StringUtils.isEmpty(doWhenRepeatInAcs) ? 0 : Integer.parseInt(doWhenRepeatInAcs),
+                StringUtils.isEmpty(doWhenNoUsersAtWp) ? 2 : Integer.parseInt(doWhenNoUsersAtWp),//2：跳过，参看页面
+                StringUtils.isEmpty(kyList) ? "" : kyList,
+                StringUtils.isEmpty(fqList) ? "" : fqList,
+                StringUtils.isEmpty(sort) ? 0 : Integer.parseInt(sort),
+                StringUtils.isEmpty(startType) ? 0 : Integer.parseInt(startType),
+                StringUtils.isEmpty(isDisabled) ? 0 : Integer.parseInt(isDisabled),
+                StringUtils.isEmpty(canChangeTitle) ? 0 : Integer.parseInt(canChangeTitle),
+                StringUtils.isEmpty(showGraph) ? 0 : Integer.parseInt(showGraph),
+                StringUtils.isEmpty(showRelationFile) ? 0 : Integer.parseInt(showRelationFile),
+                StringUtils.isEmpty(wisSortType) ? 0 : Integer.parseInt(wisSortType),
+                StringUtils.isEmpty(serviceObjectDefineId) ? null : Long.valueOf(serviceObjectDefineId),
+                StringUtils.isEmpty(remark) ? "" : remark,
+                StringUtils.isEmpty(createUserId) ? null : Long.valueOf(createUserId),
+                StringUtils.isEmpty(createUserLoginName) ? "" : createUserLoginName,
+                StringUtils.isEmpty(createUserName) ? "" : createUserName,
+                StringUtils.isEmpty(editUserId) ? null : Long.valueOf(editUserId),
+                StringUtils.isEmpty(editUserLoginName) ? "" : editUserLoginName,
+                StringUtils.isEmpty(editUserName) ? "" : editUserName,
+                StringUtils.isEmpty(codePrefix) ? "" : codePrefix.trim(),
+                StringUtils.isEmpty(codeTypeCode) ? "" : codeTypeCode.trim(),
+                StringUtils.isEmpty(titleType) ? "" : titleType.trim(),
+                StringHelper.parseBoolean(isBizFl),
+                flowCode, flowVersion)) {
+            Fl oldFl = getDao().findFirstByHQL(Fl.class, "FROM Fl f where f.flowCode = ? order by f.publishTime desc", flowCode);
+            FlGraph fl = new FlGraph();
+            fl.setFixLeft(fixLeft);
+            fl.setFixTop(fixTop);
+            fl.setDoWhenRepeatInAcs(StringUtils.isBlank(doWhenRepeatInAcs) ? 0 : Integer.parseInt(doWhenRepeatInAcs));
+            fl.setDoWhenNoUsersAtWp(StringUtils.isBlank(doWhenNoUsersAtWp) ? 2 : Integer.parseInt(doWhenNoUsersAtWp));
+            fl.setFlowCode(flowCode);
+            fl.setFlowVersion(flowVersion);
+            if (StringUtils.isNotBlank(ctId) && !"null".equals(ctId)){
+                fl.setCtId(Long.valueOf(ctId));
+            } else {
+                fl.setCtId(oldFl != null ? oldFl.getCtId() : null);
+            }
+
+            if (StringUtils.isNotBlank(serviceObjectDefineId) && !"null".equals(serviceObjectDefineId)){
+                fl.setServiceObjectDefineId(Long.valueOf(serviceObjectDefineId));
+            } else {
+                fl.setServiceObjectDefineId(oldFl != null ? oldFl.getServiceObjectDefineId() : null);
+            }
+            fl.setJqStrategy(StringUtils.isEmpty(jqStrategy) ? 0 : Integer.parseInt(jqStrategy));
+            fl.setFlowName(flowName);
+            fl.setXml(xml);
+
+            fl.setIsDisabled(StringUtils.isEmpty(isDisabled) ? 0 : Integer.parseInt(isDisabled));
+            fl.setIsCommited(0);
+            
+            fl.setIsDefault(null != oldFl ? (null != oldFl.getIsDefault() ? oldFl.getIsDefault() : 0) : 0);
+
+            fl.setIsTimeLimit(StringHelper.parseBoolean(isFlowTimeLimit) ? 1 : 0);
+            fl.setTimeLimit(new BigDecimal(0));
+            fl.setTimeUnit(0);
+            fl.setAppCode(null != oldFl ? oldFl.getAppCode() : "");
+            fl.setKyList(kyList);
+            fl.setFqList(fqList);
+            
+            fl.setFlSort(StringUtils.isEmpty(sort) ? null : Integer.parseInt(sort));
+            fl.setStartType(StringUtils.isEmpty(startType) ? null : Integer.parseInt(startType));
+            
+            fl.setCodePrefix(StringUtils.isEmpty(codePrefix) ? "" : codePrefix.trim());
+            fl.setCodeTypeCode(StringUtils.isEmpty(codeTypeCode) ? "" : codeTypeCode.trim());
+            fl.setTitleType(StringUtils.isEmpty(titleType) ? "" : titleType.trim());
+            
+            fl.setCanChangeTitle(StringUtils.isEmpty(canChangeTitle) ? null : Integer.parseInt(canChangeTitle));
+            fl.setShowGraph(StringUtils.isEmpty(showGraph) ? null : Integer.parseInt(showGraph));
+            fl.setShowRelationFile(StringUtils.isEmpty(showRelationFile) ? null : Integer.parseInt(showRelationFile));
+            fl.setWisSortType(StringUtils.isEmpty(wisSortType) ? null : Integer.parseInt(wisSortType));
+            fl.setServiceObjectDefineId(StringUtils.isEmpty(serviceObjectDefineId) ? null : Long.valueOf(serviceObjectDefineId));
+            fl.setFlRemark(StringUtils.isEmpty(remark) ? "" : remark);
+            
+            fl.setCreateUserId(StringUtils.isEmpty(createUserId) ? null : Long.valueOf(createUserId));
+            fl.setCreateUserLoginName(StringUtils.isEmpty(createUserLoginName) ? "" : createUserLoginName);
+            fl.setCreateUserName(StringUtils.isEmpty(createUserName) ? "" : createUserName);
+            fl.setEditUserId(StringUtils.isEmpty(editUserId) ? null : Long.valueOf(editUserId));
+            fl.setEditUserLoginName(StringUtils.isEmpty(editUserLoginName) ? "" : editUserLoginName);
+            fl.setEditUserName(StringUtils.isEmpty(editUserName) ? "" : editUserName);
+            fl.setIsBizFl(StringHelper.parseBoolean(isBizFl));
+            
+            fl.setCreateTime(StringUtils.isEmpty(createTime) ? new Date() : DateUtils.str2Date(createTime, DateUtils.DATE_FORMAT_YYYY_MM_DD_HH_MM_SS));
+            fl.setUpdateTime(StringUtils.isEmpty(updateTime) ? new Date() : DateUtils.str2Date(updateTime, DateUtils.DATE_FORMAT_YYYY_MM_DD_HH_MM_SS));
+            
+            getDao().save(fl);
+            
+            newfl = fl;
+        }
+               
+        if (isCommited) {
+        	
+            // 处理模型监控设置
+            processFlMonitorSetting(model,newfl.getId());
+            
+            Map<String, Object> cellMap = model.getCells();
+
+            List<Tr> trList = new ArrayList<Tr>();
+            List<Ac> acList = new ArrayList<Ac>();
+            //定义环节列表
+            List<AcMonitorSetting> acmsList = new ArrayList<AcMonitorSetting>();
+
+            for (Object value : cellMap.values()) {
+                mxCell cell = (mxCell) value;
+                boolean isTask = DesignerUtils.isTask(model, cell);
+
+                if (cell.isVertex() && isTask) {
+                    Ac ac = DesignerUtils.cellToAc(model, cell, null, flowCode, flowVersion);
+                    acList.add(ac);
+                    
+                    // cell转换环节
+                    if (cell.getAttribute("status") != null && !"".equals(cell.getAttribute("status"))) {
+                        AcMonitorSetting acms = DesignerUtils.cellToAcMonitorSetting(model, cell, newfl.getId());
+                        acmsList.add(acms);
+                    }
+                    
+                } else if (cell.isEdge()) {
+                    Tr tr = DesignerUtils.cellToTr(model, cell, null, flowCode, flowVersion);
+                    trList.add(tr);
+                }
+            }
+            List<Ac> acs = getDao().findAll(Ac.class, "flowCode=? and flowVersion=?", new Object[] { flowCode, flowVersion });
+            getDao().deleteAll(acs);
+            List<Tr> trs = getDao().findAll(Tr.class, "flowCode=? and flowVersion=?", new Object[] { flowCode, flowVersion });
+            getDao().deleteAll(trs);
+//            if(root.getAttribute("flId") != null && !"".equals(root.getAttribute("flId"))){
+//            	acMonitorSettingDao.delete(new Object[]{Long.valueOf(root.getAttribute("flId"))});
+//            }
+            // getDao().execute("delete Ac where flowCode=? and flowVersion=?", flowCode, flowVersion);
+            // getDao().execute("delete Tr where flowCode=? and flowVersion=?", flowCode, flowVersion);
+
+            // 拓扑排序
+            DesignerUtils.topo(acList, trList);
+
+            // 注入排序
+            //DesignerUtils.sort(acList, xmlConfig);
+
+            if (acList.size() > 0) {
+                getDao().saveOrUpdateAll(acList);
+                
+                //更新环节监控信息
+                if (acmsList.size() > 0) {
+                    for (Ac ac : acList) {
+    					for (AcMonitorSetting acms : acmsList) {
+    						if (ac.getNodeId() == acms.getNodeId()) {
+    							acms.setAcId(ac.getId());
+    						}
+    					}
+    				}
+                    getDao().saveOrUpdateAll(acmsList);
+				}
+            }
+
+            if (trList.size() > 0) {
+
+                getDao().saveOrUpdateAll(trList);
+            }
+
+            getDao().execute("update Fl set isCommited = 1,publishTime = ? where flowCode=? and flowVersion=?", new Date(),flowCode, flowVersion);
+            
+        }
+        Fl fl = getDao().findFirst(Fl.class, " flowCode = ? and flowVersion = ? ", new Object[]{flowCode, flowVersion});
+        if (null != fl && null != fl.getServiceObjectDefineId()){
+        	fl.setAppCode(getDao().findString("select min(moduleCode) from ServiceObjectDefine where id = ?", fl.getServiceObjectDefineId()));
+        	getDao().update(fl);
+        }
+        opRelationInsService.updateFlOpRelationIns(fl);
+        return new AsyncResult<Integer>(1);
+    }
+
+    /**
+     * 
+     * <p>
+     * 重置拓扑关系
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param flowId
+     *            流程ID
+     * @return 成功状态 1成功 / -1失败
+     */
+    public int resetTopo(Long flowId) {
+        try {
+            FlGraph fl = getDao().getById(FlGraph.class, flowId);
+            resetFromNextInfo(fl.getXml());
+            return 1;
+        } catch (Exception e) {
+            return -1;
+        }
+
+    }
+
+    /**
+     * 
+     * <p>
+     * 重置拓扑关系
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param xml
+     *            模型xml
+     */
+    public void resetFromNextInfo(String xml) {
+        Document doc = mxXmlUtils.parseXml(xml);
+        mxCodec codec = new mxCodec(doc);
+
+        mxGraphModel model = (mxGraphModel) codec.decode(doc.getDocumentElement());
+
+        mxCell root = (mxCell) model.getRoot();
+        String flowCode = root.getAttribute("flowCode");
+        String flowVersion = root.getAttribute("flowVersion");
+
+        Map<String, Object> cellMap = model.getCells();
+
+        for (Map.Entry<String, Object> e : cellMap.entrySet()) {
+            mxCell cell = (mxCell) e.getValue();
+            boolean isTask = DesignerUtils.isTask(model, cell);
+
+            if (cell.isVertex() && isTask) {
+                Object[] nextInfo = DesignerUtils.getNextCellsAsString(model, cell);
+                Object[] fromInfo = DesignerUtils.getFromCellsAsString(model, cell);
+
+                String next1 = (String) nextInfo[0];
+                String nextA = (String) nextInfo[1];
+                String nextTr1 = (String) nextInfo[2];
+                String nextTrA = (String) nextInfo[3];
+                Integer nextTr1Size = (Integer) nextInfo[4];
+
+                String from1 = (String) fromInfo[0];
+                String fromA = (String) fromInfo[1];
+                String fromTr1 = (String) fromInfo[2];
+                String fromTrA = (String) fromInfo[3];
+                Integer fromTr1Size = (Integer) fromInfo[4];
+
+                Ac pojo = getDao().findFirst(Ac.class, "nodeId=? and flowCode = ? and flowVersion = ?", new Object[] { cell.getId(), flowCode, flowVersion });
+                if (pojo != null) {
+                    pojo.setNext_1(next1);
+                    pojo.setNext_a(nextA);
+                    pojo.setNext_tr_1(nextTr1);
+                    pojo.setNext_tr_a(nextTrA);
+                    pojo.setNext_tr_1_size(nextTr1Size);
+                    pojo.setIsEnd(nextTr1Size == 0 ? 1 : 0);
+
+                    pojo.setFrom_1(from1);
+                    pojo.setFrom_a(fromA);
+                    pojo.setFrom_tr_1(fromTr1);
+                    pojo.setFrom_tr_a(fromTrA);
+                    pojo.setFrom_tr_1_size(fromTr1Size);
+                    pojo.setIsStart(fromTr1Size == 0 ? 1 : 0);
+                    getDao().update(pojo);
+                }
+            } else if (cell.isEdge()) {
+
+            }
+        }
+
+    }
+    /**
+     * 替换流程模板参与人
+     * @author jun
+     * @param participantString 参与者
+     * @param toParticipantString 目标参与者
+     * @param flIds 流程模板ids
+     */
+    public void replaceParticipant(String participantString, String toParticipantString, Long[] flIds){
+        if (null != flIds && flIds.length > 0 && StringUtils.isNotBlank(participantString)){
+            List<FlGraph> flList = getDao().findAll(FlGraph.class, "id in(" + StringHelper.join(flIds, ",") + ")");
+            for (FlGraph fl : flList){
+                String oldXml = fl.getXml();
+                // 转Model
+                Document doc = mxXmlUtils.parseXml(oldXml);
+                mxCodec codec = new mxCodec(doc);
+                mxGraphModel model = (mxGraphModel) codec.decode(doc.getDocumentElement());
+                mxCell root = (mxCell) model.getRoot();
+                String newFlowVersion = DateUtils.formatDate(System.currentTimeMillis(), "yyyyMMddHHmmss");
+                // 修改属性
+                root.setAttribute("flowVersion", newFlowVersion);
+                model.setRoot(root);
+                // 转XML
+                Node node = new mxCodec().encode(model);
+                String newXml = mxUtils.getPrettyXml(node);
+                if (StringUtils.isNotBlank(toParticipantString)){
+                    newXml = newXml.replaceAll(participantString, toParticipantString);
+                } else {
+                    //先替换有;结尾的再替换无;结尾的
+                    newXml = newXml.replaceAll(participantString + ";", "");
+                    newXml = newXml.replaceAll(participantString, "");
+                }
+                this.save(newXml, true, null);
+            }
+        }
+    }
+    
+    /**
+     * 处理模型监控设置
+     * @param root
+     */
+    public void processFlMonitorSetting( mxGraphModel model, Long flId) {
+    	mxCell root = (mxCell) model.getRoot();
+    	String status = root.getAttribute("status");
+        if (status != null && !"".equals(status)) {
+            String approverOvertime = root.getAttribute("approverOvertime");
+            String approverRate = root.getAttribute("approverRate");
+            String leaderOvertime = root.getAttribute("leaderOvertime");
+            String leaderId = root.getAttribute("leaderId");
+            String leaderName = root.getAttribute("leaderName");
+            String leaderRate = root.getAttribute("leaderRate");
+
+        	FlMonitorSetting flms = new FlMonitorSetting();
+        	flms.setApproverOvertime(StringUtils.isEmpty(approverOvertime)  ? null : Long.valueOf(approverOvertime));
+        	flms.setApproverRate(StringUtils.isEmpty(approverRate) ? null : Integer.parseInt(approverRate));
+        	flms.setLeaderId(StringUtils.isEmpty(leaderId)  ? null : leaderId);
+        	flms.setLeaderName(StringUtils.isEmpty(leaderName)  ? null : leaderName);
+        	flms.setLeaderOvertime(StringUtils.isEmpty(leaderOvertime)  ? null : Long.valueOf(leaderOvertime));
+        	flms.setLeaderRate(StringUtils.isEmpty(leaderRate) ? null : Integer.parseInt(leaderRate));
+        	flms.setFlId(flId);
+        	flms.setStatus(StringUtils.isEmpty(status) ? null : Integer.parseInt(status));
+
+            getDao().save(flms);
+            
+//            int r = flMonitorSettingDao.update(new Object[]{
+//            		(StringUtils.isEmpty(approverOvertime)  ? null : Long.valueOf(approverOvertime)),
+//                    (StringUtils.isEmpty(approverRate) ? null : Integer.parseInt(approverRate)),
+//                    (StringUtils.isEmpty(leaderId)  ? null : leaderId),
+//                    (StringUtils.isEmpty(leaderName)  ? null : leaderName),
+//                    (StringUtils.isEmpty(leaderOvertime)  ? null : Long.valueOf(leaderOvertime)),
+//                    (StringUtils.isEmpty(leaderRate) ? null : Integer.parseInt(leaderRate)),
+//                    (StringUtils.isEmpty(status) ? null : Integer.parseInt(status)),
+//                    (StringUtils.isEmpty(flId)  ? null : Long.valueOf(flId))}
+//            );
+//            if (0 == r) {        	
+//            	FlMonitorSetting flms = new FlMonitorSetting();
+//            	flms.setApproverOvertime(StringUtils.isEmpty(approverOvertime)  ? null : Long.valueOf(approverOvertime));
+//            	flms.setApproverRate(StringUtils.isEmpty(approverRate) ? null : Integer.parseInt(approverRate));
+//            	flms.setLeaderId(StringUtils.isEmpty(leaderId)  ? null : leaderId);
+//            	flms.setLeaderName(StringUtils.isEmpty(leaderName)  ? null : leaderName);
+//            	flms.setLeaderOvertime(StringUtils.isEmpty(leaderOvertime)  ? null : Long.valueOf(leaderOvertime));
+//            	flms.setLeaderRate(StringUtils.isEmpty(leaderRate) ? null : Integer.parseInt(leaderRate));
+//            	flms.setFlId(StringUtils.isEmpty(flId)  ? null : Long.valueOf(flId));
+//            	flms.setStatus(StringUtils.isEmpty(status) ? null : Integer.parseInt(status));
+//
+//                getDao().save(flms);
+//            }
+		}
+	}
+}

@@ -1,0 +1,142 @@
+/*
+ * @(#)Ye8050ServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 考勤管理
+ */
+
+package com.yds.att.service.impl;
+
+
+import java.text.SimpleDateFormat;
+import java.util.List;
+
+import org.springframework.stereotype.Service;
+
+import com.yds.att.bean.AttInfoUncor;
+import com.yds.att.common.service.AttComService;
+import com.yds.att.dao.Ye8050Dao;
+import com.yds.att.service.AttConstants;
+import com.yds.att.service.AttConstants.UncorType;
+import com.yds.base.service.AbstractBaseService;
+import com.yds.batch.service.BatchJobRun;
+import com.yds.common.service.CommonConstants.SparkSignEnum;
+import com.yds.common.service.SessionConstants;
+import com.yds.common.service.CommonConstants.MsgTypeEnum;
+import com.yds.common.service.CommonConstants.SparkMsgIDEnum;
+import com.yds.common.service.CommonConstants.SparkSysIDEnum;
+import com.yds.util.bean.SparkMessagerBean;
+import com.yds.util.service.ApplicationContextHolder;
+import com.yds.util.service.DateUtil;
+import com.yds.util.service.PropertyManager;
+import com.yds.util.service.SendMessage;
+
+
+@Service("ye8050Service")
+public class Ye8050ServiceImpl extends AbstractBaseService implements BatchJobRun {
+	
+	/** 注入attComService. */
+	private AttComService attComService;      
+	private Ye8050Dao ye8050Dao;
+	
+	@Override
+	public void jobRun() throws Throwable {
+
+		// 取得当前日期		
+		String curDayStr = attComService.getParameter("com.yds.att.curday");
+		// 取得上月年月
+		SimpleDateFormat sdf = new SimpleDateFormat("yyyyMMdd");
+		String upYm = sdf.format(DateUtil.parse(DateUtil.dateAdd(curDayStr,-1,1)));
+		String upYearmonth = upYm.substring(0, 6);
+		
+		// 取得不整合考勤数据
+		List<AttInfoUncor> attInfoUncorList =  ye8050Dao.getAttInfoUncor(upYearmonth); 
+
+		PropertyManager propMgr= (PropertyManager)ApplicationContextHolder.getBean("propMgr");
+		String urlPath = propMgr.getParameter("com.yds.web.url");
+		
+		// 修改迁移画面的参数
+		// SparkMessagerBean的设定
+		for(AttInfoUncor attInfoUncor : attInfoUncorList){
+			// Spark信息的发送
+			SparkMessagerBean sparkMessagerBean = new SparkMessagerBean();
+			
+			// spark 消息类型
+			sparkMessagerBean.setStatus(MsgTypeEnum.UPDATE);
+            
+			// 消息内部用ID
+			sparkMessagerBean.setSign(SparkSignEnum.ATT.value());
+			
+			// 要发送的人员一览
+			sparkMessagerBean
+					.setEmpid(new String[] { attInfoUncor.getAttPerId() });
+			
+			// 发送消息的系统ID
+			sparkMessagerBean.setSystem_id(SparkSysIDEnum.AT);
+			
+			if(UncorType.ATTNOTCOMP.value().equals(attInfoUncor.getUncorType())){				
+				// 发送消息的消息类型ID
+				sparkMessagerBean.setMsg_id(SparkMsgIDEnum.AT_0);				
+				// 消息的内容
+				sparkMessagerBean.setMsg_content(propMgr.getMessage(
+						"yds.att.info.0006",
+						attInfoUncor.getCnt1()+ ""));
+				// 消息的链接
+				sparkMessagerBean.setMsg_url(urlPath
+						+ AttConstants.SYSTEM_NAME + "/ye0010Init?"
+						+ SessionConstants.REQUESTTARGET + "=1");				
+			}else if(UncorType.CORRECTNOTAPPROVE.value().equals(attInfoUncor.getUncorType())){
+				// 发送消息的消息类型ID
+				sparkMessagerBean.setMsg_id(SparkMsgIDEnum.AT_1);								
+				// 消息的内容
+				sparkMessagerBean.setMsg_content(propMgr.getMessage(
+						"yds.att.info.0007",
+						attInfoUncor.getCnt1()+ ""));
+				// 消息的链接
+				sparkMessagerBean.setMsg_url(urlPath
+						+ AttConstants.SYSTEM_NAME + "/ye0050Init?"
+						+ SessionConstants.REQUESTTARGET + "=1");				
+			}else if(UncorType.RESTNOTAPPROVE.value().equals(attInfoUncor.getUncorType())){
+				// 发送消息的消息类型ID
+				sparkMessagerBean.setMsg_id(SparkMsgIDEnum.AT_2);				
+				// 消息的内容
+				sparkMessagerBean.setMsg_content(propMgr.getMessage(
+						"yds.att.info.0008",
+						attInfoUncor.getCnt1()+ ""));
+				// 消息的链接
+				sparkMessagerBean.setMsg_url(urlPath
+						+ AttConstants.SYSTEM_NAME + "/ye0040Init?"
+						+ SessionConstants.REQUESTTARGET + "=1");				
+			}else{
+				// 发送消息的消息类型ID
+				sparkMessagerBean.setMsg_id(SparkMsgIDEnum.AT_3);	
+				// 消息的内容
+				sparkMessagerBean.setMsg_content(propMgr.getMessage(
+						"yds.att.info.0009",
+						attInfoUncor.getCnt1()+ ""));
+				// 消息的链接
+				sparkMessagerBean.setMsg_url(urlPath
+						+ AttConstants.SYSTEM_NAME + "/ye0060Init?"
+						+ SessionConstants.REQUESTTARGET + "=1");				
+			}
+
+			// 发送spark消息
+			SendMessage.asyncSend(sparkMessagerBean);
+		}
+	}
+
+	/**
+	 * @param acs the attComService to set
+	 */
+	public void setAttComService(AttComService acs) {
+		this.attComService = acs;
+	}
+	/**
+	 * @param ye8050Dao the ye8050Dao to set
+	 */
+	public void setYe8050Dao(Ye8050Dao ye8050Dao) {
+		this.ye8050Dao = ye8050Dao;
+	}
+
+}

@@ -1,0 +1,316 @@
+/*
+ * @(#)Ye0040Action.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 考勤管理
+ */
+package com.yds.att.action;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.config.BeanDefinition;
+import org.springframework.context.annotation.Scope;
+import org.springframework.stereotype.Controller;
+
+import com.yds.att.bean.AttExamin;
+import com.yds.att.bean.AttRestApp;
+import com.yds.att.bean.OrgInfo;
+import com.yds.att.bean.Ye0040CondA;
+import com.yds.att.common.service.DateRelationService;
+import com.yds.att.common.service.OrgRelationService;
+import com.yds.att.service.AttConstants;
+import com.yds.att.service.Ye0040Service;
+import com.yds.att.service.AttConstants.AppStatus;
+import com.yds.att.service.AttConstants.AppStatusText;
+import com.yds.att.service.AttConstants.VacationType;
+import com.yds.att.service.AttConstants.VacationTypeText;
+import com.yds.base.action.BasePagerAction;
+import com.yds.common.service.SessionService;
+
+/**
+ * @author 远东) 共通组
+ * @version 1.0
+ */
+
+
+@Scope(BeanDefinition.SCOPE_PROTOTYPE)
+@Controller("ye0040Action")
+public class Ye0040Action extends BasePagerAction{
+	
+	/**
+	 * 
+	 */
+	private static final long serialVersionUID = 5604062918259783342L;
+
+	/** 注入Service. */
+	private Ye0040Service ye0040Service;
+	private static final String DEFAULT_FROM_ID="ye0040";
+	/** 组织关系Service. */
+	private OrgRelationService orgRelationService;
+	/** 时间计算Service. */
+	private DateRelationService dateRelationService;
+	
+	/** 条件bean/单条明细bean. */
+	private AttRestApp attRestApp;
+	
+	/** 联动菜单 */
+	private String selectList;
+	
+	/** 一览List. */
+	private List<AttRestApp> attRestAppList;
+	
+	/** 条件bean */
+	private Ye0040CondA ye0040CondA;
+	
+	/** 件数. */
+	private long count;
+	
+	/** 申请编号. */
+	private String appId;
+	
+	/** 是否同意休假. */
+	private boolean agree;
+	
+	/** 审批意见. */
+	private String exaSuggestion;
+	
+	/**
+	 * 由检索条件取得一览
+	 * @return SUCCESS
+	 */
+	public String execute(){
+		// 取得用户ID
+		String userId = SessionService.getLoginUserId();
+		boolean isfirst = false;
+		
+		// 判断请假类型都没选的情况
+		if (null == ye0040CondA) {
+			isfirst = true;
+		}
+		
+		if (null != ye0040CondA 
+			&& !ye0040CondA.isBj()
+			&& !ye0040CondA.isCc()
+			&& !ye0040CondA.isCj()
+			&& !ye0040CondA.isGc()
+			&& !ye0040CondA.isHj()
+			&& !ye0040CondA.isHx()
+			&& !ye0040CondA.isNx()
+			&& !ye0040CondA.isShij()
+			&& !ye0040CondA.isSj()
+			&& !ye0040CondA.isTj()
+			&& !ye0040CondA.isHbj()
+			&& !ye0040CondA.isHsj()) {
+			
+			ye0040CondA.setAttFlag(true);
+		}
+		
+		if (!isfirst) {
+			ye0040CondA.setUpdateUser(userId);
+			// 取得检索信息一览
+			setAttRestAppList(ye0040Service.getAttRestAppList(ye0040CondA));
+			count = attRestAppList.size();
+
+			reSetAttRestAppList(attRestAppList);
+		}
+		
+		if (null == getFromId() || "".equals(getFromId())) {
+			setFromId(DEFAULT_FROM_ID);
+		}
+		
+		return SUCCESS;
+	}
+	
+	/**
+	 * 更新处理
+	 * @return SUCCESS
+	 * @throws Exception 
+	 */
+	public String attPend() throws Exception {
+		ye0040Service.updateAttPend(appId, agree, exaSuggestion);
+		// 操作状态消息
+		//putOpTip(propMgr.getMessage("yds.att.info.0003"));
+		return SUCCESS;
+	}
+
+	private List<AttRestApp> reSetAttRestAppList(List<AttRestApp> attRestAppList) {
+		// 取得用户ID
+		String userId = SessionService.getLoginUserId();
+		
+		for (AttRestApp attRestApp : attRestAppList) {
+			
+			// 休假类型
+			String restType = attRestApp.getRestType();
+			String restTypeH = "";
+			if (restType.length() > 1) {
+				restTypeH = restType.substring(1, 2);
+				restType = restType.substring(0, 1);
+			}
+			// 申请状态
+			String appStatus = attRestApp.getAppStatus();
+			// 取得上级组织信息
+			OrgInfo orgInfo = orgRelationService.getParentOrgBy(attRestApp.getRestOrganizationId());
+			// 计算请假天数
+			Map<String, Object> drs = new HashMap<String, Object>();
+			try {
+				drs = dateRelationService.getLeaveTime(attRestApp.getRestStartDate(), attRestApp.getRestEndDate(), attRestApp.getRestType(), attRestApp.getRestPerId());
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+			// 设置请假天数
+			Double restDates = (Double)drs.get("leaveDays");
+			if (restDates >= 1) {
+				attRestApp.setRestDates(String.valueOf(Math.round(restDates)));
+			} else {
+				if (AttConstants.LEAVE_AM.equals(restTypeH)) {
+					attRestApp.setRestDates(VacationTypeText.AM.value());
+				} else if (AttConstants.LEAVE_PM.equals(restTypeH)) {
+					attRestApp.setRestDates(VacationTypeText.PM.value());
+				}
+			}
+			// 设置部门名称
+			if ("prjt".equals(attRestApp.getOrgType())) {
+				
+				attRestApp.setDeptNm(orgInfo.getOrgSnm());
+			} else {
+				attRestApp.setDeptNm(attRestApp.getPrjNm());
+				attRestApp.setPrjNm("");
+			}
+			
+			// 休假类型文字设定
+			if (VacationType.SICK_LEAVE.value().equals(restType)) {
+				attRestApp.setRestTypeText(VacationTypeText.SICK_LEAVE.value());
+			} else if (VacationType.MATERNITY_LEAVE.value().equals(restType)) {
+				attRestApp.setRestTypeText(VacationTypeText.MATERNITY_LEAVE.value());
+			} else if (VacationType.TRAVEL.value().equals(restType)) {
+				attRestApp.setRestTypeText(VacationTypeText.TRAVEL.value());
+			} else if (VacationType.BUSINESS_TRIP.value().equals(restType)) {
+				attRestApp.setRestTypeText(VacationTypeText.BUSINESS_TRIP.value());
+			} else if (VacationType.SPECIAL_LEAVE.value().equals(restType)) {
+				attRestApp.setRestTypeText(VacationTypeText.SPECIAL_LEAVE.value());
+			} else if (VacationType.FOR_HUGH.value().equals(restType)) {
+				attRestApp.setRestTypeText(VacationTypeText.FOR_HUGH.value());
+			} else if (VacationType.MARRIAGE_LEAVE.value().equals(restType)) {
+				attRestApp.setRestTypeText(VacationTypeText.MARRIAGE_LEAVE.value());
+			} else if (VacationType.ANNUAL_LEAVE.value().equals(restType)) {
+				attRestApp.setRestTypeText(VacationTypeText.ANNUAL_LEAVE.value());
+			} else if (VacationType.BEREAVEMENT_LEAVE.value().equals(restType)) {
+				attRestApp.setRestTypeText(VacationTypeText.BEREAVEMENT_LEAVE.value());
+			} else if (VacationType.LEAVE.value().equals(restType)) {
+				attRestApp.setRestTypeText(VacationTypeText.LEAVE.value());
+			}
+			
+			// 审批状态文字设定
+			if (AppStatus.PENDING.value().equals(appStatus)) {
+				attRestApp.setAppStatus(AppStatusText.PENDING.value());
+			} else if (AppStatus.APP_ING.value().equals(appStatus)) {
+				attRestApp.setAppStatus(AppStatusText.APP_ING.value());
+			} else if (AppStatus.APPROVED.value().equals(appStatus) || AppStatus.EDIAT_DIRECT.value().equals(appStatus)) {
+				attRestApp.setAppStatus(AppStatusText.APPROVED.value());
+			} else if (AppStatus.REJECTED.value().equals(appStatus)) {
+				attRestApp.setAppStatus(AppStatusText.REJECTED.value());
+			} else if (AppStatus.REVOKEED.value().equals(appStatus)) {
+				attRestApp.setAppStatus(AppStatusText.REVOKEED.value());
+			}
+
+			// 取得用户所具有的审批流程
+			List<AttExamin> aeList = ye0040Service.getAttExamin(attRestApp.getAppId(), userId);
+			
+			// 判断是否可以操作,按钮制御
+			if (AppStatus.REJECTED.value().equals(appStatus) 
+				|| AppStatus.REVOKEED.value().equals(appStatus)
+				|| AppStatus.APPROVED.value().equals(appStatus)
+				|| AppStatus.EDIAT_DIRECT.value().equals(appStatus)) {
+				attRestApp.setOptFlag(false);
+			} else if(aeList.size() > 0 && (null == aeList.get(0).getExaId() || "".equals(aeList.get(0).getExaId()))) {
+				attRestApp.setOptFlag(true);
+			} else {
+				attRestApp.setOptFlag(false);
+			}
+		}
+		return attRestAppList;
+	}
+	
+	/**
+	 *  @return the count
+	 */
+	public long getCount() {
+		return count;
+	}
+
+	public void setCount(long count) {
+		this.count = count;
+	}	
+
+	public List<AttRestApp> getAttRestAppList() {
+		return attRestAppList;
+	}
+
+	public void setAttRestAppList(List<AttRestApp> attRestAppList) {
+		this.attRestAppList = attRestAppList;
+	}
+
+	public String getSelectList() {
+		return selectList;
+	}
+
+	public void setSelectList(String selectList) {
+		this.selectList = selectList;
+	}
+
+	public Ye0040CondA getYe0040CondA() {
+		return ye0040CondA;
+	}
+
+	public void setYe0040CondA(Ye0040CondA ye0040CondA) {
+		this.ye0040CondA = ye0040CondA;
+	}
+
+	public String getAppId() {
+		return appId;
+	}
+
+	public void setAppId(String appId) {
+		this.appId = appId;
+	}
+
+	public boolean isAgree() {
+		return agree;
+	}
+
+	public void setAgree(boolean agree) {
+		this.agree = agree;
+	}
+
+	public String getExaSuggestion() {
+		return exaSuggestion;
+	}
+
+	public void setExaSuggestion(String exaSuggestion) {
+		this.exaSuggestion = exaSuggestion;
+	}
+
+	public void setOrgRelationService(OrgRelationService orgRelationService) {
+		this.orgRelationService = orgRelationService;
+	}
+
+	public void setYe0040Service(Ye0040Service ye0040Service) {
+		this.ye0040Service = ye0040Service;
+	}
+
+	public AttRestApp getAttRestApp() {
+		return attRestApp;
+	}
+
+	public void setAttRestApp(AttRestApp attRestApp) {
+		this.attRestApp = attRestApp;
+	}
+
+	public void setDateRelationService(DateRelationService dateRelationService) {
+		this.dateRelationService = dateRelationService;
+	}
+
+}

@@ -1,0 +1,235 @@
+package com.xinleju.platform.sys.org.dto;
+
+import java.util.List;
+
+public class OrgnazationTreeNodeDto {
+	
+	 //主键
+	  private String id ;
+	  //名称
+	  private String name;
+	  //类型
+	  private String type;
+	  //排序
+	  private Long sort;
+	  //父节点ID
+	  private String parentId;
+	 //目录ID
+	  private String rootId;
+	  //子节点对象
+	  private List<OrgnazationTreeNodeDto> children;
+	  
+	  private String icon;
+	  private String level;
+	  private String tId;
+	  private String parentTId;
+	  private String open;
+	  private String isParent;
+	  private String zAsync;
+	  private String isFirstNode;
+	  private String isLastNode;
+	  private String isAjaxing;
+	  private String pId;
+	  private String checked;
+	  private String checkedOld;
+	  private String nocheck;
+	  private String chkDisabled;
+	  private String halfCheck;
+	  private String check_Child_State;
+	  private String check_Focus;
+	  private String isHover;
+	  private String editNameFlag;
+	  
+	//状态
+	  private String status;
+	  //全路径名称
+	  private String prefixName;
+	  //全路径Id
+	  private String prefixId;
+	  
+	  
+	
+	 public String getIcon() {
+		return icon;
+	}
+	public void setIcon(String icon) {
+		this.icon = icon;
+	}
+	public String getLevel() {
+		return level;
+	}
+	public void setLevel(String level) {
+		this.level = level;
+	}
+	public String gettId() {
+		return tId;
+	}
+	public void settId(String tId) {
+		this.tId = tId;
+	}
+	public String getParentTId() {
+		return parentTId;
+	}
+	public void setParentTId(String parentTId) {
+		this.parentTId = parentTId;
+	}
+	public String getOpen() {
+		return open;
+	}
+	public void setOpen(String open) {
+		this.open = open;
+	}
+	public String getIsParent() {
+		return isParent;
+	}
+	public void setIsParent(String isParent) {
+		this.isParent = isParent;
+	}
+	public String getzAsync() {
+		return zAsync;
+	}
+	public void setzAsync(String zAsync) {
+		this.zAsync = zAsync;
+	}
+	public String getIsFirstNode() {
+		return isFirstNode;
+	}
+	public void setIsFirstNode(String isFirstNode) {
+		this.isFirstNode = isFirstNode;
+	}
+	public String getIsLastNode() {
+		return isLastNode;
+	}
+	public void setIsLastNode(String isLastNode) {
+		this.isLastNode = isLastNode;
+	}
+	public String getIsAjaxing() {
+		return isAjaxing;
+	}
+	public void setIsAjaxing(String isAjaxing) {
+		this.isAjaxing = isAjaxing;
+	}
+	public String getpId() {
+		return pId;
+	}
+	public void setpId(String pId) {
+		this.pId = pId;
+	}
+	public String getChecked() {
+		return checked;
+	}
+	public void setChecked(String checked) {
+		this.checked = checked;
+	}
+	public String getCheckedOld() {
+		return checkedOld;
+	}
+	public void setCheckedOld(String checkedOld) {
+		this.checkedOld = checkedOld;
+	}
+	public String getNocheck() {
+		return nocheck;
+	}
+	public void setNocheck(String nocheck) {
+		this.nocheck = nocheck;
+	}
+	public String getChkDisabled() {
+		return chkDisabled;
+	}
+	public void setChkDisabled(String chkDisabled) {
+		this.chkDisabled = chkDisabled;
+	}
+	public String getHalfCheck() {
+		return halfCheck;
+	}
+	public void setHalfCheck(String halfCheck) {
+		this.halfCheck = halfCheck;
+	}
+	public String getCheck_Child_State() {
+		return check_Child_State;
+	}
+	public void setCheck_Child_State(String check_Child_State) {
+		this.check_Child_State = check_Child_State;
+	}
+	public String getCheck_Focus() {
+		return check_Focus;
+	}
+	public void setCheck_Focus(String check_Focus) {
+		this.check_Focus = check_Focus;
+	}
+	public String getIsHover() {
+		return isHover;
+	}
+	public void setIsHover(String isHover) {
+		this.isHover = isHover;
+	}
+	public String getEditNameFlag() {
+		return editNameFlag;
+	}
+	public void setEditNameFlag(String editNameFlag) {
+		this.editNameFlag = editNameFlag;
+	}
+	public String getId() {
+		return id;
+	}
+	public void setId(String id) {
+		this.id = id;
+	}
+	public String getName() {
+		return name;
+	}
+	public void setName(String name) {
+		this.name = name;
+	}
+	public String getType() {
+		return type;
+	}
+	public void setType(String type) {
+		this.type = type;
+	}
+	public Long getSort() {
+		return sort;
+	}
+	public void setSort(Long sort) {
+		this.sort = sort;
+	}
+	public String getParentId() {
+		return parentId;
+	}
+	public void setParentId(String parentId) {
+		this.parentId = parentId;
+	}
+	public List<OrgnazationTreeNodeDto> getChildren() {
+		return children;
+	}
+	public void setChildren(List<OrgnazationTreeNodeDto> children) {
+		this.children = children;
+	}
+	public String getRootId() {
+		return rootId;
+	}
+	public void setRootId(String rootId) {
+		this.rootId = rootId;
+	}
+	public String getStatus() {
+		return status;
+	}
+	public void setStatus(String status) {
+		this.status = status;
+	}
+	public String getPrefixName() {
+		return prefixName;
+	}
+	public void setPrefixName(String prefixName) {
+		this.prefixName = prefixName;
+	}
+	public String getPrefixId() {
+		return prefixId;
+	}
+	public void setPrefixId(String prefixId) {
+		this.prefixId = prefixId;
+	}
+
+	  
+	  
+}

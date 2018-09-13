@@ -1,0 +1,25 @@
+package com.xinleju.platform.finance.utils.voucherxml;
+import java.util.List;
+
+import javax.xml.bind.annotation.XmlAccessType;
+import javax.xml.bind.annotation.XmlAccessorType;
+import javax.xml.bind.annotation.XmlElement;
+import javax.xml.bind.annotation.XmlType;
+
+@XmlAccessorType(XmlAccessType.FIELD)  
+@XmlType(name = "voucher_body", propOrder = {})
+public class VoucherBody {
+//@XmlElementWrapper()  
+@XmlElement(name = "entry")
+private List<Entry> entry;
+
+public List<Entry> getEntry() {
+	return entry;
+}
+
+public void setEntry(List<Entry> entry) {
+	this.entry = entry;
+}
+
+
+}

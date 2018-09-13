@@ -1,0 +1,765 @@
+package com.xinleju.erp.flow.dao.impl;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+
+import org.apache.commons.lang3.StringUtils;
+import org.hibernate.FetchMode;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.Order;
+import org.hibernate.criterion.Restrictions;
+import org.hibernate.sql.JoinType;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.util.Assert;
+
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.utils.StringHelper;
+import com.xinleju.erp.flow.flowutils.bean.AssignWi;
+import com.xinleju.erp.flow.flowutils.utils.WsConstant;
+import com.xinleju.erp.flow.frameapi.domain.User;
+import com.xinleju.erp.flow.models.Ai;
+import com.xinleju.erp.flow.models.Wi;
+import com.xinleju.erp.flow.models.Wp;
+import com.xinleju.erp.flow.service.AlService;
+import com.xinleju.erp.flow.service.api.DoAfterService;
+import com.xinleju.erp.flow.service.api.OrgnAPIService;
+import com.xinleju.erp.flow.utils.FlowUtils;
+import com.xinleju.erp.flow.utils.LogUtils;
+import com.xinleju.erp.flow.utils.ParticipantUtils;
+import com.xinleju.erp.flow.utils.UserPrefixUtils;
+
+/**
+ * 
+ * 
+ * <p>
+ * </p>
+ * <p>
+ * </p>
+ * 
+ * @author 孙朝辉
+ * @version $Id: WiDAO.java 2315 2015-01-19 05:25:13Z zhongjun $
+ * @since
+ * 
+ */
+@Service
+public class WiDAO extends BaseDAO {
+
+    /**
+     * 流程触发事件Service
+     */
+    @Autowired
+    private DoAfterService doAfterService;
+    
+    @Autowired
+    private OrgnAPIService orgnAPIService;
+
+    /**
+     * 
+     * <p>
+     * 完成工作
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param wiId
+     *            工作ID
+     * @param user
+     *            操作人
+     * @param userNote
+     *            用户意见
+     * @param opCode
+     *            外部操作编码，譬如[提交、批注、加签等]
+     * @return 当前工作
+     */
+    public Wi completeWi(Long wiId, User user, String userNote, String opCode) {
+        return this.completeWi(wiId, user, userNote, opCode, null, null);
+    }
+
+    /**
+     * 
+     * <p>
+     * 完成工作
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param wiId
+     *            工作ID
+     * @param user
+     *            操作人
+     * @param userNote
+     *            用户意见
+     * @param opCode
+     *            外部操作编码，譬如[提交、批注、加签等]
+     * @param opUsers
+     *            格式化参与人字符串,保存在Wi对象中,表示完成本工作时相关联的用户，譬如：转发时选择的被转发人列表
+     * @return 当前工作
+     */
+    public Wi completeWi(Long wiId, User user, String userNote, String opCode, String opUsers) {
+        return this.completeWi(wiId, user, userNote, opCode, opUsers, null);
+    }
+
+    /**
+     * 结束wi
+     * @author jun
+     * @param wiId wiId
+     * @param user 操作用户
+     * @param userNote 用户意见
+     * @param opCode 操作编码
+     * @param opUsers 置顶用户
+     * @param changedWiType wi类型
+     * @return wi
+     */
+    public Wi completeWi(Long wiId, User user, String userNote, String opCode, String opUsers, String changedWiType){
+        return this.completeWi(wiId, user, userNote, opCode, opUsers, changedWiType, null);
+    }
+    /**
+     * 
+     * <p>
+     * 完成工作
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param wiId
+     *            工作ID
+     * @param user
+     *            操作人
+     * @param userNote
+     *            用户意见
+     * @param opCode
+     *            外部操作编码，譬如[提交、批注、加签等]
+     * @param opUsers
+     *            格式化参与人字符串,保存在Wi对象中,表示完成本工作时相关联的用户，譬如：转发时选择的被转发人列表
+     * @param changedWiType
+     *            改变WiType,一般的，在结束时会转换成Log类型的Wi
+     * @param opRole 操作岗位
+     * @return 当前工作
+     */
+    public Wi completeWi(Long wiId, User user, String userNote, String opCode, String opUsers, String changedWiType, Long opRole) {
+        Wi wi = getDao().getById(Wi.class, wiId, "ai", "ai.ac", "fi");
+
+        if (wi.getStatus() == Wi.STATUS_RUNNING) {
+            // 默认是Wi.的参与者来完成
+            if (user == null) {
+                LogUtils.log(wi.getFiId(), "当前参数参与者空置，工作的完成者将默认取预分配参与人");
+                user = new User();
+                user.setLoginName(wi.getParticipantLoginName());
+                user.setUserName(wi.getParticipantUserName());
+                user.setUserId(wi.getParticipant());
+            }
+
+            if (StringUtils.isNotEmpty(changedWiType)) {
+                wi.setWiType(changedWiType);
+//                wi.setIsEffectFlow(WiType.get(changedWiType).getIsEffectFlow());
+            }
+
+            wi.setOpCode(opCode);
+            wi.setOpUsers(opUsers);
+            wi.setStatus(Wi.STATUS_COMPLETE);
+            wi.setCompleteTime(new Date());
+            wi.setCompleteUserId(user.getUserId());
+            wi.setCompleteUserLoginName(user.getLoginName());
+            wi.setCompleteUserName(user.getUserName());
+            wi.setUserNote(userNote);
+            wi.setIsRead(1);
+            getDao().update(wi);
+           
+            doAfterService.doAfterWiComplete(wi);
+        }
+        return wi;
+    }
+    /**
+     * @param wiId
+     * @param user
+     * @param userNote
+     * @param opCode
+     * @param opUsers
+     * @param changedWiType
+     * @param opRole
+     * @return
+     */
+    public Wi updateXBWi(Long wiId, User user, String userNote, String opCode, String opUsers, String changedWiType, Long opRole) {
+        Wi wi = getDao().getById(Wi.class, wiId, "ai", "ai.ac", "fi");
+
+        if (wi.getStatus() == Wi.STATUS_RUNNING) {
+            // 默认是Wi.的参与者来完成
+            if (user == null) {
+                LogUtils.log(wi.getFiId(), "当前参数参与者空置，工作的完成者将默认取预分配参与人");
+                user = new User();
+                user.setLoginName(wi.getParticipantLoginName());
+                user.setUserName(wi.getParticipantUserName());
+                user.setUserId(wi.getParticipant());
+            }
+
+            if (StringUtils.isNotEmpty(changedWiType)) {
+                wi.setWiType(changedWiType);
+//                wi.setIsEffectFlow(WiType.get(changedWiType).getIsEffectFlow());
+            }
+
+            wi.setOpCode(opCode);
+            wi.setOpUsers(opUsers);
+            wi.setStatus(Wi.STATUS_COMPLETE);
+            wi.setCompleteTime(new Date());
+            wi.setCompleteUserId(user.getUserId());
+            wi.setCompleteUserLoginName(user.getLoginName());
+            wi.setCompleteUserName(user.getUserName());
+            wi.setUserNote(userNote);
+            wi.setIsRead(1);
+            getDao().update(wi);
+        }
+        return wi;
+    }
+
+    /**
+     * 
+     * <p>
+     * 过期、失效工作
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param wi
+     *            被失效的工作
+     */
+    public void overdueWi(Wi wi) {
+        wi.setStatus(Wi.STATUS_OVERDUE);
+        getDao().update(wi);
+        doAfterService.doAfterWiOverdue(wi);
+
+    }
+
+    /**
+     * 
+     * <p>
+     * 过期、失效工作
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param ai
+     *            当前Ai
+     * @param overduAi
+     *            是否需要将Ai过期掉
+     */
+    public void overdueByAi(Ai ai, boolean overduAi) {
+
+        List<Wi> wiList = getDao().findAll(Wi.class, "aiId=? and status = ? and isEffectFlow = 1", new Object[] { ai.getId(), Wi.STATUS_RUNNING },
+                new String[] { "fi", "ai" });
+        for (Wi wi : wiList) {
+            overdueWi(wi);
+        }
+        if (overduAi) {
+            ai.setStatus(Ai.STATUS_OVERDUE);
+            getDao().update(ai);
+        }
+    }
+
+    // public List<Wi> assignWi(boolean isBacked, Wp wp, List<User> users, String wiType, int status, User opUser, String opCode, String opUsers, String
+    // userNote,
+    // Date startDate) {
+    //
+    // String wiCode = null;
+    // String wiName = null;
+    // return this.assignWi(isBacked, wp, users, wiType, wiCode, wiName, status, opUser, opCode, opUsers, userNote, startDate);
+    // }
+
+    /**
+     * 
+     * <p>
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param wp
+     *            工作组
+     * @param users
+     *            被分配工作用户列表
+     * @param wiType
+     *            工作类别编码
+     * @param status
+     *            被分配工作状态
+     * @param opUser
+     *            操作时的opUser
+     * @param opCode
+     *            操作编码,一下几个参数，用于记录型工作,譬如转发、加签等,工作分配时就是"结束"状态
+     * @param opUsers
+     *            格式化字符串,操作用户列表,譬如转发目标用户
+     * @param userNote
+     *            用户意见
+     * @param startDate
+     *            开始时间
+     * @return 工作列表
+     */
+
+    /**
+     * <p>
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param isBacked 是否是退回节点
+     * @param wp 节点wp
+     * @param assignWi 需要指派的任务
+     * @param startDate 开始时间
+     * @param px px
+     * @return wiList
+     */
+    public List<Wi> assignWi(boolean isBacked, Wp wp, AssignWi assignWi, Date startDate, int px) {
+        Assert.notNull(wp);
+        List<Wi> newWiList = new ArrayList<Wi>();
+        //Fl fl = getDao().getById(Fl.class, wp.getAi().getFlId());
+        //需要插入wi的px
+        List<Integer> insertPxList = new ArrayList<Integer>();
+        String prefix = "";
+        for (int i = 0; i < assignWi.getParticipants().size(); i++) {
+        	
+            User user = assignWi.getParticipants().get(i);
+         
+            boolean isExist = getDao().isExist(Wi.class, "participant = ? and tstamp = ? and aiId = ? and wiType = ? and status = ?",
+                    new Object[] { user.getUserId(), wp.getTstamp(), wp.getAi().getId(), assignWi.getWiType(), assignWi.getStatus() });
+        
+            /**
+             * 
+             * yzp
+            boolean isExist = getDao().isExist(Wi.class, "participant = ?  and aiId = ? and wiType = ? and status = ?",
+                    new Object[] { user.getUserId(),  wp.getAi().getId(), assignWi.getWiType(), assignWi.getStatus() });
+                **/
+            //Log的工作不判断重复性
+            if (!isExist  || WsConstant.WiType.LG.getCode().equals(assignWi.getWiType()) || WsConstant.WiType.CY.getCode()
+                    .equals(assignWi.getWiType()) || WsConstant.WiType.CB.getCode().equals(assignWi.getWiType())) {
+                insertPxList.add(px + i + 1);
+                Wi wi = new Wi();
+                prefix = StringUtils.isNotBlank(user.getPrefix()) ? user.getPrefix() : UserPrefixUtils.getPrefix(user.getUserId(), wp.getUsersPrefix());
+                if (StringUtils.isBlank(prefix)){
+                	prefix = orgnAPIService.getMainRolePath(user.getUserId());
+                }
+                wi.setPx(px + i + 1);
+                // 运行态，但是是需要串行化的工作
+                if (i > 0 && assignWi.getStatus() == Wi.STATUS_RUNNING 
+                        && assignWi.getAssignType() != null && assignWi.getAssignType().intValue() == 1) {
+                    wi.setStatus(Wi.STATUS_CREATED);
+                } else {
+                    wi.setStatus(assignWi.getStatus());
+                }
+                
+                wi.setUserNote(assignWi.getUserNote());
+                wi.setWiType(assignWi.getWiType());
+                wi.setWiCode(assignWi.getWiCode());
+                wi.setWiName(assignWi.getWiName());
+
+                wi.setIsEffectFlow(WsConstant.WiType.get(assignWi.getWiType()).getIsEffectFlow());
+                wi.setAcId(wp.getAi().getAcId());
+                wi.setAiId(wp.getAi().getId());
+                wi.setFiId(wp.getAi().getFiId());
+                wi.setFl(wp.getAi().getFl());
+                wi.setFlId(wp.getAi().getFlId());
+                wi.setTstamp(wp.getTstamp());  //不需要时间戳
+                wi.setWpId(wp.getId());
+                wi.setAc(wp.getAi().getAc());
+                wi.setAi(wp.getAi());
+                wi.setWp(wp);
+                /*wi.setParentWpId(wp.getParentWpId());*/
+                wi.setFi(wp.getFi());
+                wi.setFl(wp.getFi().getFl());
+                wi.setParticipant(user.getUserId());
+                if (!StringUtils.isEmpty(user.getLoginName())){
+                    wi.setParticipantLoginName(user.getLoginName());
+                }
+                
+                wi.setParticipantUserName(user.getUserName());
+                wi.setIsBacked(isBacked ? 1 : 0);
+               
+
+                wi.setIsRead(0);
+
+                Date now = new Date();
+                wi.setCreateTime(now);
+                wi.setAcceptTime(now);
+
+                if (assignWi.getStatus() == Wi.STATUS_RUNNING) {
+                    wi.setStartTime(now);
+                }
+                if (assignWi.getStatus() == Wi.STATUS_COMPLETE) {
+                    wi.setStartTime(now);
+                    wi.setCompleteTime(now);
+                    wi.setCompleteUserId(user.getUserId());
+                    wi.setCompleteUserName(user.getUserName());
+                    wi.setCompleteUserLoginName(user.getLoginName());
+                    wi.setIsRead(1);
+                }
+
+                wi.setOpCode(assignWi.getOpCode());
+                wi.setOpUsers(assignWi.getOpUsers());
+                wi.setAssigner(assignWi.getOpUserId());
+                //催办
+                if (WsConstant.WiType.CB.getCode().equals(assignWi.getWiType())){
+                    wi.setAssignWiId(assignWi.getOpWiId());
+                }
+                if (startDate != null) {
+                    wi.setStartTime(startDate);
+                }
+                wi.setPrefix(prefix);
+                newWiList.add(wi);
+            }
+        }
+        //更新px
+        for (int insertPx : insertPxList){
+            getDao().execute("update Wi set px = (px + 1) where wpId = ? and px > ? ", wp.getId(), insertPx);
+        }
+        if (newWiList.size() > 0) {
+            getDao().saveOrUpdateAll(newWiList);
+            // 当不是日志型的工作,则发布工作事件
+            if (!WsConstant.WiType.LG.getCode().equals(WsConstant.WiType.get(assignWi.getWiType()).getCode())) {
+                if (assignWi.getStatus() == Wi.STATUS_RUNNING) {
+                    doAfterService.doAfterWiStarted(newWiList);
+                }
+                if (assignWi.getStatus() == Wi.STATUS_COMPLETE) {
+                    doAfterService.doAfterWiComplete(newWiList);
+                }
+
+            }
+
+            
+            for(Wi w : newWiList){
+                if(WsConstant.WI_CODE_AUTO_AS_REPEAT.equals(w.getWiCode())){
+                    App.getBean(AlService.class).logWiAutoAsRepeat(w);
+                }
+            }
+        }
+        return newWiList;
+
+    }
+
+    /**
+     * 
+     * <p>
+     * 开始工作组
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param wp
+     *            工作组
+     * @param isBacked
+     *            是否退回
+     */
+    
+    public void startWp(Wp wp, boolean isBacked) {
+        this.startWp(wp, isBacked, wp.getAssignType());
+    }
+    
+    public void startWi(Wp wp, boolean isBacked) {
+        this.startWp(wp, isBacked, wp.getAssignType());
+    }
+    
+    /**生成wp对应wi
+     * @param wp
+     * @param isBacked
+     * @param assignType
+     */
+    public void startWp(Wp wp, boolean isBacked,int assignType) {
+        
+        List<User> participants = ParticipantUtils.toUsers(wp.getParticipants());
+        
+        List<User> participantsDefines = ParticipantUtils.toUsers(wp.getParticipantsDefine());
+        
+        String originDefine = wp.getOriginDefine();
+        
+        
+        boolean justRole_logic = originDefine != null && originDefine.indexOf("Role") >= 0 && originDefine.indexOf(";") == -1;
+        //没有参与人自动通过
+        boolean isAutoPassWhenNoParticipants = FlowUtils.isAutoPassWhenNoParticipants(wp);
+        
+        if(wp.getIsSuspend() == null || wp.getIsSuspend().intValue() == 0){
+            
+            //定义列表为空
+            if(participantsDefines.size() == 0){
+                
+                //流程设置为：不自动跳过 并且 是岗位空的情况
+                if(!isAutoPassWhenNoParticipants && justRole_logic){
+                    wp.setIsSuspend(1);
+                    getDao().update(wp);
+                    doAfterService.doAfterWpSuspend(wp);
+                }
+                else {
+                    /**Log在此处不合适，可能会有启动后的 admin调整，这段代码需要放到 completeAi处**/
+//                    //其他情况，将记录自动跳过
+//                    //如果是一个 串行的wp(wp1->wp2->wp3),不会执行到这段代码，在popSub的时候就自动跳过，并且记录了log
+//                    App.getBean(AlService.class).logWpAutoPassAsNoUsers(wp);
+                }
+                
+            }
+            
+        }
+        
+        //已经挂起的忽略
+        if(wp.getIsSuspend() == null || wp.getIsSuspend().intValue() == 0){
+            
+            
+            // 指定本次工作组的时间戳
+            wp.setTstamp(FlowUtils.getTstamp());
+            wp.setBjBackPoint(0);
+            getDao().update(wp);
+
+            // 发布工作
+           
+          
+            AssignWi assignWi = new AssignWi();
+
+            assignWi.setAssignType(assignType);
+
+            // 基本属性
+            assignWi.setStatus(Wi.STATUS_RUNNING);
+            assignWi.setWiType(WsConstant.WiType.ZC.getCode());
+            assignWi.setWiCode(null);
+            assignWi.setWiName(wp.getDisplayName());
+            assignWi.setParticipants(participants);  //参与人列表
+
+            // 完成工作属性
+            assignWi.setOpCode(null);
+            assignWi.setOpUserId(null);
+            assignWi.setOpUsers(null);
+            assignWi.setUserNote(null);
+
+            assignWi(isBacked, wp, assignWi, null, 0);
+            
+            tryLogAutoPassWi(wp);
+           
+        }
+       
+       
+    }
+
+    
+    
+    public void tryLogAutoPassWi(Wp wp){
+        List<User> participants = ParticipantUtils.toUsers(wp.getParticipants());
+        List<User> participantsOfStatic = ParticipantUtils.toUsers(ParticipantUtils.getParticipantsOfStatic(wp));
+        //一下记录重复参与人的工作日志
+        if (participantsOfStatic.size() > 0){
+            List<User> lostUsers = new ArrayList<User>();
+            
+            for (User user : participantsOfStatic){
+                if (!participants.contains(user)){
+                    lostUsers.add(user);
+                }
+            }
+            AssignWi assignWi = new AssignWi();
+            assignWi.setAssignType(wp.getAssignType());
+            // 基本属性
+            assignWi.setStatus(Wi.STATUS_COMPLETE);
+            assignWi.setWiType(WsConstant.WiType.LG.getCode());
+            assignWi.setWiCode(WsConstant.WI_CODE_AUTO_AS_REPEAT);
+            assignWi.setWiName(wp.getDisplayName());
+            assignWi.setParticipants(lostUsers);
+            // 完成工作属性
+            assignWi.setOpCode(AlService.MSG_WP_AUTO_PASS_OP_CODE);
+            assignWi.setOpUserId(null);
+            assignWi.setOpUsers(null);
+            assignWi.setUserNote(AlService.MSG_WI_AUTO_PASS_AS_USER_REPEAT);
+
+            assignWi(false, wp, assignWi, new Date(), 0);
+        }
+    }
+    /**
+     * 
+     * <p>
+     * 获取工作对象
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param wiId
+     *            工作ID
+     * @param includes
+     *            级联抓取对象
+     * @return 工作对象
+     */
+    public Wi getWiById(Long wiId, String... includes) {
+        return getDao().getById(Wi.class, wiId, includes);
+    }
+    
+    /**
+     * 查出wp下的所有有效的wi集合
+     * @author jun
+     * @param pwiId pwiId
+     * @return wp下的所有有效wi集合
+     */
+    public List<Wi> getWiListByPwpId(Long pwiId){
+        DetachedCriteria dc = DetachedCriteria.forClass(Wi.class);
+        dc.setFetchMode("wp", FetchMode.JOIN);
+        dc.createAlias("wp", "wp", JoinType.INNER_JOIN);
+        dc.add(Restrictions.or(Restrictions.eq("status", Wi.STATUS_RUNNING),Restrictions.eq("status" ,Wi.STATUS_COMPLETE)));
+        dc.add(Restrictions.eq("wp.pwiId", pwiId));
+        dc.addOrder(Order.asc("completeTime"));
+        dc.addOrder(Order.asc("createTime"));
+        dc.addOrder(Order.asc("id"));
+        return getDao().findByCriteria(dc);
+    }
+    
+    /**
+     * 是否有子wi
+     * @author jun
+     * @param pwiId wiId
+     * @return 是否存在
+     */
+    public boolean isExistsChildWi(Long pwiId){
+        return getDao().isExist(Wi.class, " wp.pwiId = ? and (status = ? or status = ?) ", pwiId, Wi.STATUS_RUNNING, Wi.STATUS_COMPLETE);
+    }
+    
+    /**
+     * 
+     * <p>
+     * 重置工作对象
+     * </p>
+     * <p>
+     * 譬如:前加签时,本工作重置,等前加签工作结束时,再次开始
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param wi
+     *            工作对象
+     * @return 工作对象
+     */
+    public Wi resetWi(Wi wi) {
+        if (wi.getStatus() != Wi.STATUS_RUNNING) {
+            wi.setStatus(Wi.STATUS_RUNNING);
+            wi.setIsRead(0);
+            wi.setStartTime(new Date());
+            getDao().update(wi);
+            doAfterService.doAfterWiReset(wi);
+        }
+        return wi;
+    }
+    
+    /**
+     * <p>
+     * 返回下一个px值的Wi
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param wi
+     *            工作
+     * @return Wi
+     */
+    public Wi getNextWi(Wi wi) {
+        int px = wi.getPx() == null ? 0 : wi.getPx();
+        return getDao().findFirst(Wi.class, "wpId = ? and status = ? and px > ?", 
+                new Object[] { wi.getWpId(), Wi.STATUS_CREATED, px }, "px asc", 
+                new String[] { "ai", "ac", "fi" });
+    }
+
+    /**
+     * <p>
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param wi 当前工作
+     */
+    public void startWi(Wi wi) {
+        if (wi.getStatus() != Wi.STATUS_RUNNING) {
+            wi.setStatus(Wi.STATUS_RUNNING);
+            wi.setIsRead(0);
+            wi.setStartTime(new Date());
+            getDao().update(wi);
+            doAfterService.doAfterWiStart(wi);
+        }
+    }
+    /**
+     * 得到流程正在运行的任务
+     * @author jun
+     * @param fiId 流程id
+     * @param wiTypes 需要查找的任务类型
+     * @return 流程正在运行的任务
+     */
+    public List<Wi> getRunningWiList(Long fiId, String[] wiTypes){
+        String inWiTypes = "";
+        if (null != wiTypes && wiTypes.length > 0){
+            inWiTypes = " and (wiType = '" + StringHelper.join(wiTypes, "' or wiType = '") + "')";
+        }
+        return getDao().findAll(Wi.class, " fiId = ? and status = ? " + inWiTypes
+                , new Object[]{fiId, Wi.STATUS_RUNNING}, " wpId asc, px asc");
+    }
+    /**
+     * 得到流程正在运行的任务
+     * @author jun
+     * @param fiId 流程id
+     * @param wiTypes 需要查找的任务类型
+     * @return 流程正在运行的任务
+     */
+    public Wi getFirstRunningWi(Long fiId, String[] wiTypes){
+        String inWiTypes = "";
+        if (null != wiTypes && wiTypes.length > 0){
+            inWiTypes = " and (wiType = '" + StringHelper.join(wiTypes, "' or wiType = '") + "')";
+        }
+        return getDao().findFirst(Wi.class, " fiId = ? and status = ? " + inWiTypes
+                , new Object[]{fiId, Wi.STATUS_RUNNING}, " wpId asc, px asc");
+    }
+    /**
+     * 得到流程正在运行的任务
+     * @author jun
+     * @param aiId 节点id
+     * @param wiTypes 需要查找的任务类型
+     * @return 流程正在运行的任务
+     */
+    public Wi getFirstRunningWiByAiId(Long aiId, String[] wiTypes){
+        String inWiTypes = "";
+        if (null != wiTypes && wiTypes.length > 0){
+            inWiTypes = " and (wiType = '" + StringHelper.join(wiTypes, "' or wiType = '") + "')";
+        }
+        return getDao().findFirst(Wi.class, " aiId = ? and status = ? " + inWiTypes
+                , new Object[]{aiId, Wi.STATUS_RUNNING}, " wpId asc, px asc");
+    }
+    
+    /**
+     * 得到流程的任务
+     * @author jun
+     * @param aiId 节点id
+     * @return 流程的任务
+     */
+    public List<Wi> getWiByAiId(Long aiId){
+
+        return getDao().findAll(Wi.class, " aiId = ? and status = ? ", new Object[]{aiId, Wi.STATUS_COMPLETE});
+    }
+    
+    /**
+     * 过期掉ai下的所有任务
+     * @author jun
+     * @param aiId 节点id
+     */
+    public void overdueAllWiByAi(Long aiId) {
+        List<Wi> wiList = getDao().findAll(Wi.class, "aiId=? and (status = ? or status = ?)"
+                , new Object[] {aiId, Wi.STATUS_CREATED, Wi.STATUS_RUNNING},
+                new String[] { "fi", "ai" });
+        for (Wi wi : wiList) {
+            overdueWi(wi);
+        }
+    }
+    /**
+     * 
+     * @param fiId
+     * @return
+     */
+    public Wi getStartWiByFiId(Long fiId){
+    	if (null != fiId){
+    		return getDao().findFirst(Wi.class, " fiId = ? and ac.isStart = ? and status != ?", new Object[]{fiId, 1, Wi.STATUS_OVERDUE});
+    	}
+    	return new Wi();
+    }
+}

@@ -1,0 +1,26 @@
+package com.xinleju.platform.sys.org.service.impl;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.sys.org.dao.ProjectBranchGroupDao;
+import com.xinleju.platform.sys.org.entity.ProjectBranchGroup;
+import com.xinleju.platform.sys.org.service.ProjectBranchGroupService;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class ProjectBranchGroupServiceImpl extends  BaseServiceImpl<String,ProjectBranchGroup> implements ProjectBranchGroupService{
+	
+
+	@Autowired
+	private ProjectBranchGroupDao projectBranchGroupDao;
+	
+
+}

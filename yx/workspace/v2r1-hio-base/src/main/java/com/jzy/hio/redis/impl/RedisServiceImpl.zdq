@@ -1,0 +1,220 @@
+package com.jzy.hio.redis.impl;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import javax.annotation.Resource;
+import javax.persistence.Table;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataAccessException;
+import org.springframework.data.redis.connection.RedisConnection;
+import org.springframework.data.redis.core.RedisCallback;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.serializer.RedisSerializer;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.annotation.RedisList;
+import com.jzy.hio.annotation.RedisMap;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.entity.BaseEntity;
+import com.jzy.hio.base.rds.BaseRds;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.redis.RedisService;
+import com.jzy.hio.utils.JacksonUtils;
+
+/**
+ * 
+ * @author wt.coffee<br/>
+ *         2018年3月7日下午3:00:25
+ */
+@Service
+public class RedisServiceImpl extends Base implements RedisService {
+	
+	private static final Logger logger = LoggerFactory.getLogger(RedisServiceImpl.class);
+	
+	@Autowired
+	public RedisTemplate<Object, Object> redisTemplate;
+
+	@Resource(name = "redisTemplate")
+	// @Autowired
+	public ValueOperations<Object, Object> valOps;
+
+	private static HashMap<String, String> map = new HashMap<>();
+
+	@Override
+	public String addRow(String key, Map<String, String> map) {
+		String result = JedisUtil.addRowMap(key, map);
+		return result;
+	}
+
+	@Override
+	public void addRow(String tendCode, BaseEntity entity) {
+		JedisUtil.addRow(tendCode, entity);
+	}
+
+	@Override
+	public void addRow(String tendCode, List<? extends BaseEntity> entitys) {
+		if (isEmpty(entitys)) {
+			logger.info("addRow List 空 {} ", tendCode);
+			return;
+		}
+		for (BaseEntity entity : entitys) {
+			this.addRow(tendCode, entity);
+		}
+	}
+
+	@Override
+	public void editRow(String tendCode, BaseEntity entity) {
+		JedisUtil.editRow(tendCode, entity);
+	}
+
+	@Override
+	public String getRow(String key, String id) {
+		return JedisUtil.fetchRow(key, id);
+	}
+
+	@Override
+	public <T> T getRowEntity(String tendCode, Class<T> baseEntity, String id) {
+		String key = baseEntity.getAnnotation(Table.class).name();
+		if (isNotEmpty(tendCode)) {
+			key = tendCode + ":" + key;
+		}
+		String json = JedisUtil.fetchRow(key, id);
+		T t = JacksonUtils.fromJson(json, baseEntity);
+		return t;
+	}
+
+	@Override
+	public Map<String, String> getRowAll(String key) {
+		return JedisUtil.fetchRelationRow(key);
+	}
+
+	@Override
+	public String getRow(String tendCode, Class<? extends BaseRds> baseRds, String id) {
+		if (baseRds.getAnnotation(RedisList.class) != null) {
+			throw new HioException("请调用getRowAll(Class<? extends BaseRds> baseRds, String id)");
+		}
+		String key = tendCode + ":" + baseRds.getAnnotation(Table.class).name();
+		return JedisUtil.fetchRow(key, id);
+	}
+
+	@Override
+	public Map<String, String> getRowAll(String tendCode, Class<? extends BaseRds> baseRds, String id) {
+		if (baseRds.getAnnotation(RedisMap.class) != null) {
+			throw new HioException("请调用getRow(Class<? extends BaseRds> baseRds, String id) ");
+		}
+		String key = tendCode + ":" + baseRds.getAnnotation(Table.class).name() + ":" + id;
+		return getRowAll(key);
+	}
+
+	@Override
+	public void delRow(String tendCode, Class<?> beanClass, String id) {
+		String tableName = beanClass.getAnnotation(Table.class).name();
+		String key = tendCode + ":" + tableName;
+		JedisUtil.delRow(key, id);
+	}
+
+	/**
+	 * 删除成功
+	 * 
+	 * @return 1-成功
+	 */
+	@Override
+	public Long delRow(String key, String id) {
+		Long result = JedisUtil.delRow(key, id);
+		return result;
+	}
+
+	@Override
+	public void delAll(Class<?> entityClass) {
+		String tableName = getTableName(entityClass);
+		JedisUtil.delRelationRow(tableName);
+		// Collection<String> keys = redisClient.keys(tableName + "*");
+		// redisClient.delete(keys);
+	}
+
+	@Override
+	public void delAll(String key) {
+		JedisUtil.delAll(key);
+	}
+
+	@Override
+	public Map<String, String> query(String key) {
+		return JedisUtil.fetchRelationRow(key);
+	}
+
+	private String getTableName(Class<?> entityClass) {
+		String tableName = map.get(entityClass.getName());
+		if (tableName == null) {
+			tableName = entityClass.getAnnotation(Table.class).name();
+			map.put(entityClass.getName(), tableName);
+		}
+		return tableName;
+	}
+
+	/**
+	 * 使用redis setnx rides锁 如果键已存在则返回false
+	 */
+	@Override
+	public boolean addRedisSetnx(final String skey, final String sname) {
+		logger.info("redis setnx 加锁开始");
+		boolean result = redisTemplate.execute(new RedisCallback<Boolean>() {
+			@Override
+			public Boolean doInRedis(RedisConnection connection) throws DataAccessException {
+				RedisSerializer<String> serializer = redisTemplate.getStringSerializer();
+				byte[] key = serializer.serialize(skey);
+				byte[] name = serializer.serialize(sname);
+				Boolean aBoolean = connection.setNX(key, name);
+				logger.info("redis setnx返回值:{}",aBoolean);
+				return aBoolean;
+			}
+		}, false, false);
+		return result;
+	}
+
+	/**
+	 * 通过key释放rides中锁的信息
+	 */
+	@Override
+	public boolean releaseRedisSetnx(final String skey) {
+		return redisTemplate.execute(new RedisCallback<Boolean>() {
+			@Override
+			public Boolean doInRedis(RedisConnection connection) throws DataAccessException {
+				RedisSerializer<String> serializer = redisTemplate.getStringSerializer();
+				byte[] key = serializer.serialize(skey);
+				Long del = connection.del(key);
+				if (del == 1) {
+					return true;
+				} else {
+					return false;
+				}
+			}
+		});
+	}
+	
+	@Override
+	public String find(final String skey) {
+        String result = redisTemplate.execute(new RedisCallback<String>() {
+
+            public String doInRedis(RedisConnection connection) throws DataAccessException {
+                RedisSerializer<String> serializer = redisTemplate.getStringSerializer();
+                byte[] key = serializer.serialize(skey);
+                //get
+                byte[] value = connection.get(key);
+                if(value == null) {
+                    return null;
+                }
+                String name = serializer.deserialize(value);
+                
+                return name;
+            }
+        });
+        return result;
+    }
+}

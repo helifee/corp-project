@@ -1,0 +1,42 @@
+package com.xinleju.platform.sys.num.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Table(value="PT_SYS_NUM_RULER_SUB",desc="编号规则实例")
+public class RulerSub extends BaseEntity{
+	
+		
+	@Column(value="ruler_id",desc="规则id")
+	private String rulerId;
+    
+  		
+	@Column(value="current_serial",desc="当前编号字符串")
+	private String currentSerial;
+    
+		
+	public String getRulerId() {
+		return rulerId;
+	}
+	public void setRulerId(String rulerId) {
+		this.rulerId = rulerId;
+	}
+    
+  		
+	public String getCurrentSerial() {
+		return currentSerial;
+	}
+	public void setCurrentSerial(String currentSerial) {
+		this.currentSerial = currentSerial;
+	}
+
+	
+}

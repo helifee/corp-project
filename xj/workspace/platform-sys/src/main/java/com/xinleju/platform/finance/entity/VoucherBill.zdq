@@ -1,0 +1,266 @@
+package com.xinleju.platform.finance.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Table(value="PT_FI_VOUCHER_BILL",desc="凭证")
+public class VoucherBill extends BaseEntity{
+	
+		
+	@Column(value="account_set_id",desc="财务系统公司id")
+	private String accountSetId;
+    
+  		
+	@Column(value="enter_name",desc="制单人")
+	private String enterName;
+    
+	@Column(value="enter_code",desc="制单人编码")
+	private String enterCode;
+  		
+	@Column(value="enter_id",desc="制单人id")
+	private String enterId;
+    
+  		
+	@Column(value="enter_date",desc="制单日期")
+	private String enterDate;
+    
+  		
+	@Column(value="export_date",desc="输出日期")
+	private String exportDate;
+    
+  		
+	@Column(value="word",desc="凭证字")
+	private String word;
+    
+  		
+	@Column(value="not_full_error",desc="不完整凭证原因")
+	private String notFullError;
+    
+  		
+	@Column(value="send_status",desc="输出状态")
+	private String sendStatus;
+    
+  		
+	@Column(value="error_cause",desc="失败原因")
+	private String errorCause;
+    
+  		
+	@Column(value="voucher_no",desc="凭证号")
+	private String voucherNo;
+    
+  		
+	@Column(value="fiscal_year",desc="会计年度")
+	private String fiscalYear;
+    
+  		
+	@Column(value="accounting_period",desc="会计期间/月份")
+	private String accountingPeriod;
+    
+  		
+	@Column(value="attachment_number",desc="附单据数")
+	private String attachmentNumber;
+    
+  		
+	@Column(value="template_id",desc="模板业务id")
+	private String templateId;
+    
+  		
+	@Column(value="template_type_id",desc="模板业务类型id")
+	private String templateTypeId;
+	
+	@Column(value="template_parent_type_id",desc="模板业务父类型id")
+	private String templateParentTypeId;
+    
+  		
+	@Column(value="company_code",desc="账套的公司编码")
+	private String companyCode;
+    
+  		
+	@Column(value="credit_amount",desc="贷方金额合计")
+	private String creditAmount;
+    
+  		
+	@Column(value="debit_amount",desc="借方金额合计")
+	private String debitAmount;
+    
+  	@Column(value="bill_type",desc="表单类型")
+  	private String billType;
+  	
+  	@Column(value="status",desc="凭证完整性")
+  	private String status; //1：完整凭证 2：不完整凭证
+		
+	public String getTemplateParentTypeId() {
+		return templateParentTypeId;
+	}
+	public void setTemplateParentTypeId(String templateParentTypeId) {
+		this.templateParentTypeId = templateParentTypeId;
+	}
+	public String getAccountSetId() {
+		return accountSetId;
+	}
+	public void setAccountSetId(String accountSetId) {
+		this.accountSetId = accountSetId;
+	}
+  		
+	public String getBillType() {
+		return billType;
+	}
+	public void setBillType(String billType) {
+		this.billType = billType;
+	}
+	public String getEnterName() {
+		return enterName;
+	}
+	public void setEnterName(String enterName) {
+		this.enterName = enterName;
+	}
+  		
+	public String getEnterCode() {
+		return enterCode;
+	}
+	public void setEnterCode(String enterCode) {
+		this.enterCode = enterCode;
+	}
+	public String getEnterId() {
+		return enterId;
+	}
+	public void setEnterId(String enterId) {
+		this.enterId = enterId;
+	}
+    
+  		
+	public String getEnterDate() {
+		return enterDate;
+	}
+	public void setEnterDate(String enterDate) {
+		this.enterDate = enterDate;
+	}
+    
+  		
+	public String getExportDate() {
+		return exportDate;
+	}
+	public void setExportDate(String exportDate) {
+		this.exportDate = exportDate;
+	}
+  		
+	public String getStatus() {
+		return status;
+	}
+	public void setStatus(String status) {
+		this.status = status;
+	}
+	public String getWord() {
+		return word;
+	}
+	public void setWord(String word) {
+		this.word = word;
+	}
+    
+  		
+	public String getNotFullError() {
+		return notFullError;
+	}
+	public void setNotFullError(String notFullError) {
+		this.notFullError = notFullError;
+	}
+    
+  		
+	public String getSendStatus() {
+		return sendStatus;
+	}
+	public void setSendStatus(String sendStatus) {
+		this.sendStatus = sendStatus;
+	}
+    
+  		
+	public String getErrorCause() {
+		return errorCause;
+	}
+	public void setErrorCause(String errorCause) {
+		this.errorCause = errorCause;
+	}
+    
+  		
+	public String getVoucherNo() {
+		return voucherNo;
+	}
+	public void setVoucherNo(String voucherNo) {
+		this.voucherNo = voucherNo;
+	}
+    
+  		
+	public String getFiscalYear() {
+		return fiscalYear;
+	}
+	public void setFiscalYear(String fiscalYear) {
+		this.fiscalYear = fiscalYear;
+	}
+    
+  		
+	public String getAccountingPeriod() {
+		return accountingPeriod;
+	}
+	public void setAccountingPeriod(String accountingPeriod) {
+		this.accountingPeriod = accountingPeriod;
+	}
+    
+  		
+	public String getAttachmentNumber() {
+		return attachmentNumber;
+	}
+	public void setAttachmentNumber(String attachmentNumber) {
+		this.attachmentNumber = attachmentNumber;
+	}
+    
+  		
+	public String getTemplateId() {
+		return templateId;
+	}
+	public void setTemplateId(String templateId) {
+		this.templateId = templateId;
+	}
+    
+  		
+	public String getTemplateTypeId() {
+		return templateTypeId;
+	}
+	public void setTemplateTypeId(String templateTypeId) {
+		this.templateTypeId = templateTypeId;
+	}
+    
+  		
+	public String getCompanyCode() {
+		return companyCode;
+	}
+	public void setCompanyCode(String companyCode) {
+		this.companyCode = companyCode;
+	}
+    
+  		
+	public String getCreditAmount() {
+		return creditAmount;
+	}
+	public void setCreditAmount(String creditAmount) {
+		this.creditAmount = creditAmount;
+	}
+    
+  		
+	public String getDebitAmount() {
+		return debitAmount;
+	}
+	public void setDebitAmount(String debitAmount) {
+		this.debitAmount = debitAmount;
+	}
+    
+  		
+	
+}

@@ -1,0 +1,334 @@
+package com.xinleju.erp.frame.filter;
+
+import java.io.IOException;
+import java.net.HttpCookie;
+import java.net.URLDecoder;
+import java.security.Security;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+
+import javax.servlet.Filter;
+import javax.servlet.FilterChain;
+import javax.servlet.FilterConfig;
+import javax.servlet.ServletException;
+import javax.servlet.ServletRequest;
+import javax.servlet.ServletResponse;
+import javax.servlet.http.Cookie;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+import org.apache.commons.collections.map.LinkedMap;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.http.NameValuePair;
+import org.apache.http.message.BasicNameValuePair;
+import org.apache.log4j.Logger;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+
+import com.landray.kmss.util.encryption.BCVFactory;
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.flow.service.api.ApiConstant;
+import com.xinleju.erp.flow.service.api.extend.BaseAPI;
+import com.xinleju.erp.flow.service.api.extend.BaseAPIService;
+import com.xinleju.erp.flow.service.api.extend.dto.FuncDTO;
+import com.xinleju.erp.frame.dao.AppDao;
+import com.xinleju.erp.frame.models.Setting;
+import com.xinleju.erp.frame.service.SettingService;
+import com.xinleju.erp.frame.utils.StaticInterface;
+
+/**
+ * 
+ * <p>
+ * 用URL登录单点认证
+ * </p>
+ * <p>
+ * 现阶段用于OA系统对接
+ * </p>
+ * <p>
+ * URL格式：http://server:port/casUrlLogin?url=http://server:port/App!index.do&
+ * username=test&password=123
+ * </p>
+ * 
+ * @author hubo
+ * 
+ */
+public class CASUrlLoginFilter implements Filter {
+
+	private static Logger log = Logger.getLogger(CASUrlLoginFilter.class);
+	/**
+	 * cas服务器server:port
+	 */
+	private String casServerUrl;
+	/**
+	 * 系统首页
+	 */
+	private static final String HOME_PAGE_URL = "/App!index.do";
+
+	@Override
+	public void destroy() {
+
+	}
+
+	@Override
+	public void doFilter(ServletRequest arg0, ServletResponse arg1, FilterChain chain) throws IOException, ServletException {
+
+		// http://localhost:8080/xinleju/casUrlLogin?url=http://localhost:8080/xinleju/App!index.do&username=cHpnHq7XwQA%253D
+		// http://222.222.156.61:100/casUrlLogin?url=http://222.222.156.61:100/App!index.do&username=test&password=xinleju
+		// http://localhost:100/flow/casUrlLogin?erpUrl=http://localhost:100/flow/App!index.do&username=yzjbr
+		// http://localhost:100/flow/casUrlLogin?erpUrl=http://localhost:100/flow/App!index.do&code=yzjbr
+		HttpServletRequest request = (HttpServletRequest) arg0;
+		String param1=request.getParameter("param1");
+
+		HttpServletResponse response = (HttpServletResponse) arg1;
+
+		if (request.getRequestURI().indexOf("casUrlLogin") == -1 || casServerUrl == null) {
+			chain.doFilter(request, response);
+			return;
+		}
+
+		log.info("query url : " + request.getQueryString());
+
+		String requestUrl = null;
+
+		if (request.getParameter("erpUrl") != null) {
+			requestUrl = request.getParameter("erpUrl");
+		} else {
+			requestUrl = request.getParameter("url");
+		}
+		
+		/*
+		 * 先去掉优化校验 Cookie[] cookies = request.getCookies();
+		 * 
+		 * if(cookies != null) { for (Cookie cookie : cookies) {
+		 * if("CASTGC".equals(cookie.getName())) {
+		 * log.info("exist Cookie CASTGC then Redirect RequestUrl : " +
+		 * requestUrl); response.sendRedirect(requestUrl); return; } } }
+		 */
+		String username = request.getParameter("username");
+
+		if (username == null && request.getParameter("UserId") != null) {
+			try {
+				username = dncrypt(request.getParameter("UserId"));
+			} catch (Exception e) {
+				log.error(e.getMessage(), e);
+				chain.doFilter(request, response);
+				return;
+			}
+		}
+		
+	
+		 String requestHeader = request.getHeader("user-agent");
+	     if(isMobileDevice(requestHeader)){
+	    		String phoneUrl = null;
+	    		if (request.getParameter("phoneUrl") != null) {
+	    			phoneUrl = request.getParameter("phoneUrl");
+	    		   // phoneUrl="http://10.22.1.125:8080/mobiletodo/weixin/shenpi.jsp?wiid=2075167&userId=admin&from=0";
+	    			response.sendRedirect(phoneUrl);
+	    		} 
+	        	return;
+	     }else{
+	     }
+	    log.info("requestUrl :" + requestUrl);
+		String u = URLDecoder.decode(requestUrl, "UTF-8");  
+
+		String moduleId = request.getParameter("moduleId");
+
+		// 其他公司的代码 调整这个功能的时候
+		if (username == null && request.getParameter("code") != null) {
+
+			SettingService settingService = (SettingService)App.getBean(SettingService.class);
+	        Setting setting = settingService.getSetting(StaticInterface.SKEY_PT_FANCEOA_INTERFACE_AUTH);
+	        String openAthenURL=setting.getValue();
+			HttpForwardProxy proxy = new HttpForwardProxy();
+			
+			username = proxy.get(openAthenURL + request.getParameter("code"),
+					null);
+
+		}
+
+		log.info("username : " + username);
+
+		/*
+		 * 默认密码，URL登录不校验密码，所以给个密码默认值
+		 */
+		String password = "111";
+
+		HttpForwardProxy proxy = new HttpForwardProxy();
+		HtmlParser parser = new HtmlParser();
+
+		String html = proxy.get(requestUrl, null);
+
+		Map<String, String> postArgs = parser.parseCasPostRequestArg(html);
+
+		String action = postArgs.get("action");
+		List<NameValuePair> formParams = new ArrayList<NameValuePair>();
+		formParams.add(new BasicNameValuePair("username", username));
+		formParams.add(new BasicNameValuePair("password", password));
+		formParams.add(new BasicNameValuePair("urlLogin", Boolean.TRUE.toString()));
+
+		formParams.add(new BasicNameValuePair("lt", postArgs.get("lt")));
+		formParams.add(new BasicNameValuePair("_eventId", postArgs.get("_eventId")));
+		if (postArgs.get("execution") != null) {
+			formParams.add(new BasicNameValuePair("execution", postArgs.get("execution")));
+		}
+		CASLoginResult result = proxy.casLogin(casServerUrl + action, formParams);
+
+		if (result == null) {
+			log.error("login cas faild !!!!!! ");
+
+			String requestUrlBase = request.getRequestURL().substring(0, request.getRequestURL().indexOf("casUrlLogin"));
+
+			response.sendRedirect(requestUrlBase + "OAAuthorError.html");
+
+			return;
+		}
+
+		String rediretUrl = result.getRediretUrl()+"&ts="+(new Date()).getTime();
+
+		// rediretUrl.substring(rediretUrl.indexOf("http"));
+
+		for (HttpCookie c : result.getCookies()) {
+			Cookie cookie = new Cookie(c.getName(), c.getValue());
+			cookie.setMaxAge(-1);
+			cookie.setPath("/");
+			response.addCookie(cookie);
+		}
+		// response.setHeader("Cache-Control", "no-store");//or no-cache
+		// response.setHeader("Pragrma", "no-cache");
+		// response.setDateHeader("Expires", 0);
+
+		if (moduleId != null) {
+			Cookie cookie = new Cookie("defaultModuleId", moduleId);
+			cookie.setMaxAge(-1);
+			cookie.setPath("/");
+			response.addCookie(cookie);
+		}
+
+		if (request.getParameter("funcId") != null) {
+			response.addCookie(new Cookie("defaultFuncId", request.getParameter("funcId")));
+		}
+		//Map<com.xinleju.erp.frame.models.App, List<FuncDTO>> funcMap = this.getFuncDTOListMap(username);
+		//if (checkUserHasAuth2CurrentURI(requestUrl, funcMap)) {
+			response.sendRedirect(rediretUrl);
+		//} else {
+			//response.sendRedirect(request.getContextPath() + "/page/Error/noAuth.jsp");
+		//}
+
+	}
+
+	/**
+	 * 检查当前用户对当前URI是否有权限
+	 * 
+	 * @param requestURI
+	 * @param funcMap
+	 */
+	private boolean checkUserHasAuth2CurrentURI(String requestURL, Map<com.xinleju.erp.frame.models.App, List<FuncDTO>> funcMap) {
+		boolean isHasAuth = false;
+		if (!funcMap.isEmpty()) {
+			for (Entry<com.xinleju.erp.frame.models.App, List<FuncDTO>> entry : funcMap.entrySet()) {
+				com.xinleju.erp.frame.models.App app = entry.getKey();
+				if (requestURL.contains(app.getIndexUrl())) {
+					isHasAuth = true;
+					break;
+				}
+				List<FuncDTO> funcDTOList = entry.getValue();
+				if (checkFuncList(funcDTOList, requestURL)) {
+					isHasAuth = true;
+					break;
+				}
+			}
+		}
+		return isHasAuth;
+	}
+	
+	/**是否是手机端
+	 * @param requestHeader
+	 * @return
+	 */
+	public static boolean  isMobileDevice(String requestHeader){
+        /**
+         * android : 所有android设备
+         * mac os : iphone ipad
+         * windows phone:Nokia等windows系统的手机
+         */
+        String[] deviceArray = new String[]{"android","mac os","windows phone"};
+        if(requestHeader == null)
+            return false;
+        requestHeader = requestHeader.toLowerCase();
+        for(int i=0;i<deviceArray.length;i++){
+            if(requestHeader.indexOf(deviceArray[i])>0){
+                return true;
+            }
+        }
+        return false;
+   }
+
+	/**
+	 * 递归检车权限模块uri是否包含当前权限
+	 * 
+	 * @param funcDTOList
+	 * @return
+	 */
+	private boolean checkFuncList(List<FuncDTO> funcDTOList, String requestURL) {
+		// 系统首页
+		if (requestURL.contains(HOME_PAGE_URL)) {
+			return true;
+		}
+		if (funcDTOList != null && funcDTOList.size() > 0) {
+			for (FuncDTO func : funcDTOList) {
+				if (requestURL.contains(func.getUrl())) {
+					return true;
+				}
+				if (func.getChildren() != null && func.getChildren().size() > 0) {
+					return checkFuncList(func.getChildren(), requestURL);
+				}
+			}
+		}
+		return false;
+	}
+
+	private Map<com.xinleju.erp.frame.models.App, List<FuncDTO>> getFuncDTOListMap(String loginName) {
+		Map<com.xinleju.erp.frame.models.App, List<FuncDTO>> funcDTOListMap = new LinkedMap();
+		if (StringUtils.isNotBlank(loginName)) {
+			AppDao appDao = App.getBean(AppDao.class);
+			Map<String, com.xinleju.erp.frame.models.App> appMap = appDao.getAppMap();
+			if (null != appMap && appMap.size() > 0) {
+				BaseAPI baseAPIService = App.getBean(BaseAPIService.class, ApiConstant.BEAN_CODE);
+				for (Entry<String, com.xinleju.erp.frame.models.App> map : appMap.entrySet()) {
+					if (map != null && map.getKey() != null) {
+						List<FuncDTO> funcDtoList = baseAPIService.getFuncAuth(loginName, map.getKey().trim()).getResult();
+						// 过滤没有功能授权App(除首页外)
+						// 如果没有funcList 目前只有两种情况，1、此功能模块没有授权
+						// 2、此功能模块没有注册菜单项（理论存在），
+						if ((funcDtoList != null && funcDtoList.size() > 0) || map.getKey().equals("HP")) {
+							funcDTOListMap.put(map.getValue(), funcDtoList);
+						}
+					}
+
+				}
+			}
+		}
+		return funcDTOListMap;
+	}
+
+	private String dncrypt(String username) throws Exception {
+		Security.addProvider(new BouncyCastleProvider());
+		// 双重解码，12345678为加密的固定字符
+		String dncryptUsername = username;
+		try {
+			dncryptUsername = BCVFactory.blowfishDecrypt("12345678", URLDecoder.decode(username, "utf-8"));
+		} catch (Exception e) {
+			dncryptUsername = BCVFactory.blowfishDecrypt("12345678", username);
+		}
+
+		return dncryptUsername.substring(0, dncryptUsername.length() - 1);
+	}
+
+	@Override
+	public void init(FilterConfig config) throws ServletException {
+		casServerUrl = config.getInitParameter("casServerUrl");
+	}
+
+}

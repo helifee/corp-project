@@ -1,0 +1,190 @@
+package com.jzy.hio.sys.external.service.impl;
+
+import com.jzy.hio.annotation.DataSource;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.service.impl.BaseSysServiceImpl;
+import com.jzy.hio.entity.OaSysExternalContact;
+import com.jzy.hio.entity.OaSysExternalShare;
+import com.jzy.hio.entity.OaSysUser;
+import com.jzy.hio.exception.HioMybatisUpdateException;
+import com.jzy.hio.sys.external.mapper.ExternalContactMapper;
+import com.jzy.hio.sys.external.mapper.ExternalShareMapper;
+import com.jzy.hio.sys.external.param.ExternalManagerParam;
+import com.jzy.hio.sys.external.service.ExternalShareService;
+import com.jzy.hio.sys.user.dto.IMUserDetailInfoDto;
+import com.jzy.hio.sys.user.mapper.UserMapper;
+import com.jzy.hio.sys.user.param.IMOAUserUpdaterShareParam;
+import com.jzy.hio.sys.user.service.UserService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * 外部联系人的管理人、共享人
+ * 
+ * @author wt.coffee
+ * @date 2018年4月2日下午8:23:16
+ */
+@Service
+public class ExternalShareServiceImpl extends BaseSysServiceImpl<OaSysExternalShare> implements ExternalShareService {
+
+	@Autowired
+	private ExternalContactMapper externalContactMapper;
+	@Autowired
+	private ExternalShareMapper externalShareMapper;
+	@Autowired
+	private UserMapper userMapper;
+	@Autowired
+	private UserService userService;
+
+	/**
+	 * 添加外部联系人-负责人
+	 */
+	@Override
+	public int saveManager(@DataSource String tendId, String contactId, String shareId) {
+		OaSysExternalShare share = new OaSysExternalShare();
+		share.setType(BaseConstants.MYSQL_EXTERNAL_MANAGER);
+		share.setContactId(contactId);
+		share.setShareId(shareId);
+		return super.save(share);
+	}
+
+	@Override
+	public void saveOrUpdateShare(@DataSource String tendId, List<OaSysExternalShare> newList) {
+		if (newList == null || newList.size() == 0) {
+			return;
+		}
+		OaSysExternalShare external = new OaSysExternalShare();
+		external.setType(BaseConstants.MYSQL_EXTERNAL_SHARE);
+		external.setContactId(newList.get(0).getContactId());
+		external.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+		List<OaSysExternalShare> oldList = queryList(external);
+		List<OaSysExternalShare> addList = new ArrayList<>();// 新增
+		for (OaSysExternalShare news : newList) {
+			if (oldList.contains(news) == false) {
+				addList.add(news);
+			}
+		}
+		saveBatch(addList);
+	}
+
+	@Override
+	public int save(@DataSource String tendId, OaSysExternalShare oaSysExternalShare) {
+		return save(oaSysExternalShare);
+	}
+
+	@Override
+	public List<IMUserDetailInfoDto.UserManagerDto> queryOaUserListByType(@DataSource String tendId, String externalContactId, Integer mysqlExternalManager) {
+		return externalContactMapper.queryOaUserListByType(externalContactId, mysqlExternalManager);
+	}
+
+	@Override
+	public OaSysExternalShare queryByExampleMap(@DataSource String tendId, Map<String, Object> map) {
+		return getObjectByExample(map);
+	}
+
+	@Override
+	public void updateShares(@DataSource String tendId, String oaSysExternalId,List<String> shareUsers,List<String> deleteEsIds) {
+		//校验是否存在
+		OaSysExternalContact oaSysExternalContact = externalContactMapper.selectByPrimaryKey(oaSysExternalId);
+		if (oaSysExternalContact == null || oaSysExternalContact.getDelflag().intValue() == BaseConstants.MYSQL_DELFLAG_DELETED){
+			throw new HioMybatisUpdateException("当前外部联系人不存在或者已经删除");
+		}
+		boolean isChange = false;
+		//删除的集合
+		int deleteCnt = deleteAllObjectByIds(deleteEsIds);
+		if (deleteCnt >0 ){
+			isChange = true;
+		}
+		OaSysExternalShare queryCondition = new OaSysExternalShare();
+		queryCondition.setContactId(oaSysExternalId);
+		queryCondition.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+		List<OaSysExternalShare> exitsShares = queryList(queryCondition);
+		if (shareUsers!= null && shareUsers.size()>0){
+			List<OaSysExternalShare> addShares = new ArrayList<>();
+			OaSysExternalShare externalShare = null;
+			for (int i = 0; i < shareUsers.size(); i++) {
+				externalShare = new OaSysExternalShare();
+				String imUserId = shareUsers.get(i);
+				//查询imUserId对应的用户ID
+				String userId = userMapper.queryOaUserIdByImId(imUserId);
+				if (isEmpty(userId)) {
+					continue;
+				}
+				externalShare.setShareId(userId);
+				externalShare.setContactId(oaSysExternalId);
+				externalShare.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+				externalShare.setType(BaseConstants.MYSQL_EXTERNAL_SHARE);
+				if (exitsShares!=null && !exitsShares.contains(externalShare)){
+					addShares.add(externalShare);
+				}
+			}
+			saveBatch(addShares);
+			if (addShares.size()>0){
+				isChange = true;
+			}
+		}
+		if (isChange){
+			userService.updateOrganizationUpdateDateByUserPosition(tendId,null,null,null,null,oaSysExternalContact);
+		}
+	}
+
+	@Override
+	public void saveOrUpdateManager(@DataSource String tendId, ExternalManagerParam apiParam) {
+		//校验是否存在
+		OaSysExternalContact oaSysExternalContact = externalContactMapper.selectByPrimaryKey(apiParam.getContactId());
+		if (oaSysExternalContact == null || oaSysExternalContact.getDelflag().intValue() == BaseConstants.MYSQL_DELFLAG_DELETED){
+			throw new HioMybatisUpdateException("当前外部联系人不存在或者已经删除");
+		}
+		//修改管理员
+		OaSysExternalShare oaSysExternalShare = queryManagerByContactId(tendId,oaSysExternalContact.getId());
+		//查询imUserId对应的用户ID
+		String userId = userMapper.queryOaUserIdByImId(apiParam.getShareId());
+		if (isEmpty(userId)){
+			throw new HioMybatisUpdateException("设置的负责人不存在或者已经删除");
+		}
+		boolean isChange = false;
+		//如果不存在就新增
+		if (oaSysExternalShare == null){
+			saveManager(tendId,apiParam.getContactId(),userId);
+			isChange = true;
+		}else {
+			//当设置的不同才需要更新
+			if (isNotEquals(oaSysExternalShare.getShareId(),userId)){
+				oaSysExternalShare.setShareId(userId);
+				update(oaSysExternalShare);
+				isChange = true;
+			}
+		}
+		//负责人变化了需要更新组织时间、批量更新
+		if (isChange){
+			userService.updateOrganizationUpdateDateByUserPosition(tendId,null,null,null,null,oaSysExternalContact);
+		}
+	}
+
+	@Override
+	public OaSysExternalShare queryManagerByContactId(@DataSource String tendId, String contactId) {
+		OaSysExternalShare tmp = new OaSysExternalShare();
+		tmp.setContactId(contactId);
+		tmp.setType(BaseConstants.MYSQL_EXTERNAL_MANAGER);
+		tmp.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+		List<OaSysExternalShare> result = externalShareMapper.select(tmp);
+		if (result!=null && result.size()>0){
+			return result.get(0);
+		}
+		return null;
+	}
+
+	@Override
+	public boolean queryUserIsRelation(@DataSource String tendId, String sourceUserId, String targetUserId) {
+		OaSysExternalShare oaSysExternalShare = new OaSysExternalShare();
+		oaSysExternalShare.setContactId(targetUserId);
+		oaSysExternalShare.setShareId(sourceUserId);
+		oaSysExternalShare.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+		int count = externalShareMapper.selectCount(oaSysExternalShare);
+		return count>0;
+	}
+}

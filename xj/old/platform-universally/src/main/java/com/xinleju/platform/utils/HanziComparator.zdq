@@ -1,0 +1,33 @@
+package com.xinleju.platform.utils;
+
+import com.xinleju.platform.base.utils.AttachmentDto;
+
+import java.text.Collator;
+import java.util.Comparator;
+
+/**
+ * 按汉字首字母排序
+ */
+public class HanziComparator implements Comparator<AttachmentDto> {
+
+    private Collator cmp = Collator.getInstance(java.util.Locale.CHINA);
+
+    @Override
+    public int compare(AttachmentDto o1, AttachmentDto o2) {
+        String tempName1 = o1.getTempName();
+        String tempName2 = o2.getTempName();
+        if (null == tempName1) {
+            if (null == tempName2) {
+                return 0;
+            } else {
+                return 1;
+            }
+        } else if (null == tempName2) {
+            return -1;
+        } else {
+            int result = cmp.compare(tempName1, tempName2);
+            return result;
+        }
+    }
+
+}

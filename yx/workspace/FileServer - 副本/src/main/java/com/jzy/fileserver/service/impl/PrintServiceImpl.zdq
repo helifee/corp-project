@@ -1,0 +1,269 @@
+package com.jzy.fileserver.service.impl;
+
+import java.util.Date;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+
+import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+import org.springframework.util.CollectionUtils;
+
+import com.jzy.fileserver.controller.params.PrintParam;
+import com.jzy.fileserver.dao.FileDao;
+import com.jzy.fileserver.dao.PrintTaskDao;
+import com.jzy.fileserver.dao.TaskDetailDao;
+import com.jzy.fileserver.domain.FileVo;
+import com.jzy.fileserver.domain.PrintResult;
+import com.jzy.fileserver.domain.PrintTaskVo;
+import com.jzy.fileserver.domain.Result;
+import com.jzy.fileserver.domain.TaskDetail;
+import com.jzy.fileserver.enums.PrinterMsgType;
+import com.jzy.fileserver.enums.TaskPrior;
+import com.jzy.fileserver.enums.TaskStatus;
+import com.jzy.fileserver.printer.PrintTask;
+import com.jzy.fileserver.printer.PrintTaskSender;
+import com.jzy.fileserver.printer.msg.external.GenImageMsgExternal;
+import com.jzy.fileserver.printer.msg.external.TaskEndMsgExternal;
+import com.jzy.fileserver.printer.msg.external.TaskStartMsgExternal;
+import com.jzy.fileserver.service.PrintService;
+import com.jzy.fileserver.socket.ServerBorad;
+import com.jzy.fileserver.utils.FilePathUtils;
+import com.jzy.fileserver.utils.JacksonUtils;
+
+/**
+ * 打印服务实现
+ *
+ * Created by daoqi on 2018年8月9日
+ */
+@Service
+public class PrintServiceImpl implements PrintService {
+	
+	private static final Logger logger = LoggerFactory.getLogger(PrintServiceImpl.class);
+	
+	@Autowired
+	private FileDao fileDao;
+	
+	@Autowired
+	private PrintTaskDao printTaskDao;
+	
+	@Autowired
+	private TaskDetailDao taskDetailDao;
+	
+	@Autowired
+	private PrintTaskSender printTaskSender;
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public Result print(PrintParam printParam) {
+		
+		//查询文件
+		FileVo file = fileDao.findById(printParam.getFileId());
+		if(file == null) {
+			return Result.fail("指定文件不存在！fileId=" + printParam.getFileId());
+		}
+		
+		//
+		List<PrintTaskVo> tasks = printTaskDao.findByFileId(printParam.getFileId());
+		if(!CollectionUtils.isEmpty(tasks)) {
+			if(tasks.size() > 1) {
+				logger.error("同一个文件存在两条打印记录：fileId={}", printParam.getFileId());
+			}
+			for(PrintTaskVo taskVo : tasks) {
+				
+				//此文件已打印过
+				if(TaskStatus.task_end.name().equals(taskVo.getTaskStatus())) {
+					
+					//模拟消息并广播
+					simulatePrintEvent(file, printParam);
+					
+					return Result.success(null, "文件已打印过，模拟打印事件消息！");
+					
+					//文件正在打印中
+				} else {
+					return Result.fail("指定文件已处理打印状态");
+					
+				}
+			}
+			
+			
+		}
+		
+		PrintTaskVo task = new PrintTaskVo();
+		task.setFileId(printParam.getFileId());
+		task.setSendPageNotify(printParam.isSendPageNotify());
+		task.setGenThumb(printParam.isGenThumb());
+		task.setTaskPrior(TaskPrior.NORMAL.getCode());
+		task.setTaskStatus(TaskStatus.task_sended.name());
+		task.setInputType(0);	//暂未使用
+		task.setOutputType(0);
+		task.setCreateTime(new Date());
+		task.setFileSrcPath(file.getFileLocation());
+		task.setFileDestPath(FilePathUtils.srcPath2Dest(file.getFileLocation()));
+		
+		printTaskDao.save(task);
+		
+		sendPrintMsg(printParam, task);
+		
+		return Result.success(null, "打印成功！");
+	}
+
+	private void simulatePrintEvent(FileVo file, PrintParam printParam) {
+		List<TaskDetail> taskDetails = taskDetailDao.findByFileId(file.getId());
+		
+		//任务开始消息
+		TaskStartMsgExternal taskStartMsg = new TaskStartMsgExternal();
+		taskStartMsg.setMsgType(PrinterMsgType.task_update.name());
+		taskStartMsg.setConfId(printParam.getConfId());
+		taskStartMsg.setGroupId(printParam.getGroupId());
+		taskStartMsg.setFileId(file.getId());
+		taskStartMsg.setPageCount(taskDetails.size());
+		taskStartMsg.setDocName(file.getFileName());
+		taskStartMsg.setTaskStatus(TaskStatus.task_begin.name());
+		ServerBorad.broadcast(JacksonUtils.toJson(taskStartMsg));
+		
+		//每页图片消息
+		//每页面缩略图消息
+		if(!CollectionUtils.isEmpty(taskDetails)) {
+			for(TaskDetail taskDetail : taskDetails) {
+				GenImageMsgExternal pageMsg = new GenImageMsgExternal();
+				pageMsg.setMsgType(PrinterMsgType.task_update.name());
+				pageMsg.setConfId(printParam.getConfId());
+				pageMsg.setGroupId(printParam.getGroupId());
+				pageMsg.setPageIndex(taskDetail.getPageId());
+				pageMsg.setFileId(file.getId());
+				
+				String innerPath = taskDetail.getPath();
+				String outterPath = FilePathUtils.innerPathToOuter(innerPath);
+				pageMsg.setDocName(outterPath);
+				if(taskDetail.getImageType() == 0) {
+					pageMsg.setTaskStatus(TaskStatus.task_gen_thumb.name());
+					
+				} else {
+					pageMsg.setTaskStatus(TaskStatus.task_gen_page.name());
+				}
+				ServerBorad.broadcast(JacksonUtils.toJson(pageMsg));
+			}
+		}
+		
+		//任务结束消息
+		TaskEndMsgExternal taskEndMsg = new TaskEndMsgExternal();
+		taskEndMsg.setFileId(file.getId());
+		taskEndMsg.setConfId(printParam.getConfId());
+		taskEndMsg.setGroupId(printParam.getGroupId());
+		taskEndMsg.setDocName(file.getFileName());
+		taskEndMsg.setMsgType(PrinterMsgType.task_update.name());
+		taskEndMsg.setTaskResult(0);
+		taskEndMsg.setTaskStatus(TaskStatus.task_end.name());
+		ServerBorad.broadcast(JacksonUtils.toJson(taskEndMsg));
+		
+	}
+
+	/**
+	 * 发送打印机消息
+	 * 
+	 * @param printParam
+	 */
+	private void sendPrintMsg(PrintParam printParam, PrintTaskVo taskInDB) {
+        PrintTask task = new PrintTask();
+        task.setTask_id(taskInDB.getId());
+        task.setInput_type(0);
+        task.setOutput_type(0);
+        task.setSend_page_notify(printParam.isSendPageNotify());
+        task.setGen_thumb(printParam.isGenThumb());
+        task.setTask_prior(TaskPrior.NORMAL.getCode());
+        task.setFile_src_name(FilePathUtils.toRelativePath(taskInDB.getFileSrcPath()));
+        task.setFile_dest_name(FilePathUtils.toRelativePath(taskInDB.getFileDestPath()));
+        task.setConf_id(printParam.getConfId());
+        task.setGroup_id(printParam.getGroupId());
+
+        printTaskSender.send(task);
+	}
+
+	@Override
+	@Scheduled(fixedDelayString = "${print.retry.time}")
+	public int resendAcceptFailTask() {
+		List<PrintTaskVo> failTasks = printTaskDao.findFailTasks();
+		if(!CollectionUtils.isEmpty(failTasks)) {
+			logger.info("重新发送{}个打印任务", failTasks.size());
+			Iterator<PrintTaskVo> iter = failTasks.iterator();
+			while(iter.hasNext()) {
+				PrintTaskVo task = iter.next();
+				PrintParam printParam = new PrintParam();
+				printParam.setGenThumb(task.isGenThumb());
+				printParam.setSendPageNotify(task.isSendPageNotify());
+				sendPrintMsg(printParam, task);
+				
+			}
+		}
+		return 0;
+	}
+	
+	/**
+	 * 重发指定打印任务
+	 * 
+	 * @param taskId
+	 * @return
+	 */
+	@Override
+	public int resendFailTask(int taskId) {
+		PrintTaskVo printTask = printTaskDao.findById(taskId);
+		PrintParam printParam = new PrintParam();
+		printParam.setGenThumb(printTask.isGenThumb());
+		printParam.setSendPageNotify(printTask.isSendPageNotify());
+		sendPrintMsg(printParam, printTask);
+		
+		logger.info("重新发送任务【{}】", taskId);
+		return 0;
+	}
+
+	@Override
+	public Result cancelTask(int taskId) {
+		PrintTaskVo printTask = printTaskDao.findById(taskId);
+		String printerHost = printTask.getPrinterHost();
+		String taskStatus = printTask.getTaskStatus();
+		if(!TaskStatus.task_begin.name().equals(taskStatus) 
+				|| StringUtils.isEmpty(printerHost)) {
+			logger.info("任务【{}】取消失败：status={}, host={}", taskId, taskStatus, printerHost);
+			Result.fail("任务取消失败！");
+		}
+		
+		printTaskSender.cancelTask(taskId, printerHost);
+		return Result.success(null, "任务取消命令发送成功！");
+	}
+
+	@Override
+	public Result queryPrintResult(long fileId) {
+		List<TaskDetail> taskDetails = taskDetailDao.findByFileId(fileId);
+		Map<Integer, PrintResult> map = new TreeMap<Integer, PrintResult>();
+		if(!CollectionUtils.isEmpty(taskDetails)) {
+			for(TaskDetail detail : taskDetails) {
+				int pageId = detail.getPageId();
+				PrintResult printResult = map.get(pageId);
+				if(printResult == null) {
+					printResult = new PrintResult();
+					map.put(pageId, printResult);
+				}
+				printResult.setFileId(fileId);
+				printResult.setFileName(detail.getFileName());
+				printResult.setPageIndex(pageId);
+				String innerPath = detail.getPath();
+				String outterPath = FilePathUtils.innerPathToOuter(innerPath);
+				if(detail.getImageType() == 0) {
+					printResult.setImagePath(outterPath);
+				} else {
+					printResult.setThumbPath(outterPath);
+				}
+			}
+		}
+		return Result.success(map.values(), "查询打印结果成功！");
+	}
+
+}

@@ -1,0 +1,22 @@
+﻿CKEDITOR.plugins.setLang("syntaxhighlight","zh-cn",{
+  syntaxhighlight:
+    {
+	 title:"插入代码",
+	 sourceTab:"源代码",
+	 langLbl:"选择语言",
+	 advancedTab:"高级",
+	 hideGutter:"隐藏分割线",
+	 hideGutterLbl:"隐藏分割线和行号",
+	 hideControls:"隐藏工具栏",
+	 hideControlsLbl:"隐藏代码块顶部的工具栏",
+	 collapse:"折叠选项",
+	 collapseLbl:"折叠代码 (必须开启工具栏)",
+	 showColumns:"显示栏",
+	 showColumnsLbl:"在第一行显示行列",
+	 lineWrap:"自动换行",
+	 lineWrapLbl:"关闭自动换行",
+	 lineCount:"默认行数",
+	 highlight:"高亮行号",
+	 highlightLbl:"输入以逗号分隔的行号,如3,10,15"
+	}
+});

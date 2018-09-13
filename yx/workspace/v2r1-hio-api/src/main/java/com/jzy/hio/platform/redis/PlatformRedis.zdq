@@ -1,0 +1,171 @@
+package com.jzy.hio.platform.redis;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.feign.PlatformFeignService;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.RedisKeyConstant;
+import com.jzy.hio.platform.dto.aliasdto.AliasDto.ImFriendAliasDto;
+import com.jzy.hio.platform.dto.tenantcompanyinfo.TenantCompanyInfoDto;
+import com.jzy.hio.platform.dto.tenantcompanyinfo.TendUserInfoDto;
+import com.jzy.hio.platform.dto.userinfo.ImUserInfoDto;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.redis.RedisService;
+
+/**
+ * 平台相关的redis查询
+ * 
+ * @author wt.coffee
+ * @date 2018年5月4日上午9:50:07
+ */
+@Service
+public class PlatformRedis extends Base {
+
+	@Autowired
+	private RedisService redisService;
+	@Autowired
+	private PlatformFeignService platFeignService;
+
+	/**
+	 * 获取头像
+	 * 
+	 * @return
+	 */
+	public String getHeadIcon(String imUserId) {
+		if (isEmpty(imUserId)) {
+			return null;
+		}
+		String resourceImgUrl = "";
+		String json = redisService.getRow("im_user_info", imUserId);
+		if(isEmpty(json)){
+			ApiFeignResponse<ImUserInfoDto> afres = platFeignService.getUserInfoByIMId(imUserId);
+			if(isEquals(afres.getStatus(),HioException.SUCCESS)){
+				ImUserInfoDto dto = afres.getResult();
+				resourceImgUrl = dto.getResourceImgUrl();
+			}
+		}else {
+			Map<String, Object> map = json2map(json);
+			resourceImgUrl = getStr(map, BaseConstants.MYSQL_IM_USER_INFO_RESOURCEIMGURL);
+		}
+		return resourceImgUrl;
+	}
+	
+	/**
+	 * 获取im用户信息
+	 * 
+	 * @return
+	 */
+	public ImUserInfoDto getImUser(String imUserId) {
+		if (isEmpty(imUserId)) {
+			return null;
+		}
+		String json = redisService.getRow("im_user_info", imUserId);
+		ImUserInfoDto userInfoDto = new ImUserInfoDto();
+		if(isEmpty(json)){
+			ApiFeignResponse<ImUserInfoDto> afres = platFeignService.getUserInfoByIMId(imUserId);
+			if(isEquals(afres.getStatus(),HioException.SUCCESS)){
+				userInfoDto = afres.getResult();
+			}
+		}else{
+			userInfoDto = json2obj(json, ImUserInfoDto.class);
+		}
+		return userInfoDto;
+	}
+
+	/**
+	 * 获取用户的租户列表
+	 */
+	public List<TendUserInfoDto> getTendUserList() {
+		return getTendUserList(false);
+	}
+
+	/**
+	 * flag ：true 所有，false不包含未激活
+	 * 获取用户的租户列表
+	 */
+	public List<TendUserInfoDto> getTendUserList(boolean flag) {
+		Map<String, String> sessionMap = getSession();
+		String userIdIm = (String) sessionMap.get(BaseConstants.SESSION_USERID_IM);
+		Map<String, String> userTendJson = JedisUtil.fetchRelationRow(RedisKeyConstant.userTendList + userIdIm);
+		List<TendUserInfoDto> tendInfoList = new ArrayList<TendUserInfoDto>();
+		if (null != userTendJson && userTendJson.size() > 0) {
+			for (String key : userTendJson.keySet()) {
+				if (!"table_name".equals(key)) {
+					TendUserInfoDto tendUserInfo = json2obj(userTendJson.get(key), TendUserInfoDto.class);
+					if (isNotEmpty(tendUserInfo)) {
+						if(!flag){
+							if (isNotEquals(BaseConstants.UserWorkStatus.JOB.getWorkStatus(), tendUserInfo.getReserve1())) {
+								continue;
+							}
+						}
+						tendInfoList.add(tendUserInfo);
+					}
+				}
+			}
+		}
+		logger.info("登录人的租户列表：{}", obj2json(tendInfoList));
+		return tendInfoList;
+	}
+	
+	/**
+	 * 查询租户信息
+	 * @param tendId
+	 * @return
+	 */
+	public TenantCompanyInfoDto queryByTendId(String tendId) {
+		String tenantId = JedisUtil.fetchIndexMobile(RedisKeyConstant.tenantToInfo, tendId);
+		String tenantJson = JedisUtil.fetchRow("tenant_company_info", tenantId);
+		if(isNotEmpty(tenantJson)) {
+			TenantCompanyInfoDto tenantCompanyInfoDto = Base.json2obj(tenantJson,TenantCompanyInfoDto.class);
+			return tenantCompanyInfoDto;
+		}else{
+			TenantCompanyInfoDto dto = new TenantCompanyInfoDto();
+			dto.setTendId(tendId);
+			ApiFeignResponse<TenantCompanyInfoDto> afres = platFeignService.queryTenantCompanyInfoByTendId(dto);
+			if(isEquals(afres.getStatus(),HioException.SUCCESS)){
+				TenantCompanyInfoDto tenantCompanyInfoDto = afres.getResult();
+				return tenantCompanyInfoDto;
+			}
+		}
+		return null;
+	}
+	
+	/**
+	 * 根据用户id和tendid查询用户与该租户的关系
+	 * @param userImId
+	 * @param tendId
+	 */
+	public TendUserInfoDto queryByUserAndTendId(String imUserId,String tendId) {
+		String tendUserJson = JedisUtil.fetchRow(RedisKeyConstant.userTendList + imUserId, tendId);
+		if(isNotEmpty(tendUserJson)) {
+			TendUserInfoDto tendUser = json2obj(tendUserJson,TendUserInfoDto.class);
+			if(isEquals(BaseConstants.UserWorkStatus.JOB.getWorkStatus(), tendUser.getReserve1())) {
+				return tendUser;
+			}else {
+				return null;
+			}
+		}
+		return null;
+	}
+	
+	/**
+	 * 获取用户的备注
+	 */
+	public ImFriendAliasDto getFAliasNameByUid(String imUserId,String fid) {
+		String json = JedisUtil.fetchRow("im_friend_alias", imUserId + "_" + fid);
+		if(StringUtils.isNotBlank(json)) {
+			ImFriendAliasDto ifa = Base.json2obj(json,ImFriendAliasDto.class);
+			return ifa;
+		}
+		return null;
+	}
+}

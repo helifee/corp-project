@@ -1,0 +1,306 @@
+package com.xinleju.erp.frame.action;
+
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.hibernate.FetchMode;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.Order;
+import org.hibernate.criterion.Property;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+
+import com.xinleju.erp.base.app.action.BaseAction;
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.flow.models.Fl;
+import com.xinleju.erp.flow.service.CtService;
+import com.xinleju.erp.flow.service.api.extend.dto.UserDTO;
+import com.xinleju.erp.flow.utils.LoginInfoUtils;
+import com.xinleju.erp.frame.dao.PartyStructDao;
+import com.xinleju.erp.frame.models.FlowAuth;
+import com.xinleju.erp.frame.models.PartyType;
+import com.xinleju.erp.frame.models.Role;
+import com.xinleju.erp.frame.models.User;
+import com.xinleju.erp.frame.service.FlowAuthService;
+import com.xinleju.erp.frame.service.RoleService;
+import com.xinleju.erp.frame.utils.FrameConstant;
+
+/**
+ * 流程授权Action
+ * 
+ * @author liuhaiming
+ * @since
+ * @see
+ */
+public class FlowAuthAction extends BaseAction {
+	private FlowAuth flowAuth;
+	
+	@Autowired
+	private FlowAuthService flowAuthService;
+	
+	@Autowired
+	private RoleService roleService;
+	
+	@Autowired
+	private PartyStructDao partyStructDao;
+	
+	@Autowired
+    private CtService ctService;
+	
+	/**
+	 * 通用角色列表
+	 * 
+	 * @author liuhaiming
+	 * @param request
+	 * @param pageable
+	 * @param model
+	 * @return
+	 */
+	public String index() {
+		DetachedCriteria c = DetachedCriteria.forClass(FlowAuth.class);
+		c.addOrder(Order.asc("sort"));
+		page = getCommonService().findPage(c, start, limit);
+
+		return "index";
+	}
+	
+	public void findAuthUser() {
+		Map<String, Object> result = new HashMap<String, Object>();
+		try {
+			result.put("success", true);
+		} catch (Exception e) {
+			result.put("success", false);
+		}
+
+		renderJson(result);
+	}
+
+	public String edit() {
+		if (id != null) {
+			flowAuth = getCommonService().getById(FlowAuth.class, id);
+			
+		} else {
+			flowAuth = new FlowAuth();
+			flowAuth.setStatus(FlowAuth.STATUS_ENABLE);
+
+			Date currDate = Calendar.getInstance().getTime();
+			UserDTO userDto = LoginInfoUtils.getLoginInfo(request).getUserDTO();
+			User user = getCommonService().getById(User.class, userDto.getId());
+			flowAuth.setCreateUserId( userDto.getId() );
+			flowAuth.setCreateUser( user );
+			flowAuth.setCreateDate( currDate );
+			
+			flowAuth.setAuthUserId( userDto.getId() );
+			flowAuth.setAuthUser( user );
+			flowAuth.setTransFlg(0);
+		}
+		
+		List<Role> jobLst = getUserJobs( flowAuth.getAuthUserId() );
+		request.setAttribute("jobs", jobLst);
+
+		List<Fl> flLst = getSelAuthScope(flowAuth.getAuthScope());
+		request.setAttribute("scopes", flLst);
+		
+		return "edit";
+	}
+	
+	public void getUserJobs() {
+		Long userId = getParameterLong("userId");
+		List<Role> jobLst = getUserJobs( userId );
+		
+		renderJson( jobLst );
+	}
+	
+	public List<Role> getUserJobs(Long userId) {
+		DetachedCriteria c = DetachedCriteria.forClass(Role.class);
+		User user = getCommonService().getById(User.class, Long.valueOf(userId), "mainRole");
+		
+		List<Long> roleIds = partyStructDao.findParentRefIdsByChildRefId(Long.valueOf(userId),PartyType.TYPE_ROLE);
+		//  兼职角色列表不显示默认角色的
+		if(user.getMainRoleId()!=null&&user.getMainRoleId()!=0){
+			roleIds.remove(user.getMainRoleId());
+		}
+		if (roleIds.size() < 1){
+			roleIds.add(-1L);
+		}
+		c.add(Restrictions.in("id", roleIds));
+		c.addOrder(Order.asc("id"));
+		
+		List<Role> jobLst = new ArrayList<Role>();
+		jobLst.add( user.getMainRole() );
+		List<Role> partTimeJobLst = getCommonService().findByCriteria(c);
+		jobLst.addAll( partTimeJobLst );
+
+		for(Role job : jobLst){
+			job.setNamefix(roleService.getNamefix(job));
+			String t = roleService.getUpPath(job);
+			if(StringUtils.isNotBlank(t)){
+				t = FrameConstant.XY+t;
+			}
+			
+			job.setUpPath(t);
+		}
+		return jobLst;
+	}
+	
+	public void getUserAuthScope() {
+		List<Fl> flLst = getAuthScope();
+		
+		renderJson(flLst);
+	}
+	
+	public List<Fl> getSelAuthScope(String selScope) {
+		if (selScope == null || selScope.length() == 0) {
+			return new ArrayList<Fl>();
+		}
+		
+		List<String> selFlCodeLst = new ArrayList<String>();
+		for ( String strId : selScope.split(";") ) {
+			selFlCodeLst.add( strId );
+		}
+		
+		DetachedCriteria dcAs = DetachedCriteria.forClass(Fl.class, "flowAs");
+        dcAs.setProjection(Property.forName("flowVersion").max());
+        dcAs.add(Property.forName("flowAs.flowCode").eqProperty("flowObj.flowCode"));
+        DetachedCriteria dc = DetachedCriteria.forClass(Fl.class, "flowObj");
+        dc.add(Property.forName("flowVersion").eq(dcAs));
+        dc.add(Restrictions.in("flowCode", selFlCodeLst));
+		
+		List<Fl> flLst = getCommonService().findByCriteria(dc);
+		return flLst;
+	}
+	
+	public List<Fl> getAuthScope() {
+		Long srcId = getParameterLong("srcId");
+		String prefixVar = getParameter("prefixVar");
+
+		Long ctId = null;
+		Long appId = null;
+		Long serviceObjectDefineId = null;
+		
+        if ("App_".equals( prefixVar )){
+        	appId = srcId;
+        } else if("Object_".equals( prefixVar )){
+        	serviceObjectDefineId = srcId;
+        } else {
+        	ctId = srcId;
+        }
+		
+		DetachedCriteria dcAs = DetachedCriteria.forClass(Fl.class, "flowAs");
+        dcAs.setProjection(Property.forName("flowVersion").max());
+        dcAs.add(Property.forName("flowAs.flowCode").eqProperty("flowObj.flowCode"));
+        DetachedCriteria dc = DetachedCriteria.forClass(Fl.class, "flowObj");
+        dc.add(Property.forName("flowVersion").eq(dcAs));
+        dc.setFetchMode("serviceObjectDefine", FetchMode.JOIN);
+        dc.add(Restrictions.eq("isDisabled", 0));
+        
+        if (ctId != null && ctId != 0){
+            if (null != ctId && ctId > 0){
+                List<Long> subCtIdList = getSubCtIdList(ctId);
+                subCtIdList.add(ctId);
+                dc.add(Restrictions.in("ctId", subCtIdList));
+            } else {
+                dc.add(Restrictions.eq("ctId", 0L));
+            }
+        }
+        
+        if (serviceObjectDefineId != null && serviceObjectDefineId != 0){
+            dc.add(Restrictions.eq("serviceObjectDefineId", serviceObjectDefineId));
+        }
+        
+        if (appId != null && appId != 0){
+            String sqlStr = "select s.id from sm_service_object_define s inner join sm_app a on s.module_code = a.code where a.id = ? ";
+            List<Long> sodIdList = App.getBean(JdbcTemplate.class).queryForList(sqlStr, new Object[]{appId}, Long.class);
+            if (null != sodIdList && sodIdList.size() > 0){
+                dc.add(Restrictions.in("serviceObjectDefineId", sodIdList));
+            } else {
+                dc.add(Restrictions.eq("serviceObjectDefineId", 0L));
+            }
+        }
+        
+        dc.addOrder(Order.asc("flSort"));
+        dc.addOrder(Order.asc("id"));
+        List<Fl> flLst = getCommonService().findByCriteria(dc);
+        
+        return flLst;
+        
+	}
+	
+	 /**
+     * 得到ids
+     * @author jun
+     * @param ctId
+     * @param isDisabled
+     * @return
+     */
+    private List<Long> getSubCtIdList(Long ctId){
+        return ctService.getSubCtIdList(ctId, null);
+    }
+
+	public void save() {
+		try {
+			flowAuthService.saveOrUpdate(flowAuth);
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		Map<String, Object> rtn = new HashMap<String, Object>();
+		rtn.put("success", true);
+		super.renderJson(rtn);
+	}
+
+	public void deleteFlowAuth() {
+		String flowAuthId = request.getParameter("flowAuthId");
+		if(StringUtils.isNotBlank(flowAuthId)){
+			flowAuthService.getDao().delete(FlowAuth.class, Long.valueOf(flowAuthId));
+        }
+
+		Map<String, Object> tree = new HashMap<String, Object>();
+        tree.put("success", "true");
+        super.renderJson(tree);
+	}
+	
+	public void disable() {
+		String flowAuthId = request.getParameter("id");
+        if(StringUtils.isNotBlank(flowAuthId)){
+        	flowAuthService.changeStatus(Long.valueOf(flowAuthId), FlowAuth.STATUS_DISABLE);
+        }
+
+        Map<String, Object> tree = new HashMap<String, Object>();
+        tree.put("success", "true");
+        super.renderJson(tree);
+    }
+    
+    public void enable() {
+		String flowAuthId = request.getParameter("id");
+        if(StringUtils.isNotBlank(flowAuthId)){
+        	flowAuthService.changeStatus(Long.valueOf(flowAuthId), FlowAuth.STATUS_ENABLE);
+        }
+
+        Map<String, Object> tree = new HashMap<String, Object>();
+        tree.put("success", "true");
+        super.renderJson(tree);
+    }
+    
+    public String unionFlow() {
+    	String authScope = getParameter("authScope");
+    	List<Fl> flLst = getSelAuthScope(authScope);
+		request.setAttribute("authScope", flLst);
+    	
+    	return "unionFlow";
+    }
+    
+	public FlowAuth getFlowAuth() {
+		return flowAuth;
+	}
+
+	public void setFlowAuth(FlowAuth flowAuth) {
+		this.flowAuth = flowAuth;
+	}
+}

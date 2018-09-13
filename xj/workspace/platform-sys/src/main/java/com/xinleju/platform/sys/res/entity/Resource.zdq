@@ -1,0 +1,175 @@
+package com.xinleju.platform.sys.res.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Table(value="PT_SYS_RES_RESOURCE",desc="资源")
+public class Resource extends BaseEntity{
+	
+		
+	@Column(value="code",desc="编号")
+	private String code;
+    
+  		
+	@Column(value="name",desc="名称")
+	private String name;
+  		
+	@Column(value="url",desc="地址")
+	private String url;
+	
+	@Column(value="mobile_url",desc="手机地址")
+	private String mobileUrl;
+  		
+	@Column(value="app_id",desc="模块")
+	private String appId;
+		
+	@Column(value="parent_id",desc="父id")
+	private String parentId;
+    
+  		
+	@Column(value="status",desc="状态")
+	private String status;
+    
+  		
+	@Column(value="icon",desc="图标")
+	private String icon;
+    
+  		
+	@Column(value="sort",desc="排序")
+	private Long sort;
+	
+	@Column(value="isinventedmenu",desc="是否虚拟菜单")
+	private String isinventedmenu;
+
+	@Column(value="isoutmenu",desc="是否第三方菜单")
+	private String isoutmenu;
+	
+	@Column(value="openmode",desc="打开方式")
+	private String openmode;
+	
+	@Column(value="remark",desc="说明")
+	private String remark;
+    
+	@Column(value="prefix_id",desc="全路径Id")
+	private String prefixId;
+	@Column(value="prefix_sort",desc="全路径排序")
+	private String prefixSort;
+	@Column(value="prefix_name",desc="全路径名称")
+	private String prefixName;
+	public String getPrefixId() {
+		return prefixId;
+	}
+	public void setPrefixId(String prefixId) {
+		this.prefixId = prefixId;
+	}
+	public String getPrefixSort() {
+		return prefixSort;
+	}
+	public void setPrefixSort(String prefixSort) {
+		this.prefixSort = prefixSort;
+	}
+	public String getPrefixName() {
+		return prefixName;
+	}
+	public void setPrefixName(String prefixName) {
+		this.prefixName = prefixName;
+	}
+
+		
+	public String getCode() {
+		return code;
+	}
+	public void setCode(String code) {
+		this.code = code;
+	}
+    
+  		
+	public String getName() {
+		return name;
+	}
+	public void setName(String name) {
+		this.name = name;
+	}
+	public String getUrl() {
+		return url;
+	}
+	public void setUrl(String url) {
+		this.url = url;
+	}
+  		
+	public String getStatus() {
+		return status;
+	}
+	public void setStatus(String status) {
+		this.status = status;
+	}
+    
+  		
+	public String getIcon() {
+		return icon;
+	}
+	public void setIcon(String icon) {
+		this.icon = icon;
+	}
+    
+  		
+	public Long getSort() {
+		return sort;
+	}
+	public void setSort(Long sort) {
+		this.sort = sort;
+	}
+	public String getParentId() {
+		return parentId;
+	}
+	public void setParentId(String parentId) {
+		this.parentId = parentId;
+	}
+	public String getAppId() {
+		return appId;
+	}
+	public void setAppId(String appId) {
+		this.appId = appId;
+	}
+	public String getIsinventedmenu() {
+		return isinventedmenu;
+	}
+	public void setIsinventedmenu(String isinventedmenu) {
+		this.isinventedmenu = isinventedmenu;
+	}
+	public String getIsoutmenu() {
+		return isoutmenu;
+	}
+	public void setIsoutmenu(String isoutmenu) {
+		this.isoutmenu = isoutmenu;
+	}
+	public String getRemark() {
+		return remark;
+	}
+	public void setRemark(String remark) {
+		this.remark = remark;
+	}
+	public String getOpenmode() {
+		return openmode;
+	}
+	public void setOpenmode(String openmode) {
+		this.openmode = openmode;
+	}
+	public String getMobileUrl() {
+		return mobileUrl;
+	}
+	public void setMobileUrl(String mobileUrl) {
+		this.mobileUrl = mobileUrl;
+	}
+    
+  		
+	
+}

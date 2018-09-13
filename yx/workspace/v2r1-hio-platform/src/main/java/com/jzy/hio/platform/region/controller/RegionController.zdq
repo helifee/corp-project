@@ -1,0 +1,173 @@
+package com.jzy.hio.platform.region.controller;
+
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.jzy.hio.base.controller.BaseController;
+import com.jzy.hio.entity.SysBaseRegion;
+import com.jzy.hio.platform.region.dto.RegionDto;
+import com.jzy.hio.platform.region.service.RegionService;
+import com.jzy.hio.redis.RedisService;
+
+/**
+ * 地区
+ * 
+ * @author wt.coffee<br/>
+ *         2018年3月26日上午10:58:44
+ */
+@RestController
+@RequestMapping("region")
+public class RegionController extends BaseController {
+
+	@Autowired
+	private RegionService regionService;
+	@Autowired
+	private RedisService redisService;
+
+	/**
+	 * 测试数据 110000-北京
+	 * 
+	 * @param paramMap
+	 * @return
+	 */
+	@SuppressWarnings("unchecked")
+	@PostMapping("queryNode")
+	public List<RegionDto> queryTree(@RequestBody Map<String, Object> paramMap) {
+		// 110000
+		String province = getStr(paramMap, "province");
+		if (isNotEmpty(province)) {
+			// 查询指定省
+			Map<String, String> result = redisService.getRowAll("platform:region");
+			List<RegionDto> list = new ArrayList<>();
+			for (String regionJson : result.values()) {
+				RegionDto region = json2obj(regionJson, RegionDto.class);
+				if (province.equals(region.getId()) || province.equals(region.getParentId())) {
+					list.add(region);
+				}
+			}
+			List<RegionDto> tree = (List<RegionDto>) list2Tree(list);
+			sort(tree);
+			return tree;
+		} else {
+			// 只查询省
+			Map<String, String> result = redisService.getRowAll("platform:region");
+			List<RegionDto> list = new ArrayList<>();
+			for (String regionJson : result.values()) {
+				RegionDto region = json2obj(regionJson, RegionDto.class);
+				if (isEmpty(region.getParentId())) {
+					list.add(region);
+				}
+			}
+			list.sort(new RegionComparator());
+			return list;
+		}
+	}
+
+	/**
+	 * 查询所有的数据---直接查询数据库 比查询redis慢(因为json解析成JavaBean)
+	 * 
+	 * @param paramMap
+	 * @return
+	 */
+	@SuppressWarnings("unchecked")
+	@PostMapping("queryAllNodes")
+	public List<RegionDto> queryAllNodes() {
+		logger.info("_________1");
+		// 110000
+		// 查询指定省
+		Map<String, Object> paramMap = new HashMap<>();
+		paramMap.put("order by", "sort");
+		paramMap.put("pageCount", "10000");
+		List<SysBaseRegion> sourceList = regionService.queryListByExample(paramMap);
+		List<RegionDto> targetList = copyProperties(sourceList, RegionDto.class);
+		List<RegionDto> tree = (List<RegionDto>) list2Tree(targetList);
+		sort(tree);
+		logger.info("_________2");
+		return tree;
+	}
+
+	private void sort(List<RegionDto> treeNodes) {
+		if (treeNodes != null && treeNodes.size() > 0) {
+			treeNodes.sort(new RegionComparator());
+		}
+		for (RegionDto node : treeNodes) {
+			sort(node.getChildren());
+		}
+	}
+
+	/**
+	 * 按照code由小到大排序
+	 * 
+	 * @author wt.coffee<br/>
+	 *         2018年3月27日上午10:00:17
+	 */
+	private class RegionComparator implements Comparator<RegionDto> {
+		@Override
+		public int compare(RegionDto o1, RegionDto o2) {
+			return o1.getCode().compareTo(o2.getCode());
+		}
+	}
+
+	/**
+	 * 组装成树存储
+	 * 
+	 * @return
+	 */
+	@GetMapping("sync2tree")
+	@SuppressWarnings("unchecked")
+	public String sync2redisTree() {
+		logger.info("______1");
+		Map<String, Object> paramMap = new HashMap<>();
+		paramMap.put("order by", "sort");
+		paramMap.put("pageCount", "10000");
+		List<SysBaseRegion> sourceList = regionService.queryListByExample(paramMap);
+		List<RegionDto> targetList = copyProperties(sourceList, RegionDto.class);
+		List<RegionDto> resultList = (List<RegionDto>) list2Tree(targetList);
+		logger.info("______2");
+		redisService.delAll("platform:region");
+		logger.info("______3");
+		for (RegionDto region : resultList) {
+			Map<String, String> map = new LinkedHashMap<>();
+			map.put(region.getId(), obj2json(region));
+			redisService.addRow("platform:region", map);
+		}
+		logger.info("______4");
+		return "success";
+	}
+
+	/**
+	 * 一条条的存储 , 把数据库中的数据同步到redis中
+	 * 
+	 * @return
+	 */
+	@GetMapping("sync2list")
+	public String sync2redis() {
+		logger.info("______1");
+		Map<String, Object> paramMap = new HashMap<>();
+		paramMap.put("order by", "sort");
+		paramMap.put("pageCount", "10000");
+		List<SysBaseRegion> sourceList = regionService.queryListByExample(paramMap);
+		List<RegionDto> targetList = copyProperties(sourceList, RegionDto.class);
+		logger.info("______2");
+		redisService.delAll("platform:region");
+		logger.info("______3");
+		for (RegionDto region : targetList) {
+			Map<String, String> map = new LinkedHashMap<>();
+			map.put(region.getId(), obj2json(region));
+			redisService.addRow("platform:region", map);
+		}
+		logger.info("______4");
+		return "success";
+	}
+}

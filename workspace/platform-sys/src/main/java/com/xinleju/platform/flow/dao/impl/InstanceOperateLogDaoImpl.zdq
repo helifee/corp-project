@@ -1,0 +1,78 @@
+package com.xinleju.platform.flow.dao.impl;
+
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.platform.base.dao.impl.BaseDaoImpl;
+import com.xinleju.platform.flow.dao.InstanceOperateLogDao;
+import com.xinleju.platform.flow.dto.InstanceDto;
+import com.xinleju.platform.flow.entity.InstanceOperateLog;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Repository
+public class InstanceOperateLogDaoImpl extends BaseDaoImpl<String,InstanceOperateLog> implements InstanceOperateLogDao{
+
+	public InstanceOperateLogDaoImpl() {
+		super();
+	}
+
+	@Override
+	public int deleteDataByParamMap(Map<String, String> paramMap) {
+		System.out.println("\n\n001 DaoImpl... deleteDataByParamMap ");
+		if(paramMap== null || paramMap.size()==0){
+//			System.out.println("\n\n DaoImpl  deleteDataByParamMap  ERROR>>参数为空");
+			return -1;
+		}
+		String instanceId = paramMap.get("instanceId");
+		if(instanceId== null || "".equals(instanceId) || instanceId.length()<10){
+//			System.out.println("\n\n DaoImpl  deleteDataByParamMap  ERROR>>instanceId=("+instanceId+")参数不符合条件>>");
+			return -1;
+		}
+		
+		String operateType = paramMap.get("operateType");
+		if(operateType== null || "".equals(operateType) || operateType.length()<=3){
+//			System.out.println("\n\n DaoImpl  deleteDataByParamMap  ERROR>>operateType=("+operateType+")参数不符合条件>>");
+			return -1;
+		}
+		String method = InstanceOperateLog.class.getName() + ".deleteDataByParamMap";
+		int resultSum = getSqlSession().update(method, paramMap);
+//		System.out.println("\n\n002 DaoImpl... deleteDataByParamMap resultSum="+resultSum);
+		return resultSum;
+	}
+
+	@Override
+	public int deleteOperateLogBySpecialAction(Map<String, String> paramMap) {
+		String method = InstanceOperateLog.class.getName() + ".deleteOperateLogBySpecialAction";
+		int resultSum = getSqlSession().update(method, paramMap);
+		System.out.println("\n\n002 DaoImpl... deleteOperateLogBySpecialAction resultSum="+resultSum);
+		return resultSum;
+	}
+
+	@Override
+	public List<InstanceOperateLog> queryLogListByParamMap(Map<String, String> paramMap) {
+		String method = InstanceOperateLog.class.getName() + ".queryLogListByParamMap";
+		return getSqlSession().selectList(method, paramMap);
+	}
+
+	@Override
+	public List<InstanceDto> queryRelatedInstanceListByKeyword(Map<String, Object> paramMap) {
+		String method = InstanceOperateLog.class.getName() + ".queryRelatedInstanceListByKeyword";
+		return getSqlSession().selectList(method, paramMap);
+	}
+
+	@Override
+	public Integer queryRelatedInstanceCountByKeyword(Map<String, Object> paramMap) {
+		String method = InstanceOperateLog.class.getName() + ".queryRelatedInstanceCountByKeyword";
+		return getSqlSession().selectOne(method, paramMap);
+	}
+
+	
+	
+}

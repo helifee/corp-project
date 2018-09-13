@@ -1,0 +1,543 @@
+package com.xinleju.erp.flow.service;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.Order;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.app.exception.AppException;
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.base.utils.DateUtils;
+import com.xinleju.erp.base.utils.FileUtils;
+import com.xinleju.erp.base.utils.StringHelper;
+import com.xinleju.erp.flow.bean.LoginInfo;
+import com.xinleju.erp.flow.config.FilePathMap;
+import com.xinleju.erp.flow.flowutils.bean.FileDto;
+import com.xinleju.erp.flow.models.Upload;
+import com.xinleju.erp.flow.utils.FileDESPlus;
+import com.xinleju.erp.flow.utils.FlowConstant;
+import com.xinleju.erp.frame.models.Role;
+
+
+@Service
+@SuppressWarnings("rawtypes")
+public class FileService extends BaseService{
+	
+	public static final int PATH_STYLE_ROOT = 0;
+	public static final int PATH_STYLE_OWNERID = 1;
+	public static final int PATH_STYLE_DATE = 2;
+	public static final int PATH_STYLE_USER_DATE = 3;
+	public static final int PATH_STYLE_DATE_SPLIT = 4;
+	
+	@Value("#{appProperties['file_disk_path']?:''}")
+    private String file_disk_path;
+	
+
+	@Autowired
+	private JdbcTemplate jt;
+	
+	public List<Upload> getUploadList(String category,String ownerId){
+		List<Upload> list = getDao().findAll(Upload.class,"category=? and ownerId=?", new Object[]{category,ownerId},"id asc");
+		return list;
+	}
+	
+	public List<Upload> getUploadList(String category,String ownerId,String source){
+		List<Upload> list = getDao().findAll(Upload.class,"category=? and ownerId=? and source=?", new Object[]{category,ownerId,source},"id asc");
+		return list;
+	}
+	public List<Upload> getUploadList(List<Integer> ids){
+		List<Upload> list = new ArrayList<Upload>();
+		if(ids.size()>0){
+			list= getDao().findAll(Upload.class,"id in ("+StringHelper.join(ids,",")+")");
+		}
+		return list;
+	}
+	/**
+	 * 附件列表
+	 * @author jun
+	 * @param ids 附件ids
+	 * @return 附件列表
+	 */
+	public List<Upload> getUploadList(String ids){
+        List<Upload> list = new ArrayList<Upload>();
+        if(StringUtils.isNotBlank(ids)){
+            list= getDao().findAll(Upload.class,"id in (" + (ids.endsWith(",") ? ids.substring(0, ids.length() - 1) : ids) + ")");
+        }
+        return list;
+    }
+	public List<Upload> getUploadListByOwnerIdLike(String category,String ownerId,String ownerIdlike,boolean isAll){
+		DetachedCriteria dc = DetachedCriteria.forClass(Upload.class);
+		dc.add(Restrictions.eq("category", category));
+		dc.add(Restrictions.ilike("ownerId", ownerIdlike+"%"));
+		if(!isAll){
+			dc.add(Restrictions.ne("ownerId", ownerId));
+		}
+		dc.addOrder(Order.desc("uploadTime"));
+		List<Upload> list = getDao().findByCriteria(dc);
+		return list;
+	}
+	
+	public Upload getFirstUploadList(String category,String ownerId){
+		List<Upload> list = getUploadList(category,ownerId);
+		return list.size()>0?list.get(0) : null;
+	}
+	
+	public Upload getFirstUploadListMaxTime(String category,String ownerId){
+		DetachedCriteria dc = DetachedCriteria.forClass(Upload.class);
+		dc.add(Restrictions.eq("category", category));
+		dc.add(Restrictions.eq("ownerId", ownerId));
+		dc.addOrder(Order.desc("uploadTime"));
+		List<Upload> list = getDao().findByCriteria(dc);
+		return list.size()>0?list.get(0) : null;
+	}
+	
+	public void upload(File[] filedatas,String[] filedatasFileName, String realPath, String[] userLabels,String[] notes,String category,String ownerId,int pathStyle,LoginInfo loginInfo,boolean inDb){
+		for(int i = 0 ;filedatas!=null && i<filedatas.length;i++){
+			File fileItem = filedatas[i];
+			
+			String userLabel = userLabels==null ? filedatasFileName[i]:userLabels[i];
+			String note = notes==null?"":notes[i];
+			upload(fileItem,filedatasFileName[i], realPath, userLabel,note,category,ownerId,pathStyle,loginInfo,false,inDb);
+		}
+	}
+	public void upload(File[] filedatas,String[] filedatasFileName, String realPath, String category,String ownerId,int pathStyle,LoginInfo loginInfo,boolean inDb){
+		for(int i = 0 ;filedatas!=null && i<filedatas.length;i++){
+			File fileItem = filedatas[i];
+			upload(fileItem,filedatasFileName[i], realPath, filedatasFileName[i],"",category,ownerId,pathStyle,loginInfo,false,inDb);
+		}
+	}
+	public void upload(File filedata,String fileName, String realPath, String category,String ownerId,int pathStyle,LoginInfo loginInfo,boolean inDb){
+		upload(filedata,fileName, realPath, fileName,"",category,ownerId,pathStyle,loginInfo,true,inDb);
+	}
+	
+	public String getRelativePath(String ownerId,LoginInfo loginInfo,int pathStyle){
+		
+		if(loginInfo==null && pathStyle==PATH_STYLE_USER_DATE) throw new AppException();
+		
+		String relativePath = "";
+		if(pathStyle==PATH_STYLE_OWNERID) relativePath = ownerId;
+		if(pathStyle==PATH_STYLE_DATE) relativePath = DateUtils.formatDate(new Date(),"yyyyMMdd");
+		if(pathStyle==PATH_STYLE_USER_DATE) relativePath = loginInfo.getUserDTO().getId() + DateUtils.formatDate(new Date(),"yyyyMMdd");
+		if(pathStyle==PATH_STYLE_DATE_SPLIT) relativePath = DateUtils.formatDate(new Date(),"yyyy/MM/dd");
+		return relativePath + File.separator;
+		
+		
+	}
+	
+   public String getRelativePath(String ownerId,int pathStyle){
+        String relativePath = "";
+        if(pathStyle==PATH_STYLE_OWNERID) relativePath = ownerId;
+        if(pathStyle==PATH_STYLE_DATE) relativePath = DateUtils.formatDate(new Date(),"yyyyMMdd");
+        if(pathStyle==PATH_STYLE_DATE_SPLIT) relativePath = DateUtils.formatDate(new Date(),"yyyy/MM/dd");
+        return relativePath + File.separator;
+    }
+	
+	
+	public Upload upload(File filedata,String fileName, String realPath, String userLabel,String note,String category,String ownerId,int pathStyle,LoginInfo loginInfo,boolean isSingle,boolean inDB){
+		return this.upload(filedata, fileName, realPath, userLabel, note, category, ownerId, pathStyle, loginInfo, isSingle, inDB,false);
+	}
+	
+	public Upload upload(File filedata,String fileName, String realPath, String userLabel,String note,String category,String ownerId,int pathStyle,LoginInfo loginInfo,boolean isSingle,boolean inDB,boolean isScan){
+	    return this.upload(filedata, fileName, realPath,  userLabel, note, category, ownerId, pathStyle, loginInfo, isSingle, inDB, isScan, null);
+	}
+	
+	public Upload upload(File filedata,String fileName, String realPath, String userLabel,String note,String category,String ownerId,int pathStyle,LoginInfo loginInfo,boolean isSingle,boolean inDB,boolean isScan,Integer attId){
+	Upload pojo = null;
+		//唯一性冗余保证
+		if(isSingle){
+			pojo = (Upload)getDao().findFirst(Upload.class,"category=? and ownerId=?", new Object[]{category,ownerId});
+			//getDao().execute("delete Upload where category=? and ownerId=? and id!=?", category,ownerId,pojo.getId());
+		}
+		if(pojo==null){
+			pojo = new Upload();
+		}
+		
+		FilePathMap uploadMap = App.getBean(FilePathMap.class,FilePathMap.MAP_UPLOADMAP);
+		String configPath = "";
+		//扫描，文件放入缓冲区
+		configPath =(String)uploadMap.get(category);
+		
+		String orgnShortName = "";
+		String orgnFullName = "";
+		String userId = "";
+		String userName = "";
+		if (null != loginInfo && null != loginInfo.getUserDTO()){
+			userId = loginInfo.getUserDTO().getId() + "";
+			userName = loginInfo.getUserDTO().getRealName();
+		}
+		if(StringUtils.isEmpty(userLabel)) userLabel = fileName;
+		
+		if(filedata!=null){
+			boolean isWrited = false;
+			if(inDB){
+				try {
+					byte[] file = FileUtils.streamToByte(new FileInputStream(filedata));
+					pojo.setFileContent(file);
+				} catch (FileNotFoundException e) {
+					e.printStackTrace();
+				}
+			}
+			else if(StringUtils.isNotEmpty(configPath)){
+				try {
+					//写文件
+					String relativePath = getRelativePath(ownerId, loginInfo, pathStyle);
+					if(!configPath.endsWith(File.separator)) configPath += File.separator;
+					if(!relativePath.endsWith(File.separator)) relativePath += File.separator;
+					FileUtils.checkDir(realPath+configPath + relativePath);
+					String newPath = realPath+configPath + relativePath + fileName;
+					String relationPath=configPath + relativePath + fileName;
+
+					File newFile  = new File(newPath);
+					
+					if(newFile.exists() && newFile.isFile()){
+						newFile.delete();
+					}
+					FileUtils.copyForChannel(filedata, newFile);
+					//filedata.renameTo(newFile);
+					//路径信息
+					pojo.setPath(relationPath);
+					isWrited = true;
+				} catch (Exception e) {
+					isWrited = false;
+					e.printStackTrace();
+				}
+			}
+			
+			
+			if(isWrited){
+				// add by liuhm 如果已经存在则不进行二次更新数据库
+				Upload existPojo = (Upload)getDao().findFirst(Upload.class,"category=? and ownerId=? and fileName=?", new Object[]{category,ownerId, fileName});
+				if ( existPojo != null ) {
+					return existPojo;
+				}
+				
+				
+				String ext = ".unknow";
+				if(fileName.indexOf(".")!=-1)
+					ext = fileName.substring(fileName.lastIndexOf("."));
+				
+				pojo.setCategory(category);
+				pojo.setOwnerId(ownerId);
+				pojo.setNote(note);
+				pojo.setFileName(fileName);
+				pojo.setIsEncrypt(FlowConstant.STR_FALSE);
+				pojo.setOrgnShortName(orgnShortName);
+				pojo.setOrgnFullName(orgnFullName);
+				pojo.setUploadTime(System.currentTimeMillis());
+				pojo.setUserId(userId);
+				pojo.setUserName(userName);
+				pojo.setUserLabel(userLabel);
+				pojo.setExt(ext);
+				pojo.setOwnerId(ownerId);
+				getDao().saveOrUpdate(pojo);
+				
+				return pojo;
+			}
+			
+		}
+		
+		
+		return null;
+	}
+	
+	public Upload urlUpload(String userLabel,String filedataFileName, String category,String ownerId,LoginInfo loginInfo){
+		Upload fUpload = new Upload();
+		
+		String userId = "";
+		String userName = "";
+		if (null != loginInfo && null != loginInfo.getUserDTO()){
+			userId = loginInfo.getUserDTO().getId() + "";
+			userName = loginInfo.getUserDTO().getRealName();
+		}
+		
+		fUpload.setCategory(category);
+		fUpload.setOwnerId(ownerId);
+		fUpload.setFileName(filedataFileName);
+		fUpload.setIsEncrypt(FlowConstant.STR_FALSE);
+		fUpload.setUploadTime(System.currentTimeMillis());
+		fUpload.setUserId(userId);
+		fUpload.setUserName(userName);
+		fUpload.setUserLabel(userLabel);
+		fUpload.setExt("url");
+		fUpload.setOwnerId(ownerId);
+		getDao().saveOrUpdate(fUpload);
+		
+		return fUpload;
+	}
+	
+	public void rmUpload(Long id){
+	    Upload upload = getDao().getById(Upload.class, id);
+	    if(upload!=null){
+	        String configPath = null;
+	        Map uploadMap = (Map)App.getBean("uploadMap");
+            configPath = (String)uploadMap.get(upload.getCategory());
+            if (!configPath.endsWith(File.separator)) {
+                configPath += File.separator;
+            }
+	        String filePath =file_disk_path+ upload.getPath();
+	        File file = new File(configPath + filePath);
+	        if(file.isFile()&&file.exists()){
+	            file.delete();
+	        }
+	        getDao().delete(upload);
+	    }
+	}
+	
+	public File uploadEncrypt(Integer uploadId){
+		File returnFile = null;
+		Upload upload = null;
+		if(uploadId!=null){
+			upload = getDao().getById(Upload.class,uploadId);
+			String filePath = file_disk_path+upload.getPath();
+			Map uploadMap = (Map)App.getBean("uploadMap");
+			String configPath = (String)uploadMap.get(upload.getCategory());
+			if(!configPath.endsWith(File.separator))
+				configPath = configPath + File.separator;
+			File file = new File(configPath + filePath);
+			if(!file.exists()){
+				throw new AppException("对不起,未找到打开文件！");
+			}
+			filePath = filePath.replaceAll(upload.getExt(), "temp"+upload.getExt());
+			File file_temp = new File(configPath + filePath);
+			//文件加密保存(先生成一个加密的临时文件，在把真实文件替换为临时文件，最后删除临时文件)
+			try {
+				FileDESPlus FileDESPlus = new FileDESPlus();
+				FileDESPlus.encryptFile(file, file_temp);
+				FileUtils.copyForChannel(file_temp, file);
+				returnFile = file;
+			} catch (Exception e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}finally{
+				file_temp.delete();
+			}
+		}
+		return returnFile;
+	}
+	
+	/**
+	 *附件加密
+	 * @author zhengxj
+	 * @param upload 上传的附件
+	 * @return
+	 */
+	 public File uploadEncrypt(Upload upload){
+	        File returnFile = null;
+	        String filePath = file_disk_path+upload.getPath();
+	        Map uploadMap = (Map)App.getBean("uploadMap");
+	        String configPath = (String)uploadMap.get(upload.getCategory());
+	        if(!configPath.endsWith(File.separator))
+	            configPath = configPath + File.separator;
+	        File file = new File(configPath + filePath);
+	        if(!file.exists()){
+	            throw new AppException("对不起,未找到打开文件！");
+	        }
+	        filePath = filePath.replaceAll(upload.getExt(), "temp"+upload.getExt());
+	        File file_temp = new File(configPath + filePath);
+	        //文件加密保存(先生成一个加密的临时文件，在把真实文件替换为临时文件，最后删除临时文件)
+	        try {
+	            FileDESPlus FileDESPlus = new FileDESPlus();
+	            FileDESPlus.encryptFile(file, file_temp);
+	            FileUtils.copyForChannel(file_temp, file);
+	            returnFile = file;
+	        } catch (Exception e) {
+	            // TODO Auto-generated catch block
+	            e.printStackTrace();
+	        }finally{
+	            file_temp.delete();
+	        }
+	    
+	        return returnFile;
+	    }
+	 
+	public File getUploadFile(Integer uploadId){
+		Upload upload = null;
+		if(uploadId!=null){
+			upload = getDao().getById(Upload.class,uploadId);
+		}
+		String filePath = upload!=null ?file_disk_path+ upload.getPath() : null;
+		Map uploadMap = (Map)App.getBean("uploadMap");
+		String configPath = uploadMap!=null ? (String)uploadMap.get(upload.getCategory()):"";
+		if(!configPath.endsWith(File.separator))
+			configPath = configPath + File.separator;
+		File file = new File(configPath + filePath);
+		if(!file.exists()){
+			throw new AppException("对不起,未找到打开文件：" + file.getName());
+		}
+		return file;
+	}
+	
+	public List<FileDto> getFileList(String category,String bizIds){
+		String sql="select file_name, owner_id, path from sm_upload d where d.category='"+category+"' and d.owner_id in("+bizIds+")";
+		 return jt.query(sql, new RowMapper<FileDto>(){
+			@Override
+			public FileDto mapRow(ResultSet rs, int rowNum) throws SQLException {
+				// TODO Auto-generated method stub
+				FileDto dto=new FileDto();		
+				dto.setFileId(rs.getString("owner_id"));
+				dto.setName(rs.getString("file_name"));
+				dto.setUrl(rs.getString("path"));
+				return dto;
+			}
+			
+		});
+	}
+	
+	public File uploadDecrypt(Long uploadId){
+		File returnFile = null;
+		Upload upload = null;
+		if(uploadId!=null){
+			upload = getDao().getById(Upload.class,uploadId);
+		}
+		String filePath = upload!=null ?file_disk_path+ upload.getPath():null;
+		Map uploadMap = (Map)App.getBean("uploadMap");
+		String configPath = uploadMap!=null ? (String)uploadMap.get(upload.getCategory()):"";
+		@SuppressWarnings("unused")
+		String fileName = upload!=null ? upload.getFileName():"";
+		if(!configPath.endsWith(File.separator))
+			configPath = configPath + File.separator;
+		File file = new File(configPath + filePath);
+		File file_temp = null;//解密临时文件
+		if(!file.exists()){
+			throw new AppException("对不起,未找到打开文件！");
+		}
+		//解密
+		if(FlowConstant.STR_TRUE.equals(upload.getIsEncrypt())){
+			filePath = filePath.replaceAll(upload.getExt(), "temp"+upload.getExt());
+			file_temp = new File(configPath + filePath);
+			if(!file_temp.exists()||!file_temp.isFile()){
+				FileDESPlus FileDESPlus;
+				try {
+					FileDESPlus = new FileDESPlus();
+					FileDESPlus.decryptFile(file,file_temp);
+				} catch (Exception e) {
+					e.printStackTrace();
+				}finally{
+					
+				}
+			}
+			returnFile = file_temp;
+		}else{
+			returnFile = file;
+		}
+		return returnFile;
+	}
+	
+	/**
+	 * 附件加密
+	 * @author zhengxj
+	 * @param upload 附件
+	 * @return
+	 */
+	public File uploadDecrypt(Upload upload){
+        File returnFile = null;
+        String filePath = upload.getPath();
+        Map uploadMap = (Map)App.getBean("uploadMap");
+        String configPath = (String)uploadMap.get(upload.getCategory());
+        @SuppressWarnings("unused")
+        String fileName = upload.getFileName();
+        if(!configPath.endsWith(File.separator))
+            configPath = configPath + File.separator;
+        File file = new File(configPath + filePath);
+        File file_temp = null;//解密临时文件
+        if(!file.exists()){
+            throw new AppException("对不起,未找到打开文件！");
+        }
+        //解密
+        if(FlowConstant.STR_TRUE.equals(upload.getIsEncrypt())){
+            filePath = filePath.replaceAll(upload.getExt(), "temp"+upload.getExt());
+            file_temp = new File(configPath + filePath);
+            if(!file_temp.exists()||!file_temp.isFile()){
+                FileDESPlus FileDESPlus;
+                try {
+                    FileDESPlus = new FileDESPlus();
+                    FileDESPlus.decryptFile(file,file_temp);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }finally{
+                    
+                }
+            }
+            returnFile = file_temp;
+        }else{
+            returnFile = file;
+        }
+        return returnFile;
+    }
+	
+	/**
+	 * 通过upload获取相关附件存放地址
+	 * @param upload
+	 * @return
+	 */
+	public String getFilePathByUpload(Upload upload){
+		String filePath = "";
+		if(upload!=null){
+			Map uploadMap = (Map)App.getBean("uploadMap");
+			String path = upload.getPath();
+			String configPath = (String)uploadMap.get(upload.getCategory());
+			if(!configPath.endsWith(File.separator))
+				configPath = configPath + File.separator;
+			filePath =file_disk_path+ configPath + path;
+		}
+		return filePath;
+	}
+	
+	/**
+	 * 文件复制
+	 * @param ownerId 原ownerId
+	 * @param category 原category
+	 * @param toOwnerId 新ownerId
+	 * @param toCategory 新category
+	 */
+    public void copyUpload(String ownerId, String category, String realPath, String toOwnerId, String toCategory){
+        if(StringUtils.isNotBlank(ownerId) && StringUtils.isNotBlank(category) && StringUtils.isNotBlank(toOwnerId) && StringUtils.isNotBlank(toCategory)){
+            //附件
+            List<Upload> uploadList = this.getUploadList(category, ownerId);
+            if(null != uploadList){
+                //copy附件
+                for(Upload uploadTrack : uploadList){
+                    Map<?,?> uploadMap = (Map<?,?>)App.getBean("uploadMap");
+                    String configPath = (String)uploadMap.get(uploadTrack.getCategory());
+                    if(!configPath.endsWith(File.separator)){
+                        configPath = configPath + File.separator;
+                    }
+                    String filePath =file_disk_path+ uploadTrack.getPath();
+                    File file = new File(configPath + filePath);
+                    if(file.isFile()&&file.exists()){
+                        this.upload(file, uploadTrack.getFileName(), realPath, uploadTrack.getUserLabel(), uploadTrack.getNote(), toCategory, toOwnerId, FileService.PATH_STYLE_OWNERID, null, false, false, false);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 校验上传的URL是否合法
+     * @param category
+     * @param ownerId
+     * @param userLabel
+     */
+	public boolean checkUploadUrl(String category, String ownerId, String filedataFileName) {
+		Upload upload = (Upload)getDao().findFirst(Upload.class,"category=? and ownerId=? and fileName=?", new Object[]{category, ownerId, filedataFileName});
+		return upload != null;
+	}
+	
+}

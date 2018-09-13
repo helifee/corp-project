@@ -1,0 +1,387 @@
+/*
+ * @(#)Ya0020ServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 权限管理
+ */
+
+package com.yds.perm.service.impl;
+
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import net.sf.json.JSONObject;
+import org.springframework.stereotype.Service;
+import com.yds.base.service.AbstractBaseService;
+import com.yds.common.bean.Node;
+import com.yds.common.bean.Tree;
+import com.yds.common.service.ComSequenceService;
+import com.yds.common.service.CommonConstants;
+import com.yds.common.service.LogService;
+import com.yds.common.service.SessionService;
+import com.yds.common.service.CommonConstants.SubIdEnum;
+import com.yds.perm.bean.PerRoleInfo;
+import com.yds.perm.bean.PerRolePermitInfo;
+import com.yds.perm.bean.RolePerMgrInfo;
+import com.yds.perm.dao.Ya0020Dao;
+import com.yds.perm.service.PermConstants;
+import com.yds.perm.service.Ya0020Service;
+import com.yds.util.service.TreeUtil;
+
+/**
+ * @see com.yds.perm.service.Ya0020Service
+ */
+@Service("ya0020Service")
+public class Ya0020ServiceImpl extends AbstractBaseService implements Ya0020Service {
+
+	private Ya0020Dao ya0020Dao;
+	private LogService logService;
+	private ComSequenceService comSequenceService;
+
+	/**
+	 * @param comSequenceService the comSequenceService to set
+	 */
+	public void setComSequenceService(ComSequenceService comSequenceService) {
+		this.comSequenceService = comSequenceService;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public PerRoleInfo getPerRoleInfo(String roleId) {
+
+		// 取得角色信息
+		PerRoleInfo perRoleInfo = ya0020Dao.getPerRoleInfo(roleId);
+		if (null == perRoleInfo) {
+			perRoleInfo = new PerRoleInfo();
+			// 没有数据赋初值
+			perRoleInfo.setRoleId("");
+			perRoleInfo.setRoleName("");
+			perRoleInfo.setRoleDescription("");
+		}
+		return perRoleInfo;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 * @throws Exception 
+	 */
+	@Override
+	public PerRoleInfo updateMaxRoleId() throws Exception {
+
+		// 取得最大角色ID	
+		PerRoleInfo perRoleInfo = new PerRoleInfo();
+		String resultRoleId = comSequenceService.getNextSequence("per_role", "ROLE_ID", 3);
+		if (resultRoleId == null || "".equals(resultRoleId)) {
+			perRoleInfo.setRoleId("001");
+		}else {
+			perRoleInfo.setRoleId(resultRoleId);
+		}	
+
+		// 角色名和角色描述赋初值
+		perRoleInfo.setRoleName("");
+		perRoleInfo.setRoleDescription("");
+		return perRoleInfo;
+	}
+
+	@Override
+	public Tree getRolePerMgrTree() {
+
+		// 取得角色授权信息一览(新规模式)
+		List<RolePerMgrInfo> rolePerMgrList = ya0020Dao.getRolePerMgrList();
+		return rolePermitToTree(rolePerMgrList, "");
+	}
+
+	@Override
+	public Tree getRolePerMgrTreeChecked(String roleId) {
+
+		// 取得角色授权信息一览(参照/修改模式)
+		List<RolePerMgrInfo> rolePerMgrList = ya0020Dao
+				.getRolePerMgrListChecked(roleId);
+		return rolePermitToTree(rolePerMgrList, roleId);
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@SuppressWarnings("unchecked")
+	@Override
+	public void insertRoleAndRolePerMgr(String jsonStr, PerRoleInfo perRoleInfo) {
+
+		PerRolePermitInfo perRolePermitInfo;
+		String permitId = ""; // 权限ID
+		String logMsg = ""; // 日志信息
+		StringBuffer logMsgAdd = new StringBuffer(); // 追加的日志信息
+
+		// 取得登录者ID
+		String userId = SessionService.getLoginUserId();
+
+		// 添加角色信息
+		ya0020Dao.insertPerRoleInfo(perRoleInfo);
+
+		// 新建角色信息的日志编辑
+		logMsg = logMsg + "新建" + perRoleInfo.getRoleName() + "角色，";
+
+		// 遍历jsonStr的每个key
+		JSONObject tree = JSONObject.fromObject(jsonStr);
+		Iterator<String> iterTree = tree.keys();
+
+		while (iterTree.hasNext()) {
+			perRolePermitInfo = new PerRolePermitInfo();
+
+			permitId = iterTree.next();
+			// 角色授权信息Bean.角色ID设置
+			perRolePermitInfo.setRoleId(perRoleInfo.getRoleId());
+
+			// 角色授权信息Bean.权限ID设置
+			perRolePermitInfo.setPermitId(permitId);
+
+			// 角色授权信息Bean.操作人ID
+			perRolePermitInfo.setOperatorId(userId);
+
+			// 添加角色授权信息
+			ya0020Dao.insertPerRolePermitInfo(perRolePermitInfo);
+
+			// 追加角色授权信息的日志的编辑
+			logMsgAdd.append("赋予");
+			logMsgAdd.append(tree.getJSONObject(permitId).getString(
+					PermConstants.PERMIT_NAME));
+			logMsgAdd.append("权限，");
+		}
+
+		// 日志信息的编辑
+		logMsg = logMsg + logMsgAdd;
+		logMsg = logMsg.substring(0, logMsg.length() - 1) + "。";
+
+		logService.insertLogInfo(CommonConstants.LoglevelEnum.Not_Delete
+				.toString(), SubIdEnum.Sub_PERM.toString(), perRoleInfo.getRoleId(), logMsg, "");
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@SuppressWarnings("unchecked")
+	@Override
+	public void updateRoleAndRolePerMgr(String updateRoleFlg,
+			PerRoleInfo perRoleInfo, String jsonStr, String jsonStrC, String hidRoleNm) {
+
+		PerRolePermitInfo perRolePermitInfo;
+		String permitId = ""; // 权限ID
+		String logMsg = ""; // 日志信息
+		StringBuffer logMsgAdd = new StringBuffer(); // 追加的日志信息
+		StringBuffer logMsgDel = new StringBuffer(); // 删除的日志信息
+
+		// 取得登录者ID
+		String userId = SessionService.getLoginUserId();
+
+		if (!PermConstants.UPDATE_ROLE_UNCHANGE.equals(updateRoleFlg)) {
+
+			// 更新角色信息
+			ya0020Dao.updatePerRoleInfo(perRoleInfo);
+
+			// 角色信息的更新日志编辑
+			if (PermConstants.UPDATE_ROLE_CHANGE.equals(updateRoleFlg)) {
+				logMsg = logMsg + hidRoleNm + "角色更名为"
+						+ perRoleInfo.getRoleName() + "，";
+			}
+		}
+		
+		// 删除角色授权信息(PER_ROLE_PERMIT表)
+		ya0020Dao.deletePerRolePermit(perRoleInfo.getRoleId());
+		
+		// 遍历jsonStrC的每个key
+		JSONObject treeC = JSONObject.fromObject(jsonStrC);
+		Iterator<String> iterTreeC = treeC.keys();
+		
+		while (iterTreeC.hasNext()) {
+			perRolePermitInfo = new PerRolePermitInfo();
+			permitId = iterTreeC.next();
+
+			// 角色授权信息Bean.角色ID设置
+			perRolePermitInfo.setRoleId(perRoleInfo.getRoleId());
+
+			// 角色授权信息Bean.权限ID设置
+			perRolePermitInfo.setPermitId(permitId);
+
+			// 角色授权信息Bean.操作人ID
+			perRolePermitInfo.setOperatorId(userId);
+			
+			// 添加修改后角色授权信息
+			ya0020Dao.insertPerRolePermitInfo(perRolePermitInfo);
+		}
+		
+		// 遍历jsonStr的每个key
+		JSONObject tree = JSONObject.fromObject(jsonStr);
+		Iterator<String> iterTree = tree.keys();
+		
+		while (iterTree.hasNext()) {
+			perRolePermitInfo = new PerRolePermitInfo();
+			permitId = iterTree.next();
+
+			// 角色授权信息Bean.角色ID设置
+			perRolePermitInfo.setRoleId(perRoleInfo.getRoleId());
+
+			// 角色授权信息Bean.权限ID设置
+			perRolePermitInfo.setPermitId(permitId);
+
+			// 角色授权信息Bean.操作人ID
+			perRolePermitInfo.setOperatorId(userId);
+
+			if (PermConstants.CHECKED == tree.getJSONObject(permitId).getInt(
+					PermConstants.CHECK_VALUE)) {
+
+				// 添加角色授权信息
+				//ya0020Dao.insertPerRolePermitInfo(perRolePermitInfo);
+
+				// 追加角色授权信息的日志的编辑
+				logMsgAdd.append("增加");
+				logMsgAdd.append(tree.getJSONObject(permitId).getString(
+						PermConstants.PERMIT_NAME));
+				logMsgAdd.append("权限，");
+			} else if (PermConstants.UNCHECKED == tree.getJSONObject(permitId)
+					.getInt(PermConstants.CHECK_VALUE)) {
+
+				// 删除角色授权信息
+				//ya0020Dao.deleteRolePermitInfo(perRolePermitInfo);
+
+				// 删除角色授权信息的日志的编辑
+				logMsgDel.append("删除");
+				logMsgDel.append(tree.getJSONObject(permitId).getString(
+						PermConstants.PERMIT_NAME));
+				logMsgDel.append("权限，");
+			}
+		}
+
+		// 日志信息的编辑
+		if (!PermConstants.UPDATE_ROLE_CHANGE.equals(updateRoleFlg)) {
+			if (!"".equals(logMsgAdd.toString())
+					|| !"".equals(logMsgDel.toString())) {
+				logMsg = logMsg + hidRoleNm + "角色的权限更改：" + logMsgAdd
+						+ logMsgDel;
+			}
+		} else {
+			if (!"".equals(logMsgAdd.toString())
+					|| !"".equals(logMsgDel.toString())) {
+				logMsg = logMsg + logMsgAdd + logMsgDel;
+			}
+		}
+		if (!"".equals(logMsg)) {
+			logMsg = logMsg.substring(0, logMsg.length() - 1) + "。";
+
+			logService.insertLogInfo(
+					CommonConstants.LoglevelEnum.Not_Delete.toString(),
+					CommonConstants.SubIdEnum.Sub_PERM.toString(), perRoleInfo.getRoleId(), logMsg, "");
+		}
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void deleteRolePerMgrInfo(String roleId, String hidRoleNm) {
+
+		// 日志信息
+		String logMsg = "";
+
+		// 删除职位角色表相关信息(PER_ROLE_POSITION表)
+		ya0020Dao.deletePerRolePosition(roleId);
+
+		// 删除角色授权信息(PER_ROLE_PERMIT表)
+		ya0020Dao.deletePerRolePermit(roleId);
+
+		// 删除用户授权表关联信息(PER_USER_PERMIT表)
+		ya0020Dao.deletePerUserPermit(roleId);
+
+		// 删除角色信息(PER_ROLE表)
+		ya0020Dao.deletePerRole(roleId);
+
+		// 日志信息的编辑
+		logMsg = "删除角色名为" + hidRoleNm + "的角色。";
+
+		logService.insertLogInfo(CommonConstants.LoglevelEnum.Not_Delete
+				.toString(), SubIdEnum.Sub_PERM.toString(), roleId, logMsg, "");
+	}
+
+	/**
+	 * @param ya0020Dao
+	 *            the ya0020Dao to set
+	 */
+	public void setYa0020Dao(Ya0020Dao ya0020Dao) {
+		this.ya0020Dao = ya0020Dao;
+	}
+
+	/**
+	 * @param logService
+	 *            the logService to set
+	 */
+	public void setLogService(LogService logService) {
+		this.logService = logService;
+	}
+
+	/**
+	 * 把角色授权信息转换成树结构
+	 * 
+	 * @param rolePerMgrInfo
+	 *            角色授权信息
+	 * @param roleId
+	 *            角色ID
+	 * 
+	 * @return tree 树形结构
+	 */
+	private Tree rolePermitToTree(List<RolePerMgrInfo> rolePerMgrInfo,
+			String roleId) {
+
+		// 构造树结构
+		Tree tree;
+
+		// 该权限是否被选中
+		int permitFlg;
+
+		// 准备数据，从DB中检索的List(须按dispSeq排序)
+		List<Node> nodes = new ArrayList<Node>();
+
+		for (int i = 0; i < rolePerMgrInfo.size(); i++) {
+			if ("".equals(roleId)) {
+
+				// 新规模式全部为未选中
+				permitFlg = PermConstants.UNCHECKED;
+			} else {
+
+				// 判断该权限是否被选中
+				permitFlg = changePermitFlg(rolePerMgrInfo.get(i)
+						.getCheckPermitId());
+			}
+
+			nodes.add(new Node(rolePerMgrInfo.get(i).getPermitPermitId(),
+					rolePerMgrInfo.get(i).getMenuName(), permitFlg,
+					rolePerMgrInfo.get(i).getDispSeq(), null));
+		}
+
+		// 根据检索的List生成树
+		tree = TreeUtil.getTree(nodes);
+
+		// 设置root
+		tree.setId(PermConstants.ROOT_ID);
+		tree.setTxt(PermConstants.ROOT_NAME);
+
+		return tree;
+	}
+
+	/**
+	 * 根据角色授权表中的PermitCheckId判断用户是否有权限
+	 * 
+	 * @param PermitCheckId
+	 *            权限ID
+	 * 
+	 * @return 0：没有权限/1：有权限
+	 */
+	private int changePermitFlg(String permitCheckId) {
+		if (null == permitCheckId) {
+			return PermConstants.UNCHECKED;
+		} else {
+			return PermConstants.CHECKED;
+		}
+	}
+}

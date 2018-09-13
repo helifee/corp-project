@@ -1,0 +1,110 @@
+package com.jzy.hio.flow.utils;
+
+import java.util.concurrent.TimeUnit;
+
+import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataAccessException;
+import org.springframework.data.redis.connection.RedisConnection;
+import org.springframework.data.redis.core.RedisCallback;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.stereotype.Component;
+
+/**
+ * Redis distributed lock implementation.
+ *
+ * @author chaoyang
+ */
+@Component
+public class RedisLock {
+
+	private static Logger logger = LoggerFactory.getLogger(RedisLock.class);
+
+	@Autowired
+	public RedisTemplate<String, String> redisTemplate;
+
+	private static final int DEFAULT_CYCLIC = 100;
+
+	private static final String LOCK_KEY = "LOCKKEY_INSTANCE_";
+	private static final String FLOW_LOCK_FILE = "FLOW_LOCK:" + LOCK_KEY;
+
+	/**
+	 * 锁超时时间，防止当前实例在入锁以后,操作此相关业务
+	 */
+	private int expireSecond = 10;
+
+	public boolean lock(String instanceId) throws InterruptedException {
+
+		if (StringUtils.isBlank(instanceId)) {
+			return true;
+		}
+		logger.info("-----------进入redis锁--------当前实例:{}", instanceId);
+		try {
+			// 循环多少次
+			int count = DEFAULT_CYCLIC;
+			while (true) {
+				count = count - 1;
+				String key = FLOW_LOCK_FILE + instanceId;
+				ValueOperations<String, String> opsForValue = redisTemplate.opsForValue();
+				long currentTimestamp = currentTimestamp();
+				Boolean isExist = opsForValue.setIfAbsent(key, String.valueOf(currentTimestamp));
+				if (isExist) {
+					Boolean expire = redisTemplate.expire(key, expireSecond, TimeUnit.SECONDS);
+					String result = expire == true ? "成功" : "失败";
+					logger.info("----------- redis锁时效设置" + result + "--------当前实例:{}", instanceId);
+					return true;
+				}
+				// 如果循环相同的过期时间没有处理完成 自动释放锁
+				if (count <= 0) {
+					return true;
+				}
+
+				/*
+				 * 延迟100 毫秒, 这里使用随机时间可能会好一点,可以防止饥饿进程的出现,即,当同时到达多个进程,
+				 */
+
+				Thread.sleep(stayMilli());
+				logger.info("-----------第 " + (DEFAULT_CYCLIC - count) + "次 轮询redis锁--------当前实例:{}", instanceId);
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("------------redis锁存储异常---------");
+			return true;
+		}
+	}
+
+	public long currentTimestamp() {
+		return redisTemplate.execute(new RedisCallback<Long>() {
+			@Override
+			public Long doInRedis(RedisConnection redisConnection) throws DataAccessException {
+				return redisConnection.time();
+			}
+		});
+	}
+
+	/**
+	 * Acqurired lock release.
+	 */
+	public void unlock(String instanceId) {
+		logger.info("-----------释放redis锁--------当前实例:" + instanceId);
+
+		if (StringUtils.isBlank(instanceId)) {
+			return;
+		}
+		try {
+			redisTemplate.delete(FLOW_LOCK_FILE + instanceId);
+		} catch (Exception e) {
+			e.printStackTrace();
+			logger.error("---------------释放redis锁异常, 当前绑定实例 {}", instanceId);
+		}
+	}
+
+	public int stayMilli() {
+		int Max = 110, Min = 100;
+		return (int) Math.round(Math.random() * (Max - Min) + Min);
+	}
+
+}

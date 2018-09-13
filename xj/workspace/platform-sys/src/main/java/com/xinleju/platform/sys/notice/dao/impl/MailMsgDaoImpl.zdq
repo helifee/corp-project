@@ -1,0 +1,44 @@
+package com.xinleju.platform.sys.notice.dao.impl;
+
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.platform.base.dao.impl.BaseDaoImpl;
+import com.xinleju.platform.sys.notice.dao.MailMsgDao;
+import com.xinleju.platform.sys.notice.entity.MailMsg;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Repository
+public class MailMsgDaoImpl extends BaseDaoImpl<String,MailMsg> implements MailMsgDao{
+
+	public MailMsgDaoImpl() {
+		super();
+	}
+
+	
+	/**
+	 * 分页数据
+	 * @param map
+	 * @return
+	 * @throws Exception
+	 */
+	public List<MailMsg> getPageData(Map<String, Object> map){
+		return  getSqlSession().selectList("com.xinleju.platform.sys.notice.entity.MailMsg.getPageData", map);
+	}
+	/**
+	 * 总条数
+	 * @param map
+	 * @return
+	 * @throws Exception
+	 */
+	public Integer getPageDataCount(Map<String, Object> map){
+		return  getSqlSession().selectOne("com.xinleju.platform.sys.notice.entity.MailMsg.getPageDataCount", map);
+	}
+}

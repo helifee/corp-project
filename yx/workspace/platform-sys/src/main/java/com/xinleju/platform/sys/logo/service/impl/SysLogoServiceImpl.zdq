@@ -1,0 +1,25 @@
+package com.xinleju.platform.sys.logo.service.impl;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.sys.logo.dao.SysLogoDao;
+import com.xinleju.platform.sys.logo.entity.SysLogo;
+import com.xinleju.platform.sys.logo.service.SysLogoService;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class SysLogoServiceImpl extends  BaseServiceImpl<String,SysLogo> implements SysLogoService{
+	
+
+	@Autowired
+	private SysLogoDao sysLogoDao;
+	
+
+}

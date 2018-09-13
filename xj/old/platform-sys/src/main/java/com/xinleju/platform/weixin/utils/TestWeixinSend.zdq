@@ -1,0 +1,111 @@
+package com.xinleju.platform.weixin.utils;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import com.xinleju.platform.tools.data.JacksonUtils;
+import com.xinleju.platform.weixin.message.Article;
+import com.xinleju.platform.weixin.message.Articles;
+import com.xinleju.platform.weixin.message.NewsMessage;
+import com.xinleju.platform.weixin.pojo.Token;
+import com.xinleju.platform.weixin.pojo.WeixinUser;
+import com.xinleju.platform.weixin.pojo.WeixinUserResponse;
+
+import net.sf.json.JSONObject;
+
+public class TestWeixinSend {
+
+	public static void main(String[] args) {
+		//获取用户的token信息
+		test_getUserTokenInfo();
+		/*String urlText = "http://192.168.3.134:8080/platform-app/mobile/approve/approve_detail.html?msgId=1bf5ba8b59824ade90e825349f919fa9&users=&isback=N&opCode=NA&tabIdx=0";
+		String userId = "user_2042813";
+		String loginName = "zhengjiajie";
+		String tendId = "7bb8bd69611f408da93d70d8ae8b3025";
+		String tendCode = "erp_xinyuan";*/
+		//String tokenText = SSOTokenService.processUrlTextWithSSOTokenByUserInfo(urlText, userId, loginName, tendId, tendCode);
+		//System.out.println("111---tokenText="+tokenText);
+		
+		//String tokenText22 = SSOTokenService.processUrlTextWithSSOTokenByUserInfo(urlText, userId, loginName, tendId, tendCode);
+		//System.out.println("222---tokenText="+tokenText22);
+	
+		//获取关注列表
+		//testWeixinSend_getAttentionUserList();
+		
+		//执行单条发送消息
+		//testWeixinSend_doSendAction();
+	}
+	
+	public static void test_getUserTokenInfo(){
+		String userInfo = "zhengjiajie";//"zl@xinju";
+		String tendId = "7bb8bd69611f408da93d70d8ae8b3025";
+		String tendCode = "erp_xinyuan";
+		com.alibaba.fastjson.JSONObject json = SSOLoginUtils.getToken(userInfo, tendId, tendCode);
+		System.out.println("json="+json.toString());
+	}
+	
+	public static void testWeixinSend_getAttentionUserList(){
+		WeixinUserResponse userResponse = CommonUtil.getAttentionUserResponse();
+		if(userResponse.getErrcode()==0){
+			List<WeixinUser> userList =userResponse.getUserlist();
+			for(WeixinUser user : userList){
+				System.out.println("userid="+user.getUserid()+"; name="+user.getName());
+			}
+		}
+		//System.out.println("userResponse="+JacksonUtils.toJson(userResponse));
+		//{"errcode":0,"errmsg":"ok","userlist":[{"userid":"baoquan","name":"宝全","department":[4]},
+		// {"userid":"wangfei01","name":"王飞","department":[2]},
+		//{"userid":"zhengjiajie","name":"郑家杰","department":[1]},
+		//{"userid":"yuanzhanpeng","name":"袁展鹏","department":[2]},
+		//{"userid":"dingguanghuai","name":"丁光怀","department":[2]},
+		//{"userid":"markingyu","name":"马彬","department":[1]},
+		//{"userid":"luorongxin","name":"雒荣新","department":[1]},
+		//{"userid":"liuyongcan","name":"刘永灿","department":[2]},
+		//{"userid":"xljfengbo","name":"冯波","department":[2]},
+		//{"userid":"zhaoheguang","name":"赵和广","department":[2]},
+		//{"userid":"like01","name":"李可","department":[2]},
+		//{"userid":"jixy","name":"纪玄烨","department":[2,3,4,5]},
+		//{"userid":"hepan","name":"贺盼","department":[2,4]},
+		//{"userid":"caoyang","name":"曹阳","department":[2,3,4]},
+		//{"userid":"zhangfangzhi","name":"张方志","department":[1,2,3,4,5]},
+		//{"userid":"shiyong","name":"史勇","department":[2]},
+		//{"userid":"liwenlong","name":"李文龙","department":[2]},
+		//{"userid":"zhangdaoqiang","name":"张小","department":[1]},
+		//{"userid":"wangwei00","name":"王伟","department":[2]},
+		//{"userid":"PanBingZhi","name":"潘炳直","department":[1]}]}
+	}
+	
+	public static void testWeixinSend_doSendAction(){
+		Token token = CommonUtil.getToken(ParamesAPI.corpId, ParamesAPI.corpsecret);
+		
+		Articles articles = new Articles();
+		List<Article> articleList = new ArrayList<Article>();
+		StringBuffer sbf = new StringBuffer(); 
+		String title = "微信推送测试";
+		String sendDate = "2017-07-18 15:47:00"; 
+		String opType = "DB"; 
+		String toDoSum = "1";
+		sbf.append("流程标题：").append(title).append("\n\n")
+		.append("发起时间：").append(sendDate).append("\n\n")
+		.append("DB".equals(opType) ? "待审批数共：" : "待阅数共：")
+		.append(toDoSum).append("条");
+
+		String mobileToDoServer = "http://192.168.3.84:8080/platform-app/";
+		String msgId = "1111111";
+		String userId = "zhangdaoqiang123";
+		articleList.add(new Article("DB".equals(opType) ? "待审批消息" : "待阅消息",
+				sbf.toString(), mobileToDoServer + "/mobile/approve/approve_list.html?wiid="
+						+ msgId + "&userId=" + userId + "&from=0&backType="+opType));
+		articles.setArticles(articleList);
+		NewsMessage newsMessage = new NewsMessage();
+		newsMessage.setMsgtype("news");
+		newsMessage.setAgentid(ParamesAPI.mobiletodoAgentId);
+		newsMessage.setNews(articles);
+		newsMessage.setTouser(userId);
+		
+		JSONObject jsonObject = CommonUtil.SendNewsMsg(token.getAccessToken(), newsMessage);
+		
+		System.out.println("userResponse="+JacksonUtils.toJson(jsonObject));
+	}
+
+}

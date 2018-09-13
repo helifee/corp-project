@@ -1,0 +1,28 @@
+package com.xinleju.platform.sys.res.dto.service;
+
+import com.xinleju.platform.base.dto.service.BaseDtoServiceCustomer;
+
+public interface DataItemDtoServiceCustomer extends BaseDtoServiceCustomer{
+
+	/**
+	 * 新增作用域控制对象
+	 * @return
+	 */
+	public String saveDataItem(String userInfo, String paramater);
+	/**
+	 *查询作用域业务对象和控制点
+	 * @return
+	 */
+	public String queryDataItemAndPointList(String userInfo, String paramater);
+	/**
+	 *查询作用域业务对象和控制点
+	 * @return
+	 */
+	public String queryDataItemAndPointObjList(String userInfo, String paramater);
+	
+	/**
+	 * 校验appId+itemCode是否已存在，不可重复
+	 * @return
+	 */
+	public String checkRepeat(String userInfo, String paramater);
+}

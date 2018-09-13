@@ -1,0 +1,185 @@
+package com.xinleju.platform.sys.org.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.sys.org.dao.RoleCatalogDao;
+import com.xinleju.platform.sys.org.dao.RoleUserDao;
+import com.xinleju.platform.sys.org.dao.StandardRoleDao;
+import com.xinleju.platform.sys.org.dto.RoleCatalogDto;
+import com.xinleju.platform.sys.org.dto.RoleNodeDto;
+import com.xinleju.platform.sys.org.entity.Orgnazation;
+import com.xinleju.platform.sys.org.entity.RoleCatalog;
+import com.xinleju.platform.sys.org.service.RoleCatalogService;
+import com.xinleju.platform.sys.res.utils.InvalidCustomException;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class RoleCatalogServiceImpl extends  BaseServiceImpl<String,RoleCatalog> implements RoleCatalogService{
+	
+
+	@Autowired
+	private RoleCatalogDao roleCatalogDao;
+	@Autowired
+	private StandardRoleDao standardRoleDao;
+	@Autowired
+	private RoleUserDao roleUserDao;
+	
+	/**
+	 * 获取目录子节点目录
+	 * @param parentId
+	 * @return
+	 */
+	@Override
+	public List<RoleNodeDto> queryRoleCatalogList(String parentId)  throws Exception{
+		return roleCatalogDao.queryRoleCatalogList(parentId);
+	}
+
+	@Override
+	public List<RoleNodeDto> queryRoleCatalogRoot(Map<String,Object> map) throws Exception {
+		return roleCatalogDao.queryRoleCatalogRoot(map);
+	}
+	
+	/**
+	 * 维护相关表全路径
+	 * @param map 参数
+	 * @return
+	 * @throws Exception
+	 */
+	public Integer updateCataAndRoleAllPreFix(Map<String, Object> map) throws Exception{
+		return roleCatalogDao.updateCataAndRoleAllPreFix(map);
+	}
+	/**
+	 * 禁用角色
+	 * @param paramater
+	 * @return
+	 */
+	public Integer lockRole(Map map)throws Exception{
+		return roleCatalogDao.lockRole(map);
+	}
+	
+	/**
+	 * 校验名字是否重复
+	 * @param paramater
+	 * @return
+	 */
+	public Integer checkName(Map map)throws Exception{
+		return roleCatalogDao.checkName(map);
+	}
+	
+	/**
+	 * 启用角色
+	 * @param paramater
+	 * @return
+	 */
+	public Integer unLockRole(Map map)throws Exception{
+		return roleCatalogDao.unLockRole(map);
+	}
+	
+	/**
+	 * 删除角色目录及其下级
+	 */
+	@Override
+	@Transactional(readOnly=false,rollbackFor=Exception.class)
+	public Integer deleteOrgAllSon(RoleCatalogDto roleCatalogDto) throws Exception {
+		try {
+			//查询目录下角色是否被引用，如果有不让删除
+			Map<String,Object> map = new HashMap<String,Object>();
+			map.put("cataId", roleCatalogDto.getId());
+			map.put("delflag", "0");
+			Integer pcount = roleUserDao.selectSonRefCount(map);
+			if(null!=pcount && pcount>0){
+				throw new InvalidCustomException("该分类下有下级被引用，不可删除");
+			}
+			
+			List<String> list=roleCatalogDao.selectSunById(map);
+			roleCatalogDao.deleteAllObjectByIds(list);
+			standardRoleDao.deleteAllObjectByIds(list);
+			return 1;
+		} catch (Exception e) {
+			e.printStackTrace();
+			throw e;
+		}
+	}
+
+	@Override
+	@Transactional(readOnly=false,rollbackFor=Exception.class)
+	public Integer updateNew(RoleCatalog roleCatalog) throws Exception {
+		 RoleCatalog roleCatalogOld = getObjectById(roleCatalog.getId());
+		   Map<String,Object> map = new HashMap<String,Object>();
+		   map.put("delflag", "0");
+
+		   //如果状态没有改变不更改下级
+		   if(!roleCatalog.getStatus().equals(roleCatalogOld.getStatus())){
+			   //查询出来所有未删除的标准角色
+			   /*List list_roleAll= standardRoleService.queryList(map);
+			   for(int i=0;i<list_roleAll.size();i++){
+					StandardRole standardRole = (StandardRole)list_roleAll.get(i);
+					if(roleCatalog.getId().equals(standardRole.getCatalogId())){
+						standardRole.setStatus(roleCatalog.getStatus());
+						standardRoleService.update(standardRole);
+					}
+				}*/
+			   //禁用或者启用下级
+			   if(roleCatalog.getStatus().equals("0")){//禁用角色，并将其下级角色禁用
+				   String prefixId=roleCatalogOld.getPrefixId();
+				   map.put("roleId", prefixId);
+				   lockRole(map);
+			   }else if(roleCatalog.getStatus().equals("1")){//启用角色，并将其上级角色启用
+				   String prefixId=roleCatalogOld.getPrefixId();
+				   String orgIds[]=prefixId.split("/");
+				   map.put("roleIds", orgIds);
+				   unLockRole(map);
+			   }
+		   }
+		   
+		   //检查是否重名
+		   Map<String,Object> mapconC = new HashMap<>();
+		   mapconC.put("pId", roleCatalog.getParentId());
+		   mapconC.put("name", roleCatalog.getName());
+		   mapconC.put("type", "cata");
+		   mapconC.put("id", roleCatalog.getId());
+				   
+		   Integer c=roleCatalogDao.checkName(mapconC);
+			if(c>0){
+				throw new InvalidCustomException("名称已存在，不可重复");
+			}
+		   String newName=roleCatalog.getName();
+		   newName=newName.replaceAll("\\\\\\\\", "\\\\");
+		   newName=newName.replaceAll("\\\\'", "'");
+		   //如果名称或者上级进行更改了，同时要更改所有的下级全路径
+		   if(roleCatalogOld.getParentId().equals(roleCatalog.getParentId()) || roleCatalogOld.getName().equals(newName)){
+			   RoleCatalog parentRoleCatalog =  getObjectById(roleCatalog.getParentId());
+			   Map<String, Object> mapcon=new HashMap<String,Object>();
+			   roleCatalog.setPrefixId(parentRoleCatalog.getPrefixId()+"/"+roleCatalog.getId());
+			   roleCatalog.setPrefixName(parentRoleCatalog.getPrefixName()+"/"+newName);
+			   roleCatalog.setPrefixSort(parentRoleCatalog.getPrefixSort()+"-"+String.format("A%05d", roleCatalog.getSort()));
+			   mapcon.put("prefixIdOld", roleCatalogOld.getPrefixId());
+			   mapcon.put("prefixIdNew", roleCatalog.getPrefixId());
+			   mapcon.put("prefixNameOld", roleCatalogOld.getPrefixName()+"/");
+			   mapcon.put("prefixNameNew", roleCatalog.getPrefixName()+"/");
+			   mapcon.put("prefixSortOld", roleCatalogOld.getPrefixSort());
+			   mapcon.put("prefixSortNew", roleCatalog.getPrefixSort());
+			   updateCataAndRoleAllPreFix(mapcon);
+		   }
+		   String prefixName=roleCatalog.getPrefixName();
+		   prefixName=prefixName.replaceAll("\\\\", "\\\\\\\\");
+		   prefixName=prefixName.replaceAll("'", "\\\\\'");
+		   roleCatalog.setPrefixName(prefixName);
+		   int result= roleCatalogDao.update(roleCatalog);
+		   return result;
+	}
+	
+}

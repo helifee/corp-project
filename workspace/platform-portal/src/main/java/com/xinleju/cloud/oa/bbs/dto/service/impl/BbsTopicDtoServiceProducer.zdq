@@ -1,0 +1,528 @@
+package com.xinleju.cloud.oa.bbs.dto.service.impl;
+
+import java.util.*;
+
+import com.xinleju.cloud.oa.favorite.dto.service.FavoriteDtoServiceCustomer;
+import com.xinleju.platform.base.datasource.DataSourceContextHolder;
+import com.xinleju.platform.base.utils.*;
+import org.apache.commons.lang.StringUtils;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.xinleju.cloud.oa.bbs.dto.service.BbsTopicDtoServiceCustomer;
+import com.xinleju.cloud.oa.bbs.entity.BbsForum;
+import com.xinleju.cloud.oa.bbs.entity.BbsForumUser;
+import com.xinleju.cloud.oa.bbs.entity.BbsTopic;
+import com.xinleju.cloud.oa.bbs.service.BbsForumService;
+import com.xinleju.cloud.oa.bbs.service.BbsForumUserService;
+import com.xinleju.cloud.oa.bbs.service.BbsTopicService;
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.base.utils.ErrorInfoCode;
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.base.utils.LoginUtils;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+/**
+ * @author admin
+ * 
+ *
+ */
+ 
+public class BbsTopicDtoServiceProducer implements BbsTopicDtoServiceCustomer{
+	private static Logger log = Logger.getLogger(BbsTopicDtoServiceProducer.class);
+	@Autowired
+	private BbsTopicService bbsTopicService;
+	@Autowired
+	private FavoriteDtoServiceCustomer favoriteDtoServiceCustomer;
+	@Autowired
+	private BbsForumService bbsForumService;
+	@Autowired
+	private BbsForumUserService bbsForumUserService;
+	public String save(String userInfo, String saveJson){
+	   DubboServiceResultInfo info=new DubboServiceResultInfo();
+	   SecurityUserBeanInfo userBeanInfo = JacksonUtils.fromJson (userInfo,SecurityUserBeanInfo.class);
+	   try {
+
+		   Map paraMap  = new HashMap();
+		   paraMap.put ("userId",userBeanInfo.getSecurityUserDto ().getId ());
+		   paraMap.put ("delflag",false);
+		   List<BbsForumUser> bbsForumUsers = bbsForumUserService.queryList (paraMap);
+		   if(bbsForumUsers!=null&&!bbsForumUsers.isEmpty ()){
+			   BbsForumUser bbsForumUser = bbsForumUsers.get (0);
+			   if(bbsForumUser.getBanEndDate ()!=null&&bbsForumUser.getBanEndDate ().getTime ()>System.currentTimeMillis ()){
+				   info.setCode (ErrorInfoCode.SYSTEM_ERROR.getValue ());
+				   info.setMsg ("您已被禁止发言！");
+				   info.setSucess (false);
+				   return JacksonUtils.toJson (info);
+			   }
+		   }
+
+		   Map<String,Object> paramMap=new HashMap<String,Object>();
+		   BbsTopic bbsTopic =JacksonUtils.fromJson(saveJson, BbsTopic.class);
+		   bbsTopic.setDelflag(false);
+		   bbsTopic.setClickNum(0);
+		   bbsTopic.setReplyNum(0);
+		   bbsTopic.setEssence(false);
+		   bbsTopic.setResourceId("");
+		   bbsTopic.setReceiveReply(true);
+		   bbsTopic.setStick(false);
+		   bbsTopic.setClosed (false);
+		   bbsTopic.setPublishTime (new Date ());
+		   int num =  bbsTopicService.save(bbsTopic);
+		   new Thread (()->{
+		   	 try {
+                 changeDateSource (userBeanInfo.getTendCode ());
+				 BbsForum bbsForum = bbsForumService.getObjectById (bbsTopic.getForumId ());
+				 paramMap.put ("userId", userBeanInfo.getSecurityUserDto ().getId ());
+				 List<BbsForumUser> list = bbsForumUserService.queryList (paramMap);
+				 if (num == 1 && list != null && list.size () > 0) {
+					 BbsForumUser bbsForumUser = list.get (0);
+					 if (bbsForum != null && bbsForum.getPublishScore () != null) {
+						 if (Objects.equals (bbsTopic.getStatus (), "PUBLISHED")) {
+							 bbsForumUser.setScore (bbsForumUser.getScore () + bbsForum.getPublishScore ());
+						 }
+						 bbsForumUser.setDept (userBeanInfo.getSecurityTopDeptDto () != null ? userBeanInfo.getSecurityTopDeptDto ().getPrefixName () : "");
+						 List<SecurityPostDto> postList = userBeanInfo.getSecurityPostDtoList ();
+						 String post = "";
+						 if (postList != null && !postList.isEmpty ()) {
+							 for (SecurityPostDto postDto : postList) {
+								 post += postDto.getName () + "/";
+							 }
+							 post = post.substring (0, post.lastIndexOf ("/"));
+						 }
+						 bbsForumUser.setPost (post);
+						 bbsForumUser.setUserName (userBeanInfo.getSecurityUserDto ().getRealName ());
+						 if (Objects.equals (bbsTopic.getStatus (), "PUBLISHED")) {
+							 bbsForumUser.setPublishTopicNum ((bbsForumUser.getPublishTopicNum () == null ? 0 : bbsForumUser.getPublishTopicNum ()) + 1);
+						 }
+						 bbsForumUserService.update (bbsForumUser);
+					 }
+				 } else {
+					 BbsForumUser bbsForumUser = new BbsForumUser ();
+					 bbsForumUser.setId (IDGenerator.getUUID ());
+					 bbsForumUser.setUserId (userBeanInfo.getSecurityUserDto ().getId ());
+					 bbsForumUser.setUserName (userBeanInfo.getSecurityUserDto ().getRealName ());
+					 if (Objects.equals (bbsTopic.getStatus (), "PUBLISHED")) {
+						 bbsForumUser.setScore (bbsForum != null && bbsForum.getPublishScore () != null ? bbsForum.getPublishScore () : 0);
+					 } else {
+						 bbsForumUser.setScore (0);
+					 }
+					 bbsForumUser.setDelflag (false);
+					 bbsForumUser.setDept (userBeanInfo.getSecurityTopDeptDto () != null ? userBeanInfo.getSecurityTopDeptDto ().getPrefixName () : "");
+					 List<SecurityPostDto> postList = userBeanInfo.getSecurityPostDtoList ();
+					 String post = "";
+					 if (postList != null && !postList.isEmpty ()) {
+						 for (SecurityPostDto postDto : postList) {
+							 post += postDto.getName () + "/";
+						 }
+						 post = post.substring (0, post.lastIndexOf ("/"));
+					 }
+					 if (Objects.equals (bbsTopic.getStatus (), "PUBLISHED")) {
+						 bbsForumUser.setPublishTopicNum (1);
+					 }
+					 bbsForumUser.setPost (post);
+					 bbsForumUserService.save (bbsForumUser);
+				 }
+			 }catch(Exception e0){
+			 }
+
+		   }).start ();
+
+
+
+		   info.setResult(JacksonUtils.toJson(bbsTopic ));
+		   info.setSucess(true);
+		   info.setMsg("保存对象成功!");
+		} catch (Exception e) {
+		 info.setSucess(false);
+		 info.setMsg("保存对象失败!");
+		 info.setExceptionMsg(e.getMessage());
+		}
+	   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String saveBatch(String userInfo, String saveJsonList)
+			 {
+		return null;
+	}
+
+	@Override
+	public String updateBatch(String userInfo, String updateJsonList)
+			 {
+		return null;
+	}
+
+	@Override
+	public String update(String userInfo, String updateJson)  {
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+		    	SecurityUserBeanInfo userBeanInfo = JacksonUtils.fromJson (userInfo,SecurityUserBeanInfo.class);
+			   Map paraMap  = new HashMap();
+			   paraMap.put ("userId",userBeanInfo.getSecurityUserDto ().getId ());
+			   paraMap.put ("delflag",false);
+			   List<BbsForumUser> bbsForumUsers = bbsForumUserService.queryList (paraMap);
+			   if(bbsForumUsers!=null&&!bbsForumUsers.isEmpty ()){
+				   BbsForumUser bbsForumUser = bbsForumUsers.get (0);
+				   if(bbsForumUser.getBanEndDate ()!=null&&bbsForumUser.getBanEndDate ().getTime ()>System.currentTimeMillis ()){
+					   info.setCode (ErrorInfoCode.SYSTEM_ERROR.getValue ());
+					   info.setMsg ("您已被禁止发言！");
+					   info.setSucess (false);
+					   return JacksonUtils.toJson (info);
+				   }
+			   }
+			   BbsTopic bbsTopic =JacksonUtils.fromJson(updateJson, BbsTopic.class);
+			   BbsTopic bbsTopicOld = bbsTopicService.getObjectById (bbsTopic.getId ());
+			   bbsTopic.setLastContentEditor (userBeanInfo.getSecurityUserDto ().getRealName ());
+			   bbsTopic.setLastContentEditTime (new Date());
+			   int result=   bbsTopicService.update(bbsTopic );
+			   new Thread (()->{
+			   	try {
+			   		changeDateSource (userBeanInfo.getTendCode ());
+					if (Objects.equals (bbsTopicOld.getStatus (), "DRAFT")
+							&& Objects.equals (bbsTopic.getStatus (), "PUBLISHED")
+							&& result == 1) {
+						Map param = new HashMap ();
+						param.put ("userId", bbsTopic.getCreatePersonId ());
+						List<BbsForumUser> forumUsers = bbsForumUserService.queryList (param);
+						if (forumUsers != null && !forumUsers.isEmpty ()) {
+							BbsForumUser forumUser = forumUsers.get (0);
+							BbsForum bbsForum = bbsForumService.getObjectById (bbsTopic.getForumId ());
+							forumUser.setScore (forumUser.getScore () + bbsForum.getPublishScore ());
+							forumUser.setPublishTopicNum (forumUser.getPublishTopicNum () != null ? (forumUser.getPublishTopicNum () + 1) : 1);
+							bbsForumUserService.update (forumUser);
+						}
+
+					}
+				}catch (Exception e){
+
+				}
+			   }).start ();
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("更新对象成功!");
+			} catch (Exception e) {
+			 info.setSucess(false);
+			 info.setMsg("更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deleteObjectById(String userInfo, String deleteJson)
+	{
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   BbsTopic bbsTopic =JacksonUtils.fromJson(deleteJson, BbsTopic.class);
+			   int result= bbsTopicService.deleteObjectById(bbsTopic .getId());
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("删除对象成功!");
+			} catch (Exception e) {
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deleteAllObjectByIds(String userInfo, String deleteJsonList)
+   {
+		 DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   if (StringUtils.isNotBlank(deleteJsonList)) {
+				   Map map=JacksonUtils.fromJson(deleteJsonList, HashMap.class);
+				   List<String> list=Arrays.asList(map.get("id").toString().split(","));
+				   int result= bbsTopicService.deleteAllObjectByIds(list);
+				   info.setResult(JacksonUtils.toJson(result));
+				   info.setSucess(true);
+				   info.setMsg("删除对象成功!");
+				}
+			} catch (Exception e) {
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getObjectById(String userInfo, String getJson)
+	 {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			BbsTopic bbsTopic =JacksonUtils.fromJson(getJson, BbsTopic.class);
+			BbsTopic result = bbsTopicService.getObjectById(bbsTopic.getId());
+			if(result!=null && result.getForumId()!=null && !"".equals(result.getForumId())){
+				BbsForum bbsForum=bbsForumService.getObjectById(result.getForumId());
+				result.setForum(bbsForum.getName());
+			}
+			info.setResult(JacksonUtils.toJson(result));
+		    info.setSucess(true);
+		    info.setMsg("获取对象成功!");
+		} catch (Exception e) {
+			 info.setSucess(false);
+			 info.setMsg("获取对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getPage(String userInfo, String paramater) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map map=JacksonUtils.fromJson(paramater, HashMap.class);
+//				Page page=bbsTopicService.getPage(map, (Integer)map.get("start"),  (Integer)map.get("limit"));
+				Page page = bbsTopicService.queryPage(map);
+				info.setResult(JacksonUtils.toJson(page));
+			    info.setSucess(true);
+			    info.setMsg("获取分页对象成功!");
+			}else{
+				Page page=bbsTopicService.getPage(new HashMap(), null, null);
+				info.setResult(JacksonUtils.toJson(page));
+			    info.setSucess(true);
+			    info.setMsg("获取分页对象成功!");
+			}
+		} catch (Exception e) {
+			 info.setSucess(false);
+			 info.setMsg("获取分页对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String queryList(String userInfo, String paramater){
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map map=JacksonUtils.fromJson(paramater, HashMap.class);
+				List list=bbsTopicService.queryList(map);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}else{
+				List list=bbsTopicService.queryList(null);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}
+		} catch (Exception e) {
+			 info.setSucess(false);
+			 info.setMsg("获取列表对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getCount(String userInfo, String paramater)  {
+		return null;
+	}
+	
+	@Override
+	public String deletePseudoObjectById(String userInfo, String deleteJson)
+	{
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   BbsTopic bbsTopic =JacksonUtils.fromJson(deleteJson, BbsTopic.class);
+			   int result= bbsTopicService.deletePseudoObjectById(bbsTopic .getId());
+			   if(result>=1){
+				   new Thread (()->{
+					   try {
+						   favoriteDtoServiceCustomer.deleteAllObjectByIds(userInfo, "{\"id\":\"" + bbsTopic.getId () + "\"}");
+					   }catch (Exception e){
+						   log.error("删除收藏失败!"+e.getMessage());
+					   }
+				   }).start ();
+			   }
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("删除对象成功!");
+			} catch (Exception e) {
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deletePseudoAllObjectByIds(String userInfo, String deleteJsonList)
+   {
+		 DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   if (StringUtils.isNotBlank(deleteJsonList)) {
+				   Map map=JacksonUtils.fromJson(deleteJsonList, HashMap.class);
+				   List<String> list=Arrays.asList(map.get("id").toString().split(","));
+				   int result= bbsTopicService.deletePseudoAllObjectByIds(list);
+				   if(result>=1){
+				   	    new Thread (()->{
+							try {
+								favoriteDtoServiceCustomer.deleteAllObjectByIds(userInfo, "{\"id\":\"" + map.get("id").toString() + "\"}");
+							}catch (Exception e){
+								log.error("删除收藏失败!"+e.getMessage());
+							}
+
+						}).start ();
+				   }
+				   info.setResult(JacksonUtils.toJson(result));
+				   info.setSucess(true);
+				   info.setMsg("删除对象成功!");
+				}
+			} catch (Exception e) {
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	/**
+	 * 更新帖子点击量
+	 * @param userJson
+	 * @param id
+	 * @return
+     */
+	@Override
+	public String updateClickNum(String userJson, String id) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			int result= bbsTopicService.updateClickNum(id);
+			info.setResult(JacksonUtils.toJson(result));
+			info.setSucess(true);
+			info.setMsg("更新帖子点击量成功!");
+		} catch (Exception e) {
+			info.setSucess(false);
+			info.setMsg("更新帖子点击量失败!");
+			info.setExceptionMsg(e.getMessage());
+			info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	/**
+	 * 获取帖子明细信息
+	 * @param userJson
+	 * @param paramaterJson
+	 * @return
+     */
+	@Override
+	public String getDetailPage(String userJson, String paramaterJson) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramaterJson)){
+				Map map=JacksonUtils.fromJson(paramaterJson, HashMap.class);
+				Integer limit = Integer.valueOf (String.valueOf (map.get ("limit")));
+				SecurityUserBeanInfo userBeanInfo = JacksonUtils.fromJson (userJson,SecurityUserBeanInfo.class);
+				map.put ("userBeanInfo",userBeanInfo);
+				if(limit!=-1){
+					Page page = bbsTopicService.queryDetailPage(map);
+					info.setResult(JacksonUtils.toJson(page));
+					info.setSucess(true);
+					info.setMsg("获取分页对象成功!");
+				}else{
+					List list = bbsTopicService.queryDetailList(map);
+					Page page = new Page();
+					page.setStart (0);
+					page.setLimit (-1);
+					page.setList (list);
+					info.setResult(JacksonUtils.toJson(page));
+					info.setSucess(true);
+					info.setMsg("获取对象列表成功!");
+				}
+
+
+			}else{
+				info.setSucess(false);
+				info.setMsg("参数为空!");
+				info.setCode (ErrorInfoCode.PARAMETER_ERROR.getValue ());
+			}
+		} catch (Exception e) {
+			info.setSucess(false);
+			info.setMsg("获取分页对象失败!");
+			info.setExceptionMsg(e.getMessage());
+			info.setCode (ErrorInfoCode.SYSTEM_ERROR.getValue ());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	/**
+	 * 更新帖子状态
+	 * @param userJson
+	 * @param updateJson
+	 * @return
+     */
+	@Override
+	public String updateStatus(String userJson, String updateJson) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			return bbsTopicService.updateState(updateJson);
+		} catch (Exception e) {
+			info.setSucess(false);
+			info.setMsg("更新对象失败!");
+			info.setExceptionMsg(e.getMessage());
+			info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	/**
+	 *  分页查询
+	 * @param userJson
+	 * @param paramaterJson
+	 * @return
+     */
+	@Override
+	public String getMinePage(String userJson, String paramaterJson) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		Page page  = new Page();
+		try {
+			if(StringUtils.isNotBlank(paramaterJson)){
+				Map map=JacksonUtils.fromJson(paramaterJson, HashMap.class);
+				SecurityUserBeanInfo userInfo = JacksonUtils.fromJson (userJson,SecurityUserBeanInfo.class);
+				map.put ("createPersonId",userInfo.getSecurityUserDto ().getId ());
+				map.put("delflag",false);
+				page =  bbsTopicService.queryBeanPage(map);
+				info.setResult(JacksonUtils.toJson(page));
+				info.setSucess(true);
+				info.setMsg("获取分页对象成功!");
+			}
+		} catch (Exception e) {
+			info.setSucess(false);
+			info.setMsg("获取分页对象失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String addFavorite(String userJson, String ids) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+	   	try {
+	   		if (StringUtils.isNotBlank(ids)) {
+	   			Map map=JacksonUtils.fromJson(ids, HashMap.class);
+	   			List<String> list=Arrays.asList(map.get("id").toString().split(","));
+	   			int result= bbsTopicService.addFavorite(list);
+	   			info.setResult(JacksonUtils.toJson(result));
+	   			info.setSucess(true);
+	   			info.setMsg("收藏对象成功!");
+			}
+		} catch (Exception e) {
+			info.setSucess(false);
+			info.setMsg("收藏对象失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	private void changeDateSource(String tendCode){
+		DataSourceContextHolder.clearDataSourceType ();
+		DataSourceContextHolder.setDataSourceType (tendCode);
+		DataSourceContextHolder.getDataSourceType ();
+	}
+}

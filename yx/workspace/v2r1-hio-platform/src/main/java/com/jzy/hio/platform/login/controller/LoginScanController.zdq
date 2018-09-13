@@ -1,0 +1,82 @@
+package com.jzy.hio.platform.login.controller;
+
+import java.util.Map;
+
+import javax.servlet.http.HttpServletRequest;
+
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.controller.BaseController;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.utils.IDGenerator;
+
+/**
+ * 扫码登录
+ * 
+ * @author wt.coffee<br/>
+ *         2018年3月28日下午7:33:25
+ */
+@RestController
+@RequestMapping("loginScan")
+public class LoginScanController extends BaseController {
+
+	private String tableName = "platform:loginScan";
+
+	/**
+	 * <pre>
+	 * 客户端不断的发请求、检查手机端是否已经扫码
+	 * 如果手机端确认登录、则返回手机端的AccessToken
+	 * </pre>
+	 * 
+	 * @param paramMap
+	 * @return
+	 */
+	@PostMapping("getAccessToken")
+	public Object getkey(@RequestBody Map<String, String> paramMap) {
+		String key = getStr(paramMap, "key");
+		if (isEmpty(key)) {
+			// 1、生成一个新的key
+			key = IDGenerator.getUUID();
+			// 2、把key放到redis里、有效时间为1分钟
+			// Map<String, String> map = new HashMap<>();
+			// map.put(key, "0");// 0表示未登录
+			// redisService.addRow(tableName, map);
+			JedisUtil.set(tableName + ":" + key, "0", 60 * 1);
+			return key;
+		} else {
+			String accessToken = JedisUtil.get(tableName + ":" + key);
+			if (accessToken == null) {
+				// 二维码超时
+				return HioException.loginQrCodeExpired;
+			} else if ("0".equals(accessToken)) {
+				// 用户端还没扫码
+				return null;
+			} else {
+				return accessToken;
+			}
+		}
+	}
+
+	@PostMapping("confirm")
+	public Object confirm(HttpServletRequest request, @RequestBody Map<String, String> paramMap) {
+		String key = getStr(paramMap, "key");
+		// Bearer 2cd33f76-7a10-499c-825d-e8adde52aa40
+		String auth = request.getHeader("Authorization");
+		if (auth == null) {
+			return HioException.loginInValidToken;
+		}
+		String status = JedisUtil.get(tableName + ":" + key);
+		if (status == null) {
+			return HioException.loginQrCodeExpired;
+		} else {
+			String accessToken = auth.split(" ")[1];
+			JedisUtil.set(tableName + ":" + key, accessToken, 60);
+			return true;// 成功
+		}
+	}
+}

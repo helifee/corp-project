@@ -1,0 +1,271 @@
+package com.xinleju.erp.frame.service;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.base.utils.StringHelper;
+import com.xinleju.erp.frame.dao.UserDao;
+import com.xinleju.erp.frame.models.BizDataCtrl;
+import com.xinleju.erp.frame.models.BizDataRole;
+import com.xinleju.erp.frame.models.NoticeTemplate;
+import com.xinleju.erp.frame.models.NoticeType;
+import com.xinleju.erp.frame.utils.NoticeTypeTreeBuildUtils;
+
+@Service
+@Transactional(readOnly = true)
+public class NoticeService extends BaseService {
+	@Autowired UserDao userDao;
+	/**
+	 * 获取公告类别树
+	 * @param nodeType 当前节点类型（Root：表示根,NoticeType表示公告类型,NoticeTemplate表示公告模板）
+	 * @param parentId 父ID
+	 * @param includeDisabled 是否包含禁用的
+	 * @param includeTemplate 是否包含公告模板
+	 * @return
+	 */
+	public List<Map<String,Object>> getAllNoticeTypeTree(String nodeType,Long parentId,boolean includeDisabled,boolean includeTemplate) {
+		List<Map<String,Object>> result = new ArrayList<Map<String,Object>>();
+		if(nodeType == null || NoticeTypeTreeBuildUtils.NOTICE_TYPE_ROOT.equals(nodeType)) {
+			//加载根NOTICETYPE
+			StringBuffer hqlStringBuffer = new StringBuffer();
+			hqlStringBuffer.append("from NoticeType t where t.parentId is null");
+			if(!includeDisabled) {
+				hqlStringBuffer.append(" and status = " + NoticeType.STATUS_ENABLE);
+			}
+			hqlStringBuffer.append(" order by t.sort asc");
+			List<NoticeType> list = getDao().findByHQL(NoticeType.class, hqlStringBuffer.toString());
+			result.addAll(NoticeTypeTreeBuildUtils.buildNoticeTypeTree(list, includeDisabled, false));
+		}else if(NoticeTypeTreeBuildUtils.NOTICE_TYPE_NOTICETYPE.equals(nodeType)) {
+			//加载公告类型
+			StringBuffer hqlStringBuffer = new StringBuffer();
+			hqlStringBuffer.append("from NoticeType t where t.parentId = ?");
+			if(!includeDisabled) {
+				hqlStringBuffer.append(" and t.status = " + NoticeType.STATUS_ENABLE);
+			}
+			hqlStringBuffer.append(" order by t.sort asc");
+			List<NoticeType> typeList = getDao().findByHQL(NoticeType.class, hqlStringBuffer.toString(), parentId);
+			result.addAll(NoticeTypeTreeBuildUtils.buildNoticeTypeTree(typeList, includeDisabled, includeTemplate));
+			//加载公告模板
+			if(includeTemplate) {
+				StringBuffer hqlStringBuffer_ = new StringBuffer();
+				hqlStringBuffer_.append("from NoticeTemplate t where t.noticeTypeId = ?");
+				if(!includeDisabled) {
+					hqlStringBuffer_.append(" and t.status = " + NoticeType.STATUS_ENABLE);
+				}
+				hqlStringBuffer_.append(" order by t.sort asc");
+				List<NoticeTemplate> tempList = getDao().findByHQL(NoticeTemplate.class, hqlStringBuffer_.toString(), parentId);
+				result.addAll(NoticeTypeTreeBuildUtils.buildNoticeTypeTree(tempList,includeDisabled));
+			}
+		}
+		return result;
+	}
+	
+	
+	public Long getChildTypeCount(Long parentId,Boolean includeDisabled) {
+		StringBuffer hqlStringBuffer = new StringBuffer();
+		hqlStringBuffer.append("select count(t.id) from NoticeType t where t.parentId = ?");
+		if(!includeDisabled) {
+			hqlStringBuffer.append(" and t.status = " + NoticeType.STATUS_ENABLE);
+		}
+		return getDao().findLong(hqlStringBuffer.toString(), parentId);
+	}
+	
+	public Long getTemplateCountByTid(Long noticeTypeId,boolean includeDisabled) {
+		StringBuffer hqlStringBuffer_ = new StringBuffer();
+		hqlStringBuffer_.append("select count(t.id) from NoticeTemplate t where t.noticeTypeId = ?");
+		if(!includeDisabled) {
+			hqlStringBuffer_.append(" and t.status = " + NoticeType.STATUS_ENABLE);
+		}
+		return getDao().findLong(hqlStringBuffer_.toString(), noticeTypeId);
+	}
+
+
+	@Transactional
+	public void saveOrUpdate(NoticeType noticeType) {
+		getDao().saveOrUpdate(noticeType);
+		//更新prefix
+		if(noticeType.getParentId() == null){
+			noticeType.setPrefix(noticeType.getId()+"-");
+		}else{
+			NoticeType parent = getDao().getById(NoticeType.class, noticeType.getParentId());
+			noticeType.setPrefix(parent.getPrefix()+noticeType.getId()+"-");
+		}
+	}
+	
+	/**
+	 * 根据权限控制模板选择树
+	 */
+	public List<Map<String,Object>> getNoticeTypeTree(String loginName,String nodeType,Long parentId,boolean includeDisabled,boolean includeTemplate) {
+		List<Map<String,Object>> result = new ArrayList<Map<String,Object>>();
+		if(nodeType == null || NoticeTypeTreeBuildUtils.NOTICE_TYPE_ROOT.equals(nodeType)) {
+			//加载根NOTICETYPE
+			StringBuffer hqlStringBuffer = new StringBuffer();
+			hqlStringBuffer.append("from NoticeType t where t.parentId is null");
+			List<Long> typeids = getEnableNoticeType(loginName);
+			
+			if(typeids.size()>0){
+				hqlStringBuffer.append(" and t.id in ( "+StringHelper.join(typeids, ",")+" )");
+			}
+			else{
+				hqlStringBuffer.append(" and t.id in ( -1 )");
+			}
+			
+			if(!includeDisabled) {
+				hqlStringBuffer.append(" and status = " + NoticeType.STATUS_ENABLE);
+			}
+			hqlStringBuffer.append(" order by t.sort asc");
+			List<NoticeType> list = getDao().findByHQL(NoticeType.class, hqlStringBuffer.toString());
+			result.addAll(NoticeTypeTreeBuildUtils.buildNoticeTypeTree(list, includeDisabled, false));
+		}else if(NoticeTypeTreeBuildUtils.NOTICE_TYPE_NOTICETYPE.equals(nodeType)) {
+			//加载公告类型
+			StringBuffer hqlStringBuffer = new StringBuffer();
+			hqlStringBuffer.append("from NoticeType t where t.parentId = ?");
+			List<Long> typeids = getEnableNoticeType(loginName);
+			if(typeids.size()>0){
+				hqlStringBuffer.append(" and t.id in ( "+StringHelper.join(typeids, ",")+" )");
+			}
+			else{
+				hqlStringBuffer.append(" and t.id in ( -1 )");
+			}
+			if(!includeDisabled) {
+				hqlStringBuffer.append(" and t.status = " + NoticeType.STATUS_ENABLE);
+			}
+			hqlStringBuffer.append(" order by t.sort asc");
+			List<NoticeType> typeList = getDao().findByHQL(NoticeType.class, hqlStringBuffer.toString(), parentId);
+			result.addAll(NoticeTypeTreeBuildUtils.buildNoticeTypeTree(typeList, includeDisabled, includeTemplate));
+			//加载公告模板
+			if(includeTemplate) {
+				StringBuffer hqlStringBuffer_ = new StringBuffer();
+				hqlStringBuffer_.append("from NoticeTemplate t where t.noticeTypeId = ?");
+				List<Long> templateTypeids = getTemplate(loginName);
+				if(templateTypeids.size()>0){
+					hqlStringBuffer_.append(" and t.id in ( "+StringHelper.join(templateTypeids, ",")+" )");
+				}else{
+					hqlStringBuffer_.append(" and t.id in (-1)");
+				}
+				if(!includeDisabled) {
+					hqlStringBuffer_.append(" and t.status = " + NoticeType.STATUS_ENABLE);
+				}
+				hqlStringBuffer_.append(" order by t.sort asc");
+				List<NoticeTemplate> tempList = getDao().findByHQL(NoticeTemplate.class, hqlStringBuffer_.toString(), parentId);
+				result.addAll(NoticeTypeTreeBuildUtils.buildNoticeTypeTree(tempList,includeDisabled));
+			}
+		}
+		return result;
+	}
+	
+	/**
+	 * 取出可以使用的模板类型
+	 * @return
+	 */
+	public List<Long> getEnableNoticeType(String loginName){
+		List<Long> noticeTypeList=new ArrayList<Long>();
+		List<Long> noticeTemplateIdList= getTemplate(loginName);
+		List<NoticeTemplate> noticeTemplateList=new ArrayList<NoticeTemplate>();
+		//取出可用模板
+		for(Long id:noticeTemplateIdList){
+			NoticeTemplate noticeTemplate=getDao().getById(NoticeTemplate.class,id);
+			noticeTemplateList.add(noticeTemplate);
+		}
+		//取出可用类型id
+		List<Long> noticeTypeIdList=new ArrayList<Long>();
+		for(NoticeTemplate nt:noticeTemplateList){
+			noticeTypeIdList.add(nt.getNoticeTypeId());
+		}
+		//取出可用类型
+		List<NoticeType> noticeType=new ArrayList<NoticeType>();
+		for(Long id:noticeTypeIdList){
+			noticeType.add(getDao().getById(NoticeType.class,id));
+		}
+		//取出可用类型及所有父类
+		for(NoticeType nt:noticeType){
+			List<NoticeType> NoticeParentType =getParent(nt);
+			for(NoticeType notice:NoticeParentType){
+				noticeTypeList.add(notice.getId());
+			}
+		}
+		
+		return noticeTypeList;
+	}
+	
+	
+	public List<NoticeType> getParent(NoticeType noticeType){
+		List<NoticeType> result = new ArrayList<NoticeType>();
+		result.add(noticeType);
+		
+		NoticeType t = noticeType;
+		while(t.getParentId()!=null){
+			result.add(t.getParent());
+			t = t.getParent();
+		}
+		return result;
+	}
+	
+	
+
+	
+	/**
+	 * 根据用户判断可选择的模板
+	 * @return
+	 */
+	public List<Long> getTemplate(String loginName){
+
+		List<Long> idList=userDao.getRoleIds(loginName);
+		List<BizDataRole> bizDataRoleList=new ArrayList<BizDataRole>();
+		for(Long id:idList){
+			List<BizDataRole> bizDataRole=getDao().findByHQL(BizDataRole.class, "from BizDataRole bdr where bdr.roleId= ? and bdr.bizDataField.bizDataCtrl.code= ?", id,BizDataCtrl.notice_edit);
+			for(BizDataRole bdr:bizDataRole){
+				bizDataRoleList.add(bdr);
+			}
+		}
+		List<String> otherOptions=new ArrayList<String>();
+		for(BizDataRole bizDataRole:bizDataRoleList){
+			otherOptions.add(bizDataRole.getOtherOptions());
+		}
+		//解析更多分类
+		List<String[]> other=new ArrayList<String[]>();
+		for(int i=0;i<otherOptions.size();i++){
+			String[] otherOption=otherOptions.get(i).split(",");
+			other.add(otherOption);
+		}
+		List<String[]> code_name=new ArrayList<String[]>();
+		for(int i=0;i<other.size();i++){
+			for(int j=0;j<other.get(i).length;j++){
+				code_name.add(other.get(i)[j].split("/"));
+			}
+			
+		}
+		//类型_id
+		List<String> codeList=new ArrayList<String>();
+		for(int i=0;i<code_name.size();i++){
+			codeList.add(code_name.get(i)[0]);
+		}
+		
+		List<Long> noticeTemplateId=new ArrayList<Long>();
+		for(String code_id:codeList){
+			String code=code_id.split("_")[0];
+			Long id=Long.valueOf(code_id.split("_")[1]);
+			if(code.equals("NOTICETEMPLATE")){
+				noticeTemplateId.add(id);
+			}else{
+				List<NoticeType> noticeTypeList=getDao().findByHQL(NoticeType.class,"from NoticeType n where n.prefix like ?", "%"+id+"%");
+				List<NoticeTemplate> noticeTemplateList=new ArrayList<NoticeTemplate>();
+				for(NoticeType noticeType:noticeTypeList){
+					List<NoticeTemplate> noticeTemplate=getDao().findByHQL(NoticeTemplate.class, "from NoticeTemplate nt where nt.noticeTypeId= ?",noticeType.getId());
+					for(NoticeTemplate nt:noticeTemplate){
+						noticeTemplateList.add(nt);
+					}
+				}
+				for(NoticeTemplate nt:noticeTemplateList){
+					noticeTemplateId.add(nt.getId());
+				}
+			}
+		}
+		return noticeTemplateId;
+	}
+}

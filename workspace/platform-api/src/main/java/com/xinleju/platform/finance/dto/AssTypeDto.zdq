@@ -1,0 +1,128 @@
+package com.xinleju.platform.finance.dto;
+
+import com.xinleju.platform.base.dto.BaseDto;
+
+
+
+
+
+/**
+ * @author admin
+ * 
+ *
+ */
+public class AssTypeDto extends BaseDto{
+
+		
+	//业务对象名称
+	private String bizObjectName;
+    
+  		
+	//业务对象id
+	private String bizObjectId;
+    
+  		
+	//账套id
+	private String accountSetId;
+    
+  		
+	//辅助核算名称
+	private String assName;
+    
+  		
+	//类型
+	private String type;
+    
+  		
+	//是否同步
+	private String synchro;
+    
+  		
+	//传输类型
+	private String isDirectCode;
+    
+  		
+	//公司id
+	private String companyId;
+    
+    private String parentId;
+    
+    private String pId;
+		
+	public String getBizObjectName() {
+		return bizObjectName;
+	}
+	public void setBizObjectName(String bizObjectName) {
+		this.bizObjectName = bizObjectName;
+	}
+    
+  		
+	public String getBizObjectId() {
+		return bizObjectId;
+	}
+	public void setBizObjectId(String bizObjectId) {
+		this.bizObjectId = bizObjectId;
+	}
+    
+  		
+	public String getAccountSetId() {
+		return accountSetId;
+	}
+	public void setAccountSetId(String accountSetId) {
+		this.accountSetId = accountSetId;
+	}
+    
+  		
+	public String getAssName() {
+		return assName;
+	}
+	public void setAssName(String assName) {
+		this.assName = assName;
+	}
+    
+  		
+	public String getType() {
+		return type;
+	}
+	public void setType(String type) {
+		this.type = type;
+	}
+    
+  		
+	public String getSynchro() {
+		return synchro;
+	}
+	public void setSynchro(String synchro) {
+		this.synchro = synchro;
+	}
+    
+  		
+	public String getIsDirectCode() {
+		return isDirectCode;
+	}
+	public void setIsDirectCode(String isDirectCode) {
+		this.isDirectCode = isDirectCode;
+	}
+    
+  		
+	public String getCompanyId() {
+		return companyId;
+	}
+	public void setCompanyId(String companyId) {
+		this.companyId = companyId;
+	}
+	public String getParentId() {
+		return parentId;
+	}
+	public void setParentId(String parentId) {
+		this.parentId = parentId;
+	}
+	public String getpId() {
+		return pId;
+	}
+	public void setpId(String pId) {
+		this.pId = pId;
+	}
+    
+  		
+}

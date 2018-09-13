@@ -1,0 +1,683 @@
+package com.xinleju.platform.finance.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.erp.sm.extend.dto.FinaData;
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.finance.dao.VoucherTemplateDao;
+import com.xinleju.platform.finance.dao.VoucherTemplateEntryDao;
+import com.xinleju.platform.finance.dao.VoucherTemplateTypeDao;
+import com.xinleju.platform.finance.entity.VoucherTemplate;
+import com.xinleju.platform.finance.entity.VoucherTemplateEntry;
+import com.xinleju.platform.finance.entity.VoucherTemplateType;
+import com.xinleju.platform.finance.service.VoucherTemplateTypeService;
+import com.xinleju.platform.finance.utils.DataType;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class VoucherTemplateTypeServiceImpl extends  BaseServiceImpl<String,VoucherTemplateType> implements VoucherTemplateTypeService{
+	
+
+	@Autowired
+	private VoucherTemplateTypeDao voucherTemplateTypeDao;
+	@Autowired
+	private VoucherTemplateDao voucherTemplateDao;
+	@Autowired
+	private VoucherTemplateEntryDao voucherTemplateEntryDao;
+
+	/** 凭证分录概要模板 变量表达式 */
+	private static final String VOUCHER_ENTRY_SUMMARY_VAR_EXPR = "\\{!(.+?):(.+?);\\}";
+	private static final String LIKE = "like";
+	private static final String NO_LIKE = "nolike";
+	private static final String NO_EQUE = "<>";
+	private static final String NO_EQUE2 = "!=";
+	private static final String EQUE = "==";
+	private static final String LESS = "<";
+	private static final String GREATER = ">";
+	private static final String LESS_EQUE = "<=";
+	private static final String GREATER_EQUE = ">=";
+	private static final String DIVIDE = "/";
+	
+	private static final String AND = "&&";
+	private static final String MAP_FIR = "1";
+	private static final String MAP_SEC = "2";
+	private static final String MAP_THIR = "3";
+	
+	@Override
+	public int saveTempAll(String saveJson) throws Exception {
+		@SuppressWarnings("unchecked")
+		Map<String,Object> typeDtoMap = JacksonUtils.fromJson(saveJson, HashMap.class);//转Map
+		
+		String typeId = (String) typeDtoMap.get("id");//获取主键
+		VoucherTemplate billEntity = voucherTemplateDao.getObjectById(typeId);//获取数据库模板对象
+		
+		List<Map<String, Object>> entryEntityList = voucherTemplateEntryDao.getMapListByTypeId(typeId);//获取数据库分录列表
+		
+		@SuppressWarnings("unchecked")
+		List<Map<String,Object>> rulerDtoList = (List<Map<String,Object>>) typeDtoMap.get("entryList");//获取分录数据
+		
+		if(null==billEntity){//数据为空
+			VoucherTemplate newTypeEntity = JacksonUtils.fromJson(JacksonUtils.toJson(typeDtoMap), VoucherTemplate.class);
+			voucherTemplateDao.save(newTypeEntity);//新增bill对象
+			@SuppressWarnings("unchecked")
+			List<Map<String,Object>> rulerList = JacksonUtils.fromJson(JacksonUtils.toJson(rulerDtoList),List.class);
+			for(int i=0;i<rulerList.size();i++){
+				voucherTemplateEntryDao.save(JacksonUtils.fromJson(JacksonUtils.toJson(rulerList.get(i)), VoucherTemplateEntry.class));//新增分录对象
+			}
+		}else{//数据为修改
+			String billJson = JacksonUtils.toJson(billEntity);//对象转换
+			@SuppressWarnings("unchecked")
+			Map<String,Object> billMap = JacksonUtils.fromJson(billJson, HashMap.class);
+			billMap.putAll(typeDtoMap);
+			VoucherTemplate newTypeEntity = JacksonUtils.fromJson(JacksonUtils.toJson(billMap), VoucherTemplate.class);
+			newTypeEntity.setFilter(newTypeEntity.getFilter().replace("\'", "\\\'"));
+			voucherTemplateDao.update(newTypeEntity);//更新模板对象
+			if(billEntity.getBizObjectId().equals(newTypeEntity.getBizObjectId())){
+				for(int i=0;i<rulerDtoList.size();i++){
+					if(DataType.DATA_ADD.getCode()==rulerDtoList.get(i).get("entryDataType")){
+						voucherTemplateEntryDao.save(JacksonUtils.fromJson(JacksonUtils.toJson(rulerDtoList.get(i)),VoucherTemplateEntry.class));//新增方法
+					}else if(DataType.DATA_UPDATE.getCode()==rulerDtoList.get(i).get("entryDataType")){
+						//匹配数据库已存在对象
+						for(int j=0;j<entryEntityList.size();j++){
+							if(entryEntityList.get(j).get("id").equals(rulerDtoList.get(i).get("id"))){
+								@SuppressWarnings("unchecked")
+								Map<String,Object> RulerMap = JacksonUtils.fromJson(JacksonUtils.toJson(rulerDtoList.get(i)), HashMap.class);
+								Map<String,Object> oldRulerMap = entryEntityList.get(j);
+								oldRulerMap.putAll(RulerMap);
+								voucherTemplateEntryDao.update(JacksonUtils.fromJson(JacksonUtils.toJson(oldRulerMap), VoucherTemplateEntry.class));//修改方法
+							}
+						}
+					}else if(DataType.DATA_DELETE.getCode()==rulerDtoList.get(i).get("entryDataType")){
+						voucherTemplateEntryDao.deletePseudoObjectById((String)rulerDtoList.get(i).get("id"));//伪删除方法
+					}
+				}
+			}else{
+				voucherTemplateEntryDao.deleteObjectByTempId(billEntity.getId());//清空原模板对应分录
+				for(int i=0;i<rulerDtoList.size();i++){
+					//新增模板对应分录
+					voucherTemplateEntryDao.save(JacksonUtils.fromJson(JacksonUtils.toJson(rulerDtoList.get(i)), VoucherTemplateEntry.class));//新增RulerList对象
+				}
+			}
+		}
+		return 1;//返回成功
+	}
+	
+	/**
+	 * 根据单据数据配置对应的模板
+	 * @param finaData
+	 * @return
+	 */
+	@Override
+	public FinaData setTempTemplate(FinaData finaData,String typeId,String appCode){
+		List<VoucherTemplateType> temps = this.getParentAndSubsById(typeId);
+		List<VoucherTemplate> fvts = new ArrayList<VoucherTemplate>();
+		Map<String,Object> templateMap = new HashMap<String,Object>();
+		for(VoucherTemplateType tmp:temps){
+			String tmepId = tmp.getId(); 
+			templateMap.put("typeId", tmepId);
+			templateMap.put("status", 1);
+			List<VoucherTemplate> fiVoucherTemplateList = voucherTemplateDao.queryList(templateMap);
+			if(null != fiVoucherTemplateList && fiVoucherTemplateList.size() > 0){
+				fvts.addAll(fiVoucherTemplateList);
+			}
+        }
+		//判断如果只有一个凭证模板  则直接将该模板赋予此数据
+		if(fvts.size() == 1){
+			finaData.put("voucherTemplateId", fvts.get(0).getId());
+			finaData.put("voucherTemplateName", fvts.get(0).getName());
+			// 凭证字
+			finaData.put("flag", fvts.get(0).getWord());
+			finaData.put("typeTempId", fvts.get(0).getTypeId());
+			VoucherTemplateType vft = voucherTemplateTypeDao.getObjectById(fvts.get(0).getTypeId());
+			if(vft!=null){
+				finaData.put("typeTempParentId", vft.getParentId());
+			}
+			return finaData;
+		}
+		for(VoucherTemplate fvt:fvts){
+			String filter = fvt.getFilter();
+			List<Map<String,String>> listFilter = convertFilter(filter);
+			boolean isMach = true;
+			if(listFilter == null || listFilter.size() == 0) 
+				isMach = false;
+			for(int i=0; i<listFilter.size(); i++){
+				Map<String,String> m = listFilter.get(i);
+				String arrr = m.get(MAP_FIR).trim();
+				String sign = m.get(MAP_SEC);
+				String value = m.get(MAP_THIR).trim();
+				//根据表达式的属性获取 单据的属性对应的值
+				Object billAttrValue = finaData.get(arrr);
+				String billAttrSinganlValue = null;
+				List<String> billAttrList = new ArrayList<String>();
+				
+				if(billAttrValue == null){
+					List<FinaData> fts = (List<FinaData>)finaData.get("ft");
+					if(fts!=null){
+						for(FinaData ft:fts){
+							String val = String.valueOf(ft.get(arrr));
+							if(ft.get(arrr) == null){
+								billAttrList.add("0");
+							}else{
+								billAttrList.add(val);
+							}
+						}
+					}
+				}else{
+					billAttrSinganlValue = String.valueOf(billAttrValue);
+				}
+				
+				if(billAttrSinganlValue != null){
+					//如果表达式的符号是 "=="  如果存在一个不符合条件的 则都不符合条件
+					billAttrSinganlValue = billAttrSinganlValue.equals("0.0")?"0":billAttrSinganlValue;
+					value = value.replaceAll("'", "");
+					if(sign.equals(EQUE) && !value.equals(billAttrSinganlValue)){
+						isMach = false;
+					}
+					if((sign.equals(NO_EQUE) || sign.equals(NO_EQUE2)) && value.equals(billAttrSinganlValue)){
+						isMach = false;
+					}
+					if(sign.trim().equals(">")  && Double.valueOf(value)>Double.valueOf(billAttrSinganlValue)){
+						isMach = false;
+					}
+					if(sign.trim().equals("<")  && Double.valueOf(value)< Double.valueOf(billAttrSinganlValue)){
+						isMach = false;
+					}
+					if(sign.trim().equals(">=")  && Double.valueOf(value)>=Double.valueOf(billAttrSinganlValue)){
+						isMach = false;
+					}
+					if(sign.trim().equals("<=")  && Double.valueOf(value)<= Double.valueOf(billAttrSinganlValue)){
+						isMach = false;
+					}
+					String ss = billAttrSinganlValue.replace("%","");
+					if(sign.equals(LIKE) && !value.contains(ss)){
+						isMach = false;
+					}
+					if(sign.equals(NO_LIKE) && value.contains(ss)){
+						isMach = false;
+					}
+				}else{
+					for(String billValue:billAttrList){
+						billValue = billValue.equals("0.0")?"0":billValue;
+						value = value.replaceAll("'", "");
+						//如果表达式的符号是 "=="  如果存在一个不符合条件的 则都不符合条件
+						if(sign.equals(EQUE) && !value.equals(billValue)){
+							isMach = false;
+						}
+						if(sign.equals(NO_EQUE) && value.equals(billValue)){
+							isMach = false;
+						}
+						if(sign.trim().equals(">")  && Double.valueOf(value)>Double.valueOf(billAttrSinganlValue)){
+							isMach = false;
+						}
+						if(sign.trim().equals("<")  && Double.valueOf(value)< Double.valueOf(billAttrSinganlValue)){
+							isMach = false;
+						}
+						if(sign.trim().equals(">=")  && Double.valueOf(value)>=Double.valueOf(billAttrSinganlValue)){
+							isMach = false;
+						}
+						if(sign.trim().equals("<=")  && Double.valueOf(value)<= Double.valueOf(billAttrSinganlValue)){
+							isMach = false;
+						}
+						String ss = billValue.replace("%","");
+						if(sign.equals(LIKE) && !sign.equals(NO_LIKE) && !value.contains(ss)){
+							isMach = false;
+						}
+						if(sign.equals(NO_LIKE) && value.contains(ss)){
+							isMach = false;
+						}
+					}
+					
+				}
+			}
+			
+			if(isMach){
+				finaData.put("voucherTemplateId", fvt.getId());
+				finaData.put("voucherTemplateName", fvt.getName());
+				// 凭证字
+				finaData.put("flag", fvt.getWord());
+				finaData.put("typeTempId", fvt.getTypeId());
+				VoucherTemplateType ft = voucherTemplateTypeDao.getObjectById(fvt.getTypeId());
+				if(ft!=null){
+					finaData.put("typeTempParentId", ft.getParentId());
+				}
+			}
+        }
+		if(appCode.equals("SA")){
+			List<FinaData> fts = (List<FinaData>)finaData.get("ft");
+			for(FinaData ft : fts){
+				for(VoucherTemplate fvt:fvts){
+					String filter = fvt.getFilter();
+					List<Map<String,String>> listFilter = convertFilter(filter);
+					boolean isMach = true;
+					if(listFilter == null || listFilter.size() == 0) 
+						isMach = false;
+					for(int i=0; i<listFilter.size(); i++){
+						Map<String,String> m = listFilter.get(i);
+						String arrr = m.get(MAP_FIR).trim();
+						String sign = m.get(MAP_SEC);
+						String value = m.get(MAP_THIR).trim();
+						//根据表达式的属性获取 单据的属性对应的值
+						Object billAttrValue = ft.get(arrr);
+						String billAttrSinganlValue = null;
+						List<String> billAttrList = new ArrayList<String>();
+						
+						if(billAttrValue != null){
+							billAttrSinganlValue = String.valueOf(billAttrValue);
+						}
+						
+						if(billAttrSinganlValue != null){
+							//如果表达式的符号是 "=="  如果存在一个不符合条件的 则都不符合条件
+							billAttrSinganlValue = billAttrSinganlValue.equals("0.0")?"0":billAttrSinganlValue;
+							value = value.replaceAll("'", "");
+							if(sign.equals(EQUE) && !value.equals(billAttrSinganlValue)){
+								isMach = false;
+							}
+							if((sign.equals(NO_EQUE) || sign.equals(NO_EQUE2)) && value.equals(billAttrSinganlValue)){
+								isMach = false;
+							}
+							if(sign.trim().equals(">")  && Double.valueOf(value)>Double.valueOf(billAttrSinganlValue)){
+								isMach = false;
+							}
+							if(sign.trim().equals("<")  && Double.valueOf(value)< Double.valueOf(billAttrSinganlValue)){
+								isMach = false;
+							}
+							if(sign.trim().equals(">=")  && Double.valueOf(value)>=Double.valueOf(billAttrSinganlValue)){
+								isMach = false;
+							}
+							if(sign.trim().equals("<=")  && Double.valueOf(value)<= Double.valueOf(billAttrSinganlValue)){
+								isMach = false;
+							}
+							String ss = billAttrSinganlValue.replace("%","");
+							if(sign.equals(LIKE) && !value.contains(ss)){
+								isMach = false;
+							}
+							if(sign.equals(NO_LIKE) && value.contains(ss)){
+								isMach = false;
+							}
+						}else{
+							for(String billValue:billAttrList){
+								billValue = billValue.equals("0.0")?"0":billValue;
+								value = value.replaceAll("'", "");
+								//如果表达式的符号是 "=="  如果存在一个不符合条件的 则都不符合条件
+								if(sign.equals(EQUE) && !value.equals(billValue)){
+									isMach = false;
+								}
+								if(sign.equals(NO_EQUE) && value.equals(billValue)){
+									isMach = false;
+								}
+								if(sign.trim().equals(">")  && Double.valueOf(value)>Double.valueOf(billValue)){
+									isMach = false;
+								}
+								if(sign.trim().equals("<")  && Double.valueOf(value)< Double.valueOf(billValue)){
+									isMach = false;
+								}
+								if(sign.trim().equals(">=")  && Double.valueOf(value)>=Double.valueOf(billValue)){
+									isMach = false;
+								}
+								if(sign.trim().equals("<=")  && Double.valueOf(value)<= Double.valueOf(billValue)){
+									isMach = false;
+								}
+								String ss = billValue.replace("%","");
+								if(sign.equals(LIKE) && !sign.equals(NO_LIKE) && !value.contains(ss)){
+									isMach = false;
+								}
+								if(sign.equals(NO_LIKE) && value.contains(ss)){
+									isMach = false;
+								}
+							}
+							
+						}
+					}
+					
+					if(isMach){
+						ft.put("voucherTemplateId", fvt.getId());
+						ft.put("voucherTemplateName", fvt.getName());
+						// 凭证字
+						ft.put("flag", fvt.getWord());
+						ft.put("typeTempId", fvt.getTypeId());
+						VoucherTemplateType vft = voucherTemplateTypeDao.getObjectById(fvt.getTypeId());
+						if(vft!=null){
+							ft.put("typeTempParentId", vft.getParentId());
+						}
+					}
+		        }
+			}
+		}
+		return finaData;
+	}
+	
+	/**
+	 * 匹配分录规则
+	 * @param filter
+	 * @param finaData
+	 * @return
+	 */
+	@Override
+	public boolean macherEntry(String filter,FinaData finaData){
+		boolean isMach = true;
+		try{
+//			System.out.println("filter===="+filter +"finaData===="+finaData);
+			List<Map<String,String>> listFilter = convertFilter(filter);
+			if(listFilter == null || listFilter.size() == 0) 
+				isMach = false;
+			for(int i=0; i<listFilter.size(); i++){
+				Map<String,String> m = listFilter.get(i);
+				String arrr = m.get(MAP_FIR).trim();
+				String sign = m.get(MAP_SEC);
+				String value = m.get(MAP_THIR).trim();
+				
+				if(arrr.contains(DIVIDE)){
+					String[] atrrs = arrr.split(DIVIDE);
+					Double v1 = Double.parseDouble((finaData.get(atrrs[0]).toString()));
+					Double v2 = Double.parseDouble((finaData.get(atrrs[1]).toString())); 
+					Double billVale = v1/v2;
+					if(sign.equals(LESS_EQUE) && billVale > Double.parseDouble(value)){
+						isMach = false;
+					}
+					if(sign.equals(LESS) && billVale >= Double.parseDouble(value)){
+						isMach = false;
+					}
+					if(sign.equals(GREATER_EQUE) && billVale < Double.parseDouble(value)){
+						isMach = false;
+					}
+					if(sign.equals(GREATER) && billVale <= Double.parseDouble(value)){
+						isMach = false;
+					}
+					
+				}else{
+					//根据表达式的属性获取 单据的属性对应的值
+					Object billAttrValue = finaData.get(arrr);
+					String billAttrSinganlValue = null;
+					List<String> billAttrList = new ArrayList<String>();
+					
+					if(billAttrValue == null){
+						List<FinaData> fts = (List<FinaData>)finaData.get("ft");
+						if(fts!=null){
+							for(FinaData ft:fts){
+								String val = String.valueOf(ft.get(arrr));
+								if(val != null && !val.trim().equals("null") && !val.trim().equals("NULL"))
+									billAttrList.add(val);
+							}
+						}else{
+							String val = String.valueOf(finaData.get(arrr));
+							if(val != null && !val.trim().equals("null") && !val.trim().equals("NULL"))
+								billAttrList.add(val);
+						}
+					}else{
+						billAttrSinganlValue = String.valueOf(billAttrValue);
+					}
+					
+					if(billAttrSinganlValue != null){
+						billAttrSinganlValue = (billAttrSinganlValue.equals("0.0") || billAttrSinganlValue.equals("0.00"))?"0":billAttrSinganlValue;
+						value = value.replaceAll("'", "").replaceAll("\"", "");
+						//如果表达式的符号是 "=="  如果存在一个不符合条件的 则都不符合条件
+						if(sign.equals(EQUE) && !value.equals(billAttrSinganlValue)){
+							isMach = false;
+							return isMach;
+						}
+						if(sign.equals("<") && !(Double.valueOf(value)>Double.valueOf(billAttrSinganlValue))){
+							isMach = false;
+							return isMach;
+						}
+						if(sign.equals(">") && !(Double.valueOf(value)<Double.valueOf(billAttrSinganlValue))){
+							isMach = false;
+							return isMach;
+						}
+						if(sign.equals("<=") && !(Double.valueOf(value)>=Double.valueOf(billAttrSinganlValue))){
+							isMach = false;
+							return isMach;
+						}
+						if(sign.equals(">=") && !(Double.valueOf(value)<=Double.valueOf(billAttrSinganlValue))){
+							isMach = false;
+							return isMach;
+						}
+						if((sign.equals(NO_EQUE) || sign.equals(NO_EQUE2)) && value.equals(billAttrSinganlValue)){
+							isMach = false;
+							return isMach;
+						}
+						String ss = billAttrSinganlValue.replace("%","");
+						if(sign.equals(LIKE) && !value.contains(ss)){
+							isMach = false;
+							return isMach;
+						}
+						if(sign.equals(NO_LIKE) && value.contains(ss)){
+							isMach = false;
+							return isMach;
+						}
+						
+						
+					}else{
+						if(billAttrList == null || billAttrList.size() == 0)
+							return false;
+						for(String billValue:billAttrList){
+							value = value.replaceAll("'", "").replaceAll("\"", "");
+							//如果表达式的符号是 "=="  如果存在一个不符合条件的 则都不符合条件
+							if(sign.equals(EQUE) && !value.equals((billValue.equals("0.0") || billValue.equals("0.00"))?"0":billValue)){
+								isMach = false;
+								return isMach;
+							}
+							if((sign.equals(NO_EQUE) || sign.equals(NO_EQUE2) ) && value.equals((billValue.equals("0.0") || billValue.equals("0.00"))?"0":billValue)){
+								isMach = false;
+								return isMach;
+							}
+							if(sign.equals("<") && !(Double.valueOf(value)>Double.valueOf(billAttrSinganlValue))){
+								isMach = false;
+								return isMach;
+							}
+							if(sign.equals(">") && !(Double.valueOf(value)<Double.valueOf(billAttrSinganlValue))){
+								isMach = false;
+								return isMach;
+							}
+							if(sign.equals("<=") && !(Double.valueOf(value)>=Double.valueOf(billAttrSinganlValue))){
+								isMach = false;
+								return isMach;
+							}
+							if(sign.equals(">=") && !(Double.valueOf(value)<=Double.valueOf(billAttrSinganlValue))){
+								isMach = false;
+								return isMach;
+							}
+							String ss = billValue.replace("%","");
+							if(sign.equals(LIKE) && !sign.equals(NO_LIKE) && !value.contains(ss)){
+								isMach = false;
+								return isMach;
+							}
+							if(sign.equals(NO_LIKE) && value.contains(ss)){
+								isMach = false;
+								return isMach;
+							}
+						}
+						
+					}
+				}
+				
+			}
+		}catch(Exception e){
+			e.printStackTrace();
+			return true;
+		}
+		return isMach;
+	}
+	
+	/**
+	 * 根据ID获取父级和子集的模板
+	 * @param id
+	 * @return
+	 */
+	public List<VoucherTemplateType> getParentAndSubsById(String id){
+		List<VoucherTemplateType> tmps = new ArrayList<VoucherTemplateType>();
+		VoucherTemplateType ft = voucherTemplateTypeDao.getObjectById(id);
+		tmps.add(ft);
+		Map<String,Object> map = new HashMap<String,Object>();
+		map.put("parentId", id);
+		List<VoucherTemplateType> subTmps = voucherTemplateTypeDao.queryList(map);
+		if(subTmps != null && subTmps.size() > 0){
+			tmps.addAll(subTmps);
+		}
+		
+		return tmps;
+	}
+	
+	/**
+	 * 根据传入的表达式  将条件拆成 MAP
+	 * key:1 传入属性名称   key:2 传入判断符号   key:3 传入属性值
+	 * @param filter
+	 * @return
+	 */
+	public List<Map<String,String>> convertFilter(String filter){
+		List<Map<String, String>> list = new ArrayList<Map<String, String>>();
+		// 转换IK表达式
+		Pattern pt = Pattern.compile(VOUCHER_ENTRY_SUMMARY_VAR_EXPR);
+		Matcher mt = pt.matcher(filter);
+		StringBuffer filResult = new StringBuffer();
+		while (mt.find()) {
+			mt.appendReplacement(filResult, mt.group(1));
+		}
+		mt.appendTail(filResult);
+		// 将将单引号转换成双引号
+		String result = filResult.toString();
+		Map<String,String> map = null;
+		// 表达式暂时按照 "&&"来关联
+		String fiFlag = "";
+		String[] cods = null;
+
+		cods = result.split(AND);
+
+		for (int i = 0; i < cods.length; i++) {
+			//
+			String str = cods[i];
+			if (str.contains(EQUE)) {
+				map = new HashMap<String, String>();
+				String[] sarray = str.split(EQUE);
+				map.put(MAP_FIR, sarray[0]);
+				map.put(MAP_SEC, EQUE);
+				map.put(MAP_THIR, sarray[1]);
+				list.add(map);
+			}
+			if (str.contains(NO_EQUE) || str.contains(NO_EQUE2)) {
+				map = new HashMap<String, String>();
+				String[] sarray = null;
+				if (str.contains(NO_EQUE))
+					sarray = str.split(NO_EQUE);
+				if (str.contains(NO_EQUE2))
+					sarray = str.split(NO_EQUE2);
+				map.put(MAP_FIR, sarray[0]);
+				if (str.contains(NO_EQUE))
+					map.put(MAP_SEC, NO_EQUE);
+				if (str.contains(NO_EQUE2))
+					map.put(MAP_SEC, NO_EQUE2);
+				map.put(MAP_THIR, sarray[1]);
+				list.add(map);
+			}
+			if (str.contains(LIKE) && !str.contains("not like")) {
+				map = new HashMap<String, String>();
+				String[] sarray = str.split(LIKE);
+				map.put(MAP_FIR, sarray[0]);
+				map.put(MAP_SEC, LIKE);
+				map.put(MAP_THIR, sarray[1]);
+				list.add(map);
+			}
+			if (str.contains(LIKE) && str.contains("not like")) {
+				map = new HashMap<String, String>();
+				String[] sarray = str.split("not like");
+				map.put(MAP_FIR, sarray[0]);
+				map.put(MAP_SEC, NO_LIKE);
+				map.put(MAP_THIR, sarray[1]);
+				list.add(map);
+			}
+			if (str.contains(LESS_EQUE)) {
+				map = new HashMap<String, String>();
+				String[] sarray = str.split(LESS_EQUE);
+				map.put(MAP_FIR, sarray[0]);
+				map.put(MAP_SEC, LESS_EQUE);
+				map.put(MAP_THIR, sarray[1]);
+				list.add(map);
+			}
+
+			if (str.contains(LESS) && !str.contains(LESS_EQUE)) {
+				map = new HashMap<String, String>();
+				String[] sarray = str.split(LESS);
+				map.put(MAP_FIR, sarray[0]);
+				map.put(MAP_SEC, LESS);
+				map.put(MAP_THIR, sarray[1]);
+				list.add(map);
+			}
+			if (str.contains(GREATER_EQUE)) {
+				map = new HashMap<String, String>();
+				String[] sarray = str.split(GREATER_EQUE);
+				map.put(MAP_FIR, sarray[0]);
+				map.put(MAP_SEC, GREATER_EQUE);
+				map.put(MAP_THIR, sarray[1]);
+				list.add(map);
+			}
+
+			if (str.contains(GREATER) && !str.contains(GREATER_EQUE)) {
+				map = new HashMap<String, String>();
+				String[] sarray = str.split(GREATER);
+				map.put(MAP_FIR, sarray[0]);
+				map.put(MAP_SEC, GREATER);
+				map.put(MAP_THIR, sarray[1]);
+				list.add(map);
+			}
+		}
+
+		return list;
+	}
+	
+	@Override
+	public int deleteTempAllObjectByIds(List<String> list) throws Exception {
+		if(list.size()>0){
+			Map<String,Object> map = new HashMap<String,Object>();
+			for(int i=0;i<list.size();i++){
+				voucherTemplateTypeDao.deleteObjectById(list.get(i));//删除模板类型
+				map.put("typeId", list.get(i));
+				List<VoucherTemplate> tempList= voucherTemplateDao.queryList(map);
+				if(tempList.size()>0){
+					for(int j=0;j<tempList.size();j++){
+						voucherTemplateDao.deleteObjectById(tempList.get(j).getId());//删除模板
+						voucherTemplateEntryDao.deleteObjectByTempId(tempList.get(j).getId());
+					}
+				}
+			}
+		}
+		return 1;
+	}
+
+	@Override
+	public int saveAllCopyTemp(String saveJson) throws Exception {
+		@SuppressWarnings("unchecked")
+		Map<String,Object> typeDtoMap = JacksonUtils.fromJson(saveJson, HashMap.class);//转Map
+		
+		@SuppressWarnings("unchecked")
+		List<Map<String,Object>> rulerDtoList = (List<Map<String,Object>>) typeDtoMap.get("entryList");//获取分录数据
+		
+		@SuppressWarnings("unchecked")
+		Map<String,Object> tempDtoMap = (Map<String,Object>) typeDtoMap.get("tempDto");//获取模板数据
+		
+		@SuppressWarnings("unchecked")
+		List<Map<String,Object>> entryList = JacksonUtils.fromJson(JacksonUtils.toJson(rulerDtoList),List.class);
+		for(int i=0;i<entryList.size();i++){
+			voucherTemplateEntryDao.save(JacksonUtils.fromJson(JacksonUtils.toJson(entryList.get(i)), VoucherTemplateEntry.class));//新增RulerList对象
+		}
+		VoucherTemplate tempEntity = JacksonUtils.fromJson(JacksonUtils.toJson(tempDtoMap), VoucherTemplate.class);
+		voucherTemplateDao.save(tempEntity);//新增bill对象
+		
+		VoucherTemplateType tempTypeEntity = JacksonUtils.fromJson(JacksonUtils.toJson(typeDtoMap), VoucherTemplateType.class);
+		voucherTemplateTypeDao.save(tempTypeEntity);
+		return 1;//返回成功
+	}
+}

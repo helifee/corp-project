@@ -1,0 +1,150 @@
+/*
+ * @(#)BatchJobExecutorImplTest.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 批处理系统
+ */
+
+package com.yds.batch.service.impl;
+
+import java.util.Date;
+import java.util.Iterator;
+import java.util.List;
+
+import javax.annotation.Resource;
+
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.yds.base.test.AbstractSpringTransTest;
+import com.yds.base.test.BeanAssert;
+import com.yds.batch.bean.BatchJob;
+import com.yds.batch.service.BatchConstants;
+import com.yds.batch.service.BatchJobExecutor;
+
+/**
+ * 批处理任务执行测试
+ * 
+ * @author wangduo
+ * @version 1.0 2010/05/20
+ */
+@Transactional(propagation=Propagation.NOT_SUPPORTED)
+public class BatchJobExecutorImplTest extends AbstractSpringTransTest {
+
+	/** 被测试类. */
+	@Resource
+	BatchJobExecutor batchJobExecutor;
+	
+	@Resource
+	private DbBackup dbBackup;
+
+	/**
+	 * @throws java.lang.Exception
+	 */
+	@Before
+	public void setUp() throws Exception {
+		
+		// 备份数据库
+		dbBackup.setTables("bat_job_his");
+		dbBackup.backupTables();
+		
+		initCommonData(BatchJobExecutorImpl.class);
+		
+		//插入测试数据
+		initData("" , "result01.xls");
+		
+	}
+
+	/**
+	 * @throws java.lang.Exception
+	 */
+	@After
+	public void tearDown() throws Exception {
+		
+		// 还原数据库
+		dbBackup.restoreTables();
+	}
+
+	/**
+	 * Test method for {@link com.yds.batch.service.impl.BatchJobExecutorImpl#executeJob(com.yds.batch.bean.BatchJob)}.
+	 * @throws Throwable 
+	 */
+	@Test(expected = BatchRunException.class)
+	public void testExecuteJob() throws Throwable {
+
+		List<BatchJob> batchJobList = getExpectList(BatchJob.class, "batJob");
+		
+		Throwable t = new Exception();
+		
+		try {
+			
+			for (Iterator<BatchJob> iter = batchJobList.iterator(); iter.hasNext();) {
+				testExecuteJob(iter.next());
+			}
+			
+		} catch (BatchRunException e) {
+			t = e;
+		}
+		
+		// 任务组履历期望结果
+		List<BatchJob> expectjobHis = getExpectList(BatchJob.class, "expect_his");
+		
+		// 任务组履历实际结果
+		List<BatchJob> actualjobHis = findListBeanByCondition(BatchJob.class
+				, "param_BAT_JOB_HIS");
+		
+		BeanAssert.assertListLenientEquals(expectjobHis, actualjobHis);
+
+		
+		throw t;
+	}
+	
+	/**
+	 * 任务执行测试方法
+	 * 
+	 * @param batchJob 任务
+	 * @throws Throwable
+	 */
+	private void testExecuteJob(BatchJob batchJob) throws Throwable {
+		
+		Date startTime = null;
+		Date endTime = null;
+		
+		try {
+			
+			// 记录执行开始时间
+			startTime = new Date();
+			
+			// 执行测试方法
+			batchJobExecutor.executeJob(batchJob);
+
+		} catch (BatchRunException e) {
+			
+			throw e;
+			
+		} finally {
+			
+			// 可重新执行
+			if (BatchConstants.RETRY_ALLOW.equals(batchJob.getRetryFlg())) {
+				
+				// 记录执行完成时间
+				endTime = new Date();
+				
+				// 运行时间
+				double s = (double) (endTime.getTime() - startTime.getTime() + 100) / 1000;
+				
+				// 判断运行时间是否大于间隔时间总和
+				// 发生错误说明没有间隔执行
+				Assert.assertTrue(s >= batchJob.getRetryCnt() * batchJob.getRetryInterval());
+			
+			}
+
+		}
+	}
+
+}

@@ -1,0 +1,279 @@
+package com.xinleju.platform.weixin.utils; 
+
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.UnsupportedEncodingException;
+import java.net.ConnectException;
+import java.net.URL;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocketFactory;
+import javax.net.ssl.TrustManager;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.xinleju.platform.tools.data.JacksonUtils;
+import com.xinleju.platform.weixin.message.NewsMessage;
+import com.xinleju.platform.weixin.pojo.Token;
+import com.xinleju.platform.weixin.pojo.WeixinUser;
+import com.xinleju.platform.weixin.pojo.WeixinUserResponse;
+
+import net.sf.json.JSONException;
+import net.sf.json.JSONObject;
+
+/**
+ * 通用工具类
+ * 
+ * @author maguanglei
+ * @date 20141015
+ */
+public class CommonUtil {
+	private static Logger log = LoggerFactory.getLogger(CommonUtil.class);
+
+	// 凭证获取（GET）
+	public final static String token_url = "https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=CORPID&corpsecret=CORPSECRET";
+
+	// 发送消息
+	public static String SEND_TXT = "https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=ACCESS_TOKEN";
+	// 默认id=1的部门为根节点，关注的会员
+	private static final String NUMBER_URL = "https://qyapi.weixin.qq.com/cgi-bin/user/simplelist?access_token=%s&department_id=1&fetch_child=1&status=1";
+	
+	public static String access_token;
+	// 主动调用：请求token的时间
+	public static Date access_token_date;
+	
+	public static Token token;
+
+	/**
+	 * 发送https请求
+	 * 
+	 * @param requestUrl
+	 *            请求地址
+	 * @param requestMethod
+	 *            请求方式（GET、POST）
+	 * @param outputStr
+	 *            提交的数据
+	 * @return JSONObject(通过JSONObject.get(key)的方式获取json对象的属性值)
+	 */
+	
+	
+	public static JSONObject httpsRequest(String requestUrl, String requestMethod, String outputStr) {
+		JSONObject jsonObject = null;
+		InputStream inputStream = null; 
+		HttpsURLConnection conn = null ;
+		OutputStream outputStream  = null ; 
+		try {
+			// 创建SSLContext对象，并使用我们指定的信任管理器初始化
+			TrustManager[] tm = { new MyX509TrustManager() };
+			SSLContext sslContext = SSLContext.getInstance("SSL", "SunJSSE");
+			sslContext.init(null, tm, new java.security.SecureRandom());
+			// 从上述SSLContext对象中得到SSLSocketFactory对象
+			SSLSocketFactory ssf = sslContext.getSocketFactory();
+			
+			URL url = new URL(requestUrl);
+		    conn = (HttpsURLConnection) url.openConnection();
+			conn.setSSLSocketFactory(ssf);
+
+			conn.setDoOutput(true);
+			conn.setDoInput(true);
+			conn.setUseCaches(false);
+			// 设置请求方式（GET/POST）
+			conn.setRequestMethod(requestMethod);
+
+			// 当outputStr不为null时向输出流写数据
+			if (null != outputStr) {
+				 outputStream = conn.getOutputStream();
+				// 注意编码格式
+				outputStream.write(outputStr.getBytes("UTF-8"));
+				outputStream.flush();
+			}
+
+			// 从输入流读取返回内容
+			 inputStream = conn.getInputStream();
+			 
+			 InputStreamReader inputStreamReader = new InputStreamReader(inputStream, "utf-8");
+			 BufferedReader bufferedReader = new BufferedReader(inputStreamReader);
+			String str = null;
+			StringBuffer buffer = new StringBuffer();
+			while ((str = bufferedReader.readLine()) != null) {
+				buffer.append(str);
+			}
+			
+			jsonObject = JSONObject.fromObject(buffer.toString());
+		} catch (ConnectException ce) {
+			log.error("连接超时：{}", ce);
+		} catch (Exception e) {
+			log.error("https请求异常：{}", e);
+		}
+		finally{
+			// 释放资源
+			if( inputStream !=null)
+			{
+				try {
+					inputStream.close();
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
+			}
+			if( outputStream !=null)
+			{
+				try {
+					outputStream.close();
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
+			}
+			if( conn !=null)
+			{
+				try {
+					conn.disconnect();
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
+			}
+		}
+		return jsonObject;
+	}
+
+	/**
+	 * 获取接口访问凭证
+	 * 
+	 * @param corpid
+	 *            凭证
+	 * @param corpsecret
+	 *            密钥
+	 * @return
+	 */
+	public static Token getToken(String corpid, String corpsecret) {
+		String requestUrl = token_url.replace("CORPID", corpid).replace("CORPSECRET", corpsecret);
+//		log.info("requestUrl===="+requestUrl);
+//		log.info("requestUrl===="+requestUrl);
+		// 1、判断access_token是否存在，不存在的话直接申请
+		// 2、判断时间是否过期，过期(>=7200秒)申请，否则不用请求直接返回以前的token
+		if (null == token || null == access_token
+				|| "".equals(access_token)
+				|| (new Date().getTime() - access_token_date.getTime()) >= (7000 * 1000)) {
+			// 发起GET请求获取凭证
+			JSONObject jsonObject = httpsRequest(requestUrl, "GET", null);
+
+			if (null != jsonObject) {
+				try {
+					token = new Token();
+					token.setAccessToken(jsonObject.getString("access_token"));
+					token.setExpiresIn(jsonObject.getInt("expires_in"));
+					// 设置全局变量
+					access_token = token.getAccessToken();
+					access_token_date = new Date();
+					log.info("获取token信息：access_token：" + access_token
+							+ "----获取时间：" + access_token_date);
+				} catch (JSONException e) {
+					token = null;
+					// 获取token失败
+					log.error("获取token失败 errcode:{} errmsg:{}", jsonObject.getInt("errcode"),
+							jsonObject.getString("errmsg"));
+				}
+			}
+		}
+		return token;
+	}
+
+	/**
+	 * URL编码（utf-8）
+	 * 
+	 * @param source
+	 * @return
+	 */
+	public static String urlEncodeUTF8(String source) {
+		String result = source;
+		try {
+			result = java.net.URLEncoder.encode(source, "utf-8");
+		} catch (UnsupportedEncodingException e) {
+			e.printStackTrace();
+		}
+		return result;
+	}
+
+	/**
+	 * 根据内容类型判断文件扩展名
+	 * 
+	 * @param contentType
+	 *            内容类型
+	 * @return
+	 */
+	public static String getFileExt(String contentType) {
+		String fileExt = "";
+		if ("image/jpeg".equals(contentType))
+			fileExt = ".jpg";
+		else if ("audio/mpeg".equals(contentType))
+			fileExt = ".mp3";
+		else if ("audio/amr".equals(contentType))
+			fileExt = ".amr";
+		else if ("video/mp4".equals(contentType))
+			fileExt = ".mp4";
+		else if ("video/mpeg4".equals(contentType))
+			fileExt = ".mp4";
+		return fileExt;
+	}
+
+	/**
+	 * 发送文本消息
+	 * 
+	 * @param accesstoken
+	 * @param textMessage
+	 * @return
+	 */
+	public static JSONObject SendNewsMsg(String accesstoken, NewsMessage newsMessage) {
+		// 拼接请求地址
+		String requestUrl = SEND_TXT.replace("ACCESS_TOKEN", accesstoken);
+
+		//20170718 因对应的Gson的maven的pom.xml不生效,所以改为JacksonUtils来获取newsMessage的JSON字符串
+        String newsMessageJson = JacksonUtils.toJson(newsMessage);
+        System.out.println("001 requestUrl="+requestUrl);
+        System.out.println("002 msgJson="+newsMessageJson);
+        return CommonUtil.httpsRequest(requestUrl, "POST", newsMessageJson);
+	}
+
+	/**
+	 * 获得所有关注微信的用户
+	 * 
+	 * @return
+	 */
+	public static JSONObject getAttentionUser() {
+		String numberUrl = String.format(NUMBER_URL,
+				getToken(ParamesAPI.corpId, ParamesAPI.corpsecret).getAccessToken());
+		return CommonUtil.httpsRequest(numberUrl, "POST", null);
+	}
+
+	/**
+	 * 获得所有关注微信的用户
+	 * 
+	 * @return
+	 */
+	public static WeixinUserResponse getAttentionUserResponse() {
+		Map<String, Class<WeixinUser>> classMap = new HashMap<String, Class<WeixinUser>>();
+		classMap.put("userlist", WeixinUser.class);
+		JSONObject json = getAttentionUser();
+		return (WeixinUserResponse) JSONObject.toBean(json, WeixinUserResponse.class, classMap);
+	}
+	
+	//判断是否是纯数字
+	 public static boolean IsNumber(String str) {
+		 String regex = "^[0-9]*$";
+		 return match(regex, str);
+	 }
+	
+    private static boolean match(String regex, String str) {
+		 Pattern pattern = Pattern.compile(regex);
+		 Matcher matcher = pattern.matcher(str);
+		 return matcher.matches();
+	}
+}

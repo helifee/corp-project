@@ -1,0 +1,5 @@
+package com.xinleju.platform.sys.base.dto.service;
+
+public interface BaseSupplierTaskServiceCustomer {
+	String executeTask(String userJson,String taskCode);
+}

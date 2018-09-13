@@ -1,0 +1,385 @@
+package com.xinleju.erp.flowengine.service.impl;
+
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import javax.annotation.Resource;
+
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.erp.base.app.service.ICommonService;
+import com.xinleju.erp.flow.models.AcMonitorSetting;
+import com.xinleju.erp.flow.models.FlMonitorSetting;
+import com.xinleju.erp.flowengine.models.FlowInstanceStepWorkTaskWarnLog;
+import com.xinleju.erp.flowengine.service.FlowInstanceStepWorkTaskExtendService;
+import com.xinleju.erp.flowengine.service.FlowInstanceStepWorkTaskWarnLogService;
+import com.xinleju.erp.flowengine.service.FlowInstanceWarningTaskService;
+import com.xinleju.erp.flowengine.utils.IDGenerator;
+import com.xinleju.erp.flowengine.utils.TaskTypeStatus.TaskType;
+import com.xinleju.erp.form.utils.DbType;
+
+@Service
+public class FlowInstanceWarningTaskServiceImpl implements FlowInstanceWarningTaskService {
+	//预期审批领导通知
+	private static final String SPLDYQGZMSGTYPE="1";
+	//预期审批通知
+	
+	private static final String SPYQGZMSGTYPE="2";
+	
+	//一次
+	private static final String TIMESONETYPE="0";
+	
+	//多次
+    private static final String TIMESTWOTYPE="1";
+    
+    
+   private   long nd = 1000*24*60*60;//一天的毫秒数
+	
+   private final long nh = 1000*60*60;//一小时的毫秒数
+   private final long nm = 1000*60;//一分钟的毫秒数
+   private final long ns = 1000;//一秒钟的毫秒数long diff;try {
+    
+	@Resource
+	private FlowInstanceStepWorkTaskExtendService flowInstanceStepWorkTaskExtendService;
+	@Resource
+	private FlowInstanceStepWorkTaskWarnLogService flowInstanceStepWorkTaskWarnLogService;
+
+    @Autowired
+    private ICommonService commonService;
+	@Autowired
+	private JdbcTemplate jt;
+	SimpleDateFormat sd = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+	@Override
+	public void excuteBatchTaskWarningSendMsg() throws Exception{
+		// TODO Auto-generated method stub
+		
+		
+		//获得两个时间的毫秒时间差异
+		//long day = diff/nd;//计算差多少天
+		
+	//	long min = diff%nd%nh/nm;//计算差多少分钟
+		//long sec = diff%nd%nh%nm/ns;//计算差多少秒//输出结果
+		excuteBatchTaskSPLDWarningSendMsg();
+		excuteBatchTaskSPWarningSendMsg();
+		
+	}
+	
+	
+	
+	/**
+	 * 
+	 * 审批领导
+	 * @throws Exception
+	 */
+	public void excuteBatchTaskSPLDWarningSendMsg()throws Exception{
+//		System.out.println("=================流程已经被执行！");
+		//可能需要发送消息的任务审批人
+		String sql="select k.guid as task_id,k.step_id,k.participant,k.create_time,f.fl_id ,k.fi_id ,p.ac_id from flow_instance_step_work_task k LEFT JOIN flow_instance_step p on p.guid=k.step_id left join flow_instance f on k.fi_id=f.guid where k.status=1 and not " +
+		" exists(select 1 from flow_instance_step_work_warn_log l where l.fi_id=f.guid and l.task_id=k.guid and  l.msg_type='"+SPLDYQGZMSGTYPE+"' and  l.type=0 or (l.type=1 and date_add(l.send_date, interval -1 day)>now()))";
+		List<Map<String,Object>> list=jt.queryForList(sql, new Object[]{});
+		for(Map<String,Object> map:list){
+		   if(map.get("ac_id")==null)continue;
+		   Date createTime=(Date) map.get("create_time");
+		   String step_id=(String) map.get("step_id");
+		   Long fl_id=(Long) map.get("fl_id");
+		   String fi_id=(String) map.get("fi_id");
+		   String task_id =(String) map.get("task_id");
+		   Long ac_id =(Long) map.get("ac_id");
+		   long diff = new Date().getTime() - createTime.getTime();
+		   long hour = diff/nh;//计算差多少小时
+		   //计算配置时间
+		   Map<String,Object> settingMap=getTF2Task( fl_id, ac_id, "2");
+		   Long settingHour=(Long)settingMap.get("settingHour");
+		   String settingUser=(String)settingMap.get("settingUser");
+		   //1,2
+		   Integer type=(Integer)settingMap.get("settingType");
+		   String participant=(String) map.get("participant");
+		   if(settingHour!=null && settingHour<hour){
+			   //
+			   List<String> userIds=new ArrayList<String>();
+			   userIds=getUsersBySettingUser( settingUser,participant);
+			   if(userIds!=null && userIds.size()>0){
+				   //此处发送消息
+				   flowInstanceStepWorkTaskExtendService.sendDYFlowInstanceStepWorkTaskExtend(step_id, fi_id, task_id, TaskType.SPLDYQGZ.getCode(), userIds);
+				   //记录日志
+				   FlowInstanceStepWorkTaskWarnLog flowInstanceStepWorkTaskWarnLog =new FlowInstanceStepWorkTaskWarnLog();
+				   flowInstanceStepWorkTaskWarnLog.setFiId(fi_id);
+				   flowInstanceStepWorkTaskWarnLog.setGuid(IDGenerator.getUUID());
+				   flowInstanceStepWorkTaskWarnLog.setSendDate(new Date());
+				   flowInstanceStepWorkTaskWarnLog.setTaskId(task_id);
+				   flowInstanceStepWorkTaskWarnLog.setMsgType(SPLDYQGZMSGTYPE);
+				   flowInstanceStepWorkTaskWarnLog.setType(type);
+				   flowInstanceStepWorkTaskWarnLogService.saveFlowInstanceStepWorkTaskWarnLogDao(flowInstanceStepWorkTaskWarnLog);
+			       
+			   }
+		   }
+		}
+	}
+	
+	
+	/**
+	 * 
+	 * 审批
+	 * @throws Exception
+	 */
+	public void excuteBatchTaskSPWarningSendMsg()throws Exception{
+//		System.out.println("=================流程已经被执行！");
+		//可能需要发送消息的任务审批人
+		String sql="select k.guid as task_id,k.step_id,k.participant,k.create_time,f.fl_id ,k.fi_id ,p.ac_id from flow_instance_step_work_task k LEFT JOIN flow_instance_step p on p.guid=k.step_id left join flow_instance f on k.fi_id=f.guid where k.status=1 and not " +
+		" exists(select 1 from flow_instance_step_work_warn_log l where l.fi_id=f.guid and l.task_id=k.guid and  l.msg_type='"+SPYQGZMSGTYPE+"' and  l.type=0 or (l.type=1 and date_add(l.send_date, interval -1 day)>now()))";
+		List<Map<String,Object>> list=jt.queryForList(sql, new Object[]{});
+		for(Map<String,Object> map:list){
+		   if(map.get("ac_id")==null)continue;
+		   Date createTime=(Date) map.get("create_time");
+		   String step_id=(String) map.get("step_id");
+		   Long fl_id=(Long) map.get("fl_id");
+		   String fi_id=(String) map.get("fi_id");
+		   String task_id =(String) map.get("task_id");
+		   Long ac_id =(Long) map.get("ac_id");
+		   String participant=(String) map.get("participant");
+		   long diff = new Date().getTime() - createTime.getTime();
+		   long hour = diff/nh;//计算差多少小时
+		   //计算配置时间
+		   Map<String,Object> settingMap=getTF2Task( fl_id, ac_id, "1");
+		   Long settingHour=(Long)settingMap.get("settingHour");
+		   String settingUser=(String)settingMap.get("settingUser");
+		   //1,2
+		   Integer type=(Integer)settingMap.get("settingType");
+		   if(settingHour!=null && settingHour<hour){
+			   //
+			   List<String> userIds=new ArrayList<String>();
+			   //计算人员
+			  // userIds=getUsersBySettingUser( settingUser,participant);
+			   userIds.add(participant);
+			   if(userIds!=null && userIds.size()>0){
+				   //此处发送消息
+				   flowInstanceStepWorkTaskExtendService.sendDYFlowInstanceStepWorkTaskExtend(step_id, fi_id, task_id, TaskType.SPLDYQGZ.getCode(), userIds);
+				   //记录日志
+				   FlowInstanceStepWorkTaskWarnLog flowInstanceStepWorkTaskWarnLog =new FlowInstanceStepWorkTaskWarnLog();
+				   flowInstanceStepWorkTaskWarnLog.setFiId(fi_id);
+				   flowInstanceStepWorkTaskWarnLog.setGuid(IDGenerator.getUUID());
+				   flowInstanceStepWorkTaskWarnLog.setSendDate(new Date());
+				   flowInstanceStepWorkTaskWarnLog.setTaskId(task_id);
+				   flowInstanceStepWorkTaskWarnLog.setMsgType(SPYQGZMSGTYPE);
+				   flowInstanceStepWorkTaskWarnLog.setType(type);
+				   flowInstanceStepWorkTaskWarnLogService.saveFlowInstanceStepWorkTaskWarnLogDao(flowInstanceStepWorkTaskWarnLog);
+			       
+			   }
+		   }
+		}
+	}
+	
+	/**
+	 * 
+	 * 获取当前审批人或者审核人对应的时间
+	 * 
+	 * @param fl_id
+	 *            模型ID
+	 * @param ac_id
+	 *            环节ID
+	 * @param type
+	 *            1-审批人，2-审批人领导
+	 * @return
+	 */
+	private Map<String,Object> getTF2Task(Long fl_id,Long ac_id,String type){
+		Map<String, Object> settingMap = null;
+
+		if ("1".equals(type)) {
+			
+			settingMap = getMSForApp(fl_id, ac_id);
+			
+		} else if ("2".equals(type)) {
+			
+			settingMap = getMSForLeader(fl_id, ac_id);
+			
+		}
+
+		return settingMap;
+	}
+	/**
+	 * 
+	 * 计算对应人员
+	 * @param settingUser
+	 * @return
+	 */
+	private List<String> getUsersBySettingUser(String settingUser,String participant){
+		Set<String> setUser=new HashSet<String>();
+		List<String> listUser=new ArrayList<String>();
+		//Part_1998350;Part_1337392;Xdpa_11;Part_10002507;
+		List<Long> xdpas=new ArrayList<Long>();
+		StringBuilder parts=new StringBuilder();
+		if(StringUtils.isNotBlank(settingUser)){
+			String[] users=settingUser.split(";");
+			for(String user:users){
+				String[] u=user.split("_");
+				if("Part".equals(u[0])){
+					parts.append(u[1]+",");
+				}
+				if("Xdpa".equals(u[0])){
+					xdpas.add(Long.valueOf(u[1]));
+				}
+			}
+		}
+		if(StringUtils.isNotBlank(parts.toString())){
+			parts.deleteCharAt(parts.length()-1);
+			String sql=" select DISTINCT u.ref_id from sm_party_entity u,sm_party_entity e where e.id in("+parts.toString()+")and u.party_type_id=6 and "+DbType.getType()+"locate(e.prefix,u.prefix)>0 ";
+			List<Map<String,Object>> list=jt.queryForList(sql);
+			if(list!=null && list.size()>0){
+				for(Map<String,Object> map:list){
+					setUser.add(String.valueOf(map.get("ref_id")));
+				}
+			}
+		}
+		
+		if(xdpas!=null && xdpas.size()>0){
+			for(Long id: xdpas){
+				if(id==11){
+					String sql="select u.ref_id from sm_party_entity y  ,sm_party_entity u where y.ref_id in(select r.main_role_id from  sm_user r where r.id="+participant+") and y.party_type_id=5 and u.party_type_id=6 and "+DbType.getType()+"locate(y.prefix,u.prefix)>0";
+					List<Map<String,Object>> list=jt.queryForList(sql);
+					if(list!=null && list.size()>0){
+						for(Map<String,Object> map:list){
+							setUser.add(String.valueOf(map.get("ref_id")));
+						}
+					}
+				}
+				if(id==12){
+					//获取最近部门
+					String sqldepts="select d.ref_id from sm_party_entity y  ,sm_party_entity d where y.ref_id in(select r.main_role_id from  sm_user r where r.id="+participant+") and y.party_type_id=5 and d.party_type_id=3 and "+DbType.getType()+"locate(d.prefix,y.prefix)>0  order by d.prefix desc ";
+					List<Map<String,Object>> list=jt.queryForList(sqldepts);
+					Long deptId=null;
+					if(list!=null && list.size()>0){
+						for(Map<String,Object> map:list){
+							deptId=(Long)map.get("ref_id");
+							break;
+						}
+					}
+					if(deptId!=null){
+						String sql="select u.ref_id from sm_dept d,sm_party_entity  y,sm_party_entity u where d.up_deptrole_id=y.ref_id and y.party_type_id=5 and "+DbType.getType()+"locate(y.prefix,u.prefix)>0 and  u.party_type_id=6 and d.id="+deptId;
+						List<Map<String,Object>> listu=jt.queryForList(sql);
+						if(listu!=null && listu.size()>0){
+							for(Map<String,Object> map:listu){
+								setUser.add(String.valueOf(map.get("ref_id")));
+							}
+						}
+					}
+					
+				}
+			}
+		}
+		
+		Iterator<String> it = setUser.iterator(); 
+		while (it.hasNext()) 
+
+		{ 
+			listUser.add(it.next());
+		}
+		
+		return listUser;
+	}
+	
+	/**
+	 * 获取审批人逾期设置信息
+	 * 
+	 * @param settingMap
+	 * @param fl_id
+	 *            模型ID
+	 * @param ac_id
+	 *            环节ID
+	 */
+	private Map<String,Object> getMSForApp(Long fl_id,Long ac_id) {
+		Map<String, Object> settingMap = new HashMap<String, Object>();
+		if (fl_id != null && ac_id != null) {
+			AcMonitorSetting acms = null;
+			acms = commonService.findFirst(AcMonitorSetting.class, " flId = ? and acId = ? ", new Object[]{fl_id, ac_id});
+			
+			if (acms != null) {
+				
+				if ("0".equals(acms.getStatus().toString()) || "1".equals(acms.getStatus().toString())) { // 不启用/按模板默认
+					
+					FlMonitorSetting flms = null;
+					flms = commonService.findFirst(FlMonitorSetting.class, " flId = ? and status = 0 ", new Object[]{fl_id});
+					
+					if (flms != null) {
+						settingMap.put("settingHour", flms.getApproverOvertime()); 
+						settingMap.put("settingUser", null);
+						settingMap.put("settingType", flms.getApproverRate());
+					}
+				} else if ("2".equals(acms.getStatus().toString())) { // 自定义
+					
+					settingMap.put("settingHour", acms.getApproverOvertime()); 
+					settingMap.put("settingUser", null);
+					settingMap.put("settingType", acms.getApproverRate());
+				}
+			}else {
+				FlMonitorSetting flms = null;
+				flms = commonService.findFirst(FlMonitorSetting.class, " flId = ? and status = 0 ", new Object[]{fl_id});
+				if (flms != null) {
+					settingMap.put("settingHour", flms.getApproverOvertime()); // approver_overtime 小时数
+					settingMap.put("settingUser", null); // 人员ID 审批人时此项为null
+					settingMap.put("settingType", flms.getApproverRate()); // approver_rate 0-提醒一次，1-每天重复提醒
+				}
+			}	
+		} 
+		return settingMap;
+	}
+
+	/**
+	 * 获取审批人领导逾期设置信息
+	 * 
+	 * @param settingMap
+	 * @param fl_id
+	 *            模型ID
+	 * @param ac_id
+	 *            环节ID
+	 */
+	private Map<String, Object> getMSForLeader(Long fl_id,Long ac_id) {
+		Map<String, Object> settingMap = new HashMap<String, Object>();
+		if (fl_id != null && ac_id != null) {
+
+			AcMonitorSetting acms = null;
+			acms = commonService.findFirst(AcMonitorSetting.class, " flId = ? and acId = ? ", new Object[]{fl_id, ac_id});
+			
+			if (acms != null) {
+
+				if ("0".equals(acms.getStatus().toString()) || "1".equals(acms.getStatus().toString())) { // 不启用/按模板默认
+					
+					FlMonitorSetting flms = null;
+					flms = commonService.findFirst(FlMonitorSetting.class, " flId = ? and status = 0 ", new Object[]{fl_id});
+					
+					if (flms != null) {
+						settingMap.put("settingHour", flms.getLeaderOvertime()); 
+						settingMap.put("settingUser", flms.getLeaderId()); 
+						settingMap.put("settingType", flms.getLeaderRate()); 
+					}
+				} else if ("2".equals(acms.getStatus().toString())) { // 自定义
+					
+					settingMap.put("settingHour", acms.getLeaderOvertime()); 
+					settingMap.put("settingUser", acms.getLeaderId()); 
+					settingMap.put("settingType", acms.getLeaderRate()); 
+				}
+			}else {
+				
+				FlMonitorSetting flms = null;
+				flms = commonService.findFirst(FlMonitorSetting.class, " flId = ? and status = 0 ", new Object[]{fl_id});
+				
+				if (flms != null) {
+					settingMap.put("settingHour", flms.getLeaderOvertime()); 
+					settingMap.put("settingUser", flms.getLeaderId()); 
+					settingMap.put("settingType", flms.getLeaderRate());
+				}
+			}	
+		} 
+		return settingMap;
+	}
+	
+}

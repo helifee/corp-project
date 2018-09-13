@@ -1,0 +1,464 @@
+package com.xinleju.erp.thirdpart.oa.xinyuan.impl;
+
+import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
+import java.util.Date;
+import java.util.List;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.simple.ParameterizedBeanPropertyRowMapper;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.flow.flowutils.bean.FlowResult;
+import com.xinleju.erp.flow.models.Wi;
+import com.xinleju.erp.form.utils.DbType;
+import com.xinleju.erp.frame.dao.AppDao;
+import com.xinleju.erp.frame.models.App;
+import com.xinleju.erp.frame.models.Msg;
+import com.xinleju.erp.frame.models.MsgPerson;
+import com.xinleju.erp.frame.models.OaMsgSendLog;
+import com.xinleju.erp.frame.service.SettingService;
+import com.xinleju.erp.frame.utils.ExceptionUtils;
+import com.xinleju.erp.frame.utils.FrameUrlFixUtil;
+import com.xinleju.erp.frame.utils.StaticInterface;
+import com.xinleju.erp.thirdpart.oa.api.IOaMsgService;
+import com.xinleju.erp.thirdpart.oa.xinyuan.api.NotifyTodoAppResult;
+
+/**
+ * 版权：(C) 版权所有 2000-2014 上海天好电子商务有限公司苏州分公司
+ * <简述>
+ * <详细描述>
+ * @author   hongbin
+ * @version  $Id: OaMsgServiceImpl.java 55330 2015-01-03 12:45:38Z zhongjun $
+ * @since
+ * @see
+ */
+@Service
+@Transactional
+public class OaMsgServiceImpl extends BaseService implements IOaMsgService{
+	private static final Log log = LogFactory.getLog(OaMsgServiceImpl.class);
+    /**
+     * 每次扫面的数据条数
+     */
+    public static int batchLimit = 5000;
+    
+    /**
+     * 扫描的最大失败次数
+     */
+    public static int maxErrorTimes = 3;
+    
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+    
+    @Autowired
+    private AppDao appDao;
+    
+    @Autowired
+    private OATaskPushServiceImpl oATaskPushServiceImpl;
+    
+    @Autowired
+    private SettingService settingService;
+    
+    @Value("#{appProperties['send_oa_msg_person']}")
+	private String person;
+    
+    /**
+     * 
+     * @see com.xinleju.erp.frame.service.IOaMsgService#sendOaMsg(java.lang.Long)
+     */
+    @Override
+    public void sendOaMsg(Long id) {
+        if (null != id) {
+            Msg msg = getDao().getById(Msg.class, id);
+            log.info("sendOaMsg======类型==="+msg.getOpType()+"=="+msg.getLoginName()+"===id======"+msg.getId()+"==== msgid======="+msg.getMsgId()+"========="+msg.getTitle());
+            
+            Long objectId = msg.getId();
+            String opType = msg.getOpType();
+            String loginName = msg.getLoginName();
+       
+            String msgId_Id=msg.getMsgId();
+            if(msgId_Id.startsWith("Wi_")){
+            	Long wiId=Long.valueOf(msgId_Id.substring(3));
+            	Wi wi=getDao().getById(Wi.class, wiId);
+            	if(wi==null){
+            		log.info("wi========解析不到==类型===="+msg.getOpType()+"====="+msg.getLoginName()+"==="+msg.getId()+"====="+msg.getMsgId()+"======"+msg.getTitle());
+            		return;
+            	}
+            }
+            
+            try{
+            	//特殊的人保存到特殊的表里去记录下
+            	if(loginName!=null&&!"".equals(loginName)){
+            		if(person.contains(loginName)){
+	            		MsgPerson mp=new MsgPerson();
+	            		mp.setCreateTime(new Date());
+	            		mp.setDealDate(msg.getDealDate());
+	            		mp.setExData(msg.getExData());
+	            		mp.setIs_read(msg.getIs_read());
+	            		mp.setLoginName(loginName);
+	            		mp.setModuleCode(msg.getModuleCode());
+	            		mp.setMsgId(String.valueOf(msg.getId()));
+	            		mp.setMsgType(msg.getMsgType());
+	            		mp.setOpType(msg.getOpType());
+	            		mp.setTitle(msg.getTitle());
+	            		mp.setTypedDate(msg.getTypedDate());
+	            		mp.setUrl(msg.getUrl());
+	            		getDao().save(mp);
+            		}
+            	}
+            }catch(Exception ex){
+            	ex.printStackTrace();
+            }
+            Integer msgType = msg.getMsgType();
+            App app = appDao.getAppByCode(msg.getAppCode());
+            App appPt = appDao.getPtApp();
+            String appName = app.getName();
+            String modelName = appName;
+            String subject = msg.getTitle();
+            
+            //最好用urlencode处理下 
+            String newUrl="";
+            try {
+				newUrl=URLEncoder.encode(msg.getUrl(), "UTF-8");
+			} catch (UnsupportedEncodingException e1) {
+				// TODO Auto-generated catch block
+				e1.printStackTrace();
+			}
+            String msgId=msg.getMsgId();
+            String phoneUrl="";
+            if(msgId!=null && !"".equals(msgId)){
+            	  //移动端审批路径
+            	 String from ="";
+            	 if (Msg.OP_TYPE_DB.equals(opType)){
+            		 from = "0";
+                 } else if (Msg.OP_TYPE_YB.equals(opType)){
+             		 from = "2";
+                 } else if (Msg.OP_TYPE_WD.equals(opType)){
+             		 from = "1";
+                 } else if (Msg.OP_TYPE_YD.equals(opType)){
+             		 from = "2";
+                 } else if (Msg.OP_TYPE_RM.equals(opType)){
+               		 from = "2";
+                 }
+            	 String phoneWiId=msgId.toLowerCase();
+            	 if(StringUtils.isNotBlank(phoneWiId)){
+	            	 if(phoneWiId.indexOf("task_")>=0){
+	            		 phoneWiId=msgId.toLowerCase().replace("task_", "");
+	            	 }
+	            	 if(phoneWiId.indexOf("wi_")>0){
+	            		 phoneWiId=msgId.toLowerCase().replace("wi_", "");
+	            	 }
+	            	 
+	            	 if(phoneWiId.indexOf("teId_")>0){
+	           		   phoneWiId=msgId.toLowerCase().replace("teId_", "");
+	            	 }
+          		      phoneUrl="/weixin/shenpi.jsp?wiid="+phoneWiId+"&which=OA&userId="+loginName+"&from="+from;
+            	 }
+            	 
+            }
+           
+
+            try {
+            	phoneUrl=URLEncoder.encode(phoneUrl, "UTF-8");
+			} catch (UnsupportedEncodingException e1) {
+				// TODO Auto-generated catch block
+				e1.printStackTrace();
+			}
+            
+            //http://10.22.2.12/mobiletodo/weixin/shenpi.jsp?wiid=4459&userId=shenpi22&from=0
+
+            //String link = FrameUrlFixUtil.urlFix(msg.getUrl().replaceAll("&", "%26"), app.getDepUrl(), (StringUtils.isNotBlank(appPt.getDepUrl()) ? appPt.getDepUrl().trim() + "/casUrlLogin?url=" : ""));
+            String link = FrameUrlFixUtil.urlFix(newUrl, app.getDepUrl(), (StringUtils.isNotBlank(appPt.getDepUrl()) ? appPt.getDepUrl().trim() + "/casUrlLogin?username="+loginName+"&url=" : ""));
+            
+            link = FrameUrlFixUtil.urlFix(phoneUrl, app.getPhoneUrl(), link+"&phoneUrl=");
+            NotifyTodoAppResult result = null;
+            try{
+                if (StringUtils.isNotBlank(opType) && null != msgType){
+                    if (Msg.OP_TYPE_DB.equals(opType)){
+                        result = oATaskPushServiceImpl.sendTodo(appName, modelName, objectId.toString(), subject, link, 1, loginName,"审批待办",null);
+                    } else if (Msg.OP_TYPE_YB.equals(opType)){
+                        result = oATaskPushServiceImpl.setTodoDone(appName, modelName, objectId.toString(), 1, loginName,null,null);
+                    } else if (Msg.OP_TYPE_WD.equals(opType)){
+                        result = oATaskPushServiceImpl.sendTodo(appName, modelName, objectId.toString(), subject, link, 2, loginName,null,null);
+                    } else if (Msg.OP_TYPE_YD.equals(opType)){
+                        result = oATaskPushServiceImpl.setTodoDone(appName, modelName, objectId.toString(), 2, loginName,null,null);
+                    } else if (Msg.OP_TYPE_RM.equals(opType)){
+                        result = oATaskPushServiceImpl.deleteTodo(appName, modelName, objectId.toString(), null != msgType ? msgType.intValue() : 0, loginName,null,null);
+                    }
+                    if(result != null){
+                    	this.markSendLog(id, opType, result.getReturnState(), result.getMessage(),link,loginName);
+                    }else{
+                    	if(Msg.OP_TYPE_LC.equals(opType)){
+                    		
+                    	}else{
+                            throw new Exception("OA端没有返回结果！");
+                    	}
+           
+                    }
+                    log.info("sendOaMsg=推送OA=====类型==="+msg.getOpType()+"=="+msg.getLoginName()+"===id======"+objectId.toString()+"==== msgid======="+msg.getMsgId()+"========="+msg.getTitle());
+                } else {
+                    
+                }
+            }catch(Exception e){
+            	e.printStackTrace();
+            }
+        }
+    }
+    
+    public void sendOaMsgTask(Msg msg) {
+        if (null != msg&&msg.getId()!=null) {
+            log.info("sendOaMsg======类型==="+msg.getOpType()+"=="+msg.getLoginName()+"===id======"+msg.getId()+"==== msgid======="+msg.getMsgId()+"========="+msg.getTitle());
+            
+            Long objectId = msg.getId();
+            String opType = msg.getOpType();
+            String loginName = msg.getLoginName();
+            String msgId_Id=msg.getMsgId();
+            if(msgId_Id.startsWith("Wi_")){
+            	Long wiId=Long.valueOf(msgId_Id.substring(3));
+            	Wi wi=getDao().getById(Wi.class, wiId);
+            	if(wi==null){
+            		log.info("wi========解析不到==类型===="+msg.getOpType()+"====="+msg.getLoginName()+"==="+msg.getId()+"====="+msg.getMsgId()+"======"+msg.getTitle());
+            		return;
+            	}
+            }
+            
+            try{
+            	//特殊的人保存到特殊的表里去记录下
+            	if(loginName!=null&&!"".equals(loginName)){
+            		if(person.contains(loginName)){
+	            		MsgPerson mp=new MsgPerson();
+	            		mp.setCreateTime(new Date());
+	            		mp.setDealDate(msg.getDealDate());
+	            		mp.setExData(msg.getExData());
+	            		mp.setIs_read(msg.getIs_read());
+	            		mp.setLoginName(loginName);
+	            		mp.setModuleCode(msg.getModuleCode());
+	            		mp.setMsgId(String.valueOf(msg.getId()));
+	            		mp.setMsgType(msg.getMsgType());
+	            		mp.setOpType(msg.getOpType());
+	            		mp.setTitle(msg.getTitle());
+	            		mp.setTypedDate(msg.getTypedDate());
+	            		mp.setUrl(msg.getUrl());
+	            		getDao().save(mp);
+            		}
+            	}
+            }catch(Exception ex){
+            	ex.printStackTrace();
+            }
+            
+            Integer msgType = msg.getMsgType();
+            App app = appDao.getAppByCode(msg.getAppCode());
+            App appPt = appDao.getPtApp();
+            String appName = app.getName();
+            String modelName = appName;
+            String subject = msg.getTitle();
+            
+            //最好用urlencode处理下 
+            String newUrl="";
+            try {
+				newUrl=URLEncoder.encode(msg.getUrl(), "UTF-8");
+			} catch (UnsupportedEncodingException e1) {
+				// TODO Auto-generated catch block
+				e1.printStackTrace();
+			}
+            String msgId=msg.getMsgId();
+            String phoneUrl="";
+            if(msgId!=null && !"".equals(msgId)){
+            	  //移动端审批路径
+            	 String from ="";
+            	 if (Msg.OP_TYPE_DB.equals(opType)){
+            		 from = "0";
+                 } else if (Msg.OP_TYPE_YB.equals(opType)){
+             		 from = "2";
+                 } else if (Msg.OP_TYPE_WD.equals(opType)){
+             		 from = "1";
+                 } else if (Msg.OP_TYPE_YD.equals(opType)){
+             		 from = "2";
+                 } else if (Msg.OP_TYPE_RM.equals(opType)){
+               		 from = "2";
+                 }
+            	 String phoneWiId=msgId.toLowerCase();
+            	 if(StringUtils.isNotBlank(phoneWiId)){
+	            	 if(phoneWiId.indexOf("task_")>=0){
+	            		 phoneWiId=msgId.toLowerCase().replace("task_", "");
+	            	 }
+	            	 if(phoneWiId.indexOf("wi_")>0){
+	            		 phoneWiId=msgId.toLowerCase().replace("wi_", "");
+	            	 }
+	            	 
+	            	 if(phoneWiId.indexOf("teId_")>0){
+	           		   phoneWiId=msgId.toLowerCase().replace("teId_", "");
+	            	 }
+          		      phoneUrl="/weixin/shenpi.jsp?wiid="+phoneWiId+"&which=OA&userId="+loginName+"&from="+from;
+            	 }
+            }
+           
+
+            try {
+            	phoneUrl=URLEncoder.encode(phoneUrl, "UTF-8");
+			} catch (UnsupportedEncodingException e1) {
+				// TODO Auto-generated catch block
+				e1.printStackTrace();
+			}
+            
+            //http://10.22.2.12/mobiletodo/weixin/shenpi.jsp?wiid=4459&userId=shenpi22&from=0
+
+            //String link = FrameUrlFixUtil.urlFix(msg.getUrl().replaceAll("&", "%26"), app.getDepUrl(), (StringUtils.isNotBlank(appPt.getDepUrl()) ? appPt.getDepUrl().trim() + "/casUrlLogin?url=" : ""));
+            String link = FrameUrlFixUtil.urlFix(newUrl, app.getDepUrl(), (StringUtils.isNotBlank(appPt.getDepUrl()) ? appPt.getDepUrl().trim() + "/casUrlLogin?username="+loginName+"&url=" : ""));
+            
+            link = FrameUrlFixUtil.urlFix(phoneUrl, app.getPhoneUrl(), link+"&phoneUrl=");
+            NotifyTodoAppResult result = null;
+            try{
+                if (StringUtils.isNotBlank(opType) && null != msgType){
+                    if (Msg.OP_TYPE_DB.equals(opType)){
+                        result = oATaskPushServiceImpl.sendTodo(appName, modelName, objectId.toString(), subject, link, 1, loginName,"审批待办",null);
+                    } else if (Msg.OP_TYPE_YB.equals(opType)){
+                        result = oATaskPushServiceImpl.setTodoDone(appName, modelName, objectId.toString(), 1, loginName,null,null);
+                    } else if (Msg.OP_TYPE_WD.equals(opType)){
+                        result = oATaskPushServiceImpl.sendTodo(appName, modelName, objectId.toString(), subject, link, 2, loginName,null,null);
+                    } else if (Msg.OP_TYPE_YD.equals(opType)){
+                        result = oATaskPushServiceImpl.setTodoDone(appName, modelName, objectId.toString(), 2, loginName,null,null);
+                    } else if (Msg.OP_TYPE_RM.equals(opType)){
+                        result = oATaskPushServiceImpl.deleteTodo(appName, modelName, objectId.toString(), null != msgType ? msgType.intValue() : 0, loginName,null,null);
+                    }
+                    if(result != null){
+                        this.markSendLog(msg.getId(), opType, result.getReturnState(), result.getMessage(),link,loginName);
+                    }else{
+                        throw new Exception("OA端没有返回结果！");
+                    }
+                } else {
+                    
+                }
+            }catch(Exception e){
+              e.printStackTrace();
+            }
+        }
+    }
+    @Override
+    public void batchSendOaMsg() {
+        this.batchSendOaMsg(batchLimit);
+    }
+    /**
+     * 
+     * @see com.xinleju.erp.frame.service.IOaMsgService#batchSendOaMsg(int)
+     */
+    @Override
+    public void batchSendOaMsg(int size) {
+        String settingMaxErrorTime = settingService.getSettingValue(StaticInterface.SKEY_PT_OA_INTERFACE_MAX_ERROR_TIMES);
+        if (StringUtils.isNotBlank(settingMaxErrorTime) && StringUtils.isNumeric(settingMaxErrorTime.trim())){
+            maxErrorTimes = Integer.valueOf(settingMaxErrorTime.trim());
+        }
+        ParameterizedBeanPropertyRowMapper<Msg> rm = ParameterizedBeanPropertyRowMapper.newInstance(Msg.class);
+        String sql = "select o.id from sm_msg o left join sm_oa_msg_send_log s on (o.id = s.msg_id and s.op_type = o.op_type) where (s.return_state = ? or s.return_state = ? or s.return_state is null) and (s.error_times is null or s.error_times < ?) AND (o.op_type = 'DB' or o.op_type = 'WD' or o.op_type = 'YB' or o.op_type = 'YD' or o.op_type = 'RM') order by o.typed_date asc,o.id asc limit ?";
+        List<Msg> oaMsgs = jdbcTemplate.query(sql, rm, OaMsgSendLog.RETURN_STATE_CREATE, OaMsgSendLog.RETURN_STATE_FAIL, maxErrorTimes, size);
+        if (oaMsgs != null && oaMsgs.size() > 0) {
+            for (int i = 0; i < oaMsgs.size(); i++) {
+                this.sendOaMsg(oaMsgs.get(i).getId());
+            }
+        }
+    }
+
+    public void sendMsgByFiId(Long fiId) {
+        String settingMaxErrorTime = settingService.getSettingValue(StaticInterface.SKEY_PT_OA_INTERFACE_MAX_ERROR_TIMES);
+        if (StringUtils.isNotBlank(settingMaxErrorTime) && StringUtils.isNumeric(settingMaxErrorTime.trim())){
+            maxErrorTimes = Integer.valueOf(settingMaxErrorTime.trim());
+        }
+        ParameterizedBeanPropertyRowMapper<Msg> rm = ParameterizedBeanPropertyRowMapper.newInstance(Msg.class);
+        String sql = "select o.id from sm_msg o left join sm_oa_msg_send_log s on (o.id = s.msg_id and s.op_type = o.op_type) where o.ex_data = ? and (s.return_state = ? or s.return_state = ? or s.return_state is null) and (s.error_times is null or s.error_times < ?) order by o.typed_date asc,o.id asc ";
+        List<Msg> oaMsgs = jdbcTemplate.query(sql, rm, fiId,OaMsgSendLog.RETURN_STATE_CREATE, OaMsgSendLog.RETURN_STATE_FAIL, maxErrorTimes);
+        if (oaMsgs != null && oaMsgs.size() > 0) {
+            for (int i = 0; i < oaMsgs.size(); i++) {
+                this.sendOaMsg(oaMsgs.get(i).getId());
+            }
+        }
+    }
+    /**
+     * 
+     * @see com.xinleju.erp.frame.service.IOaMsgService#batchSendOaMsg(java.util.List)
+     */
+    @Override
+    public void batchSendOaMsg(List<Long> ids) {
+        if(!ids.isEmpty()) {
+            ParameterizedBeanPropertyRowMapper<Long> rm = ParameterizedBeanPropertyRowMapper.newInstance(Long.class);
+            String sql = "select o.id from sm_msg o where o.id in (?)";
+            List<Long> oaMsgs = jdbcTemplate.query(sql,ids.toArray(), rm);
+            if (oaMsgs != null && oaMsgs.size() > 0) {
+                for (int i = 0; i < oaMsgs.size(); i++) {
+                    this.sendOaMsg(oaMsgs.get(i));
+                }
+            }
+        }
+    }
+    /**
+     * 错误日志
+     * @author jun
+     * @param id
+     * @param opType
+     * @param errorMsg
+     */
+    @Transactional(noRollbackFor = {RuntimeException.class})
+    private void markSendLog(Long id, String opType, int returnState, String errorMsg,String phoneUrl,String loginName){
+		System.out.println(id+"========="+opType);
+    	List<OaMsgSendLog> list=getDao().findAll(OaMsgSendLog.class," opType = ?  and msgId = ? ",new Object[]{opType,id});
+    	if(list!=null && list.size()>0){
+    		OaMsgSendLog oaMsgSendLog=list.get(0);
+    		oaMsgSendLog.setOpType(opType);
+    		oaMsgSendLog.setReturnState(returnState);
+    		if(returnState==OaMsgSendLog.RETURN_STATE_SUCCESS){
+	    		oaMsgSendLog.setErrorMsg(null);
+	    		oaMsgSendLog.setErrorTimes(null);
+    		}else{
+    			oaMsgSendLog.setErrorMsg(errorMsg);
+	    		oaMsgSendLog.setErrorTimes(oaMsgSendLog.getErrorTimes()+1);
+    		}
+    		oaMsgSendLog.setTypedDate(new Date());
+    		oaMsgSendLog.setMsgId(id);
+    		oaMsgSendLog.setUrl(phoneUrl);
+    		oaMsgSendLog.setLoginName(loginName);
+    		getDao().update(oaMsgSendLog);
+    		System.out.println(oaMsgSendLog.getMsgId()+"========="+oaMsgSendLog.getErrorTimes());
+    		getDao().flush();
+    	}else{ 
+            if(returnState==OaMsgSendLog.RETURN_STATE_SUCCESS){
+            	OaMsgSendLog oaMsgSendLog=new OaMsgSendLog();
+        		oaMsgSendLog.setOpType(opType);
+        		oaMsgSendLog.setReturnState(returnState);
+        		oaMsgSendLog.setErrorMsg(errorMsg);
+        		oaMsgSendLog.setTypedDate(new Date());
+        		oaMsgSendLog.setUrl(phoneUrl);
+        		oaMsgSendLog.setMsgId(id);
+        		oaMsgSendLog.setLoginName(loginName);
+        		getDao().save(oaMsgSendLog);
+        		getDao().flush();
+            }else{
+            	OaMsgSendLog oaMsgSendLog=new OaMsgSendLog();
+        		oaMsgSendLog.setOpType(opType);
+        		oaMsgSendLog.setReturnState(returnState);
+        		oaMsgSendLog.setErrorTimes(0);
+        		oaMsgSendLog.setErrorMsg(errorMsg);
+        		oaMsgSendLog.setTypedDate(new Date());
+        		oaMsgSendLog.setUrl(phoneUrl);
+        		oaMsgSendLog.setMsgId(id);
+        		oaMsgSendLog.setLoginName(loginName);
+        		getDao().save(oaMsgSendLog);
+        		getDao().flush();
+            }
+    		
+    	}
+    }
+
+	@Override
+	public FlowResult<Boolean> savaOALog(String module, long msgId,
+			String title, String url, Date typedDate, String opType,
+			String msgType, String loginName) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+}

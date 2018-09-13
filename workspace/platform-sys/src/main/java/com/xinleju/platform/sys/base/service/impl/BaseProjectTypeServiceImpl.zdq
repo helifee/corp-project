@@ -1,0 +1,515 @@
+package com.xinleju.platform.sys.base.service.impl;
+
+import java.util.*;
+
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.sys.base.dao.BaseProjectTypeDao;
+import com.xinleju.platform.sys.base.dto.BaseProjectTypeDto;
+import com.xinleju.platform.sys.base.entity.BaseProjectType;
+import com.xinleju.platform.sys.base.service.BaseProjectTypeService;
+import com.xinleju.platform.sys.base.utils.SortType;
+import com.xinleju.platform.sys.base.utils.StatusType;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class BaseProjectTypeServiceImpl extends  BaseServiceImpl<String,BaseProjectType> implements BaseProjectTypeService{
+	
+
+	@Autowired
+	private BaseProjectTypeDao baseProjectTypeDao;
+
+	/**
+	 * author:liuf
+	 * describe: 修改排序
+	 * param:ids
+	 * thinking：排序  需要把子集的编号 也变化   这样 拿到变动的对象的排序号  然后查询所有like 这个排序号的子集  然后统一把第一个“-”前面的排序号 换成新的排序号  updateBatch
+	 */
+	@Override
+	public int updateSort(BaseProjectType baseProjectType,
+			Map<String, Object> map) throws Exception {
+	     String  sortType= String.valueOf(map.get("sortType"));
+		String sort1 = baseProjectType.getSort();
+		String parentId = baseProjectType.getParentId();
+		Map<String,Object> param=new HashMap<>();
+		param.put("parentId", parentId);
+		List<BaseProjectType> baseProjectList = baseProjectTypeDao.getBaseProjectList(param);
+		if(SortType.SHIFTUP.getCode().equals(sortType)){
+			for (int i = 0; i < baseProjectList.size(); i++) {
+				String sort2 = baseProjectList.get(i).getSort();
+				if(sort2.equals(sort1)&&i!=0){
+					String sort3 = baseProjectList.get(i-1).getSort();
+					baseProjectList.get(i-1).setSort(sort2);
+					baseProjectList.get(i).setSort(sort3);
+					baseProjectTypeDao.update(baseProjectList.get(i-1));
+					baseProjectTypeDao.update(baseProjectList.get(i));	
+					Map<String,Object> params1=new HashMap<String, Object>();
+					params1.put("oldSort", sort2);
+					params1.put("newSort", sort3);
+					params1.put("prefixId",baseProjectList.get(i).getPrefixId());
+					baseProjectTypeDao.updateAllNodes(params1);
+					Map<String,Object> params2=new HashMap<String, Object>();
+					params2.put("oldSort", sort3);
+					params2.put("newSort", sort2);
+					params2.put("prefixId",baseProjectList.get(i-1).getPrefixId());
+					baseProjectTypeDao.updateAllNodes(params2);
+					break;
+				}
+			}
+			
+		}else if(SortType.SHIFTDOWN.getCode().equals(sortType)){
+		  for (int i = 0; i < baseProjectList.size(); i++) {
+			  String sort2 = baseProjectList.get(i).getSort();
+				if(sort2.equals(sort1)){
+					if(i!=baseProjectList.size()-1){
+						String sort3 = baseProjectList.get(i+1).getSort();
+						String PrefixId1=baseProjectList.get(i).getPrefixId();
+						String PrefixId2=baseProjectList.get(i+1).getPrefixId();
+						baseProjectList.get(i+1).setSort(sort2);
+						baseProjectList.get(i).setSort(sort3);
+						baseProjectTypeDao.update(baseProjectList.get(i+1));
+						baseProjectTypeDao.update(baseProjectList.get(i));	
+						Map<String,Object> params1=new HashMap<String, Object>();
+						params1.put("oldSort", sort2);
+						params1.put("newSort", sort3);
+						params1.put("prefixId",PrefixId1);
+						baseProjectTypeDao.updateAllNodes(params1);
+						Map<String,Object> params2=new HashMap<String, Object>();
+						params2.put("oldSort", sort3);
+						params2.put("newSort", sort2);
+						params2.put("prefixId",PrefixId2);
+						baseProjectTypeDao.updateAllNodes(params2);
+						break;
+					}
+					
+				}
+		}
+		}else if(SortType.STICK.getCode().equals(sortType)){
+			  String firstSort = baseProjectList.get(0).getSort();
+			for (int i = 0; i < baseProjectList.size(); i++) {
+				String sort2 = baseProjectList.get(i).getSort();
+					if(sort2.equals(sort1)){
+						if(i!=0){
+							Map<String,Object> params1=new HashMap<String, Object>();
+					    String oldSort = baseProjectList.get(i).getSort();
+					    baseProjectList.get(i).setSort(firstSort);
+					    baseProjectTypeDao.update(baseProjectList.get(i));
+					    params1.put("newSort",firstSort);
+					    params1.put("oldSort",oldSort);
+						params1.put("prefixId",baseProjectList.get(i).getPrefixId());
+						baseProjectTypeDao.updateAllNodes(params1);
+						break;
+						}else{
+							break;
+						}
+					}else{
+						String newSort=baseProjectList.get(i+1).getSort();
+						String oldSort=baseProjectList.get(i).getSort();
+						String prefixId = baseProjectList.get(i).getPrefixId();
+						baseProjectList.get(i).setSort(baseProjectList.get(i+1).getSort());
+						baseProjectTypeDao.update(baseProjectList.get(i));
+						Map<String,Object> params2=new HashMap<String, Object>();
+						params2.put("oldSort", oldSort);
+						params2.put("newSort", newSort);
+						params2.put("prefixId",prefixId);
+						baseProjectTypeDao.updateAllNodes(params2);
+					}	
+				
+			}
+		}else if(SortType.TOBOTTOM.getCode().equals(sortType)){
+			String endSort = baseProjectList.get(baseProjectList.size()-1).getSort();
+			for (int i = baseProjectList.size()-1; i >-1; i--) {
+				String sort2 = baseProjectList.get(i).getSort();
+					if(sort2.equals(sort1)){
+						if(i!=baseProjectList.size()-1){
+						String oldSort = baseProjectList.get(i).getSort();
+						baseProjectList.get(i).setSort(endSort);
+						baseProjectTypeDao.update(baseProjectList.get(i));
+						Map<String,Object> params1=new HashMap<String, Object>();
+						params1.put("oldSort", oldSort);
+						params1.put("newSort", endSort);
+						params1.put("prefixId",baseProjectList.get(i).getPrefixId());
+						baseProjectTypeDao.updateAllNodes(params1);
+						
+						break;
+						}else{
+							break;
+						}
+					}else{
+						String newSort=baseProjectList.get(i-1).getSort();
+						String oldSort=baseProjectList.get(i).getSort();
+						baseProjectList.get(i).setSort(newSort);
+						baseProjectTypeDao.update(baseProjectList.get(i));
+						Map<String,Object> params2=new HashMap<String, Object>();
+						params2.put("oldSort", oldSort);
+						params2.put("newSort", newSort);
+						params2.put("prefixId",baseProjectList.get(i).getPrefixId());
+						baseProjectTypeDao.updateAllNodes(params2);
+					}	
+			}
+		}
+		return 1;
+	}
+	/**
+	 * author:liuf
+	 * describe: 修改名字
+	 * param:ids
+	 */
+	@Override
+	public int updateName(BaseProjectType baseProjectType, Map<String, Object> map)
+			throws Exception {
+		int j=0;
+		String  name = String.valueOf(map.get("name"));
+		String id = baseProjectType.getId();
+		baseProjectType.setName(name);
+		 List<BaseProjectType> repeatObject = this.getRepeatObject(baseProjectType);
+		 if(repeatObject!=null){
+			  if(repeatObject.size()==1&&repeatObject.get(0).getId().equals(id)){
+				  j = baseProjectTypeDao.update(baseProjectType);
+			  }else{
+				  j=5;
+			  }
+		 }else{
+			j = baseProjectTypeDao.update(baseProjectType);
+		 }
+		return j;
+	}
+	/**
+	 * author:liuf
+	 * describe: 修改状态
+	 * param:ids
+	 */
+	@Override
+	@Transactional
+	public int updateStatus(BaseProjectType object,Map<String,Object> paramMap) throws Exception {
+		 String status = object.getStatus();
+		 if(status.equals(StatusType.StatusOpen.getCode())){
+			//对子集全部启用禁用 
+			this.updateChirdStatus(object);
+			 object.setStatus(StatusType.StatusClosed.getCode());
+			 baseProjectTypeDao.update(object);
+		 }else if(status.equals(StatusType.StatusClosed.getCode())){
+			 //对父集全部启用启用
+			 this.updateParentStatus(object);
+			 if(Objects.equals (paramMap.get ("isChildren"),true)){
+			 	//启用所有子节点
+				this.openChildrenStatus (object);
+			 }
+			 object.setStatus(StatusType.StatusOpen.getCode());
+			 baseProjectTypeDao.update(object);
+		 }
+		return 1;
+	}
+	/**
+	 * author:liuf
+	 * describe: 修改父节点状态
+	 * param:object
+	 */
+	public void  updateParentStatus(BaseProjectType object){
+		 String parentId = object.getParentId();
+		 BaseProjectType baseProjectType = baseProjectTypeDao.getObjectById(parentId);
+	
+		 if(baseProjectType!=null){
+			 	 updateParentStatus(baseProjectType);
+				 baseProjectType.setStatus(StatusType.StatusOpen.getCode());
+				 baseProjectTypeDao.update(baseProjectType);
+		 }
+	}
+	/**
+	 * author:liuf
+	 * describe: 修改子节点所有状态
+	 * param:object
+	 */
+	public void updateChirdStatus(BaseProjectType object){
+		 Map<String,Object> param=new HashMap<>();
+		 param.put("parentId", object.getId());
+		 List<BaseProjectType> projectList = baseProjectTypeDao.getBaseProjectList(param);
+		 if(projectList!=null&&projectList.size()>0){
+			 for (BaseProjectType baseProjectType : projectList) {
+				 updateChirdStatus(baseProjectType);
+				 baseProjectType.setStatus(StatusType.StatusClosed.getCode());
+				 baseProjectTypeDao.update(baseProjectType);
+			 }
+		 }
+	}
+
+	/**
+	 * 启用所有子节点
+	 * @param object
+     */
+	public void openChildrenStatus(BaseProjectType object){
+		Map<String,Object> param=new HashMap<>();
+		param.put("parentId", object.getId());
+		List<BaseProjectType> projectList = baseProjectTypeDao.getBaseProjectList(param);
+		if(projectList!=null&&projectList.size()>0){
+			for (BaseProjectType baseProjectType : projectList) {
+				openChildrenStatus(baseProjectType);
+				baseProjectType.setStatus(StatusType.StatusOpen.getCode());
+				baseProjectTypeDao.update(baseProjectType);
+			}
+		}
+	}
+	/**
+	 * author:liuf
+	 * describe: 删除
+	 * param:id
+	 */
+	@Override
+	public int deletePseudoProjectTypeById(String id) throws Exception {
+		Map<String,Object> param=new HashMap<>();
+		BaseProjectType baseProjectType = baseProjectTypeDao.getObjectById(id);
+		String prefixId = baseProjectType.getPrefixId();
+		param.put("prefixId", prefixId);
+		List<String> ids = baseProjectTypeDao.getDeleteBaseProjectList(param);
+			return baseProjectTypeDao.deletePseudoAllObjectByIds(ids);
+	}
+	/**
+	 * author:liuf
+	 * describe: 查询树表格数据
+	 * param:status
+	 */
+	@Override
+	public List<BaseProjectTypeDto> queryBaseProjecType(  Map map)throws Exception {
+	   List<BaseProjectTypeDto> list=new ArrayList<>();//组装的对象
+	   String name = (String) map.get("name");
+	   String pstatus = (String) map.get("pstatus");
+/*	   Map<String,Object> map=new HashMap<>();
+	   map.put("status", status);//查询条件
+*/	 ///  Long level=0l;
+	///   Long num=1l;
+	    List<BaseProjectType> baseProjectList = baseProjectTypeDao.getBaseProjectListToView(map);//列表
+	    
+	  List parentIds= baseProjectTypeDao.getBaseProjectParentIdList();//查询所有的parentId
+	    
+	    
+	    
+	   if(baseProjectList!=null&&baseProjectList.size()>0){
+		   if(StringUtils.isBlank(name)&&("".equals(pstatus))){
+			   for (BaseProjectType baseProjectType : baseProjectList) {
+				   BaseProjectTypeDto baseProjectTypeDto=new BaseProjectTypeDto();
+				   String sort = baseProjectType.getSort();
+				  String[] split = sort.split("-");
+				  Long i=(long) split.length;
+		    		BeanUtils.copyProperties(baseProjectType, baseProjectTypeDto);
+		    		baseProjectTypeDto.setLevel(i);
+		    		baseProjectTypeDto.setExpanded(true);
+		    		baseProjectTypeDto.setLoaded(true);
+		    		String id = baseProjectTypeDto.getId();
+		    		 if(parentIds.contains(id)){
+		    			 baseProjectTypeDto.setIsLeaf(false);
+		    		 }else{
+		    			 baseProjectTypeDto.setIsLeaf(true); 
+		    		 };
+		    		list.add(baseProjectTypeDto);
+			   }
+		  }else{
+			  Set  setIds=new HashSet();
+			   for (BaseProjectType baseProjectType : baseProjectList) {
+				   String prefixId = baseProjectType.getPrefixId();
+				   String[] ids = prefixId.split("-");
+				   for (String resultId : ids) {
+					   setIds.add(resultId);
+				   }
+			   }
+			   
+			   List<BaseProjectType> resultProjectList  = baseProjectTypeDao.queryListByIds( setIds);
+			   String beforeStatusId = (String) map.get("beforeStatusId");
+			   String prefixIdBefore ="";
+			   if(StringUtils.isNotBlank(beforeStatusId)){
+				   prefixIdBefore = baseProjectTypeDao.getObjectById(beforeStatusId).getPrefixId();
+			   }
+			   for (BaseProjectType baseProjectType : resultProjectList) {
+				   BaseProjectTypeDto baseProjectTypeDto=new BaseProjectTypeDto();
+				   String id = baseProjectType.getId();
+				   if((!"".equals(prefixIdBefore))&&prefixIdBefore.contains(id)){
+					   continue;
+				   }
+				   String sort = baseProjectType.getSort();
+				  String[] split = sort.split("-");
+				  
+				  
+				  Long i=(long) split.length;
+		    		BeanUtils.copyProperties(baseProjectType, baseProjectTypeDto);
+		    		baseProjectTypeDto.setLevel(i);
+		    		baseProjectTypeDto.setExpanded(true);
+		    		baseProjectTypeDto.setLoaded(true);
+		    		 if(parentIds.contains(id)){
+		    			 baseProjectTypeDto.setIsLeaf(false);
+		    		 }else{
+		    			 baseProjectTypeDto.setIsLeaf(true); 
+		    		 };
+		    		list.add(baseProjectTypeDto);
+			}
+		  }
+	   }
+	 /*   if(baseProjectList!=null&&baseProjectList.size()>0){
+	    	for (BaseProjectType baseProjectType : baseProjectList) {
+	    		BaseProjectTypeDto baseProjectTypeDto=new BaseProjectTypeDto();
+	    		BeanUtils.copyProperties(baseProjectType, baseProjectTypeDto);
+	    		baseProjectTypeDto.setLevel(level);
+	    		baseProjectTypeDto.setLft(num);
+	    		baseProjectTypeDto.setIsLeaf(false);
+	    		baseProjectTypeDto.setExpanded(true);
+	    		baseProjectTypeDto.setLoaded(true);
+	    		list.add(baseProjectTypeDto);
+	    		Map<String, Object> typeList = getbaseProjectTypeList(status,baseProjectType.getId(),list,level,num);
+	    		num= (Long) typeList.get("num");
+	    		baseProjectTypeDto.setRgt(num);
+	    		//list.addAll(baseProjectTypeList);
+			}
+	    }*/
+	   return list;
+	}
+	
+	/**
+	 * author:liuf
+	 * describe: 拼接数表格数据
+	 * param:status,id,list,level,num
+	 */
+/*  public Map<String,Object> getbaseProjectTypeList(String status,String id,List<BaseProjectTypeDto> list,Long level,Long num){
+	  Map<String,Object> map=new HashMap<String, Object>();
+	  Map<String,Object> resultmap=new HashMap<String, Object>();
+	  map.put("parentId", id);
+	//  map.put("status",status);
+	  List<BaseProjectType> baseProjectList = baseProjectTypeDao.getBaseProjectList(map);
+	  if(baseProjectList!=null&&baseProjectList.size()>0){
+		  ++level;
+		  for (BaseProjectType baseProjectType : baseProjectList) {
+			  ++num;
+			  BaseProjectTypeDto baseProjectTypeDto=new BaseProjectTypeDto();
+			  BeanUtils.copyProperties(baseProjectType, baseProjectTypeDto);
+			  baseProjectTypeDto.setLft(num);
+			  baseProjectTypeDto.setLevel(level);
+			  baseProjectTypeDto.setIsLeaf(false);
+			  baseProjectTypeDto.setExpanded(true);
+			  baseProjectTypeDto.setLoaded(true);
+			  list.add(baseProjectTypeDto);
+			  Map<String, Object> projectTypeList = getbaseProjectTypeList(status,baseProjectType.getId(),list,level,num);
+			  num= (Long) projectTypeList.get("num");
+			  baseProjectTypeDto.setRgt(num);
+		}
+		  ++num;
+	  }else{
+		  
+		  ++num;
+	  }
+	  resultmap.put("num", num);
+	  resultmap.put("list", list);
+	  return resultmap;
+  }*/
+	/**
+	 * author:liuf
+	 * describe: 保存对象
+	 * param:baseProjectType
+	 */
+@Override
+public int saveBaseProjectType(BaseProjectType baseProjectType) {
+	int j=0;
+	String parentId = baseProjectType.getParentId();
+	Map<String,Object> param=new HashMap<>();
+	param.put("parentId", parentId);
+	BaseProjectType parentProjectType = baseProjectTypeDao.getObjectById(parentId);
+	List<BaseProjectType> baseProjectList = baseProjectTypeDao.getBaseProjectList(param);
+
+	if(baseProjectList!=null&&baseProjectList.size()>0){
+		String sort = baseProjectList.get(baseProjectList.size()-1).getSort();
+		if(parentId==null){
+			String[] s =sort.split("\\$");
+			 int oldNumber =Integer.parseInt(s[1]);
+			 int newNumber=(oldNumber+1);
+			 String newSort= "$"+String.format("%04d", newNumber); 
+			baseProjectType.setSort(newSort);
+		}else{
+		 int i=sort.lastIndexOf("-");
+		 String parentSort = sort.substring(0,i);
+		 String oldSort = sort.substring(i+1,sort.length());
+		 int oldNumber =Integer.parseInt(oldSort);
+		 int newNumber=(oldNumber+1);
+		 String newSort=parentSort+"-"+ String.format("%04d", newNumber); 
+		baseProjectType.setSort(newSort);
+		}
+	}else{
+		if(parentId==null){
+			baseProjectType.setSort("$0001");
+		}else{
+			
+			String parentSort =parentProjectType.getSort();
+			 String newSort=parentSort+"-"+"0001";
+	     	baseProjectType.setSort(newSort);
+		}
+	}
+	if(parentId!=null){
+		baseProjectType.setPrefixId(parentProjectType.getPrefixId()+"-"+baseProjectType.getId());
+	}else{
+		baseProjectType.setPrefixId(baseProjectType.getId());
+	}
+        List<BaseProjectType> repeatObject = this.getRepeatObject(baseProjectType);
+	 if(repeatObject!=null&&repeatObject.size()>0){
+		  j=5;
+	 }else{
+		j = baseProjectTypeDao.save(baseProjectType);
+	 }
+	return j;
+}
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.sys.base.service.BaseProjectTypeService#updateProjectType(com.xinleju.platform.sys.base.entity.BaseProjectType)
+	 */
+	@Override
+	public int updateProjectType(BaseProjectType baseProjectType)
+			throws Exception {
+		BaseProjectType oldbaseProjectType = this.getObjectById(baseProjectType.getId());
+		String status = baseProjectType.getStatus();
+		if(!status.equals(oldbaseProjectType.getStatus())){
+			 if(status.equals(StatusType.StatusOpen.getCode())){
+				 this.updateParentStatus(baseProjectType);
+				 baseProjectType.setStatus(StatusType.StatusOpen.getCode());
+				 baseProjectTypeDao.update(baseProjectType);
+				//对子集全部启用禁用 
+			 }else if(status.equals(StatusType.StatusClosed.getCode())){
+				 this.updateChirdStatus(baseProjectType);
+				 baseProjectType.setStatus(StatusType.StatusClosed.getCode());
+				 baseProjectTypeDao.update(baseProjectType);
+				 //对父集全部启用启用
+			 }
+		}
+		int j=0;
+		 List<BaseProjectType> repeatObject = this.getRepeatObject(baseProjectType);
+		 if(repeatObject!=null&&repeatObject.size()>1){
+			  j=5;
+		 }else{
+			j = baseProjectTypeDao.update(baseProjectType);
+		 }
+		return j;
+	}
+	public   List<BaseProjectType> getRepeatObject(BaseProjectType baseProjectType){
+		String name = baseProjectType.getName();
+		String code = baseProjectType.getCode();
+		Map<String,Object> map=new HashMap<>();
+		map.put("name", name);
+		map.put("code", code);
+	    List<BaseProjectType> resultProjectTypeList=baseProjectTypeDao.getRepeatObject(map);
+		 return resultProjectTypeList;
+	}
+	@Override
+	public List<Map<String, Object>> getAllProductType() throws Exception {
+	    return baseProjectTypeDao.getAllProductType();
+
+	}
+	@Override
+	public List<Map<String,Object>> getLeafBaseProjectType() throws Exception {
+		
+		return baseProjectTypeDao.getLeafBaseProjectType();
+		
+	}
+	
+}

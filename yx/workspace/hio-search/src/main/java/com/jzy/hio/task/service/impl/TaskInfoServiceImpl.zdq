@@ -1,0 +1,152 @@
+package com.jzy.hio.task.service.impl;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import org.quartz.SchedulerException;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import com.jzy.hio.base.datasource.DataSourceContextHolder;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.tools.login.LoginUtils;
+import com.jzy.hio.base.utils.Page;
+import com.jzy.hio.task.entity.TaskInfo;
+import com.jzy.hio.task.mapper.TaskInfoDao;
+import com.jzy.hio.task.service.TaskInfoService;
+import com.jzy.hio.task.utils.QuartzManager;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+@Transactional
+@Service
+public class TaskInfoServiceImpl extends  BaseServiceImpl<String,TaskInfo> implements TaskInfoService{
+	
+	@Autowired
+	private TaskInfoDao taskInfoDao;
+
+	@SuppressWarnings("unchecked")
+	@Override
+	public Page getPage(Map<String, Object> paramater, Integer start, Integer pageSize){
+		Page page = super.getPage(paramater, start, pageSize);
+		try {
+			QuartzManager.getBatchNextFireTime(page.getList());
+		} catch (SchedulerException e) {
+			e.printStackTrace();
+		}
+		return page;
+	}
+
+	@Override
+	public String getDatabaseKey(String tendId) throws Exception {
+		Map<String, Object> params = new HashMap<>();
+		params.put("tendId", tendId);
+		String oldDataSource = DataSourceContextHolder.getDataSourceType();
+		DataSourceContextHolder.clearDataSourceType();
+		String database = taskInfoDao.getDataBaseKey(TaskInfo.class.getName() + ".getDatabaseKey", params);
+		DataSourceContextHolder.setDataSourceType(oldDataSource);
+		return database;
+	}
+
+	@Transactional
+	@Override
+	public int save(TaskInfo task){
+		String tendCode = LoginUtils.getSecurityUserBeanInfo().getTendCode();
+		try {
+			QuartzManager.addTask(task, tendCode);
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		int count = super.save(task);
+		return count;
+	}
+
+	@Transactional
+	@Override
+	public int update(TaskInfo task){
+		String tendCode = LoginUtils.getSecurityUserBeanInfo().getTendCode();
+		TaskInfo oldTask = super.getObjectById(task.getId());
+		// 先删除旧任务，再添加任务
+		try {
+			QuartzManager.deleteTask(oldTask, tendCode);
+			QuartzManager.addTask(task, tendCode);
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		int count = super.update(task);
+		return count;
+	}
+
+//	@Override
+//	public int deleteObjectById(String id) throws Exception {
+//		TaskInfo task = super.getObjectById(id);
+//		int count = super.deleteObjectById(id);
+//		String tendCode = LoginUtils.getSecurityUserBeanInfo().getTendCode();
+//		QuartzManager.deleteTask(task, tendCode);
+//		return count;
+//	}
+
+	@Override
+	public int deleteAllObjectByIds(List<String> ids){
+		String tendCode = LoginUtils.getSecurityUserBeanInfo().getTendCode();
+		int count = 0;
+		TaskInfo task = null;
+		for (String id : ids) {
+			task = super.getObjectById(id);
+			count += super.deleteObjectById(id);
+			try {
+				QuartzManager.deleteTask(task, tendCode);
+			} catch (SchedulerException e) {
+				e.printStackTrace();
+			}
+		}
+		return count;
+	}
+
+	@Override
+	public int updateTaskState(List<String> list, Map<String, Object> map) throws Exception  {
+		int count = 0;
+		Map<String, Object> param = new HashMap<>();
+		param.put("idsList", list);
+		List<TaskInfo> taskList = taskInfoDao.queryListByIds(param);
+		Boolean active = (Boolean) map.get("active");
+		String tendCode = LoginUtils.getSecurityUserBeanInfo().getTendCode();
+		for (TaskInfo taskInfo : taskList) {
+			taskInfo.setActive(active);
+			if (active) {
+				QuartzManager.resumeTask(taskInfo, tendCode);
+			} else {
+				QuartzManager.pauseTask(taskInfo, tendCode);
+			}
+			count = super.update(taskInfo);
+		}
+		return count;
+	}
+
+	@Override
+	public int executeNow(List<String> list) throws Exception {
+		Map<String, Object> param = new HashMap<>();
+		param.put("idsList", list);
+		List<TaskInfo> taskList = taskInfoDao.queryListByIds(param);
+		String tendCode = LoginUtils.getSecurityUserBeanInfo().getTendCode();
+		for (TaskInfo taskInfo : taskList) {
+			QuartzManager.triggerTask(taskInfo, tendCode);
+		}
+		return 0;
+	}
+	
+	public Page getTaskInfoByPage(Map<String, Object> map) {
+		Page page = new Page();
+		List<TaskInfo> list = taskInfoDao.getTaskInfoList(map);
+		Integer count = taskInfoDao.getTaskInfoCount(map);
+		page.setLimit((Integer) map.get("limit"));
+		page.setList(list);
+		page.setStart((Integer) map.get("start"));
+		page.setTotal(count);
+		return page;
+	}
+
+}

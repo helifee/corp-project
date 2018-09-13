@@ -1,0 +1,42 @@
+package com.xinleju.platform.sys.num.dao.impl;
+
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.platform.base.dao.impl.BaseDaoImpl;
+import com.xinleju.platform.sys.num.dao.RulerDao;
+import com.xinleju.platform.sys.num.entity.Ruler;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Repository
+public class RulerDaoImpl extends BaseDaoImpl<String,Ruler> implements RulerDao{
+
+	public RulerDaoImpl() {
+		super();
+	}
+
+	@Override
+	public List<Map<String, Object>> getMapListByBillId(String paramater) {
+	return  getSqlSession().selectList("com.xinleju.platform.sys.num.entity.Ruler.queryRuleListByBillId", paramater);
+	}
+	
+	@Override
+	public List<Ruler> getRuleListByBillId(String paramater) {
+		return  getSqlSession().selectList("com.xinleju.platform.sys.num.entity.Ruler.queryListByBillId", paramater);
+	}
+
+	@Override
+	public List<Map<String, Object>> getRulerSortNum(Map<String,Object> paramater) {
+		return  getSqlSession().selectList("com.xinleju.platform.sys.num.entity.Ruler.getRulerSortNum", paramater);
+	}
+
+	
+	
+}

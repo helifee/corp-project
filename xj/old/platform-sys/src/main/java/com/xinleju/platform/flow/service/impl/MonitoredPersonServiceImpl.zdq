@@ -1,0 +1,25 @@
+package com.xinleju.platform.flow.service.impl;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.flow.dao.MonitoredPersonDao;
+import com.xinleju.platform.flow.entity.MonitoredPerson;
+import com.xinleju.platform.flow.service.MonitoredPersonService;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class MonitoredPersonServiceImpl extends  BaseServiceImpl<String,MonitoredPerson> implements MonitoredPersonService{
+	
+
+	@Autowired
+	private MonitoredPersonDao monitoredPersonDao;
+	
+
+}

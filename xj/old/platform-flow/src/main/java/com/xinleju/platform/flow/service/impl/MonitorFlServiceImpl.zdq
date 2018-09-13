@@ -1,0 +1,34 @@
+package com.xinleju.platform.flow.service.impl;
+
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.flow.dao.MonitorFlDao;
+import com.xinleju.platform.flow.dto.MonitorFlDto;
+import com.xinleju.platform.flow.entity.MonitorFl;
+import com.xinleju.platform.flow.service.MonitorFlService;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class MonitorFlServiceImpl extends  BaseServiceImpl<String,MonitorFl> implements MonitorFlService{
+	
+
+	@Autowired
+	private MonitorFlDao monitorFlDao;
+
+	@Override
+	public List<MonitorFlDto> queryMonitorFlowList(Map<String,String> paramMap) {
+		return monitorFlDao.queryMonitorFlowList(paramMap);
+	}
+	
+
+}

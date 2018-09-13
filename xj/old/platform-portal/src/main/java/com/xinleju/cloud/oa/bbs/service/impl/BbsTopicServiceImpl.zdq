@@ -1,0 +1,754 @@
+package com.xinleju.cloud.oa.bbs.service.impl;
+
+import com.xinleju.cloud.oa.bbs.dao.*;
+import com.xinleju.cloud.oa.bbs.dto.BbsForumPermissionDto;
+import com.xinleju.cloud.oa.bbs.dto.BbsTopicDetailDto;
+import com.xinleju.cloud.oa.bbs.dto.BbsTopicDto;
+import com.xinleju.cloud.oa.bbs.dto.ReferDataDto;
+import com.xinleju.cloud.oa.bbs.entity.*;
+import com.xinleju.cloud.oa.bbs.service.BbsForumUserService;
+import com.xinleju.platform.base.utils.*;
+import com.xinleju.platform.tools.data.JacksonUtils;
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.factory.ObjectFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.cloud.oa.bbs.service.BbsTopicService;
+import com.xinleju.cloud.oa.favorite.dao.FavoriteDao;
+import com.xinleju.cloud.oa.favorite.entity.Favorite;
+
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.*;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class BbsTopicServiceImpl extends  BaseServiceImpl<String,BbsTopic> implements BbsTopicService{
+	
+
+	@Autowired
+	private BbsTopicDao bbsTopicDao;
+	@Autowired
+	private BbsReplyDao bbsReplyDao;
+	@Autowired
+ 	private BbsForumUserDao bbsForumUserDao;
+	@Autowired
+	private BbsGradeDao bbsGradeDao;
+	@Autowired
+	private BbsForumDao bbsForumDao;
+	@Autowired
+	private FavoriteDao favoriteDao;
+	@Autowired
+	private BbsForumTypeDao bbsForumTypeDao;
+	@Override
+	public Page queryPage(Map map) {
+	/*	List<BbsTopic> list = bbsTopicDao.queryBeanList(map);
+			Page page = new Page();
+			Integer total = bbsTopicDao.queryBeanCount(map);
+			page.setList(list);
+			page.setStart((Integer) map.get("start"));
+			page.setLimit((Integer) map.get("limit"));
+			page.setTotal(total);*/
+		Page page = bbsTopicDao.getObjectsByPage (map);
+        List<BbsTopic> list = page.getList ();
+		if(list!=null&&!list.isEmpty ()){
+			BbsForum forum = bbsForumDao.getObjectById (list.get (0).getForumId ());
+			if(forum!=null){
+				for(BbsTopic topic:list){
+					topic.setForum (forum.getName ());
+				}
+			}
+		}
+		return page;
+	}
+
+	/**
+	 * 计算帖子点击量
+	 * @param id
+	 * @return
+     */
+	@Override
+	public synchronized int updateClickNum(String id) {
+        BbsTopic bbsTopic =  bbsTopicDao.getObjectById(id);
+		final Integer preClickNum = bbsTopic.getClickNum() == null ? 0 : bbsTopic.getClickNum();
+        bbsTopic.setClickNum(preClickNum+1);
+        return bbsTopicDao.updateNoChangeDate(bbsTopic);
+//		return bbsTopicDao.update(bbsTopic);
+	}
+
+	@Override
+	public Page queryDetailPage(Map map) {
+		Page page = new Page();
+		Integer start = (Integer)map.get ("start");
+		Integer limit = (Integer)map.get ("limit");
+		String id = String.valueOf (map.get ("id"));
+		Map paraMap = new HashMap<String,Object>();
+		BbsTopic bbsTopic = bbsTopicDao.getObjectById (id);
+		BbsForum forum = bbsForumDao.getObjectById (bbsTopic.getForumId ());
+		StringBuffer forumTypePath = new StringBuffer ();
+		if(forum!=null){
+		  BbsForumType forumType = bbsForumTypeDao.getObjectById (forum.getTypeId ());
+		  List<String> pathList = new ArrayList<> ();
+			pathList.add (forumType.getName ());
+			BbsForumType pForumType = forumType;
+		  while (StringUtils.isNotBlank (pForumType.getParentId ())){
+		  	  pForumType =  bbsForumTypeDao.getObjectById (pForumType.getParentId ());
+			  pathList.add(pForumType.getName ());
+		  }
+		  Collections.reverse (pathList);
+		  for(String path:pathList){
+			  forumTypePath.append (path).append (" / ");
+		  }
+		}
+		List<BbsTopicDetailDto> pageList= new ArrayList<BbsTopicDetailDto> ();
+		page.setLimit (limit);
+		page.setStart (start);
+		if(bbsTopic!=null){
+			paraMap.put ("userId",bbsTopic.getCreatePersonId ());
+			List<BbsForumUser> topicUsers = bbsForumUserDao.queryList (paraMap);
+			BbsTopicDetailDto floorHostDto = new BbsTopicDetailDto ();
+			if(topicUsers!=null&&!topicUsers.isEmpty ()){
+				BbsForumUser topicUser = topicUsers.get (0);
+				BbsGrade topicUserGrade = bbsGradeDao.getObjectByScore(topicUser.getScore ()==null?0: topicUser.getScore ());
+				floorHostDto.setPublishTopicNum (topicUser.getPublishTopicNum ());
+				floorHostDto.setScore (topicUser.getScore ());
+				floorHostDto.setUserName (topicUser.getUserName ());
+				floorHostDto.setUserId(topicUser.getUserId ());
+				if(bbsTopic.getScreen ()){
+					floorHostDto.setContent (bbsTopic.getScreenReason ());
+				}else{
+					floorHostDto.setContent (bbsTopic.getContent ());
+				}
+				floorHostDto.setTopic (bbsTopic.getTitle ());
+				floorHostDto.setLevel (topicUserGrade!=null?topicUserGrade.getTitle ():"");
+				floorHostDto.setDept (topicUser.getDept ());
+				floorHostDto.setPost (topicUser.getPost ());
+				floorHostDto.setFeedbackNums (bbsTopic.getReplyNum ());
+				floorHostDto.setFloorHost (Boolean.TRUE);
+				floorHostDto.setTopicId (bbsTopic.getId ());
+				floorHostDto.setReplyId ("");
+				floorHostDto.setForumId (bbsTopic.getForumId ());
+				floorHostDto.setForum (forum!=null?forum.getName ():"");
+				floorHostDto.setPublishTime (bbsTopic.getPublishTime ());
+				floorHostDto.setEssence (bbsTopic.getEssence ());
+				floorHostDto.setReceiveReply (bbsTopic.getReceiveReply ());
+				floorHostDto.setStatus (bbsTopic.getStatus ());
+				floorHostDto.setStick (bbsTopic.getStick ());
+				floorHostDto.setAnonymity (bbsTopic.getAnonymity ());
+                floorHostDto.setLastContentEditor (bbsTopic.getLastContentEditor ());
+                floorHostDto.setLastContentEditTime (bbsTopic.getLastContentEditTime ());
+				floorHostDto.setClickNum (bbsTopic.getClickNum ());
+				floorHostDto.setClosed (bbsTopic.getClosed ());
+				floorHostDto.setFullPath (forumTypePath+(forum!=null?forum.getName ():""));
+			}
+			if(start==0){
+				pageList.add (floorHostDto);
+			}
+			boolean searchFlag=false;
+			map.remove ("id");
+			map.put ("topicId",id);
+			map.put ("limit",limit);
+			//按人员查看标识
+			if(map.get("sortFields")!=null){
+				String searchFie=(String) map.get("sortFields");
+				if(StringUtils.isNotBlank(searchFie)){
+					Map fiMap=JacksonUtils.fromJson(searchFie, HashMap.class);
+					if(fiMap.get("createPersonId")!=null){
+						searchFlag=true;
+					}
+				}
+			}
+			Page replyPage = bbsReplyDao.getObjectsByPage (map);
+                List<BbsReply> replyList = replyPage.getList ();
+                if(searchFlag){
+                	replyList=reSortReplyList(bbsTopic.getCreatePersonId (),replyList);
+                }
+				if(replyList!=null&&!replyList.isEmpty ()){
+					for(BbsReply bbsReply:replyList){
+						paraMap.put ("userId",bbsReply.getReplyUserId ());
+						List<BbsForumUser> replyUsers = bbsForumUserDao.queryList (paraMap);
+						if(replyUsers!=null&&!replyUsers.isEmpty ()){
+							BbsForumUser replyUser = replyUsers.get (0);
+							BbsGrade replyUserGrade = bbsGradeDao.getObjectByScore(replyUser.getScore ()==null?0: replyUser.getScore ());
+							BbsTopicDetailDto relayUserDto = new BbsTopicDetailDto ();
+							relayUserDto.setContent (bbsReply.getContent ());
+							if(bbsReply.getScreen ()){
+								relayUserDto.setContent (bbsReply.getScreenReason ());
+							}else{
+								relayUserDto.setContent (bbsReply.getContent ());
+							}
+							relayUserDto.setTopic ("");
+							relayUserDto.setLevel (replyUserGrade.getTitle ());
+							relayUserDto.setDept (replyUser.getDept ());
+							relayUserDto.setPost (replyUser.getPost ());
+							relayUserDto.setPraiseNum (bbsReply.getPraiseNum ());
+							relayUserDto.setFloorHost (Boolean.FALSE);
+							relayUserDto.setPublishTopicNum (replyUser.getPublishTopicNum ());
+							relayUserDto.setPublishTime (bbsReply.getReplyTime ());
+							relayUserDto.setScore (replyUser.getScore ());
+							relayUserDto.setUserName (replyUser.getUserName ());
+							relayUserDto.setUserId(replyUser.getUserId ());
+							relayUserDto.setReplyId (bbsReply.getId ());
+							relayUserDto.setTopicId (bbsTopic.getId ());
+							relayUserDto.setForumId(bbsTopic.getForumId ());
+							relayUserDto.setForum(forum!=null?forum.getName ():"");
+							relayUserDto.setFloor (String.valueOf (bbsReply.getSortNum ()));
+                            relayUserDto.setLastContentEditTime (bbsReply.getLastContentEditTime ());
+                            relayUserDto.setLastContentEditor (bbsReply.getLastContentEditor ());
+							//处理引用的数据
+							if(StringUtils.isNotBlank (bbsReply.getReplyReferenceId ())){
+								List<ReferDataDto> list = new ArrayList();
+								if(bbsReply.getReplyReferenceId ().equals (bbsTopic.getId ())){
+									BbsTopic referReply = bbsTopicDao.getObjectById (bbsReply.getReplyReferenceId ());
+									ReferDataDto dataDto = new ReferDataDto ();
+									dataDto.setReferName (referReply.getCreatePersonName ());
+									dataDto.setReferContent (referReply.getScreen ()?referReply.getScreenReason ():referReply.getContent ());
+									dataDto.setReferFloor ("楼主");
+									dataDto.setReferPublishTime (referReply.getCreateDate ());
+									list.add(dataDto);
+								}else {
+									BbsReply referReply = bbsReplyDao.getObjectById (bbsReply.getReplyReferenceId ());
+									ReferDataDto dataDto = new ReferDataDto ();
+									dataDto.setReferName (referReply.getReplyUserName ());
+									dataDto.setReferContent (referReply.getScreen ()?referReply.getScreenReason ():referReply.getContent ());
+									dataDto.setReferFloor (String.valueOf (referReply.getSortNum ()));
+									dataDto.setReferPublishTime (referReply.getCreateDate ());
+									list.add(dataDto);
+									while(StringUtils.isNotBlank (referReply.getReplyReferenceId ())){
+										if(referReply.getReplyReferenceId ().equals (bbsTopic.getId ())){
+											BbsTopic referTopic = bbsTopicDao.getObjectById (referReply.getReplyReferenceId ());
+											ReferDataDto dataTopicDto = new ReferDataDto ();
+											dataTopicDto.setReferName (referTopic.getCreatePersonName ());
+											dataTopicDto.setReferContent (referTopic.getScreen ()?referTopic.getScreenReason ():referTopic.getContent ());
+											dataTopicDto.setReferFloor ("楼主");
+											dataTopicDto.setReferPublishTime (referTopic.getCreateDate ());
+											list.add(dataTopicDto);
+											break;
+										}else{
+											referReply = bbsReplyDao.getObjectById (referReply.getReplyReferenceId ());
+											ReferDataDto dataCyDto = new ReferDataDto ();
+											dataCyDto.setReferName (referReply.getReplyUserName ());
+											dataCyDto.setReferContent (referReply.getScreen ()?referReply.getScreenReason ():referReply.getContent ());
+											dataCyDto.setReferFloor (String.valueOf (referReply.getSortNum ()));
+											dataCyDto.setReferPublishTime (referReply.getCreateDate ());
+											list.add(dataCyDto);
+										}
+									}
+								}
+								Collections.reverse (list);
+								relayUserDto.setReferData (list);
+							}
+							pageList.add (relayUserDto);
+						}
+					}
+				}
+			page.setTotal (replyPage.getTotal ()+1);
+			page.setList (pageList);
+		}
+		return page;
+	}
+
+	/**
+	  * @Description:回复重新排序将楼主回复置前
+	  * @author:zhangfangzhi
+	  * @date 2017年7月5日 下午4:35:49
+	  * @version V1.0
+	 */
+	private List<BbsReply> reSortReplyList(String createPersonId, List<BbsReply> replyList) {
+		List<BbsReply> hostReplyList=new ArrayList<BbsReply>();
+		for(int i=0;i<replyList.size();i++){
+			BbsReply bbsReply=replyList.get(i);
+			if(bbsReply!=null && bbsReply.getCreatePersonId().equals(createPersonId)){
+				hostReplyList.add(bbsReply);
+			}
+		}
+		for(int s=0;s<replyList.size();s++){
+			BbsReply bbsReply=replyList.get(s);
+			if(bbsReply!=null && !bbsReply.getCreatePersonId().equals(createPersonId)){
+				hostReplyList.add(bbsReply);
+			}
+		}
+		return hostReplyList;
+	}
+
+	/**
+	 * 更新帖子状态
+	 * @param updateJson
+	 * @return
+     */
+	@Override
+	@Transactional
+	public String updateState(String updateJson) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		Map<String,Object> paramMap = JacksonUtils.fromJson(updateJson,HashMap.class);
+		final String state = String.valueOf(paramMap.get("oper"));
+		final String id = String.valueOf(paramMap.get("id"));
+		Integer hours = 24;
+		if(state.equals("stick")){
+			hours =  Integer.valueOf(String.valueOf(paramMap.get("param")));
+		}
+		String forumId =null;
+		if(state.equals("trans")){
+			forumId =  String.valueOf(paramMap.get("param"));
+		}
+		String reason = "";
+		Integer banDay = 0;
+		if(state.equals ("screen")){
+			reason =  String.valueOf(paramMap.get("param"));
+			banDay =  Integer.valueOf(String.valueOf(paramMap.get("banDay")));
+		}else
+		if(state.equals ("unScreen")){
+			reason =  String.valueOf(paramMap.get("param"));
+		}
+			BbsTopic bbsTopic = bbsTopicDao.getObjectById(id);
+			if(bbsTopic != null){
+				switch (state){
+					case "stick"://置顶
+						bbsTopic.setStick(Boolean.TRUE);
+						bbsTopic.setStickCycle(hours);
+						bbsTopic.setStickInvalidTime(new Date(System.currentTimeMillis()+hours * 60 * 60 * 1000));
+						info = ResultInfo(bbsTopicDao.update(bbsTopic));
+						break;
+					case "unStick"://取消置顶
+						bbsTopic.setStick(Boolean.FALSE);
+						bbsTopic.setStickInvalidTime (new Date ());
+						info = ResultInfo(bbsTopicDao.update(bbsTopic));
+						break;
+					case "essence"://加精华
+						bbsTopic.setEssence (Boolean.TRUE);
+						info = ResultInfo(bbsTopicDao.update(bbsTopic));
+						if(info.isSucess ()){//加分
+							BbsForum bbsForum = bbsForumDao.getObjectById (bbsTopic.getForumId ());
+							Map paraMap = new HashMap ();
+							paraMap.put ("userId",bbsTopic.getCreatePersonId ());
+							BbsForumUser bbsForumUser = (BbsForumUser)bbsForumUserDao.queryList (paraMap).get (0);
+							bbsForumUser.setScore ((bbsForumUser.getScore ()==null?0:bbsForumUser.getScore ())+bbsForum.getSetEssenceScore ());
+							bbsForumUserDao.update (bbsForumUser);
+						}
+						break;
+					case "unEssence"://取消精华
+						bbsTopic.setEssence (Boolean.FALSE);
+						info = ResultInfo(bbsTopicDao.update(bbsTopic));
+
+						break;
+					case "collect"://收藏
+						break;
+					case "trans": //转移
+						bbsTopic.setForumId (forumId);
+						Map paramTrans = new HashMap();
+						paramTrans.put("forumId", forumId);
+						BbsTopic maxBbsTopic = bbsTopicDao.selectMaxSortBbsTopic(paramTrans);
+						Integer sort = 1;
+						if(maxBbsTopic!=null){
+							sort= maxBbsTopic.getSortNum()+1;
+						}
+						bbsTopic.setSortNum(sort);
+						info = ResultInfo(bbsTopicDao.update(bbsTopic));
+						break;
+					case "endPost": //结帖
+						bbsTopic.setClosed (Boolean.TRUE);
+						bbsTopic.setReceiveReply (Boolean.FALSE);//不可回复
+						info = ResultInfo(bbsTopicDao.update(bbsTopic));
+						break;
+					case "screen":  // 屏蔽回复内容
+						bbsTopic.setScreen (Boolean.TRUE);//屏蔽回复
+						bbsTopic.setScreenReason (reason);//屏蔽原因
+						if(banDay>0){
+							/* 禁言用户*/
+							Map userMap = new HashMap ();
+							userMap.put ("userId",bbsTopic.getCreatePersonId ());
+							List<BbsForumUser> bbsForumUsers = bbsForumUserDao.queryList (userMap);
+							if(bbsForumUsers!=null&&!bbsForumUsers.isEmpty ()){
+								String plot = "";
+								if(banDay==15){
+									plot = "情节轻微";
+								}else if(banDay==30){
+									plot = "情节严重";
+								}else if(banDay==90){
+									plot = "特别严重";
+								}else if(banDay==180){
+									plot = "极为恶劣";
+								}
+								BbsForumUser bbsForumUser= bbsForumUsers.get (0);
+								bbsForumUser.setBanStartDate (new Date ());
+								Calendar cal = Calendar.getInstance();
+								cal.add(Calendar.DATE, banDay);
+								bbsForumUser.setBanEndDate (cal.getTime());
+								bbsForumUser.setViolationPlot (plot);
+								bbsForumUser.setBanCycle (banDay);
+								info = ResultInfo(bbsForumUserDao.update(bbsForumUser));
+							}
+						}
+						info = ResultInfo(bbsTopicDao.update(bbsTopic));
+						break;
+					case "unScreen": //解除屏蔽
+						bbsTopic.setScreen (Boolean.FALSE);//解除屏蔽
+						bbsTopic.setScreenReason (reason);//清空
+						info = ResultInfo(bbsTopicDao.update(bbsTopic));
+						break;
+				}
+			}else{
+				info.setResult(id);
+				info.setCode(ErrorInfoCode.NULL_ERROR.getValue());
+				info.setMsg("未找有效的数据！");
+				info.setSucess(false);
+				return JacksonUtils.toJson(info);
+			}
+		return JacksonUtils.toJson(info);
+	}
+    private DubboServiceResultInfo ResultInfo(Integer result){
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		if(result>0){
+			info.setResult (JacksonUtils.toJson (result));
+			info.setSucess(true);
+			info.setMsg("操作成功！");
+		}else{
+			info.setResult (JacksonUtils.toJson (result));
+			info.setSucess(false);
+			info.setMsg("操作失败！");
+		}
+		return info;
+	}
+
+	/**
+	 * 按作者查询
+	 * @param map
+	 * @return
+     */
+	@Override
+	public List queryDetailList(Map map) {
+		List list = new ArrayList ();
+		Integer start = (Integer)map.get ("start");
+		Integer limit = (Integer)map.get ("limit");
+		String id = String.valueOf (map.get ("id"));
+		String userId = String.valueOf (map.get ("createPersonId"));
+		Map paraMap = new HashMap<String,Object>();
+		BbsTopic bbsTopic = bbsTopicDao.getObjectById (id);
+		BbsForum forum = bbsForumDao.getObjectById (bbsTopic.getForumId ());
+		List<BbsTopicDetailDto> pageList= new ArrayList<BbsTopicDetailDto> ();
+		if(bbsTopic!=null){
+			paraMap.put ("userId",bbsTopic.getCreatePersonId ());
+			List<BbsForumUser> topicUsers = bbsForumUserDao.queryList (paraMap);
+			BbsTopicDetailDto floorHostDto = new BbsTopicDetailDto ();
+			if(topicUsers!=null&&!topicUsers.isEmpty ()){
+				BbsForumUser topicUser = topicUsers.get (0);
+				BbsGrade topicUserGrade = bbsGradeDao.getObjectByScore(topicUser.getScore ()==null?0: topicUser.getScore ());
+				floorHostDto.setPublishTopicNum (topicUser.getPublishTopicNum ());
+				floorHostDto.setScore (topicUser.getScore ());
+				floorHostDto.setUserName (topicUser.getUserName ());
+				floorHostDto.setUserId(topicUser.getUserId ());
+				if(bbsTopic.getScreen ()){
+					floorHostDto.setContent (bbsTopic.getScreenReason ());
+				}else{
+					floorHostDto.setContent (bbsTopic.getContent ());
+				}
+				floorHostDto.setTopic (bbsTopic.getTitle ());
+				floorHostDto.setLevel (topicUserGrade.getTitle ());
+				floorHostDto.setDept (topicUser.getDept ());
+				floorHostDto.setPost (topicUser.getPost ());
+				floorHostDto.setFeedbackNums (bbsTopic.getReplyNum ());
+				floorHostDto.setFloorHost (Boolean.TRUE);
+				floorHostDto.setTopicId (bbsTopic.getId ());
+				floorHostDto.setReplyId ("");
+				floorHostDto.setForumId (bbsTopic.getForumId ());
+				floorHostDto.setForum (forum!=null?forum.getName ():"");
+				floorHostDto.setPublishTime (bbsTopic.getPublishTime ());
+				floorHostDto.setEssence (bbsTopic.getEssence ());
+				floorHostDto.setReceiveReply (bbsTopic.getReceiveReply ());
+				floorHostDto.setStatus (bbsTopic.getStatus ());
+				floorHostDto.setStick (bbsTopic.getStick ());
+				floorHostDto.setAnonymity (bbsTopic.getAnonymity ());
+                floorHostDto.setLastContentEditor (bbsTopic.getLastContentEditor ());
+                floorHostDto.setLastContentEditTime (bbsTopic.getLastContentEditTime ());
+				floorHostDto.setClosed (bbsTopic.getClosed ());
+			}
+			if(Objects.equals (userId,bbsTopic.getCreatePersonId ())){
+				pageList.add (floorHostDto);
+			}
+			map.remove ("id");
+			map.put ("topicId",id);
+			map.put("createPersonId",userId);
+			map.put ("limit",-1);
+			Page replyPage = bbsReplyDao.getObjectsByPage (map);
+			List<BbsReply> replyList = replyPage.getList ();
+			if(replyList!=null&&!replyList.isEmpty ()){
+				for(BbsReply bbsReply:replyList){
+					paraMap.put ("userId",bbsReply.getCreatePersonId ());
+					List<BbsForumUser> replyUsers = bbsForumUserDao.queryList (paraMap);
+					if(replyUsers!=null&&!replyUsers.isEmpty ()){
+						BbsForumUser replyUser = replyUsers.get (0);
+						BbsGrade replyUserGrade = bbsGradeDao.getObjectByScore(replyUser.getScore ()==null?0: replyUser.getScore ());
+						BbsTopicDetailDto relayUserDto = new BbsTopicDetailDto ();
+						relayUserDto.setContent (bbsReply.getContent ());
+						if(bbsReply.getScreen ()){
+							relayUserDto.setContent (bbsReply.getScreenReason ());
+						}else{
+							relayUserDto.setContent (bbsReply.getContent ());
+						}
+						relayUserDto.setTopic ("");
+						relayUserDto.setLevel (replyUserGrade.getTitle ());
+						relayUserDto.setDept (replyUser.getDept ());
+						relayUserDto.setPost (replyUser.getPost ());
+						relayUserDto.setPraiseNum (bbsReply.getPraiseNum ());
+						relayUserDto.setFloorHost (Boolean.FALSE);
+						relayUserDto.setPublishTopicNum (replyUser.getPublishTopicNum ());
+						relayUserDto.setPublishTime (bbsReply.getReplyTime ());
+						relayUserDto.setScore (replyUser.getScore ());
+						relayUserDto.setUserName (replyUser.getUserName ());
+						relayUserDto.setUserId(replyUser.getUserId ());
+						relayUserDto.setReplyId (bbsReply.getId ());
+						relayUserDto.setTopicId (bbsTopic.getId ());
+						relayUserDto.setForumId(bbsTopic.getForumId ());
+						relayUserDto.setForum(forum!=null?forum.getName ():"");
+						relayUserDto.setFloor (String.valueOf (bbsReply.getSortNum ()));
+                        relayUserDto.setLastContentEditor (bbsReply.getLastContentEditor ());
+                        relayUserDto.setLastContentEditTime (bbsReply.getLastContentEditTime ());
+
+						if(StringUtils.isNotBlank (bbsReply.getReplyReferenceId ())) {
+							List<ReferDataDto> referlist = new ArrayList ();
+							if (bbsReply.getReplyReferenceId ().equals (bbsTopic.getId ())) {
+								BbsTopic referReply = bbsTopicDao.getObjectById (bbsReply.getReplyReferenceId ());
+								ReferDataDto dataDto = new ReferDataDto ();
+								dataDto.setReferName (referReply.getCreatePersonName ());
+								dataDto.setReferContent (referReply.getScreen ()?referReply.getScreenReason ():referReply.getContent ());
+								dataDto.setReferFloor ("楼主");
+								dataDto.setReferPublishTime (referReply.getCreateDate ());
+								referlist.add (dataDto);
+							} else {
+								BbsReply referReply = bbsReplyDao.getObjectById (bbsReply.getReplyReferenceId ());
+								ReferDataDto dataDto = new ReferDataDto ();
+								dataDto.setReferName (referReply.getReplyUserName ());
+								dataDto.setReferContent (referReply.getScreen ()?referReply.getScreenReason ():referReply.getContent ());
+								dataDto.setReferFloor (String.valueOf (referReply.getSortNum ()));
+								dataDto.setReferPublishTime (referReply.getCreateDate ());
+								referlist.add (dataDto);
+								while (StringUtils.isNotBlank (referReply.getReplyReferenceId ())) {
+									if (referReply.getReplyReferenceId ().equals (bbsTopic.getId ())) {
+										BbsTopic referTopic = bbsTopicDao.getObjectById (referReply.getReplyReferenceId ());
+										ReferDataDto dataTopicDto = new ReferDataDto ();
+										dataTopicDto.setReferName (referTopic.getCreatePersonName ());
+										dataTopicDto.setReferContent (referTopic.getScreen ()?referTopic.getScreenReason ():referTopic.getContent ());
+										dataTopicDto.setReferFloor ("楼主");
+										dataTopicDto.setReferPublishTime (referTopic.getCreateDate ());
+										referlist.add (dataTopicDto);
+										break;
+									} else {
+										referReply = bbsReplyDao.getObjectById (referReply.getReplyReferenceId ());
+										ReferDataDto dataCyDto = new ReferDataDto ();
+										dataCyDto.setReferName (referReply.getReplyUserName ());
+										dataCyDto.setReferContent (referReply.getScreen ()?referReply.getScreenReason ():referReply.getContent ());
+										dataCyDto.setReferFloor (String.valueOf (referReply.getSortNum ()));
+										dataCyDto.setReferPublishTime (referReply.getCreateDate ());
+										referlist.add (dataCyDto);
+									}
+								}
+							}
+							Collections.reverse (referlist);
+							relayUserDto.setReferData (referlist);
+						}
+						pageList.add (relayUserDto);
+					}
+				}
+			}
+		}
+		return pageList;
+	}
+
+	/**
+	 * 获取发起或者回复的帖子分页
+	 * @param map
+	 * @return
+     */
+	@Override
+	public Page queryBeanPage(Map map) {
+		Page page = new Page ();
+		String oper = String.valueOf (map.get ("oper"));
+		map.remove ("oper");
+        if(Objects.equals (oper,"launch")){
+        	//我发起的帖子  发布/草稿
+			 page = bbsTopicDao.getObjectsByPage (map);
+			List<BbsTopic> list = page.getList ();
+			if(list!=null&&!list.isEmpty ()){
+				for(BbsTopic bbsTopic:list){
+					BbsForum bbsForum =  bbsForumDao.getObjectById (bbsTopic.getForumId ());
+					String forum = bbsForum!=null?	bbsForum.getName ():"";
+					bbsTopic.setForum (forum);
+				}
+			}
+		}else if(Objects.equals (oper,"reply")){
+			/*map.put ("groupByFields",JacksonUtils.toJson (new String[]{"topicId"}));
+            //我回复的帖子
+			Page replyPage =  bbsReplyDao.getObjectsByPage (map);
+			 List<BbsReply> list = replyPage.getList ();
+			 List<BbsTopic> topicList = new ArrayList();
+			if(list!=null&&!list.isEmpty ()){
+				for(BbsReply bbsReply:list){
+					BbsTopic bbsTopic  = bbsTopicDao.getObjectById (bbsReply.getTopicId ());
+					if(bbsTopic!=null){
+						String forum = bbsForumDao.getObjectById (bbsTopic.getForumId ()).getName ();
+						bbsTopic.setForum (forum);
+						topicList.add (bbsTopic);
+					}
+				}
+			}
+			page.setList (topicList);
+			page.setLimit (replyPage.getLimit ());
+			page.setTotal (replyPage.getTotal ());
+			page.setStart (replyPage.getStart ());*/
+            List<BbsTopic> list = bbsTopicDao.queryReplyTopicPage (map);
+			Integer total = bbsTopicDao.queryReplyTopicCount (map);
+			page.setList (list);
+			page.setLimit (Integer.valueOf (String.valueOf (map.get("limit"))));
+			page.setStart (Integer.valueOf (String.valueOf (map.get("start"))));
+			page.setTotal (total);
+		}
+		return page;
+	}
+
+	@Override
+	public int deleteObjectById(String id) throws Exception {
+		final BbsTopic bbsTopic = bbsTopicDao.getObjectById (id);
+		int num = super.deleteObjectById (id);
+		if (num == 1){
+			new Thread (new Runnable () {
+				@Override
+				public void run() {
+				Map map = new HashMap ();
+				map.put ("topicId", bbsTopic.getId ());
+				List<BbsReply> replyList = bbsReplyDao.queryList (map);
+				if(replyList!=null&&!replyList.isEmpty ()){
+					List<String> list = new ArrayList<> ();
+					for(BbsReply reply:replyList){
+						  list.add (reply.getId ());
+					}
+					bbsReplyDao.deleteAllObjectByIds(list);
+				}
+				}
+			}).start ();
+	   }
+		return num;
+	}
+
+	@Override
+	public int deleteAllObjectByIds(List<String> ids) throws Exception {
+		Map paramMap=new HashMap();
+		paramMap.put("ids", ids);
+		final List<BbsTopic> topicList = bbsTopicDao.queryBeanByIds(paramMap);
+		int num = super.deleteAllObjectByIds (ids);
+		if(num>0){
+//			new Thread (new Runnable () {
+//				@Override
+//				public void run() {
+					if (topicList != null && !topicList.isEmpty ()) {
+						List<String> list = new ArrayList<String> ();
+						for (BbsTopic bbsTopic : topicList) {
+							Map map = new HashMap ();
+							map.put ("topicId", bbsTopic.getId ());
+							List<BbsReply> replyList = bbsReplyDao.queryList (map);
+							if(replyList!=null&&!replyList.isEmpty ()){
+								for(BbsReply bbsReply:replyList){
+									list.add(bbsReply.getId ());
+								}
+							}
+						}
+						  bbsReplyDao.deleteAllObjectByIds (list);
+					}
+//				}
+//			}).start ();
+		}
+		return num;
+	}
+
+	@Override
+	public int deletePseudoObjectById(String id) throws Exception {
+
+		final BbsTopic bbsTopic = bbsTopicDao.getObjectById (id);
+		int num = super.deletePseudoObjectById (id);
+		if (num == 1){
+//			new Thread (new Runnable () {
+//				@Override
+//				public void run() {
+					Map map = new HashMap ();
+					map.put ("topicId", bbsTopic.getId ());
+					List<BbsReply> replyList = bbsReplyDao.queryList (map);
+					if(replyList!=null&&!replyList.isEmpty ()){
+						List<String> list = new ArrayList<> ();
+						for(BbsReply reply:replyList){
+							list.add (reply.getId ());
+						}
+						bbsReplyDao.deletePseudoAllObjectByIds (list);
+					}
+//				}
+//			}).start ();
+
+		}
+		return num;
+	}
+
+	@Override
+	public int deletePseudoAllObjectByIds(List<String> ids) throws Exception {
+		Map paramMap=new HashMap();
+		paramMap.put("ids", ids);
+		final List<BbsTopic> topicList = bbsTopicDao.queryBeanByIds(paramMap);
+		int num = super.deletePseudoAllObjectByIds (ids);
+		if(num>0){
+//			new Thread (new Runnable () {
+//				@Override
+//				public void run() {
+					if (topicList != null && !topicList.isEmpty ()) {
+						List<String> list = new ArrayList<String> ();
+						for (BbsTopic bbsTopic : topicList) {
+							Map map = new HashMap ();
+							map.put ("topicId", bbsTopic.getId ());
+							List<BbsReply> replyList = bbsReplyDao.queryList (map);
+							if(replyList!=null&&!replyList.isEmpty ()){
+								for(BbsReply bbsReply:replyList){
+									list.add(bbsReply.getId ());
+								}
+							}
+						}
+						bbsReplyDao.deletePseudoAllObjectByIds (list);
+					}
+//				}
+//			}).start ();
+		}
+		return num;
+	}
+
+	@Override
+	public int addFavorite(List<String> list) {
+		SecurityUserDto securityUserDto=LoginUtils.getSecurityUserBeanInfo().getSecurityUserDto();
+		Map<String,Object> paramMap=new HashMap<String,Object>();
+		paramMap.put("code", "ROOT_FAVORITE");
+		paramMap.put("createPersonId", securityUserDto.getId());
+		Favorite favoriteRoot=favoriteDao.getFavoriteRoot(paramMap);
+		List<Favorite> favoriteList=new ArrayList<Favorite>();
+		if(favoriteRoot!=null && favoriteRoot.getId()!=null){
+			if(list!=null && list.size()>0){
+				for(int i=0;i<list.size();i++){
+					String id=list.get(i);
+					BbsTopic bbsTopic = bbsTopicDao.getObjectById(id);
+					Favorite favorite=new Favorite();
+//					favorite.setId(IDGenerator.getUUID());
+					favorite.setId(id);
+					favorite.setCode(id);
+					favorite.setDelflag(false);
+					favorite.setIsFavorite(false);
+					favorite.setName(bbsTopic.getTitle());
+					favorite.setParentId(favoriteRoot.getId());
+					String link="/platform-app/oa/bbs/topic/topic_detail.html?id="+bbsTopic.getId();
+					favorite.setResourceLink(link);
+					favoriteList.add(favorite);
+				}
+			}
+		}
+		return favoriteDao.saveBatch(favoriteList);
+	}
+}

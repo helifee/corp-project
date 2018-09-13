@@ -1,0 +1,415 @@
+/*
+ * @(#)Ye0080ServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 考勤系统
+ */
+package com.yds.att.service.impl;
+
+import java.text.MessageFormat;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.List;
+
+import org.springframework.stereotype.Service;
+
+import com.yds.att.bean.AttInfo;
+import com.yds.att.bean.Ye0080CondA;
+import com.yds.att.bean.Ye0080CondB;
+import com.yds.att.common.service.DateRelationService;
+import com.yds.att.dao.Ye0080Dao;
+import com.yds.att.service.AttConstants.DateTypeEnum;
+import com.yds.att.service.AttConstants.VacationType;
+import com.yds.att.service.AttConstants.VacationTypeText;
+import com.yds.att.service.Ye0080Service;
+import com.yds.base.service.AbstractBaseService;
+
+/**
+ * @see com.yds.att.service.Ye0080Service
+ * 
+ */
+@Service("ye0080Service")
+public class Ye0080ServiceImpl extends AbstractBaseService implements Ye0080Service {
+
+	private static String STR_NONE = "&nbsp;";
+	private static String STR_KG = "旷工";
+	private static String STR_OT = "加班";
+	private static String CSS_R1 = "color_red";
+	private static String CSS_R2 = "color_lightgreen";
+	private static String CSS_R3 = "color_darkgreen";
+	private static String CSS_R4 = "bgclr_eee";
+	private static String CSS_TODAY = "font_weight_b";
+
+	private Ye0080Dao ye0080Dao;
+	private DateRelationService dateRelationService;
+
+	private SimpleDateFormat formatter;
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public List<Ye0080CondA> getYe0080AllList(AttInfo bean, List<Integer> types) {
+		List<AttInfo> list = ye0080Dao.getYe0080ListByDate(bean);
+		Calendar cal = Calendar.getInstance();
+		DateTypeEnum dt;
+		formatter = new SimpleDateFormat("yyyyMMdd");
+		String today = formatter.format(cal.getTime());
+		cal.set(Integer.parseInt(bean.getYear()), Integer.parseInt(bean.getMonth()) - 1, 1);
+		cal.add(Calendar.MONTH, 1);
+		cal.add(Calendar.DAY_OF_YEAR, -1);
+		int days = cal.get(Calendar.DAY_OF_MONTH);
+		formatter = new SimpleDateFormat("HH:mm");
+		types.add(0);
+
+		cal.set(Integer.parseInt(bean.getYear()), Integer.parseInt(bean.getMonth()) - 1, 1);
+		for (int i = 1; i <= days; i++) {
+			cal.set(Calendar.DAY_OF_MONTH, i);
+			dt = dateRelationService.getDateType(cal.getTime());
+			types.add(DateTypeEnum.WORK.equals(dt) ? 0 : (DateTypeEnum.REST.equals(dt) ? 2 : 1));
+		}
+		return convert(list, days, today);
+	}
+
+	/**
+	 * 格式转换
+	 * 
+	 * @param input 原始数据
+	 * @param days 总天数
+	 * @param today 今天
+	 * @return 转换后的格式
+	 */
+	private List<Ye0080CondA> convert(List<AttInfo> input, int days, String today) {
+		Ye0080CondA tmp = null;
+		AttInfo src;
+		List<Ye0080CondA> ret = new ArrayList<Ye0080CondA>();
+		List<String> info = new ArrayList<String>();
+		String lastId = "";
+		int nowDay = 1;
+		String todayStyle = "";
+
+		// 将每个人的考勤记录放到一个bean中
+		for (int i = 0; i < input.size(); i++) {
+			src = input.get(i);
+			int sDay = Integer.parseInt(src.getDay());
+			if (!lastId.equals(src.getEmpId())) {
+				// 空数据填充
+				fillEmpty(tmp, nowDay - 1, days);
+
+				lastId = src.getEmpId();
+				nowDay = 1;
+				tmp = new Ye0080CondA();
+				tmp.setEmpId(src.getEmpId());
+				tmp.setEmpName(src.getEmpName());
+				tmp.setStates(new ArrayList<Ye0080CondB>());
+				ret.add(tmp);
+			}
+			if (null != tmp) {
+				// 空数据填充
+				fillEmpty(tmp, nowDay, sDay);
+				nowDay = sDay;
+
+				// 今日变色
+				todayStyle = "";
+				if (today.startsWith(src.getYear())) {
+					if (today.substring(4, 6).equals(src.getMonth())) {
+						if (today.endsWith(src.getDay())) {
+							todayStyle = CSS_TODAY;
+						}
+					}
+				}
+
+				calcTime(info, src, todayStyle);
+
+				tmp.getStates().add(new Ye0080CondB(mkNode(info.get(0), todayStyle, info.get(1)), mkNode(info.get(2), todayStyle, info.get(3))));
+				nowDay++;
+			}
+		}
+		// 空数据填充
+		fillEmpty(tmp, nowDay - 1, days);
+
+		return ret;
+	}
+
+	/**
+	 * 空数据填充
+	 * 
+	 * @param obj 记录bean
+	 * @param count 数量
+	 */
+	private void fillEmpty(Ye0080CondA obj, int now, int dest) {
+		while (null != obj && dest > now) {
+			// obj.getStates().add(new Ye0080CondB(mkNode("-", dayTypes.get(now)
+			// == 0 ? "" : CSS_R4), mkNode("-", dayTypes.get(now) == 0 ? "" :
+			// CSS_R4)));
+			obj.getStates().add(new Ye0080CondB(mkNode(STR_NONE), mkNode(STR_NONE)));
+			now++;
+		}
+	}
+
+	/**
+	 * 按格式生成html
+	 * 
+	 * @param txt 内容
+	 * @param style 样式
+	 * @return 生成后的文本
+	 */
+	private String mkNode(String txt, String... style) {
+		String cls = "";
+		StringBuffer bf = new StringBuffer();
+		if (null != style && style.length > 0) {
+			for (int i = 0; i < style.length; i++) {
+				bf.append(style[i]);
+				bf.append(" ");
+			}
+			cls = bf.toString().trim();
+			if (cls.length() > 0) {
+				cls = " class=\"" + cls + "\"";
+			}
+		}
+
+		return MessageFormat.format("<div{0}>{1}</div>", cls, txt);
+	}
+
+	/**
+	 * 计算显示数据
+	 * 
+	 * @param data
+	 * @param info
+	 * @param todayStyle
+	 */
+	private void calcTime(List<String> info, AttInfo data, String todayStyle) {
+		info.clear();
+
+		Date rs = data.getRstartTime();
+		Date re = data.getRendTime();
+		Date ps = data.getPstartTime();
+		Date pe = data.getPendTime();
+
+		Calendar tm = Calendar.getInstance();
+
+		if (null != data.getFirstTime()) {
+			tm.setTime(data.getFirstTime());
+			tm.set(Calendar.SECOND, 0);
+			tm.set(Calendar.MILLISECOND, 0);
+			data.setFirstTime(tm.getTime());
+		}
+		if (null != data.getLastTime()) {
+			tm.setTime(data.getLastTime());
+			tm.set(Calendar.SECOND, 0);
+			tm.set(Calendar.MILLISECOND, 0);
+			data.setLastTime(tm.getTime());
+		}
+
+		// 历史数据修正
+		if (null == rs) {
+			rs = re;
+		} else if (null == re) {
+			re = rs;
+		}
+
+		// 旷工
+		if (null == rs && null == re) {
+
+			// 旷工：无任何申请
+			if (null == data.getAppId() && null == data.getAppIdAddi() && null == data.getAttStatusCor()) {
+				info.add(STR_KG);
+				info.add(CSS_R1);
+				info.add(STR_NONE);
+				info.add(CSS_R1);
+			} else {
+
+				info.add(STR_NONE);
+				info.add("");
+				info.add(STR_NONE);
+				info.add("");
+
+				// 考勤更正
+				fixCorrect(info, data);
+
+				// 休假
+				fixRest(info, data);
+			}
+
+			// 漏考
+		} else if (rs.equals(re)) {
+			if (rs.before(data.getLunchTimeEnd())) {
+				info.add(formatter.format(rs));
+				info.add(rs.after(ps)?CSS_R1:"");
+				info.add(STR_NONE);
+				info.add("");
+			} else {
+				info.add(STR_NONE);
+				info.add("");
+				info.add(formatter.format(re));
+				
+				if (re.before(pe)) {
+
+					// 班型:非临时班型
+					if (data.getTypeFlg().equals("0")) {
+						info.add(CSS_R1);
+					} else {
+						info.add("");
+					}
+				} else {
+					info.add("");
+				}
+			}
+		} else {
+
+			info.add(formatter.format(rs));
+
+			// 迟到
+			if (rs.after(ps)) {
+				info.add(CSS_R1);
+			} else {
+				info.add("");
+			}
+
+			info.add(formatter.format(re));
+
+			// 早退
+			if (re.before(pe)) {
+
+				// 班型:非临时班型
+				if (data.getTypeFlg().equals("0")) {
+					info.add(CSS_R1);
+				} else {
+					info.add("");
+				}
+			} else {
+				info.add("");
+			}
+
+			fixCorrect(info, data);
+
+			fixRest(info, data);
+
+			fixOverTime(info, data);
+		}
+	}
+
+	/**
+	 * 处理加班显示
+	 * 
+	 * @param info
+	 * @param data
+	 */
+	private void fixOverTime(List<String> info, AttInfo data) {
+		if ("3".equals(data.getAttStatusOt())) {
+			info.set(2, STR_OT);
+			info.set(3, CSS_R2);
+		}
+	}
+
+	/**
+	 * 处理更正显示
+	 * 
+	 * @param info
+	 * @param data
+	 */
+	private void fixCorrect(List<String> info, AttInfo data) {
+		if ("3".equals(data.getAttStatusCor())) {
+			if (!data.getRstartTime().equals(data.getFirstTime())) {
+				info.set(1, CSS_R3);
+			}
+			if (!data.getRendTime().equals(data.getLastTime())) {
+				info.set(3, CSS_R3);
+			}
+		}
+	}
+
+	/**
+	 * 处理请假显示
+	 * 
+	 * @param info
+	 * @param data
+	 */
+	private void fixRest(List<String> info, AttInfo data) {
+		String restName;
+
+		if ("3".equals(data.getAppStatus())) {
+			restName = getRestName(data.getRestType());
+			if (data.getRestType().length() == 1) {
+				info.set(0, restName);
+				info.set(1, CSS_R3);
+				info.set(2, STR_NONE);
+				info.set(3, "");
+			} else if (data.getRestType().length() == 2) {
+				// if (data.getRestType().endsWith("S")) {
+				// info.set(0, restName);
+				// info.set(1, CSS_R3);
+				// } else if (data.getRestType().endsWith("X")) {
+				// info.set(2, restName);
+				// info.set(3, CSS_R3);
+				// }
+			}
+		}
+		if (null != data.getRestType() && data.getRestType().length() == 2 && "3".equals(data.getAppStatusAddi())) {
+			// restName = getRestName(data.getRestTypeAddi());
+			// if (data.getRestTypeAddi().endsWith("S")) {
+			// info.set(0, restName);
+			// info.set(1, CSS_R3);
+			// } else if (data.getRestTypeAddi().endsWith("X")) {
+			// info.set(2, restName);
+			// info.set(3, CSS_R3);
+			// }
+		}
+	}
+
+	/**
+	 * 获取请假休假类型名称
+	 * 
+	 * @param restType
+	 * @return
+	 */
+	private String getRestName(String restType) {
+		// 请假休假类型名称
+		String strType = "unknown";
+
+		// 公出
+		if (restType.startsWith(VacationType.BUSINESS_TRIP.value())) {
+			strType = VacationTypeText.BUSINESS_TRIP.value();
+			// 换休
+		} else if (restType.startsWith(VacationType.FOR_HUGH.value())) {
+			strType = VacationTypeText.FOR_HUGH.value();
+			// 事假
+		} else if (restType.startsWith(VacationType.LEAVE.value())) {
+			strType = VacationTypeText.LEAVE.value();
+			// 病假
+		} else if (restType.startsWith(VacationType.SICK_LEAVE.value())) {
+			strType = VacationTypeText.SICK_LEAVE.value();
+			// 出差
+		} else if (restType.startsWith(VacationType.TRAVEL.value())) {
+			strType = VacationTypeText.TRAVEL.value();
+			// 年休
+		} else if (restType.startsWith(VacationType.ANNUAL_LEAVE.value())) {
+			strType = VacationTypeText.ANNUAL_LEAVE.value();
+			// 特假
+		} else if (restType.startsWith(VacationType.SPECIAL_LEAVE.value())) {
+			strType = VacationTypeText.SPECIAL_LEAVE.value();
+			// 产假
+		} else if (restType.startsWith(VacationType.MATERNITY_LEAVE.value())) {
+			strType = VacationTypeText.MATERNITY_LEAVE.value();
+			// 丧假
+		} else if (restType.startsWith(VacationType.BEREAVEMENT_LEAVE.value())) {
+			strType = VacationTypeText.BEREAVEMENT_LEAVE.value();
+			// 婚假
+		} else if (restType.startsWith(VacationType.MARRIAGE_LEAVE.value())) {
+			strType = VacationTypeText.MARRIAGE_LEAVE.value();
+		}
+
+		return strType;
+	}
+
+	public void setYe0080Dao(Ye0080Dao ye0080Dao) {
+		this.ye0080Dao = ye0080Dao;
+	}
+
+	public void setDateRelationService(DateRelationService dateRelationService) {
+		this.dateRelationService = dateRelationService;
+	}
+}

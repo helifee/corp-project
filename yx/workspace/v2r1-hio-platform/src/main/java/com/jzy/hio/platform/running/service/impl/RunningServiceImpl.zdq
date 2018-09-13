@@ -1,0 +1,228 @@
+/**
+ * 
+ */
+package com.jzy.hio.platform.running.service.impl;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import com.github.pagehelper.PageHelper;
+import com.github.pagehelper.PageInfo;
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.entity.Running;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.platform.constant.UserOrFriendConstant;
+import com.jzy.hio.platform.dto.userinfo.ImUserInfoDto;
+import com.jzy.hio.platform.running.dto.RunningDto;
+import com.jzy.hio.platform.running.mapper.RunningMapper;
+import com.jzy.hio.platform.running.service.RunningPraiseService;
+import com.jzy.hio.platform.running.service.RunningService;
+import com.jzy.hio.platform.userinfo.service.UserInfoService;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.sys.organization.dto.SkyDriveDto;
+import com.jzy.hio.sys.organization.param.SkyDriveParam;
+
+/**
+ * @author 马长习
+ * @date 2017年10月27日
+ */
+@Service
+//@RefreshScope
+public class RunningServiceImpl extends BaseServiceImpl<Running> implements RunningService {
+	
+	@Autowired
+	private RunningMapper runningMapper;
+	
+	@Autowired
+	private RunningPraiseService runningPraiseService;
+	
+	@Autowired
+	private UserInfoService userInfoService;
+	
+	@Autowired
+	private SysFeignService sysFeignService;
+	
+	// 运动达标步数
+    @Value("${running.standardSteps}")
+    private int standardSteps;
+	
+	
+	@Override
+	public Running getCurrentRunning(String enterpriseId, String uid) {
+		Running run = runningMapper.getCurrentRunning(enterpriseId, uid);
+		if(run != null) {
+			// 获取当前运动排名
+			Integer ranking = getMyRanking(enterpriseId, uid);
+			run.setRunRanking(ranking);
+		}
+		return run;
+	}
+
+	@Override
+	public Running getRunningIndex(String enterpriseId, String uid, String runDate) {
+		// 获取当前运动详情
+		Running running = runningMapper.getCurrentRunningDeatails(enterpriseId, uid, runDate);
+		if(running == null){
+			return running;
+		}
+		// 获取当前运动排名
+		int ranking = getMyRanking(enterpriseId, uid);
+		running.setRunRanking(ranking);
+		if(running.getRunSteps() >= standardSteps){
+			running.setReachStandard(1);
+		}else{
+			running.setReachStandard(0);
+		}
+		return running;
+	}
+
+	@Override
+	public RunningDto getCurrentRunningDeatails(String enterpriseId, String uid, String runDate) {
+		// 获取当前运动详情
+		Running running = runningMapper.getCurrentRunningDeatails(enterpriseId, uid, runDate);
+		// 获取当前运动排名
+		Integer ranking = getMyRanking(enterpriseId, uid);
+		if(running != null){
+			String userName = selectUserNameByTendIdAndQuit(uid, enterpriseId);
+			String userJson = JedisUtil.fetchRow(UserOrFriendConstant.IM_USER_INFO, uid);
+			ImUserInfoDto userDto = new ImUserInfoDto();
+			if(StringUtils.isBlank(userJson)) {
+				userDto = userInfoService.getUserInfoById(uid);
+			}else {
+				userDto = json2obj(userJson, ImUserInfoDto.class);
+			}
+			RunningDto runDto = new RunningDto();
+			BeanUtils.copyProperties(running, runDto);
+			runDto.setUserName(userName);
+			runDto.setRunRanking(ranking);
+			runDto.setHeadPortrait(userDto.getResourceImgUrl());
+			runDto.setGender(userDto.getSex());
+			runDto.setRunningCover(userDto.getRunningCoverUrl());
+			if(runDto.getRunSteps() >= standardSteps){
+				runDto.setReachStandard(1);
+			}else{
+				runDto.setReachStandard(0);
+			}
+			return runDto;
+		}
+		return null;
+	}
+
+	@Override
+	public PageInfo<RunningDto> getRunningRanking(String enterpriseId, String uid, String runDate, int pageNo, int pageSize) {
+		PageHelper.startPage(pageNo, pageSize);
+		List<Running> runList = runningMapper.getRunningRanking(enterpriseId, runDate);
+		if(runList != null){
+			List<RunningDto> runDtoList = new ArrayList<RunningDto>();
+			for(int i=0; i<runList.size(); i++){
+				Running run = runList.get(i);
+				String userName = selectUserNameByTendIdAndQuit(run.getUid(), enterpriseId);
+				String userJson = JedisUtil.fetchRow(UserOrFriendConstant.IM_USER_INFO, run.getUid());
+				ImUserInfoDto userDto = new ImUserInfoDto();
+				if(StringUtils.isBlank(userJson)) {
+					userDto = userInfoService.getUserInfoById(uid);
+				}else {
+					userDto = json2obj(userJson, ImUserInfoDto.class);
+				}
+				RunningDto runDto = new RunningDto();
+				BeanUtils.copyProperties(run, runDto);
+				runDto.setUserName(userName);
+				runDto.setRunRanking(i+1);
+				runDto.setHeadPortrait(userDto.getResourceImgUrl());
+				runDto.setGender(Integer.valueOf(userDto.getSex()));
+				runDto.setRunningCover(userDto.getRunningCoverUrl());
+				if(runDto.getRunSteps() >= standardSteps){
+					runDto.setReachStandard(1);
+				}else{
+					runDto.setReachStandard(0);
+				}
+				boolean isPraise = runningPraiseService.isPraiseForUser(enterpriseId, uid, runDto.getUid(), runDate);
+				if(isPraise){
+					runDto.setPraiseState(1);
+				}else{
+					runDto.setPraiseState(0);
+				}
+				runDtoList.add(runDto);
+			}
+			PageInfo<RunningDto> page = new PageInfo<RunningDto>(runDtoList);
+			return page;
+		}
+		return null;
+	}
+	
+	private String selectUserNameByTendIdAndQuit(String imUserId, String tendId) {
+		String userName = null;
+		if (!StringUtils.isEmpty(imUserId)) {
+			ApiFeignResponse<String> response = sysFeignService.queryOaUserIdByImUserId(imUserId, tendId);
+			String oaUserId = response.getResult();
+			List<String> userIdList = new ArrayList<String>();
+			userIdList.add(oaUserId);
+			SkyDriveParam skyDriveParam = new SkyDriveParam();
+			skyDriveParam.setUserIds(userIdList);
+			skyDriveParam.setTendId(tendId);
+			skyDriveParam.setStatus(1);
+			ApiFeignResponse<List<SkyDriveDto>> apiFeignResponse = sysFeignService.queryNameByOrgAndRoleAndUser(skyDriveParam);
+			if (apiFeignResponse != null) {
+				if (200 == apiFeignResponse.getStatus()) {
+					List<SkyDriveDto> skyDriveDtoList = apiFeignResponse.getResult();
+					if (skyDriveDtoList != null && skyDriveDtoList.size() > 0) {
+						userName = skyDriveDtoList.get(0).getName();
+					}
+				} else {
+					throw new HioException("调用queryNameByOrgAndRoleAndUser feign接口失败" + apiFeignResponse.getMessage());
+				}
+
+			}
+		}
+		return userName;
+	}
+
+	@Override
+	public void saveRunning(Running running) {
+		super.save(running);
+	}
+
+	@Override
+	public void updateRunningSteps(String enterpriseId, String uid, int steps, int reachStandard) {
+		runningMapper.updateRunningSteps(enterpriseId, uid, steps, reachStandard);
+	}
+	
+	@Override
+	public void deleteRunning(){
+		runningMapper.deleteRunning();
+	}
+
+	@Override
+	public void updateRunningPraise(String enterpriseId, String uid) {
+		runningMapper.updateRunningPraise(enterpriseId, uid);
+		
+	}
+
+	@Override
+	public void setRunningOpen(String enterpriseId, String uid, int openType) {
+		runningMapper.setRunningOpen(enterpriseId, uid, openType);
+	}
+	
+	@Override
+	public Running findRunningChampion(String enterpriseId, String runDate){
+		return runningMapper.findRunningChampion(enterpriseId, runDate);
+	}
+
+	@Override
+	public int getMyRanking(String enterpriseId, String uid) {
+		Integer ranking = runningMapper.getMyRanking(enterpriseId, uid);
+		if(ranking == null){
+			return 1;
+		}
+		return ranking;
+	}
+	
+}

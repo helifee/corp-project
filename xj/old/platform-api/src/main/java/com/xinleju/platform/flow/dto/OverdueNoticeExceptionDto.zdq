@@ -1,0 +1,66 @@
+package com.xinleju.platform.flow.dto;
+
+import com.xinleju.platform.base.dto.BaseDto;
+
+
+
+
+
+/**
+ * @author admin
+ * 
+ *
+ */
+public class OverdueNoticeExceptionDto extends BaseDto{
+
+		
+	//例外对象id
+	private String exceptionId;
+    
+  		
+	//例外对象类型
+	private String exceptionType;
+    
+  		
+	//业务对象
+	private String type;
+    
+  		
+	//逾期id
+	private String overdueId;
+    
+  		
+		
+	public String getExceptionId() {
+		return exceptionId;
+	}
+	public void setExceptionId(String exceptionId) {
+		this.exceptionId = exceptionId;
+	}
+    
+  		
+	public String getExceptionType() {
+		return exceptionType;
+	}
+	public void setExceptionType(String exceptionType) {
+		this.exceptionType = exceptionType;
+	}
+    
+  		
+	public String getType() {
+		return type;
+	}
+	public void setType(String type) {
+		this.type = type;
+	}
+    
+  		
+	public String getOverdueId() {
+		return overdueId;
+	}
+	public void setOverdueId(String overdueId) {
+		this.overdueId = overdueId;
+	}
+    
+  		
+}

@@ -1,0 +1,225 @@
+package com.xinleju.platform.sys.num.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Table(value="PT_SYS_NUM_RULER",desc="编号规则")
+public class Ruler extends BaseEntity{
+	
+		
+	@Column(value="code",desc="编号")
+	private String code;
+    
+  		
+	@Column(value="remark",desc="备注")
+	private String remark;
+    
+  		
+	@Column(value="name",desc="名称")
+	private String name;
+    
+  		
+	@Column(value="bill_id",desc="编号规则id")
+	private String billId;
+    
+  		
+	@Column(value="type",desc="规则类别")
+	private String type;
+    
+  		
+	@Column(value="is_out",desc="是否输出")
+	private String isOut;
+    
+  		
+	@Column(value="date_format",desc="日期格式")
+	private String dateFormat;
+    
+  		
+	@Column(value="is_serial",desc="强制连续")
+	private String isSerial;
+    
+  		
+	@Column(value="init_var",desc="初始值")
+	private String initVar;
+    
+  		
+	@Column(value="step_length",desc="步长")
+	private Integer stepLength;
+    
+  		
+	@Column(value="init_serial",desc="起步值")
+	private Long initSerial;
+    
+  		
+	@Column(value="max_serial",desc="最大值")
+	private Long maxSerial;
+    
+  		
+	@Column(value="serial_format",desc="序号格式")
+	private String serialFormat;
+    
+  		
+	@Column(value="serial_library",desc="枚举库")
+	private String serialLibrary;
+  		
+	@Column(value="connector_symbol",desc="连接符")
+	private String connectorSymbol;
+	
+	@Column(value="serial_number_length",desc="流水号位数")
+	private String serialNumberLength;
+	
+	@Column(value="serial_number_type",desc="流水类型")
+	private String serialNumberType;
+	
+	@Column(value="sort",desc="排序号")
+	private Integer sort;
+    
+  		
+		
+	public String getCode() {
+		return code;
+	}
+	public void setCode(String code) {
+		this.code = code;
+	}
+    
+  		
+	public String getRemark() {
+		return remark;
+	}
+	public void setRemark(String remark) {
+		this.remark = remark;
+	}
+    
+  		
+	public String getName() {
+		return name;
+	}
+	public void setName(String name) {
+		this.name = name;
+	}
+    
+  		
+	public String getBillId() {
+		return billId;
+	}
+	public void setBillId(String billId) {
+		this.billId = billId;
+	}
+    
+  		
+	public String getType() {
+		return type;
+	}
+	public void setType(String type) {
+		this.type = type;
+	}
+    
+  		
+	public String getIsOut() {
+		return isOut;
+	}
+	public void setIsOut(String isOut) {
+		this.isOut = isOut;
+	}
+    
+  		
+	public String getDateFormat() {
+		return dateFormat;
+	}
+	public void setDateFormat(String dateFormat) {
+		this.dateFormat = dateFormat;
+	}
+    
+  		
+	public String getIsSerial() {
+		return isSerial;
+	}
+	public void setIsSerial(String isSerial) {
+		this.isSerial = isSerial;
+	}
+    
+  		
+
+    
+  		
+	public String getInitVar() {
+		return initVar;
+	}
+	public void setInitVar(String initVar) {
+		this.initVar = initVar;
+	}
+	public Integer getStepLength() {
+		return stepLength;
+	}
+	public void setStepLength(Integer stepLength) {
+		this.stepLength = stepLength;
+	}
+    
+  		
+	public Long getInitSerial() {
+		return initSerial;
+	}
+	public void setInitSerial(Long initSerial) {
+		this.initSerial = initSerial;
+	}
+    
+  		
+	public Long getMaxSerial() {
+		return maxSerial;
+	}
+	public void setMaxSerial(Long maxSerial) {
+		this.maxSerial = maxSerial;
+	}
+    
+  		
+	public String getSerialFormat() {
+		return serialFormat;
+	}
+	public void setSerialFormat(String serialFormat) {
+		this.serialFormat = serialFormat;
+	}
+    
+  		
+	public String getSerialLibrary() {
+		return serialLibrary;
+	}
+	public void setSerialLibrary(String serialLibrary) {
+		this.serialLibrary = serialLibrary;
+	}
+	public String getConnectorSymbol() {
+		return connectorSymbol;
+	}
+	public void setConnectorSymbol(String connectorSymbol) {
+		this.connectorSymbol = connectorSymbol;
+	}
+	public String getSerialNumberLength() {
+		return serialNumberLength;
+	}
+	public void setSerialNumberLength(String serialNumberLength) {
+		this.serialNumberLength = serialNumberLength;
+	}
+	public String getSerialNumberType() {
+		return serialNumberType;
+	}
+	public void setSerialNumberType(String serialNumberType) {
+		this.serialNumberType = serialNumberType;
+	}
+	public Integer getSort() {
+		return sort;
+	}
+	public void setSort(Integer sort) {
+		this.sort = sort;
+	}
+    
+  		
+	
+}

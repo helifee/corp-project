@@ -1,0 +1,268 @@
+/*
+ * @(#)Ye0050ServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 考勤系统
+ */
+package com.yds.att.service.impl;
+
+import java.util.*;
+
+import org.springframework.stereotype.Service;
+
+import com.yds.base.service.AbstractBaseService;
+import com.yds.common.service.SessionService;
+import com.yds.att.service.Ye0050Service;
+import com.yds.att.service.AttConstants.AppResult;
+import com.yds.att.service.AttConstants.AppStatus;
+import com.yds.att.service.AttConstants.AttPermit;
+import com.yds.att.service.AttConstants.MyselfFlag;
+import com.yds.att.service.AttConstants.OrderType;
+import com.yds.att.service.AttConstants.OrgProperty;
+import com.yds.att.bean.AttCorrect;
+import com.yds.att.bean.AttExamin;
+import com.yds.att.bean.OrgInfo;
+import com.yds.att.bean.Ye0050AttCorrectInfo;
+import com.yds.att.bean.Ye0050CondA;
+import com.yds.att.common.service.OrgRelationService;
+import com.yds.att.dao.Ye0050Dao;
+
+/**
+ * @see com.yds.att.service.Ye0050Service
+ */
+@Service("ye0050Service")
+public class Ye0050ServiceImpl extends AbstractBaseService implements
+		Ye0050Service {
+
+	/** 注入Dao. */
+	private Ye0050Dao ye0050Dao;
+	private OrgRelationService orgRelationService;
+
+	@Override
+	public List<Ye0050AttCorrectInfo> getAttCorInfo(Ye0050CondA ye0050CondA)
+			throws Exception {
+
+		// 取得登陆者Id
+		String myId = SessionService.getLoginUserId();
+		// 调用子程序得到负责组织以及下属组织
+		List<OrgInfo> orgIdList = orgRelationService.getManagedOrgBy(myId);
+		// 把组织Id加入到检索条件bean
+		if (orgIdList.size() > 0) {
+			ye0050CondA.setOrgIdList(orgIdList);
+		}
+		// 把登陆者Id加入到检索条件bean
+		ye0050CondA.setAppEmpId(myId);
+		// 检索得到一览List
+		List<Ye0050AttCorrectInfo> ye0050AttCorrectInfoList = ye0050Dao
+				.getAttCorInfo(ye0050CondA);
+		for (Ye0050AttCorrectInfo ye0050AttCorrectInfo : ye0050AttCorrectInfoList) {
+			// 遍历取得审批过程表中的数据List
+			ye0050AttCorrectInfo.setAttExaminList(
+					gerAttExaList(ye0050AttCorrectInfo.getAppId()));
+			// 取得审批过程List
+			List<AttExamin> attExamin = ye0050AttCorrectInfo.getAttExaminList();
+			// 遍历审批过程List中的审批组织Id（画面部门、项目列显示）
+			for (int j = 0; j < attExamin.size(); j++) {
+				// 有部门，没有项目（一级审批,直接部长审批）
+				if (null != attExamin.get(j).getOrgNm()
+						&& null == attExamin.get(j).getProNm()) {
+					ye0050AttCorrectInfo.setOrgNm(attExamin.get(j).getOrgNm());
+				}
+				// 项目组和部门都有（二级审批）
+				if (null != attExamin.get(j).getProNm()
+						&& null != attExamin.get(j).getOrgNm()) {
+					ye0050AttCorrectInfo.setOrgNm(attExamin.get(j).getOrgNm());
+					ye0050AttCorrectInfo.setProNm(attExamin.get(j).getProNm());
+				}
+				// 有项目组（一级审批,直接组长审批）
+				if (null == attExamin.get(j).getOrgNm()
+						&& null != attExamin.get(j).getProNm()) {
+					// 调用子程序利用项目组织Id得到上级部门组织Id
+					OrgInfo orgInfo = orgRelationService
+							.getParentOrgBy(attExamin.get(j)
+									.getExaOrganizationId());
+					// 设置项目名
+					ye0050AttCorrectInfo.setProNm(attExamin.get(j).getProNm());
+					// 设置部门名
+					if(orgInfo != null){
+						ye0050AttCorrectInfo.setOrgNm(orgInfo.getOrgSnm());
+					}
+				}
+			}
+				if (attExamin.size() == 1) {
+					// 一级审批画面显示（取得组织性质，意见列显示用）
+					if (getOrgPro(attExamin.get(0).getExaOrganizationId())) {
+						// 一级审批是直接部长审批
+						ye0050AttCorrectInfo.setAttOrg(OrgProperty.DEPARTMENT.value());
+					} else {
+						// 一级审批是项目组组长审批
+						ye0050AttCorrectInfo.setAttOrg(OrgProperty.PROJECT.value());
+					}
+				}
+				// 普通人情况
+				if (orgIdList.size() == 0) {
+					ye0050AttCorrectInfo.setAttPermitFlag(AttPermit.GENERAL.value());
+				} 
+				// 管理者情况
+				else {
+					 ye0050AttCorrectInfo.setAttPermitFlag(AttPermit.HAVE_PERMIT.value());
+						// 二级审批（审批中状态下）判断审判者是否是自己（画面显示用）
+						if (AppStatus.APP_ING.value().equals(
+								ye0050AttCorrectInfo.getAppStatus())) {
+							// 二级审批不是自己
+							if (!myId.equals(getMnger(attExamin.get(1)
+									.getExaOrganizationId()))) {
+								ye0050AttCorrectInfo.setAttFlag(MyselfFlag.
+										IS_NOT_MYSELF.value());
+							} else {
+								// 二级审批是自己
+								ye0050AttCorrectInfo.setAttFlag(MyselfFlag.IS_MYSELF.value());
+							}
+						}
+						if (AppStatus.PENDING.value().equals(
+								ye0050AttCorrectInfo.getAppStatus())){
+							for(AttExamin AttExamin:attExamin){
+								if(myId.equals(getMnger(AttExamin.getExaOrganizationId()))){
+									ye0050AttCorrectInfo.setAttFlag(MyselfFlag.
+											IS_MYSELF.value());
+									break;
+								}
+							}
+					}
+						
+				}
+			}
+		// 返回检索结果bean
+		return ye0050AttCorrectInfoList;
+	}
+    /**
+     * 取得审批过程List
+     * @param appId
+     * @return
+     */
+	public List<AttExamin> gerAttExaList(String appId) {
+
+		return ye0050Dao.gerAttExaList(appId);
+
+	}
+
+	@Override
+	public boolean updateAttCorInfo(AttCorrect attCorrect, String flag)
+			throws Exception {
+		//取得登陆者Id
+		String myId = SessionService.getLoginUserId();
+		//取得审批过程List
+		List<AttExamin> attExaminList = gerAttExaList(attCorrect.getAppId());
+		int size = attExaminList.size();
+		attCorrect.setUpdateUser(myId);
+		//同意操作
+		if (AppResult.AGREE.value().equals(flag)) {
+			//审批结果（同意）
+			attCorrect.setExaResult(AppResult.AGREE.value());
+			attCorrect.setAppStatus(AppStatus.APPROVED.value());
+		}
+		else{
+			attCorrect.setExaResult(AppResult.DISAGREE.value());
+			attCorrect.setAppStatus(AppStatus.REJECTED.value());
+		}
+			//一级审批更新DB操作
+			if (size == 1) {
+				//同意操作
+				if (AppResult.AGREE.value().equals(flag)) {
+					attCorrect.setAppStatus(AppStatus.APPROVED.value());
+				}
+				attCorrect.setExaAppOrder(OrderType.FIRST.value());
+				//更新考勤审批过程表
+				ye0050Dao.updateAttExamin(attCorrect);
+			}
+			//二级审批操作（待批状态）
+			else if (attExaminList.get(0).getExaId() == null
+					|| "".equals(attExaminList.get(0).getExaId())) {
+				//越级审批
+				if ((myId.equals(getMnger(attExaminList.get(0)
+						.getExaOrganizationId()))
+						&& myId.equals(getMnger(attExaminList.get(1)
+								.getExaOrganizationId()))) || myId.equals(getMnger(attExaminList.get(1)
+										.getExaOrganizationId()))) {
+					attCorrect.setExaAppOrder(OrderType.TWO.value());
+					ye0050Dao.updateAttExamin(attCorrect);
+				}
+				//仅组长身份审批
+				 if (myId.equals(getMnger(attExaminList.get(0)
+						.getExaOrganizationId())) && !myId.equals(getMnger(attExaminList.get(1)
+								.getExaOrganizationId()))) {
+					//同意操作
+					if (AppResult.AGREE.value().equals(flag)) {
+						attCorrect.setAppStatus(AppStatus.APP_ING.value());
+					}
+					attCorrect.setExaAppOrder(OrderType.FIRST.value());
+					ye0050Dao.updateAttExamin(attCorrect);
+				} 
+			}
+			//二级审批操作（审批中）
+			else {
+				attCorrect.setExaAppOrder(OrderType.TWO.value());
+				ye0050Dao.updateAttExamin(attCorrect);
+			}
+			//更新考勤更正表
+			ye0050Dao.updateAttCor(attCorrect);
+			//更新考勤信息表
+			ye0050Dao.updateAttInfo(attCorrect);
+		return true;
+	}
+
+	/**
+	 * 取得组织ID的管理者
+	 * 
+	 * @param orgId
+	 * @return
+	 */
+	private String getMnger(String orgId) {
+
+		return ye0050Dao.getMnger(orgId);
+	}
+
+	/**
+	 * 取得组织性质
+	 * 
+	 * @param orgId
+	 * @return
+	 */
+	private boolean getOrgPro(String orgId) {
+
+		String pro = ye0050Dao.getOrgPro(orgId);
+		//组织为部门
+		if (OrgProperty.DEPARTMENT.value().equals(pro)) {
+			return true;
+		}
+		//组织为项目组
+		if (OrgProperty.PROJECT.value().equals(pro)) {
+			return false;
+		}
+		return true;
+	}
+
+	/**
+	 * @param ye0050Dao
+	 *            the ye0050Dao to set
+	 */
+	public void setYe0050Dao(Ye0050Dao dao) {
+		this.ye0050Dao = dao;
+	}
+
+	/**
+	 * @return the ye0050Dao
+	 */
+	public Ye0050Dao getYe0050Dao() {
+		return ye0050Dao;
+	}
+
+	/**
+	 * @param orgRelationService
+	 *            the orgRelationService to set
+	 */
+	public void setOrgRelationService(OrgRelationService orgRelationService) {
+		this.orgRelationService = orgRelationService;
+	}
+}

@@ -1,0 +1,294 @@
+package com.xinleju.erp.finance.action;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import net.sf.json.JSONArray;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+
+import com.opensymphony.xwork2.ModelDriven;
+import com.xinleju.erp.base.app.action.BaseAction;
+import com.xinleju.erp.base.app.bean.Page;
+import com.xinleju.erp.base.utils.JsonUtils;
+import com.xinleju.erp.finance.models.FiAccountSet;
+import com.xinleju.erp.finance.models.FiAccountSetData;
+import com.xinleju.erp.finance.service.FiAccountSetService;
+import com.xinleju.erp.finance.service.FiSysInfoService;
+import com.xinleju.erp.finance.service.SyncFinaDataService;
+import com.xinleju.erp.flow.service.api.extend.OrgnService;
+import com.xinleju.erp.flow.service.api.extend.dto.CompanyDTO;
+import com.xinleju.erp.flow.utils.LoginInfoUtils;
+import com.xinleju.erp.frame.dto.JsonTreeTableTemplete;
+import com.xinleju.erp.frame.models.extender.AccountSetExtender;
+import com.xinleju.erp.frame.service.CompanyService;
+import com.xinleju.erp.frame.utils.CommonUtil;
+import com.xinleju.erp.frame.utils.DataGridJson;
+
+public class FiAccountSetAction extends BaseAction implements ModelDriven<FiAccountSet>{
+	private static final Log log = LogFactory.getLog(FiAccountSetAction.class);
+	@Autowired
+	private FiAccountSetService fiAccountSetService;
+	@Autowired
+	private FiSysInfoService fiSysInfoService;
+	@Autowired
+	private SyncFinaDataService syncFinaDataService;
+	@Autowired
+	private CompanyService companyService;
+	
+	@Autowired
+	@Qualifier("orgnServiceProvider")
+	private OrgnService orgnService;
+	
+	private FiAccountSet fiAccountSet = new FiAccountSet();
+
+	/**
+	 * 根据公司id获得公司账套
+	 */
+	public void load() {
+		
+		Long companyId = getParameterLong("companyId");
+		List<FiAccountSet> accountSetList = null;
+		if (companyId != null)
+			accountSetList = fiAccountSetService.getFiAccountSetList(companyId, "1");
+		else
+			accountSetList = new ArrayList<FiAccountSet>();
+
+		JsonTreeTableTemplete jttt = new JsonTreeTableTemplete("id", "pid", new String[] { "id" }, AccountSetExtender.class);
+		JSONArray jsonTree = CommonUtil.transTree(accountSetList, jttt);
+		renderJson(jsonTree.toString());
+	}
+	
+	
+	
+	/**
+	 * 根据公司id获得公司账套
+	 */
+	public void getByFiSysId() {
+		Long fiSysId = getParameterLong("keyword");
+//		Long parentEntityId = Long.valueOf( request.getParameter("parentEntityId") );
+//		List<FiAccountSet> accountSetList = null;
+//		
+		DetachedCriteria dc = DetachedCriteria.forClass(FiAccountSet.class);
+		if (fiSysId != null ) {
+			dc.add(Restrictions.eq("fiSysId", fiSysId));
+		}
+		
+		limit = getParameterInt("rows")==null?10:getParameterInt("rows");
+		int pageNum = getParameterInt("page")==null?1:getParameterInt("page");
+		start = (pageNum - 1)*limit;
+		
+		page = getCommonService().findPage(dc, start, limit);
+		
+		String json = new DataGridJson(page).toJsonString();
+		renderJson(json);
+		
+//		if (fiSysId != null)
+//			accountSetList = fiAccountSetService.getFiAccountSetsBySysId(fiSysId, "1");
+//		else
+//			accountSetList = new ArrayList<FiAccountSet>();
+//		
+//		JsonTreeTableTemplete jttt = new JsonTreeTableTemplete("id", "pid", new String[] { "id" }, AccountSetExtender.class);
+//		JSONArray jsonTree = CommonUtil.transTree(accountSetList, jttt);
+//		renderJson(jsonTree.toString());
+	}
+	
+	/**
+	 * 根据公司id获得公司账套
+	 */
+	public void getByFiSysIdBill() {
+		Long sysId = getParameterLong("sysId");
+		String moduleCode = "";
+		Long ctrId = 0L;
+		Long fieldId = 0L;
+		System.out.println("-------sysId-----"+sysId);
+		if(sysId==3){
+			moduleCode = "EX";//费用
+			ctrId = 80001L;
+			fieldId = 80001L;
+		}else if(sysId==1){
+			ctrId = 50001L;
+			fieldId = 50001L;
+			moduleCode = "SA";	//销售
+		}else if(sysId == 2){
+			moduleCode = "CO";//成本
+			ctrId = 60001L;
+			fieldId = 60001L;
+		}
+		List<CompanyDTO> companyList = orgnService.getCompanyListByUserId(LoginInfoUtils.getLoginInfoUserDtoId(request),moduleCode,LoginInfoUtils.getLoginInfoUserLogName(request),ctrId,fieldId).getResult();
+		Long[] corpId = new Long[companyList.size()];
+		String ids = "";
+		for(int i=0;i<companyList.size();i++){
+			corpId[i] = companyList.get(i).getId();
+			ids += companyList.get(i).getId() + ",";
+		}
+		List<FiAccountSetData> dataList = new ArrayList<FiAccountSetData>();
+		if(StringUtils.isNotBlank(ids)){
+			ids = ids.substring(0, ids.lastIndexOf(","));
+			dataList = getCommonService().findByHQL(FiAccountSetData.class, "from FiAccountSetData where companyId in ("+ids+") and sysId="+sysId, null);//.findPage(dcdata, 0, 0);
+		}
+		Long fiSysId = getParameterLong("keyword");
+		DetachedCriteria dc = DetachedCriteria.forClass(FiAccountSet.class);
+		if (fiSysId != null ) {
+			dc.add(Restrictions.eq("fiSysId", fiSysId));
+		}
+		Long[] accountSetId = new Long[dataList.size()];
+		for(int i=0;i<dataList.size();i++){
+			accountSetId[i] = dataList.get(i).getAccountSetId();
+		}
+		if(accountSetId!=null && accountSetId.length>0){
+			dc.add(Restrictions.in("id", accountSetId));
+			limit = getParameterInt("rows")==null?10:getParameterInt("rows");
+			int pageNum = getParameterInt("page")==null?1:getParameterInt("page");
+			start = (pageNum - 1)*limit;
+			
+			page = getCommonService().findPage(dc, start, limit);
+		}
+		
+		
+		String json = new DataGridJson(page).toJsonString();
+		renderJson(json);
+	}
+	
+	/**
+	 * 业务对象编辑页面
+	 * 
+	 * @return
+	 */
+	@SuppressWarnings("unchecked")
+	public String edit() throws Exception {
+		try {
+			Long id = getParameterLong("id");
+			if (id != null) {
+				fiAccountSet =  this.fiAccountSetService.findFiAccountSetById(id);;
+			}
+		} catch (Exception e) {
+			log.error("",e);
+			throw e;
+		}
+		return "edit";
+	}
+	
+	/**
+	 * 根据财务系统ID和和账套获取账套下公司
+	 */
+	public void getCompanys() {
+		Long fiSysId = getParameterLong("fiSysId");
+		
+		List<FiAccountSet> accountSetList = null;
+		
+//		DetachedCriteria dc = DetachedCriteria.forClass(FiAccountSet.class);
+//		if (fiSysId != null ) {
+//			dc.add(Restrictions.eq("fiSysId", fiSysId));
+//		}
+//		
+//		limit = getParameterInt("rows");
+//		start = (getParameterInt("page") - 1)*limit;
+//		
+//		page = getCommonService().findPage(dc, start, limit);
+//		
+//		String json = new DataGridJson(page).toJsonString();
+//		renderJson(json);
+		
+		if (fiSysId != null)
+			accountSetList = fiAccountSetService.getFiAccountSetsBySysId(fiSysId, "1");
+		else
+			accountSetList = new ArrayList<FiAccountSet>();
+		
+		JsonTreeTableTemplete jttt = new JsonTreeTableTemplete("id", "pid", new String[] { "id" }, AccountSetExtender.class);
+		JSONArray jsonTree = CommonUtil.transTree(accountSetList, jttt);
+		renderJson(jsonTree.toString());
+	}
+	
+	
+	/**
+	 * 根据公司id查询出账套
+	 */
+	public void findFiAccountSet(){
+		Long companyId = this.getParameterLong("companyId");
+		List<FiAccountSet>  list = this.fiAccountSetService.getFiAccountSetByCompanyId(companyId);
+		String json = JsonUtils.toJSONString(list);
+		renderHtml(json);
+	}
+	/**
+	 * 保存帐套
+	 */
+	public void saveFiAccountSet(){
+		Map<String, Object> result = new HashMap<String, Object>();
+		if (fiAccountSet.getId() != null) {
+			fiAccountSet.setEditDate(new Date());
+			fiAccountSet.setEditUserId(LoginInfoUtils.getLoginInfoUserDtoId(request));
+		} else {
+			fiAccountSet.setCreateDate(new Date());
+			fiAccountSet.setStatus(0);
+			fiAccountSet.setCreateUserId(LoginInfoUtils.getLoginInfoUserDtoId(request));
+		}
+		try{
+			this.fiAccountSetService.save(fiAccountSet);
+			result.put("success", true);
+			result.put("msg", "保存成功");
+			String json = JsonUtils.toJSONString(result);
+			renderHtml(json);
+		}
+		catch(Exception e){
+			result.put("success", false);
+			result.put("msg", "保存失败");
+			String json = JsonUtils.toJSONString(result);
+			renderHtml(json);	
+		}
+	}
+
+	/**
+	 * 删除帐套
+	 * @return
+	 */
+	public void deleteFiAccountSet(){
+		Map<String,Object> result=new HashMap<String,Object>();
+		Long id = this.getParameterLong("id");
+		try{
+		this.fiAccountSetService.delete(id);
+		result.put("success", true);
+		result.put("msg", "保存成功");
+		renderJson(result);
+		}catch(Exception e){
+			e.printStackTrace();
+			result.put("success", false);
+			result.put("msg", "保存失败");
+			renderJson(result);
+			log.error("",e);
+		}
+	}
+	
+	/**
+	 * 根据账套id返回账套信息 
+	 */
+	public void getFiSysinfoById(){
+		Long id=this.getParameterLong("id");
+		FiAccountSet fiAccountSet = this.fiAccountSetService.findFiAccountSetById(id);
+		String json = JsonUtils.toJSONString(fiAccountSet);
+//		renderHtml(json);	
+		this.renderJson(json);
+	}
+
+	public FiAccountSet getFiAccountSet() {
+		return fiAccountSet;
+	}
+
+	public void setFiAccountSet(FiAccountSet fiAccountSet) {
+		this.fiAccountSet = fiAccountSet;
+	}
+
+	@Override
+	public FiAccountSet getModel() {
+		return this.fiAccountSet;
+	}
+}

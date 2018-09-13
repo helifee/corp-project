@@ -1,0 +1,36 @@
+package com.xinleju.platform.flow.dto;
+
+import java.io.Serializable;
+
+public class UserDto implements Serializable{
+	private String id; 
+	private String name;
+	private String loginName;
+	
+	public UserDto() {
+		super();
+	}
+	public UserDto(String id, String name) {
+		super();
+		this.id = id;
+		this.name = name;
+	}
+	public String getId() {
+		return id;
+	}
+	public void setId(String id) {
+		this.id = id;
+	}
+	public String getName() {
+		return name;
+	}
+	public void setName(String name) {
+		this.name = name;
+	}
+	public String getLoginName() {
+		return loginName;
+	}
+	public void setLoginName(String loginName) {
+		this.loginName = loginName;
+	}
+}

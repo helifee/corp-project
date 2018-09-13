@@ -1,0 +1,229 @@
+package com.jzy.hio.oa.portal.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.base.utils.IDGenerator;
+import com.jzy.tools.data.JacksonUtils;
+import com.jzy.hio.base.utils.Page;
+import com.jzy.hio.base.utils.SecurityStandardRoleDto;
+import com.jzy.hio.oa.portal.entity.PortalComponentPosition;
+import com.jzy.hio.oa.portal.entity.PortalPage;
+import com.jzy.hio.oa.portal.mapper.PortalComponentPositionDao;
+import com.jzy.hio.oa.portal.mapper.PortalPageDao;
+import com.jzy.hio.oa.portal.service.PortalPageService;
+
+/**
+ * @author admin
+ */
+
+@Service
+public class PortalPageServiceImpl extends BaseServiceImpl<String, PortalPage> implements PortalPageService {
+
+	@Autowired
+	private PortalPageDao portalPageDao;
+	@Autowired
+	private PortalComponentPositionDao portalComponentPositionDao;
+
+	/**
+	 * searchType 查询类型 0 全量查询， 1：模糊查询
+	 */
+	@Override
+	public Page getSearchPage(Map<String, Object> map) {
+		Page page = this.portalPageDao.queryObjectsByPage(map);
+		return page;
+	}
+
+	/**
+	 * 复制站点page对象并复制站点position对象
+	 */
+	@Override
+	public Integer saveAndCopy(PortalPage pp, String preId) {
+		Map<String, Object> paramMap = new HashMap<String, Object>();
+		paramMap.put("portalPageId", preId);
+		List<PortalComponentPosition> list = portalComponentPositionDao.queryComponentPositionList(paramMap);
+		Integer ppResult = portalPageDao.insertSelective(pp);
+		for (PortalComponentPosition pcp : list) {
+			// 更新positionId和portalpageId
+			pcp.setId(IDGenerator.getUUID());
+			pcp.setPortalPageId(pp.getId());
+		}
+		portalComponentPositionDao.saveBatchSuper(list);
+		return ppResult;
+	}
+
+	@Override
+	public PortalPage getPortalWithPermision(Map<String, Object> paramMap) throws Exception {
+		PortalPage portalPage = null;
+		if (paramMap == null) {
+			Map<String, Object> param = new HashMap<String, Object>();
+			param.put("portalPageCode", "GENERAL_PORTAL");
+			List<PortalPage> portalPages = this.queryListByExample(param);
+			if (portalPages != null) {
+				portalPage = portalPages.get(0);
+			}
+			return portalPage;
+		}
+
+		Map<String, Object> securityUserDto = (Map<String, Object>) paramMap.get("securityUserDto");
+		// 获取用户id
+		String userId = (String) securityUserDto.get("id");
+
+		// 根据门户拥有人获取portal
+		Map<String, Object> param = new HashMap<String, Object>();
+		param.put("portalPageOwner", userId);
+		param.put("status", true);
+		param.put("sidx", "priority");
+		param.put("sord", "desc");
+		List<PortalPage> portalPages = this.queryListByExample(param);
+		if (portalPages != null && portalPages.size() > 0) {
+			portalPage = portalPages.get(0);
+			return portalPage;
+		}
+
+		// 根据权限获取当前登录人对应的默认门户
+		// 默认门户根据当前登录人所拥有权限的门户的优先级进行排列，优先级高的为默认
+		String roleJson = JacksonUtils.toJson(paramMap.get("securityStandardRoleDtoList"));
+		List<SecurityStandardRoleDto> securityStandardRoleDtoList = JacksonUtils.fromJson(roleJson, List.class, SecurityStandardRoleDto.class);
+		if (securityStandardRoleDtoList != null) {
+			List<String> roleIds = new ArrayList<String>();
+			Map<String, Object> paramMap1 = new HashMap<String, Object>();
+			for (SecurityStandardRoleDto securityStandardRoleDto : securityStandardRoleDtoList) {
+				String roleId = securityStandardRoleDto.getId();
+				roleIds.add(roleId);
+			}
+
+			paramMap1.put("roleIds", roleIds);
+
+			List<PortalPage> list = portalPageDao.queryPortalByPermission(paramMap1);
+			if (list != null && list.size() > 0) {
+				portalPage = list.get(0);
+			}
+
+			if (portalPage != null) {
+				return portalPage;
+			}
+
+		}
+
+		// 默认查询
+		Map<String, Object> paramMap2 = new HashMap<String, Object>();
+		paramMap2.put("portalPageCode", "GENERAL_PORTAL");
+		paramMap2.put("portalPageOwner", "_NA_");
+		paramMap2.put("status", true);
+		List<PortalPage> portalPages1 = this.queryListByExample(paramMap2);
+		if (portalPages1 != null && portalPages1.size() > 0) {
+			portalPage = portalPages1.get(0);
+		}
+
+		return portalPage;
+	}
+
+	@Override
+	public List<PortalPage> getPortalListWithPermision(Map<String, Object> paramMap) throws Exception {
+		// 根据权限获取当前登录人对应的默认门户
+		// 默认门户根据当前登录人所拥有权限的门户的优先级进行排列，优先级高的为默认
+		String roleJson = JacksonUtils.toJson(paramMap.get("securityStandardRoleDtoList"));
+		List<SecurityStandardRoleDto> securityStandardRoleDtoList = JacksonUtils.fromJson(roleJson, List.class, SecurityStandardRoleDto.class);
+		List<PortalPage> list = new ArrayList<PortalPage>();
+		if (securityStandardRoleDtoList != null) {
+			List<String> roleIds = new ArrayList<String>();
+			Map<String, Object> paramMap1 = new HashMap<String, Object>();
+			for (SecurityStandardRoleDto securityStandardRoleDto : securityStandardRoleDtoList) {
+				String roleId = securityStandardRoleDto.getId();
+				roleIds.add(roleId);
+			}
+
+			paramMap1.put("roleIds", roleIds);
+			paramMap1.put("status", true);
+
+			list = portalPageDao.queryPortalByPermission(paramMap1);
+
+			Map<String, Object> securityUserDto = (Map<String, Object>) paramMap.get("securityUserDto");
+			// 获取用户id
+			String userId = (String) securityUserDto.get("id");
+
+			Map<String, Object> param = new HashMap<String, Object>();
+			param.put("portalPageOwner", userId);
+			param.put("status", true);
+			param.put("orderBy", "priority desc");
+			List<PortalPage> portalPages = this.queryListByExample(param);
+
+			if (portalPages != null && portalPages.size() > 0) {
+				for (PortalPage personPortalPage : portalPages) {
+					String personOriginId = personPortalPage.getOriginPortalPageId();
+					for (PortalPage adminPortalPage : list) {
+						if (Objects.equals(personOriginId, adminPortalPage.getId())) {
+							String originId = adminPortalPage.getId();
+							adminPortalPage.setId(personPortalPage.getId());
+							adminPortalPage.setOriginPortalPageId(originId);
+							break;
+						}
+					}
+				}
+			}
+		}
+		return list;
+	}
+
+	@Override
+	public int deleteObjectById(String id) {
+
+		Map<String, Object> paramMap = new HashMap<String, Object>();
+		paramMap.put("portalPageId", id);
+		List<PortalComponentPosition> list = portalComponentPositionDao.selectByExample(paramMap);
+		for (PortalComponentPosition position : list) {
+			String positionId = position.getId();
+			portalComponentPositionDao.deleteByPrimaryKey(positionId);
+		}
+
+		return super.deleteObjectById(id);
+	}
+
+	/*
+	 * (non-Javadoc)
+	 * 
+	 * @see com.jzy.hio.oa.portal.service.PortalPageService#deletePortalPageByIds(java.util.List)
+	 */
+	@Override
+	public int deletePortalPageByIds(List<String> list) throws Exception {
+		int j = 0;
+		for (String id : list) {
+			Map<String, Object> map = new HashMap<String, Object>();
+			map.put("portalPageId", id);
+			List<PortalComponentPosition> list2 = portalComponentPositionDao.queryComponentPositionList(map);
+			if (list2 != null && list2.size() > 0) {
+				j = 5;
+				break;
+			}
+		}
+		if (j == 5) {
+			return j;
+		} else {
+			return deletePseudoAllObjectByIds(list);
+		}
+	}
+
+	@Override
+	public List<PortalPage> updatePortalStatus(Map<String, Object> paramMap) {
+		List<String> portalPageIds = (List<String>) paramMap.get("portalPageIdList");
+		Boolean status = (Boolean) paramMap.get("status");
+		List<PortalPage> portalPages = portalPageDao.queryListByIdsForUpdataStatus(paramMap);
+		for (PortalPage portalPage : portalPages) {
+			portalPage.setStatus(status);
+		}
+		try {
+			updateBatch(portalPages);
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		return portalPages;
+	}
+}

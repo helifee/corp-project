@@ -1,0 +1,83 @@
+package com.xinleju.platform.flow.service.impl;
+
+import java.lang.reflect.InvocationTargetException;
+import java.sql.Timestamp;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.beanutils.BeanUtils;
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.base.utils.LoginUtils;
+import com.xinleju.platform.base.utils.SecurityPostDto;
+import com.xinleju.platform.base.utils.SecurityUserBeanInfo;
+import com.xinleju.platform.base.utils.SecurityUserDto;
+import com.xinleju.platform.flow.dao.InstanceReadRecordDao;
+import com.xinleju.platform.flow.dto.InstanceReadRecordDto;
+import com.xinleju.platform.flow.entity.InstanceReadRecord;
+import com.xinleju.platform.flow.service.InstanceReadRecordService;
+
+/**
+ *  流程查询记录
+ */
+
+@Service
+public class InstanceReadRecordServiceImpl extends  BaseServiceImpl<String,InstanceReadRecord> implements InstanceReadRecordService{
+	
+
+	@Autowired
+	private InstanceReadRecordDao instanceReadRecordDao;
+
+	@Override
+	public void record(String instanceId, String requestSource) {
+		SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+		if(securityUserBeanInfo == null) {
+			return ;
+		}
+		SecurityUserDto userInfo = securityUserBeanInfo.getSecurityUserDto();
+		InstanceReadRecord record = new InstanceReadRecord();
+		record.setId(IDGenerator.getUUID());
+		record.setFiId(instanceId);
+		if(userInfo != null) {
+			record.setUserId(userInfo.getLoginName());
+			record.setUserName(userInfo.getRealName());
+		}
+		record.setSource(requestSource);
+		record.setReadDate(new Timestamp(System.currentTimeMillis()));
+		record.setIp(null);	// TODO zhangdaoqiang 阅读日志中的IP从当前用户取，目前还没有
+		List<SecurityPostDto> securityPostDtoList = securityUserBeanInfo.getSecurityPostDtoList();
+		if(CollectionUtils.isNotEmpty(securityPostDtoList)) {
+			 for (SecurityPostDto securityPostDto : securityPostDtoList) {
+				  //判断是否是主岗位
+				 if(StringUtils.isNotBlank(securityPostDto.getIsDefault())&&Integer.parseInt(securityPostDto.getIsDefault())==1){
+					 record.setPostName(securityPostDto.getName());	// TODO zhangdaoqiang 阅读日志中的岗位从哪取？？？
+				 }
+			}
+		}
+		instanceReadRecordDao.save(record);
+	}
+	
+	@Override
+	public List<InstanceReadRecordDto> queryRecord(String instanceId) {
+		Map<String, Object> params = new HashMap<String, Object>();
+		params.put("fiId", instanceId);
+		List<InstanceReadRecord> queryList = instanceReadRecordDao.queryList(params);
+		List<InstanceReadRecordDto> retList = new ArrayList<InstanceReadRecordDto>();
+		for(InstanceReadRecord r : queryList) {
+			InstanceReadRecordDto dest = new InstanceReadRecordDto();
+			try {
+				BeanUtils.copyProperties(dest, r);
+			} catch (IllegalAccessException | InvocationTargetException e) {
+			}
+			retList.add(dest);
+		}
+		return retList;
+	}
+}

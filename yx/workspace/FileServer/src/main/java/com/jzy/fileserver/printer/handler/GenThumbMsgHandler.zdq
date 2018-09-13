@@ -1,0 +1,78 @@
+package com.jzy.fileserver.printer.handler;
+
+import java.util.Date;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
+import com.jzy.fileserver.dao.PrintTaskDao;
+import com.jzy.fileserver.dao.TaskDetailDao;
+import com.jzy.fileserver.domain.PrintTaskVo;
+import com.jzy.fileserver.domain.TaskDetail;
+import com.jzy.fileserver.printer.PrintEventMonitor;
+import com.jzy.fileserver.printer.msg.GenThumbMsg;
+import com.jzy.fileserver.printer.msg.PrinterMsg;
+import com.jzy.fileserver.printer.msg.external.GenImageMsgExternal;
+import com.jzy.fileserver.utils.FilePathUtils;
+
+/**
+ * 生成缩略图事件
+ *
+ * Created by daoqi on 2018年8月14日
+ */
+@Component
+public class GenThumbMsgHandler extends BaseMsgHandler implements MsgHandler {
+	
+	private static final Logger logger = LoggerFactory.getLogger(GenThumbMsgHandler.class);
+
+	@Autowired
+	private PrintTaskDao printTaskDao;
+	
+	@Autowired
+	private TaskDetailDao taskDetailDao;
+	
+	@Override
+	public String handle(PrinterMsg msg, PrintEventMonitor printEventMonitor) {
+		super.handle(msg, printEventMonitor);
+		GenThumbMsg genThumbMsg = (GenThumbMsg)msg;
+		
+		int taskId = genThumbMsg.getTask_id();
+		int pageId = genThumbMsg.getPage_index();
+		PrintTaskVo printTaskVo = printTaskDao.findById(taskId);
+		TaskDetail taskDetail = new TaskDetail();
+		taskDetail.setTaskId(taskId);
+		taskDetail.setFileId(printTaskVo.getFileId());
+		taskDetail.setImageType(1);
+		taskDetail.setPath(genThumbMsg.getDoc_name());
+		taskDetail.setPageId(pageId);
+		taskDetail.setCreateTime(new Date());
+		taskDetailDao.save(taskDetail);
+		
+//		rabbitSender.sendMsgOfGenThumb(genThumbMsg);
+		
+		genThumbMsg.setFile_id(printTaskVo.getFileId());
+		
+		GenImageMsgExternal genImageMsgExternal = convertToExternalVo(genThumbMsg, taskDetail.getId());
+		
+		printEventSender.broadcast(genImageMsgExternal);
+		//ServerBorad.broadcast(JacksonUtils.toJson(genImageMsgExternal));
+		
+		logger.info("任务【{}】生成缩略图事件处理完成！pageId={}", taskId, pageId);
+		
+		return null;
+	}
+	
+	private GenImageMsgExternal convertToExternalVo(GenThumbMsg genThumbMsg, long detailId) {
+		GenImageMsgExternal externalVo = new GenImageMsgExternal();
+		externalVo.setMsgType(genThumbMsg.getMsg_type());
+		externalVo.setFileId(genThumbMsg.getFile_id());
+		externalVo.setConfId(genThumbMsg.getConf_id());
+		externalVo.setGroupId(genThumbMsg.getGroup_id());
+		externalVo.setUrl(FilePathUtils.genOuterPath(detailId));
+		externalVo.setPageIndex(genThumbMsg.getPage_index());
+		externalVo.setTaskStatus(genThumbMsg.getTask_status());
+		return externalVo;
+	}
+}

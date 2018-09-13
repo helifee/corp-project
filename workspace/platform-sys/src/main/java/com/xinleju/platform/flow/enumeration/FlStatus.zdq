@@ -1,0 +1,30 @@
+package com.xinleju.platform.flow.enumeration;
+
+public enum FlStatus {
+
+	DRAFT("草稿", "0"), PUBLISH("发布", "1"), DISABLED("失效", "2");
+
+	private String name;
+	private String value;
+
+	private FlStatus(String name, String value) {
+		this.name = name;
+		this.value = value;
+	}
+
+	public String getName() {
+		return name;
+	}
+
+	public void setName(String name) {
+		this.name = name;
+	}
+
+	public String getValue() {
+		return value;
+	}
+
+	public void setValue(String value) {
+		this.value = value;
+	}
+}

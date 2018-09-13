@@ -1,0 +1,124 @@
+package com.xinleju.erp.flowengine.events;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.stereotype.Component;
+
+import com.alibaba.fastjson.JSON;
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.flow.service.api.SmObjectService;
+import com.xinleju.erp.flow.utils.FlowConstant;
+import com.xinleju.erp.flowengine.dao.FlowInstanceDao;
+import com.xinleju.erp.flowengine.models.FlowInstance;
+import com.xinleju.erp.flowengine.models.FlowInstanceStep;
+import com.xinleju.erp.flowengine.service.FlowInstanceCalculateFiService;
+import com.xinleju.erp.flowengine.utils.FlowInstanceStatus;
+import com.xinleju.erp.flowengine.utils.StepTypeStatus;
+
+@Component
+public class FlowInstanceStepEventServiceImpl extends BaseService implements FlowInstanceStepEventService {
+	
+	private static final Logger logger = Logger.getLogger(FlowInstanceStepEventServiceImpl.class);
+	
+	@Autowired
+	private ThreadPoolTaskExecutor taskExecutor;
+	
+	@Autowired
+	private SmObjectService smObjectService;
+	
+	@Autowired
+	private FlowInstanceDao flowInstanceDao;
+	
+	@Autowired
+	private FlowInstanceCalculateFiService flowInstanceCalculateFiService;
+
+	@Override
+	public void changeBeforeUpdateFlowInstanceStepEvent(
+			FlowInstanceStep flowInstanceStep) {
+	}
+
+	public void changeAfterUpdateFlowInstanceStepEvent(
+			final FlowInstanceStep flowInstanceStep) {
+		pushFlowInstanceStepStatus(flowInstanceStep);
+	}
+
+	@Override
+	public void changeBeforeSaveFlowInstanceStepEvent(
+			FlowInstanceStep flowInstanceStep) {
+	}
+
+	public void changeAfterSaveFlowInstanceStepEvent(final FlowInstanceStep flowInstanceStep) {
+		
+		pushFlowInstanceStepStatus(flowInstanceStep);
+	}
+	
+	private void pushFlowInstanceStepStatus(final FlowInstanceStep flowInstanceStep){
+		
+		if(flowInstanceStep == null){
+			logger.error("流程环节实例为空");
+			return;
+		}
+		
+		Integer status = flowInstanceStep.getStatus();
+		
+		if(status != StepTypeStatus.STATUS_COMPLETE){
+			return;
+		}
+		
+		logger.info("流程环节实例ID["+flowInstanceStep.getGuid()+"]");
+		
+		final FlowInstance flowInstance = flowInstanceCalculateFiService.getById(flowInstanceStep.getFiId());;
+		
+		final List<String> lstTaskId = flowInstanceDao.getTaskIdsByStepId(flowInstanceStep.getGuid(), StepTypeStatus.STATUS_COMPLETE);
+		
+		taskExecutor.execute(new Runnable() {
+			
+			@Override
+			public void run() {
+				
+				String sodCode = flowInstanceDao.getSodCode(flowInstance.getBizType());
+				
+				Map<String, Object> mapExtendParam = new HashMap<String, Object>();
+				// 获取当前节点下的所有任务
+				logger.info("lstTaskId=" + JSON.toJSONString(lstTaskId));
+				// 拼接附件ID
+				if(lstTaskId != null && lstTaskId.size() > 0){
+        			StringBuffer sb = new StringBuffer();
+        			sb.append("fiId_" + flowInstance.getGuid() + "_wiId_"+ lstTaskId.get(0));
+        			
+        			for(int i=1;i<lstTaskId.size();i++){
+            			
+            			sb.append(",").append("fiId_"+flowInstance.getGuid()+"_wiId_"+ lstTaskId.get(i));
+            		}
+        			
+        			mapExtendParam.put("category", FlowConstant.ATT_CODE_SP);
+        			mapExtendParam.put("ownerIds", sb.toString());
+        			
+        			logger.info("ownerIds["+sb.toString()+"]");
+        			
+        			if(StringUtils.isNotBlank(flowInstanceStep.getApprovalType())){
+        				String opCode = flowInstanceDao.getOpGroupCode(Long.parseLong(flowInstanceStep.getApprovalType()));
+        				mapExtendParam.put("opCode", opCode);
+        				logger.info("opCode["+opCode+"]");
+        			}else{
+        				logger.error("审批类型为空");
+        			}
+        			logger.info("mapExtendParam="+mapExtendParam);
+        		}
+				try {
+					smObjectService.sendAiStatus(flowInstance.getAppCode(), flowInstance.getBizId(), 
+							sodCode, FlowInstanceStatus.STATUS_RUNNING,null, 
+							 					 null, mapExtendParam);
+				} catch (Exception ex) {
+					logger.error("流程环节状态改变通知业务系统失败！",ex);
+				}
+			}
+		});
+	}
+}

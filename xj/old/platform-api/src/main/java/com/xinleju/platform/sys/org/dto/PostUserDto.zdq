@@ -1,0 +1,62 @@
+package com.xinleju.platform.sys.org.dto;
+
+import com.xinleju.platform.base.dto.BaseDto;
+
+
+
+
+
+/**
+ * @author admin
+ * 
+ *
+ */
+public class PostUserDto extends BaseDto{
+
+		
+	//用户
+	private String userId;
+    
+  		
+	//岗位
+	private String postId;
+    
+  		
+	//排序
+	private Long sort;
+    
+  	//是否主岗
+	private Boolean isDeafault;
+		
+	public String getUserId() {
+		return userId;
+	}
+	public void setUserId(String userId) {
+		this.userId = userId;
+	}
+    
+  		
+	public String getPostId() {
+		return postId;
+	}
+	public void setPostId(String postId) {
+		this.postId = postId;
+	}
+    
+  		
+	public Long getSort() {
+		return sort;
+	}
+	public void setSort(Long sort) {
+		this.sort = sort;
+	}
+    
+  		
+	public Boolean getIsDeafault() {
+		return isDeafault;
+	}
+	public void setIsDeafault(Boolean isDeafault) {
+		this.isDeafault = isDeafault;
+	}
+  		
+}

@@ -1,0 +1,21 @@
+package com.xinleju.platform.finance.dto.service;
+
+import com.xinleju.platform.base.dto.service.BaseDtoServiceCustomer;
+
+public interface SysRegisterDtoServiceCustomer extends BaseDtoServiceCustomer{
+
+	/**
+	 * @param object
+	 * @param paramaterJson
+	 * @return
+	 */
+	public String getSystemRegisterpage(String userInfo, String paramaterJson);
+
+	/**
+	 * @param userJson
+	 * @param string
+	 * @return
+	 */
+	public String updateStatus(String userJson, String string);
+
+}

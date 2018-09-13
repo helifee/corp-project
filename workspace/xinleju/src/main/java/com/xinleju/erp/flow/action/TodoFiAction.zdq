@@ -1,0 +1,296 @@
+package com.xinleju.erp.flow.action;
+
+import java.math.BigInteger;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.collections.map.LinkedMap;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.xinleju.erp.base.app.action.BaseAction;
+import com.xinleju.erp.base.utils.CollectionUtils;
+import com.xinleju.erp.flow.models.Ct;
+import com.xinleju.erp.flow.service.CtService;
+import com.xinleju.erp.flow.service.TodoFiService;
+import com.xinleju.erp.flow.service.api.extend.dto.UserDTO;
+import com.xinleju.erp.flow.service.extend.dto.TodoFiDto;
+import com.xinleju.erp.flow.utils.LoginInfoUtils;
+import com.xinleju.erp.frame.dao.CompanyDao;
+import com.xinleju.erp.frame.models.Company;
+
+/**
+ * 
+ * 版权：(C) 版权所有 2000-2014 上海天好电子商务有限公司苏州分公司
+ * 流程任务处理
+ * @author   jun
+ * @version  $Id$
+ * @since
+ * @see
+ */
+public class TodoFiAction extends BaseAction{
+    
+    /**
+     * 是否显示更多
+     */
+    private Integer ifShowMore;
+
+    /**
+     * 查询条件
+     */
+    private TodoFiDto todoFiDto;
+    
+    @Autowired
+    private CtService ctService;
+    
+    @Autowired
+    private CompanyDao companyDao;
+    
+    @Autowired
+    private TodoFiService todoFiService;
+    
+    /**
+     * 全部列表
+     * @author jun
+     * @return
+     */
+    @SuppressWarnings("unchecked")
+    public String allFiList() {
+        //流程状态
+        Map<String, String> fiStatusMap = new LinkedMap();
+        fiStatusMap.put(TodoFiDto.FI_STATUS_DS, "待审");
+        fiStatusMap.put(TodoFiDto.FI_STATUS_BH, "驳回");
+        fiStatusMap.put(TodoFiDto.FI_STATUS_CH, "撤回");
+        fiStatusMap.put(TodoFiDto.FI_STATUS_FQ, "废弃");
+        fiStatusMap.put(TodoFiDto.FI_STATUS_JS, "结束");
+        request.setAttribute("fiStatusMap", fiStatusMap);
+        //任务类型
+        Map<String, String> todoTypeMap = new LinkedMap();
+        todoTypeMap.put(TodoFiDto.TODO_TYPE_DS + "", "待审");
+        todoTypeMap.put(TodoFiDto.TODO_TYPE_DY + "", "待阅");
+        todoTypeMap.put(TodoFiDto.TODO_TYPE_YB + "", "已办");
+        todoTypeMap.put(TodoFiDto.TODO_TYPE_GR + "", "个人");
+        todoTypeMap.put(TodoFiDto.TODO_TYPE_SC + "", "收藏");
+        todoTypeMap.put(TodoFiDto.TODO_TYPE_SQ + "", "授权他人");
+        request.setAttribute("todoTypeMap", todoTypeMap);
+        String startUserIdLimitSql = "";
+        UserDTO userDto = LoginInfoUtils.getLoginInfo(request).getUserDTO();
+        Long userId = null != userDto && null != userDto.getId() ? userDto.getId() : 0L;
+        if ( "admin".equals(userDto.getLoginName().toLowerCase()) ) {
+        	userId = -1L;
+        }
+        
+        if (null != todoFiDto && StringUtils.isNotBlank(todoFiDto.getTodoType())){
+            if (todoFiDto.getTodoType().trim().equals(TodoFiDto.TODO_TYPE_GR + "")){
+            	if ( userId > 0 ) {
+            		startUserIdLimitSql = " fi.start_user_id = " + userId;
+            	}
+            	
+            } else if (todoFiDto.getTodoType().trim().equals(TodoFiDto.TODO_TYPE_DS + "") || todoFiDto.getTodoType().trim().equals(TodoFiDto.TODO_TYPE_YB + "") || todoFiDto.getTodoType().trim().equals(TodoFiDto.TODO_TYPE_YB + "")){
+            	redirect("Msg!index.do?msgDto.todoType=" + todoFiDto.getTodoType().trim());
+            }
+        }
+        page = todoFiService.getTodoFiPageBySql(todoFiDto, startUserIdLimitSql, userId, start, limit);
+        //机构
+        List<Company> companyList = companyDao.getAllCompany(false);
+        if (null == companyList){
+            companyList = new ArrayList<Company>();
+        }
+        request.setAttribute("companyMap", CollectionUtils.collectAsMap(companyList, "id"));
+        //流程目录
+        Long pctId = 0L;
+        Long ctId = 0L;
+        Long cctId = 0L;
+        //二级目录
+        if (null != todoFiDto && null != todoFiDto.getPctId()){
+            pctId = todoFiDto.getPctId();
+        }
+        
+        //三级目录
+        if (null != todoFiDto && null != todoFiDto.getCtId()){
+            pctId = getCommonService().findLong("select c.parentId from Ct c where c.id = ? ", todoFiDto.getCtId());
+            ctId = todoFiDto.getCtId();
+        }
+        if(null != todoFiDto && null != todoFiDto.getCctId()){
+            pctId = getCommonService().findLong("select p.parentId from Ct c inner join Ct p on p.id = c.parentId where c.id = ? ", todoFiDto.getCtId());
+            ctId = getCommonService().findLong("select c.parentId from Ct c where c.id = ? ", todoFiDto.getCtId());
+            cctId = todoFiDto.getCctId();
+        }
+        
+        if (null != todoFiDto){
+            todoFiDto.setPctId(pctId);
+            todoFiDto.setCtId(ctId);
+            todoFiDto.setCctId(cctId);
+        }
+        
+        //一级目录
+        List<Ct> ctList = ctService.getCtList(null, null);
+        request.setAttribute("pCtMap", CollectionUtils.collectAsMap(ctList, "id"));
+        //二级目录
+        if (null != pctId && pctId.longValue() > 0){
+            ctList = ctService.getCtList(pctId, null);
+        } else if (null != ctList && ctList.size() > 0){
+            ctList = ctService.getCtList(ctList.get(0).getId(), null);
+        } 
+        if (null == ctList) {
+            ctList = new ArrayList<Ct>();
+        }
+        request.setAttribute("ctMap", CollectionUtils.collectAsMap(ctList, "id"));
+        //三级目录
+        if (null != ctId && ctId.longValue() > 0){
+            ctList = ctService.getCtList(ctId, null);
+        } else if (null != ctList && ctList.size() > 0){
+            ctList = ctService.getCtList(ctList.get(0).getId(), null);
+        }
+        if (null == ctList) {
+            ctList = new ArrayList<Ct>();
+        }
+        request.setAttribute("cCtMap", CollectionUtils.collectAsMap(ctList, "id"));
+        return "allFiList";
+    }
+    
+    public void listAjax() {
+    	String startUserIdLimitSql = "";
+        UserDTO userDto = LoginInfoUtils.getLoginInfo(request).getUserDTO();
+        Long userId = null != userDto && null != userDto.getId() ? userDto.getId() : 0L;
+        if (null != todoFiDto && StringUtils.isNotBlank(todoFiDto.getTodoType())){
+            if (todoFiDto.getTodoType().trim().equals(TodoFiDto.TODO_TYPE_GR + "")){
+                startUserIdLimitSql = " fi.start_user_id = " + userId;
+            } else if (todoFiDto.getTodoType().trim().equals(TodoFiDto.TODO_TYPE_DS + "") || todoFiDto.getTodoType().trim().equals(TodoFiDto.TODO_TYPE_YB + "") || todoFiDto.getTodoType().trim().equals(TodoFiDto.TODO_TYPE_YB + "")){
+            	redirect("Msg!index.do?msgDto.todoType=" + todoFiDto.getTodoType().trim());
+            }
+        }
+        page = todoFiService.getTodoFiPageBySql(todoFiDto, startUserIdLimitSql, userId, start, limit);
+        
+        StringBuffer json = new StringBuffer();
+        Object[] item = null;
+        for (Object obj : page.getItems()) {
+        	item = (Object[]) obj;
+        	json.append(",{")
+        	.append("\"id\" : \"").append(item[0]).append("\",")
+    		.append("\"title\" : \"").append(item[3]).append("\",")
+    		.append("\"flowType\" : \"").append(CtAction.getCtNamePath( item[12] == null ? null : ((BigInteger) item[12]).longValue() )).append("\",")
+    		.append("\"code\" : \"").append( (item[1] == null ? "" : item[1] + "") + (item[2] == null ? "" : item[2]) ).append("\",")
+    		.append("\"compary\" : \"").append(item[9]==null ? "" : item[9]).append("\",")
+    		.append("\"applyPsn\" : \"").append(item[5]).append("\",")
+    		.append("\"applyTime\" : \"").append(item[6]).append("\"")
+    	
+    		.append("}");
+    	}
+
+        super.renderJson("[" + (json.length() == 0 ? "" : json.substring(1)) + "]");
+    }
+
+    /*private DetachedCriteria fixQueryDc(String startUserIdLimitSql, Long userId){
+        DetachedCriteria dc = DetachedCriteria.forClass(Fi.class);
+        dc.createAlias("fl", "fl");
+        if (StringUtils.isNotBlank(startUserIdLimitSql)){
+            dc.add(Restrictions.sqlRestriction(startUserIdLimitSql));
+        }
+        String fiStatusLimitSql = "";
+        if (null != todoFiDto){
+            if (StringUtils.isNotBlank(todoFiDto.getFiNameOrCode())){
+                dc.add(Restrictions.or(Restrictions.like("fiName", todoFiDto.getFiNameOrCode().trim()), Restrictions.like("fiCode", todoFiDto.getFiNameOrCode().trim())));
+            }
+            if (StringUtils.isNotBlank(todoFiDto.getSqrIds())){
+                dc.add(Restrictions.in("startUserId", new Long[]{Long.valueOf(todoFiDto.getSqrIds().trim())}));
+            }
+            if (null != todoFiDto.getDepIds()){
+                dc.add(Restrictions.in("companyId", new Long[]{todoFiDto.getDepIds()}));
+            }
+            if (StringUtils.isNotBlank(todoFiDto.getStartDate())){
+                dc.add(Restrictions.ge("startTime", DateUtils.str2Date(todoFiDto.getStartDate(), DateUtils.DATE_FORMAT_YYYY_MM_DD_HH_MM_SS)));
+            }
+            if (StringUtils.isNotBlank(todoFiDto.getEndDate())){
+                dc.add(Restrictions.le("startTime", DateUtils.str2Date(todoFiDto.getEndDate(), DateUtils.DATE_FORMAT_YYYY_MM_DD_HH_MM_SS)));
+            }
+            List<Long> ctIdList = new ArrayList<Long>();
+            if (null != todoFiDto.getCctId()){
+                ctIdList.add(todoFiDto.getCctId());
+            } else if (null != todoFiDto.getCtId()){
+                ctIdList = ctService.getSubCtIdList(todoFiDto.getCtId(), null);
+                if (null == ctIdList || 1 > ctIdList.size()){
+                    ctIdList = new ArrayList<Long>();
+                }
+                ctIdList.add(todoFiDto.getCtId());
+            } else if (null != todoFiDto.getPctId()){
+                ctIdList = ctService.getSubCtIdList(todoFiDto.getPctId(), null);
+                if (null == ctIdList || 1 > ctIdList.size()){
+                    ctIdList = new ArrayList<Long>();
+                }
+                ctIdList.add(todoFiDto.getPctId());
+            }
+            if (null != ctIdList && ctIdList.size() > 0){
+                dc.add(Restrictions.in("fl.ctId", ctIdList));
+            }
+            List<Long> objIdList = new ArrayList<Long>();
+            if (StringUtils.isNotBlank(todoFiDto.getObjIds())){
+                if (StringUtils.isNotBlank(todoFiDto.getAppCodes()) && getCommonService().isExist(ServiceObjectDefine.class, " id = ? and moduleCode = ? ", Long.valueOf(todoFiDto.getObjIds().trim()), todoFiDto.getAppCodes().trim())){
+                    objIdList.add(Long.valueOf(todoFiDto.getObjIds().trim()));
+                } else {
+                    todoFiDto.setObjIds("");
+                }
+            } else if (StringUtils.isNotBlank(todoFiDto.getAppCodes())){
+                objIdList = jdbcTemplate.queryForList("select group_"DbType.getType()+"concat(distinct d.id) from sm_service_object_define d where d.module_code = ?", Long.class, todoFiDto.getAppCodes().trim());
+            }
+            if (null != objIdList && objIdList.size() > 0){
+                dc.add(Restrictions.in("fl.serviceObjectDefineId", objIdList));
+            }
+            if (StringUtils.isNotBlank(todoFiDto.getClStartDate())){
+                dc.add(Restrictions.ge("completeTime", DateUtils.str2Date(todoFiDto.getClStartDate().trim(), DateUtils.DATE_FORMAT_YYYY_MM_DD_HH_MM_SS)));
+            }
+            if (StringUtils.isNotBlank(todoFiDto.getClEndDate())){
+                dc.add(Restrictions.le("completeTime", DateUtils.str2Date(todoFiDto.getClEndDate().trim(), DateUtils.DATE_FORMAT_YYYY_MM_DD_HH_MM_SS)));
+            }
+            if (StringUtils.isNotBlank(todoFiDto.getFiStatus())){
+                if (TodoFiDto.FI_STATUS_DS.equals(todoFiDto.getFiStatus())){
+                    fiStatusLimitSql = " {alias}.status = " + Wi.STATUS_RUNNING ;
+                } else if (TodoFiDto.FI_STATUS_BH.equals(todoFiDto.getFiStatus())) {
+                    fiStatusLimitSql = " {alias}.is_backed_fi = 1 ";
+                } else if (TodoFiDto.FI_STATUS_CH.equals(todoFiDto.getFiStatus())) {
+                    fiStatusLimitSql = " exists(select 'y' from tf_ai ai2 inner join tf_ac ac2 on ai2.ac_id = ac2.id where ai2.fi_id = {alias}.id and ai2.status = " + WsConstant.STATUS_RUNNING + ")"
+                        + " and exists(select 'y' from tf_fi fi2 where find_in_set(fi2.id,"DbType.getType()+"concat("+DbType.getType()+"ifnull({alias}.related_fi_ids,''),',',{alias}.id)) > 0 and fi2.terminate_code = '" + WsConstant.FLOW_TERMINATE_CODE_CH + "')";
+                } else if (TodoFiDto.FI_STATUS_FQ.equals(todoFiDto.getFiStatus())) {
+                    fiStatusLimitSql = " {alias}.terminate_code = '" + WsConstant.FLOW_TERMINATE_CODE_ZF + "' ";
+                } else if (TodoFiDto.FI_STATUS_JS.equals(todoFiDto.getFiStatus())) {
+                    fiStatusLimitSql = " {alias}.status = " + Wi.STATUS_COMPLETE ;
+                }
+            }
+        }
+        if (StringUtils.isNotBlank(fiStatusLimitSql)){
+            dc.add(Restrictions.sqlRestriction(fiStatusLimitSql));
+        }
+        String userLimitSql = " find_in_set(?,"+DbType.getType()+"ifnull({alias}.history_wi_user_ids,''))";
+        dc.add(Restrictions.sqlRestriction(userLimitSql, userId, LongType.INSTANCE));
+        dc.add(Restrictions.or(Restrictions.isNull("terminateCode"), Restrictions.ne("terminateCode", WsConstant.FLOW_TERMINATE_CODE_BH), Restrictions.ne("terminateCode", WsConstant.FLOW_TERMINATE_CODE_CH)));
+        dc.addOrder(Order.desc("startTime"));
+        return dc;
+    }*/
+
+    
+    
+    public TodoFiDto getTodoFiDto() {
+        return todoFiDto;
+    }
+
+    public void setTodoFiDto(TodoFiDto todoFiDto) {
+        this.todoFiDto = todoFiDto;
+    }
+
+    public Integer getIfShowMore() {
+        return ifShowMore;
+    }
+
+    public void setIfShowMore(Integer ifShowMore) {
+        this.ifShowMore = ifShowMore;
+    }
+
+    public CompanyDao getCompanyDao() {
+        return companyDao;
+    }
+
+    public void setCompanyDao(CompanyDao companyDao) {
+        this.companyDao = companyDao;
+    }
+}

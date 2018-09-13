@@ -1,0 +1,41 @@
+package com.xinleju.platform.sys.notice.service;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.sys.notice.entity.MailServer;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface MailServerService extends  BaseService <String,MailServer>{
+
+	/**
+	 * 校验code是否重复
+	 * @param paramater
+	 * @return
+	 */
+	public Integer checkCode(Map map)throws Exception;
+	/**
+	 * 保存服务器信息
+	 * @param paramater
+	 * @return
+	 */
+	public Integer saveServer(MailServer server)throws Exception;
+	/**
+	 * 修改服务器信息
+	 * @param paramater
+	 * @return
+	 */
+	public Integer updateServer(MailServer server)throws Exception;
+	/**
+	 * 模糊查询列表
+	 * @param paramater
+	 * @return
+	 */
+	public List<MailServer> queryListLike(Map map)throws Exception;
+}

@@ -1,0 +1,34 @@
+package com.xinleju.platform.flow.entity;
+
+import java.util.List;
+
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public class AcParticipant extends Ac{
+	
+	//备用的临时字段
+	private List<Participant> participantList;//参与人列表
+	/**
+	 * 
+	 */
+	private List<Participant> ccPersonList;//抄送人列表
+		
+	
+	public List<Participant> getParticipantList() {
+		return participantList;
+	}
+	public void setParticipantList(List<Participant> participantList) {
+		this.participantList = participantList;
+	}
+	public List<Participant> getCcPersonList() {
+		return ccPersonList;
+	}
+	public void setCcPersonList(List<Participant> ccPersonList) {
+		this.ccPersonList = ccPersonList;
+	}
+}

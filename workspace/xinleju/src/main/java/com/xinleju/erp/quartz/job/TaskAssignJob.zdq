@@ -1,0 +1,125 @@
+package com.xinleju.erp.quartz.job;
+
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.quartz.JobExecutionContext;
+import org.quartz.JobExecutionException;
+import org.quartz.SchedulerContext;
+import org.springframework.context.ApplicationContext;
+import org.springframework.scheduling.quartz.QuartzJobBean;
+
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.app.service.ICommonService;
+import com.xinleju.erp.base.app.service.impl.CommonService;
+import com.xinleju.erp.base.utils.JsonUtils;
+import com.xinleju.erp.com.service.impl.MyDubboService;
+import com.xinleju.erp.com.service.base.IBaseTaskJobService;
+import com.xinleju.erp.quartz.model.TaskIns;
+
+public class TaskAssignJob extends QuartzJobBean {
+
+    @Override
+    protected void executeInternal(JobExecutionContext context)
+        throws JobExecutionException {
+        try{
+            SchedulerContext schCtx = context.getScheduler().getContext(); 
+            ApplicationContext ctx = (ApplicationContext)schCtx.get("applicationContextKey");  
+            ICommonService commonService = ctx.getBean(ICommonService.class);
+            String code = context.getTrigger().getJobDataMap().getString("code").trim();
+            String name = context.getTrigger().getJobDataMap().getString("name").trim();
+            String serviceId = context.getTrigger().getJobDataMap().getString("serviceId");
+            String moduleCode = context.getTrigger().getJobDataMap().getString("moduleCode");
+            List<TaskIns> list =  commonService.findByHQL(TaskIns.class, "from TaskIns t where t.code = ? and t.moduleCode = ? and (t.status = ? or t.status = ?) ", code,moduleCode,TaskIns.STATUS_CREATE,TaskIns.STATUS_RUNNING);
+            Object[] objectArray = this.dealTaskJob(serviceId, code, null);
+            TaskIns t = new TaskIns();
+            if(list == null || list.isEmpty()) {
+            	t.setCode(code);
+            	t.setName(name);
+            	t.setServiceId(serviceId);
+            	t.setModuleCode(moduleCode);
+            	t.setCreateAt(new Date());
+            	t.setStatus(TaskIns.STATUS_CREATE);
+            	if (null != objectArray && objectArray.length > 0 && TaskIns.STATUS_SUCCESS != (Integer)objectArray[0]){
+                    t.setStatus((Integer)objectArray[0]);
+                    t.setFailureNote(objectArray[1].toString());
+                    t.setStartAt((Date)objectArray[2]);
+                    t.setFinishAt((Date)objectArray[3]);
+                    commonService.saveOrUpdate(t);
+                }
+            } else {
+                t = list.get(0);
+                t.setStatus((Integer)objectArray[0]);
+                t.setFailureNote(objectArray[1].toString());
+                t.setStartAt((Date)objectArray[2]);
+                t.setFinishAt((Date)objectArray[3]);
+                commonService.saveOrUpdate(t);
+            }
+        }catch(Exception e){
+            e.printStackTrace();
+        }
+    }
+    /**
+     * 具体的任务执行
+     * @author jun
+     * @param serviceId
+     * @param code
+     * @param status
+     * @param failureNote
+     * @return
+     */
+    private Object[] dealTaskJob(String serviceId, String code, String failureNote){
+        Object[] objectArray = new Object[4];
+        Date startDate=new Date();
+        int status = TaskIns.STATUS_CREATE;
+        IBaseTaskJobService iBaseTaskJobService = App.getBean(MyDubboService.class).getBaseTaskJobService(serviceId);
+        if (null != iBaseTaskJobService){
+            try {
+                String r = iBaseTaskJobService.executeTask(code);
+                if (StringUtils.isNotBlank(r)){
+                    try {
+                        Map map = JsonUtils.getMap(r);
+                        if (null != map && null != map.get("status") && StringUtils.isNotBlank(map.get("status").toString())){
+                            String dealSatus = map.get("status").toString();
+                            if ("2".equals(dealSatus)){
+                                status = TaskIns.STATUS_SUCCESS;
+                                failureNote = "";
+                            } else if ("1".equals(dealSatus)){
+                                status = TaskIns.STATUS_RUNNING;
+                                failureNote = "任务执行中...";
+                            } else if ("9".equals(dealSatus)){
+                                status = TaskIns.STATUS_FAIL;
+                                failureNote = "任务接口调用时异常结束:" + (null != map.get("msg") ? map.get("msg").toString() : "任务异常结束") + "！";
+                            } else {
+                                status = TaskIns.STATUS_FAIL;
+                                failureNote = "任务接口调用时返回值异常:未知状态" + dealSatus + "！";
+                            }
+                        } else {
+                            status = TaskIns.STATUS_FAIL;
+                            failureNote = "任务接口调用时返回值异常！";
+                        }
+                    } catch (Exception e){
+                        status = TaskIns.STATUS_FAIL;
+                        failureNote = "任务接口调用时返回值异常！";
+                    }
+                } else {
+                    status = TaskIns.STATUS_FAIL;
+                    failureNote = "任务接口调用时返回值为空！";
+                }
+            } catch (Exception e){
+                status = TaskIns.STATUS_FAIL;
+                failureNote = "任务接口调用失败！";
+            }
+        } else {
+            status = TaskIns.STATUS_FAIL;
+            failureNote = "任务接口没有注册，调用失败！";
+        }
+        objectArray[0] = status;
+        objectArray[1] = failureNote;
+        objectArray[2] = startDate;
+        objectArray[3] = new Date();
+        return objectArray;
+    }
+}

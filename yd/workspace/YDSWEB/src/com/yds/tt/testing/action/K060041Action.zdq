@@ -1,0 +1,534 @@
+/*
+ * @(#) K060041Action.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 教育考试培训系统
+ *    SubSystem: 考试子系统
+ */
+package com.yds.tt.testing.action;
+
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
+
+import org.springframework.beans.factory.config.BeanDefinition;
+import org.springframework.context.annotation.Scope;
+import org.springframework.stereotype.Controller;
+
+import com.yds.base.action.AbstractBaseAction;
+import com.yds.common.service.SessionConstants;
+import com.yds.tt.manager.bean.TtCheckResult;
+import com.yds.tt.manager.service.AutoMarkedService;
+import com.yds.tt.manager.service.TtCommonService;
+import com.yds.tt.manager.service.TtCommonUtil;
+import com.yds.tt.manager.service.TtConstants;
+import com.yds.tt.testing.bean.ExamEmployeeInfo;
+import com.yds.tt.testing.bean.K060031ExamPaperInfo;
+import com.yds.tt.testing.bean.TestEmployeeAnswerInfo;
+import com.yds.tt.testing.service.K060031Service;
+import com.yds.tt.testing.service.K060041Service;
+import com.yds.util.service.Session;
+
+/**
+ * 考生答卷&试卷预览(单题)处理.
+ * 
+ * @author lijinling
+ * @version 1.00 2010/03/29
+ */
+@Scope(BeanDefinition.SCOPE_PROTOTYPE)
+@Controller("k060041Action")
+public class K060041Action extends AbstractBaseAction {
+
+	private static final long serialVersionUID = 2655224941630622203L;
+
+	private K060041Service k060041Service;
+
+	private AutoMarkedService autoMarkedService;
+
+	private TtCommonService ttCommonService;
+
+	private TestEmployeeAnswerInfo testEmployeeAnswerInfo; // 考试员工答案信息
+
+	private String paperInfo; // 试卷详细内容JSON串
+
+	private Integer mode; // 画面模式
+	
+	private String modeName; // 画面模式
+	
+	private File answer; // 上传文件
+
+	private String answerContentType; // 上传文件类型
+
+	private String answerFileName; // 上传文件名
+
+	private String errorMessage; // 错误消息
+
+	private String examineId; // 考试ID
+
+	private Integer ifViewChange; // 是否视图切换
+
+	private String flag; // 答案是否提交成功
+
+	private String leftTime;
+
+	/**
+	 * 初期表示（试卷编辑预览模式）.
+	 */
+	public String initEditViewMode() {
+
+		// 取得画面模式
+		mode = (Integer) Session.get(SessionConstants.TT_K060031_MODE);
+		// 对象区分
+		Integer typeId = TtConstants.C43.C43_4.value();
+		// 启动模式<1:试卷编辑预览模式>
+		String eventId = "K060041_1";
+
+		// 画面启动限制检查
+		return checkStartUp(eventId, typeId);
+	}
+
+	/**
+	 * 初期表示（练习预览模式）.
+	 */
+	public String initPracticeViewMode() {
+
+		// 取得画面模式
+		mode = (Integer) Session.get(SessionConstants.TT_K060031_MODE);
+		// 对象区分
+		Integer typeId = TtConstants.C43.C43_5.value();
+		// 启动模式<2:练习预览模式>
+		String eventId = "K060041_2";
+		// 画面启动限制检查
+		return checkStartUp(eventId, typeId);
+	}
+
+	/**
+	 * 初期表示（参加练习模式）.
+	 */
+	public String initPracticeMode() {
+
+		// 取得画面模式
+		mode = (Integer) Session.get(SessionConstants.TT_K060031_MODE);
+		return SUCCESS;
+	}
+
+	/**
+	 * 初期表示（参加考试模式）.
+	 */
+	public String initTestMode() {
+		// 取得画面模式
+		mode = (Integer) Session.get(SessionConstants.TT_K060031_MODE);
+		// 员工考试状态判断
+		if (!k060041Service.checkTestEmployeePerm()) {
+			errorMessage = propMgr.getMessage("yds.tt.error.GTE02");
+			return ERROR;
+		}
+		testEmployeeAnswerInfo = k060041Service
+				.getCurrentTestEmployeeAnswerInfo();
+		return SUCCESS;
+	}
+
+	/**
+	 * 初期表示（试卷生成预览模式）.
+	 */
+	public String initPaperCreateMode() {
+		// 取得画面模式
+		mode = (Integer) Session.get(SessionConstants.TT_K060031_MODE);
+		// 画面启动限制检查
+		Integer typeId = TtConstants.C43.C43_5.value();
+		// 启动模式<5:生成预览模式>
+		String eventId = "K060041_3";
+		// 画面启动限制检查
+		return checkStartUp(eventId, typeId);
+	}
+
+	/**
+	 * 画面启动权限检查
+	 * 
+	 * @param eventId
+	 *            事件ID
+	 * @param objectId
+	 *            对象ID
+	 * @param typeId
+	 *            对象区分
+	 * @return
+	 */
+	private String checkStartUp(String eventId, Integer typeId) {
+		// 画面ID
+		String pageId = TtConstants.PageId.K060041.value();
+		Integer category1Id = 0;
+		Integer category2Id = 0;
+		Integer category3Id = 0;
+		List<String> objectId = new ArrayList<String>();
+		// 取得试卷ID
+		String paperId = ((K060031ExamPaperInfo) Session
+				.get(SessionConstants.TT_K060031_EXAMPAPERINFO)).getPaperId();
+		objectId.add(paperId);
+		// 调用共通画面启动限制检查
+		TtCheckResult checkResult = ttCommonService.checkStartupAuthority(
+				pageId, eventId, category1Id, category2Id, category3Id, typeId,
+				objectId);
+		if (!checkResult.getRetFlag()) {
+			errorMessage = checkResult.getRetMessage();
+			return ERROR;
+		}
+		return SUCCESS;
+	}
+
+	/**
+	 * 取得考试试卷信息.
+	 * 
+	 * @return
+	 */
+	public String gainTestPaperInfo() {
+
+		// 取得考生考试试卷信息
+		this.paperInfo = k060041Service.getPaperInfo();
+
+		return SUCCESS;
+	}
+
+	/**
+	 * 提交答案内容(考试模式).
+	 * 
+	 * @return
+	 */
+	public String subAnswerContent() {
+		// 员工考试状态判断
+		if (!k060041Service.checkTestEmployeePerm()) {
+			errorMessage = propMgr.getMessage("yds.tt.error.GTE02");
+			return ERROR;
+		}
+		// 提交考生答案信息
+		if (!k060041Service.updateAnswerContent(testEmployeeAnswerInfo)) {
+			flag = ERROR;
+			return ERROR;
+		}
+		flag = SUCCESS;
+		return SUCCESS;
+
+	}
+
+	/**
+	 * 上传题答案提交.
+	 * 
+	 * @return
+	 */
+	public String uploadFileContent() throws Exception {
+		// 员工考试状态判断
+		if (!k060041Service.checkTestEmployeePerm()) {
+			errorMessage = propMgr.getMessage("yds.tt.error.GTE02");
+			return ERROR;
+		}
+		if (!k060041Service.updateAnswerFileContent(answer, answerFileName,
+				testEmployeeAnswerInfo)) {
+			flag = ERROR;
+			return ERROR;
+		}
+
+		flag = SUCCESS;
+		return SUCCESS;
+	}
+
+	/**
+	 * 考试交卷(考试模式).
+	 * 
+	 * @return
+	 */
+	public String submitTest() {
+		// 更新考试员工考试状态
+		ExamEmployeeInfo examEmployeeInfo = k060041Service
+				.updateTestEmployeeInfoHandin();
+		examineId = examEmployeeInfo.getExamineId();
+		// 清除session中试卷和模式信息
+		Session.delete(SessionConstants.TT_K060031_EXAMPAPERINFO);
+		Session.delete(SessionConstants.TT_K060031_MODE);
+		return SUCCESS;
+	}
+
+	/**
+	 * 放弃提交试卷
+	 * 
+	 * @return
+	 */
+	public String giveupSubmit() {
+		// 取得Session
+		K060031ExamPaperInfo examPaperInfo = (K060031ExamPaperInfo) Session
+				.get(SessionConstants.TT_K060031_EXAMPAPERINFO);
+		examineId = examPaperInfo.getExamineId();
+		// 清除session中试卷和模式信息
+		Session.delete(SessionConstants.TT_K060031_EXAMPAPERINFO);
+		Session.delete(SessionConstants.TT_K060031_MODE);
+		return SUCCESS;
+	}
+
+	/**
+	 * 放弃考试(考试模式).
+	 * 
+	 * @return
+	 */
+	public String desertTest() {
+		// 更新考试员工考试状态
+		ExamEmployeeInfo examEmployeeInfo = k060041Service
+				.updateTestEmployeeInfoDesert();
+
+		examineId = examEmployeeInfo.getExamineId();
+		// 取得Session
+		// 清除session中试卷和模式信息
+		Session.delete(SessionConstants.TT_K060031_EXAMPAPERINFO);
+		Session.delete(SessionConstants.TT_K060031_MODE);
+		return SUCCESS;
+	}
+
+	/**
+	 * 查看答案(练习模式).
+	 * 
+	 * @return
+	 */
+	public String viewAnswer() {
+
+		// 取得Session
+		K060031ExamPaperInfo examPaperInfo = (K060031ExamPaperInfo) Session
+				.get(SessionConstants.TT_K060031_EXAMPAPERINFO);
+		String emplyeesId = TtCommonUtil.getLoginUserId();
+		String examId = examPaperInfo.getExamineId();
+		Integer examJoinTimes = examPaperInfo.getExamineJoinTimes();
+		// 练习评分
+		Integer markedCode = TtConstants.C39.C39_3.value();
+		// 调用自动评分处理
+		examPaperInfo = autoMarkedService.obtainUserAnswerInfo(markedCode,
+				examPaperInfo, examId, emplyeesId, examJoinTimes);
+		// 设置评分后的信息
+		Session.set(SessionConstants.TT_K060031_EXAMPAPERINFO, examPaperInfo);
+		// 迁移至考试阅卷对照(整卷)
+		return SUCCESS;
+	}
+
+	/**
+	 * 切换模式.
+	 * 
+	 * @return
+	 */
+	public String changeMode() {
+		// 取得当前模式
+		mode = (Integer) Session.get(SessionConstants.TT_K060031_MODE);
+		modeName = K060031Service.MODE_NAMES.values()[mode - 1].toString();
+		
+		// 切换模式标志
+		ifViewChange = 1;
+		return SUCCESS;
+	}
+
+	public String getExamLeftTime() {
+		// 试卷信息bean
+		K060031ExamPaperInfo examPaperInfo = (K060031ExamPaperInfo) Session
+				.get(SessionConstants.TT_K060031_EXAMPAPERINFO);
+		leftTime = examPaperInfo.getExamineTimeLeft().toString();
+		return SUCCESS;
+	}
+
+	/**
+	 * @param service
+	 *            the k060041Service to set
+	 */
+	public void setK060041Service(K060041Service service) {
+		k060041Service = service;
+	}
+
+	/**
+	 * @param ttCommonService
+	 *            the ttCommonService to set
+	 */
+	public void setTtCommonService(TtCommonService ttCommonService) {
+		this.ttCommonService = ttCommonService;
+	}
+
+	/**
+	 * @param autoMarkedService
+	 *            the autoMarkedService to set
+	 */
+	public void setAutoMarkedService(AutoMarkedService autoMarkedService) {
+		this.autoMarkedService = autoMarkedService;
+	}
+
+	/**
+	 * @return the testEmployeeAnswerInfo
+	 */
+	public TestEmployeeAnswerInfo getTestEmployeeAnswerInfo() {
+		return testEmployeeAnswerInfo;
+	}
+
+	/**
+	 * @param testEmployeeAnswerInfo
+	 *            the testEmployeeAnswerInfo to set
+	 */
+	public void setTestEmployeeAnswerInfo(
+			TestEmployeeAnswerInfo testEmployeeAnswerInfo) {
+		this.testEmployeeAnswerInfo = testEmployeeAnswerInfo;
+	}
+
+	/**
+	 * @return the paperInfo
+	 */
+	public String getPaperInfo() {
+		return paperInfo;
+	}
+
+	/**
+	 * @param paperInfo
+	 *            the paperInfo to set
+	 */
+	public void setPaperInfo(String paperInfo) {
+		this.paperInfo = paperInfo;
+	}
+
+	/**
+	 * @return the mode
+	 */
+	public Integer getMode() {
+		return mode;
+	}
+
+	/**
+	 * @param mode
+	 *            the mode to set
+	 */
+	public void setMode(Integer mode) {
+		this.mode = mode;
+	}
+
+	/**
+	 * @return the answer
+	 */
+	public File getAnswer() {
+		return answer;
+	}
+
+	/**
+	 * @param answer
+	 *            the answer to set
+	 */
+	public void setAnswer(File answer) {
+		this.answer = answer;
+	}
+
+	/**
+	 * @return the answerContentType
+	 */
+	public String getAnswerContentType() {
+		return answerContentType;
+	}
+
+	/**
+	 * @param answerContentType
+	 *            the answerContentType to set
+	 */
+	public void setAnswerContentType(String answerContentType) {
+		this.answerContentType = answerContentType;
+	}
+
+	/**
+	 * @return the answerFileName
+	 */
+	public String getAnswerFileName() {
+		return answerFileName;
+	}
+
+	/**
+	 * @return the leftTime
+	 */
+	public String getLeftTime() {
+		return leftTime;
+	}
+
+	/**
+	 * @param leftTime
+	 *            the leftTime to set
+	 */
+	public void setLeftTime(String leftTime) {
+		this.leftTime = leftTime;
+	}
+
+	/**
+	 * @param answerFileName
+	 *            the answerFileName to set
+	 */
+	public void setAnswerFileName(String answerFileName) {
+		this.answerFileName = answerFileName;
+	}
+
+	/**
+	 * @return the examineId
+	 */
+	public String getExamineId() {
+		return examineId;
+	}
+
+	/**
+	 * @param examineId
+	 *            the examineId to set
+	 */
+	public void setExamineId(String examineId) {
+		this.examineId = examineId;
+	}
+
+	/**
+	 * @return the flag
+	 */
+	public String getFlag() {
+		return flag;
+	}
+
+	/**
+	 * @param flag
+	 *            the flag to set
+	 */
+	public void setFlag(String flag) {
+		this.flag = flag;
+	}
+
+	/**
+	 * @return the errorMessage
+	 */
+	public String getErrorMessage() {
+		return errorMessage;
+	}
+
+	/**
+	 * @param errorMessage
+	 *            the errorMessage to set
+	 */
+	public void setErrorMessage(String errorMessage) {
+		this.errorMessage = errorMessage;
+	}
+
+	/**
+	 * @return the ifViewChange
+	 */
+	public Integer getIfViewChange() {
+		return ifViewChange;
+	}
+
+	/**
+	 * @param ifViewChange
+	 *            the ifViewChange to set
+	 */
+	public void setIfViewChange(Integer ifViewChange) {
+		this.ifViewChange = ifViewChange;
+	}
+
+	/**
+	 * @param modeName the modeName to set
+	 */
+	public void setModeName(String modeName) {
+		this.modeName = modeName;
+	}
+
+	/**
+	 * @return the modeName
+	 */
+	public String getModeName() {
+		return modeName;
+	}
+
+}

@@ -1,0 +1,204 @@
+package com.xinleju.platform.flow.dto;
+
+import java.util.List;
+
+import com.xinleju.platform.flow.dto.ApprovalList;
+import com.xinleju.platform.flow.dto.ApproveOperationDto;
+
+/**
+ * 流程审批查询页面Bean
+ * 
+ * @author daoqi
+ *
+ */
+public class FlowApproveViewBean {
+
+	/**
+	 * 审批列表
+	 */
+	private List<ApprovalList> list;
+
+	/**
+	 * 功能按钮编码
+	 */
+	private List<String> btnCodes;
+
+	/**
+	 * 审批操作列表
+	 */
+	private List<ApproveOperationDto> operations;
+	
+	/**
+	 * 下一环节信息
+	 */
+	private List<String> nextAc;
+	
+	/**
+	 * 关联流程信息
+	 */
+	private List<InstanceDto> relateFlows;
+	
+	/**
+	 * 移动表单数据
+	 */
+	private List<MobileFormDto> mobileForms;
+
+	private String appId;					//所属系统编码
+	private String flId;					//流程模板ID
+	private String flCode;					//流程模板编码
+	private String instanceId;				//流程实例ID
+	private String instanceStatus;			//流程实例状态：
+	private String instanceName;			//流程实例名称
+	private String pcUrl;					//PC业务表单URL
+	private String businessId;				//业务表单ID
+	private String currentUserId;			//当前用户ID
+	private String currentApprovalTypeId; 	//当前环节审批类型
+	private String currentGroupKey;			//当前审批人的key
+	
+	private String iframeMode;		//内嵌表单模式（目前只用于新闻校稿编辑）
+
+	public List<String> getBtnCodes() {
+		return btnCodes;
+	}
+
+	public void setBtnCodes(List<String> btnCodes) {
+		this.btnCodes = btnCodes;
+	}
+
+	public List<ApproveOperationDto> getOperations() {
+		return operations;
+	}
+
+	public void setOperations(List<ApproveOperationDto> operations) {
+		this.operations = operations;
+	}
+
+	public String getCurrentUserId() {
+		return currentUserId;
+	}
+
+	public void setCurrentUserId(String currentUserId) {
+		this.currentUserId = currentUserId;
+	}
+
+	public String getFlCode() {
+		return flCode;
+	}
+
+	public void setFlCode(String flCode) {
+		this.flCode = flCode;
+	}
+
+	public List<ApprovalList> getList() {
+		return list;
+	}
+
+	public void setList(List<ApprovalList> list) {
+		this.list = list;
+	}
+
+	public String getInstanceName() {
+		return instanceName;
+	}
+
+	public void setInstanceName(String instanceName) {
+		this.instanceName = instanceName;
+	}
+
+	public String getPcUrl() {
+		return pcUrl;
+	}
+
+	public void setPcUrl(String pcUrl) {
+		this.pcUrl = pcUrl;
+	}
+
+	public String getBusinessId() {
+		return businessId;
+	}
+
+	public void setBusinessId(String businessId) {
+		this.businessId = businessId;
+	}
+
+	public String getCurrentApprovalTypeId() {
+		return currentApprovalTypeId;
+	}
+
+	public void setCurrentApprovalTypeId(String currentApprovalTypeId) {
+		this.currentApprovalTypeId = currentApprovalTypeId;
+	}
+
+	public String getFlId() {
+		return flId;
+	}
+
+	public void setFlId(String flId) {
+		this.flId = flId;
+	}
+
+	public String getInstanceId() {
+		return instanceId;
+	}
+
+	public void setInstanceId(String instanceId) {
+		this.instanceId = instanceId;
+	}
+
+	public String getInstanceStatus() {
+		return instanceStatus;
+	}
+
+	public void setInstanceStatus(String instanceStatus) {
+		this.instanceStatus = instanceStatus;
+	}
+
+	public List<InstanceDto> getRelateFlows() {
+		return relateFlows;
+	}
+
+	public void setRelateFlows(List<InstanceDto> relateFlows) {
+		this.relateFlows = relateFlows;
+	}
+
+	public List<String> getNextAc() {
+		return nextAc;
+	}
+
+	public void setNextAc(List<String> nextAc) {
+		this.nextAc = nextAc;
+	}
+
+	public String getAppId() {
+		return appId;
+	}
+
+	public void setAppId(String appId) {
+		this.appId = appId;
+	}
+
+	public String getCurrentGroupKey() {
+		return currentGroupKey;
+	}
+
+	public void setCurrentGroupKey(String currentGroupKey) {
+		this.currentGroupKey = currentGroupKey;
+	}
+
+	public String getIframeMode() {
+		return iframeMode;
+	}
+
+	public void setIframeMode(String iframeMode) {
+		this.iframeMode = iframeMode;
+	}
+
+	public List<MobileFormDto> getMobileForms() {
+		return mobileForms;
+	}
+
+	public void setMobileForms(List<MobileFormDto> mobileForms) {
+		this.mobileForms = mobileForms;
+	}
+
+}

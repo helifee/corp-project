@@ -1,0 +1,601 @@
+package com.xinleju.erp.flowengine.service.impl;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import javax.annotation.Resource;
+
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.erp.flow.models.OpRelation;
+import com.xinleju.erp.flowengine.models.FlowInstanceStep;
+import com.xinleju.erp.flowengine.models.FlowInstanceStepWork;
+import com.xinleju.erp.flowengine.models.FlowInstanceStepWorkTask;
+import com.xinleju.erp.flowengine.models.FlowInstanceVariable;
+import com.xinleju.erp.flowengine.models.FlowInstanceVariableMap;
+import com.xinleju.erp.flowengine.service.FlowInstanceCalculateWorkService;
+import com.xinleju.erp.flowengine.service.FlowInstanceOrgnApISerive;
+import com.xinleju.erp.flowengine.utils.FlowInstanceConstant;
+import com.xinleju.erp.flowengine.utils.FlowInstanceVariableType;
+import com.xinleju.erp.flowengine.utils.IDGenerator;
+import com.xinleju.erp.flowengine.utils.ParticipantType;
+import com.xinleju.erp.flowengine.utils.StepTypeStatus;
+import com.xinleju.erp.flowengine.utils.TaskTypeStatus;
+import com.xinleju.erp.flowengine.utils.WorkTypeStatus;
+import com.xinleju.erp.frame.models.PartyEntity;
+import com.xinleju.erp.frame.models.PartyType;
+import com.xinleju.erp.frame.models.Role;
+import com.xinleju.erp.frame.models.User;
+
+@Service(value="FlowInstanceCalculateWorkService")
+public class FlowInstanceCalculateWorkServiceImpl implements FlowInstanceCalculateWorkService {
+
+	/**
+	 * 
+	 */
+	@Resource
+	private FlowInstanceOrgnApISerive flowInstanceOrgnApI;
+
+	/**
+	 * @param flowInstanceSteps 顺序的节点
+	 * @param startPostId 发起岗位
+	 * @return
+	 */
+	public List<FlowInstanceStep> getFlowInstanceStepList(List<FlowInstanceStep> flowInstanceSteps,FlowInstanceVariableMap flowInstanceVariableMap){
+		List<FlowInstanceStep> flowInstanceStepList;
+		try {
+			flowInstanceStepList = new ArrayList<FlowInstanceStep>();
+			List<String> appUserIds=new ArrayList<String>();
+			if(flowInstanceSteps!=null && flowInstanceSteps.size()>0){
+				//下一环节work工作组
+				List<FlowInstanceStepWork> nextflowInstanceStepWorks=new LinkedList<FlowInstanceStepWork>();
+				for(int i=flowInstanceSteps.size()-1 ; i>=0;i--){
+					FlowInstanceStep flowInstanceStep=flowInstanceSteps.get(i);
+					List<FlowInstanceStepWork> flowInstanceStepWorks=new LinkedList<FlowInstanceStepWork>();
+					//参与人
+					String originParticipants =flowInstanceStep.getOriginParticipantsList();
+					//Role_1116:集团总会计师（标准角色）;Role_1037:集团综合法务总监（标准角色）;Role_1181:集团营销专审经理
+					if(originParticipants!=null &&!"".equals(originParticipants)){
+						String[] origins=originParticipants.split(";");				
+						for(String origin:origins){
+							List<PostPersonRelation>  postPersonRelations=getPostPersonRelation( origin, flowInstanceVariableMap);
+							//解析人员
+							for(int n=postPersonRelations.size()-1 ; n>=0;n--){
+								PostPersonRelation postPersonRelation =postPersonRelations.get(n);
+								FlowInstanceStepWork  flowInstanceStepWork= new FlowInstanceStepWork();
+								flowInstanceStepWork.setGuid(IDGenerator.getUUID());
+								flowInstanceStepWork.setStepId(flowInstanceStep.getGuid());
+								flowInstanceStepWork.setFiId(flowInstanceStep.getFiId());
+								flowInstanceStepWork.setParticipantPostId(postPersonRelation.getPostId());
+								flowInstanceStepWork.setParticipantsDefineName(postPersonRelation.getPersonNames());
+								flowInstanceStepWork.setParticipantsDefine(postPersonRelation.getPersonIds());
+								flowInstanceStepWork.setStatus(WorkTypeStatus.STATUS_CREATED);
+								flowInstanceStepWork.setSort(IDGenerator.getTimeLongStr());
+								flowInstanceStepWork.setNum(IDGenerator.getNumberLongStr());
+								flowInstanceStepWork.setCreateTime(flowInstanceStep.getCreateTime());
+								if(postPersonRelation.getPersonIds()!=null){
+									String[] personIds=postPersonRelation.getPersonIds().split(",");
+									String[] personNames=postPersonRelation.getPersonNames().split(",");
+									StringBuffer participantIds=new StringBuffer();
+									StringBuffer participantNames=new StringBuffer();
+									for(int j=0;j<personIds.length;j++){
+										String personId=personIds[j];
+										String personName=personNames[j];
+										if(flowInstanceStep.getDoWhenRepeatInSteps()== StepTypeStatus.doWhenRepeatJump){
+											//发起人，校稿人，自动环节的人，不需要添加包含里面
+											if( flowInstanceStep.getIsStart()==1 || StepTypeStatus.JG.equals(flowInstanceStep.getApprovalCode()) || StepTypeStatus.AUTOACTIVITE==flowInstanceStep.getIsAuto()){
+												participantIds.append(personId+",");
+												participantNames.append(personName+",");
+											}else{
+												if(appUserIds.contains(personId)){
+													
+												}else{
+													appUserIds.add(personId);
+													participantIds.append(personId+",");
+													participantNames.append(personName+",");
+												}
+											}
+										}else if(flowInstanceStep.getDoWhenRepeatInSteps()== StepTypeStatus.doWhenRepeatNotJump){
+											participantIds.append(personId+",");
+											participantNames.append(personName+",");
+										}else {
+											participantIds.append(personId+",");
+											participantNames.append(personName+",");
+										}
+									}
+									if(participantIds!=null && participantIds.toString().endsWith(",")){
+								    	flowInstanceStepWork.setParticipantsName(participantNames.toString().substring(0,participantNames.toString().length()-1));
+								    	flowInstanceStepWork.setParticipants(participantIds.toString().substring(0,participantIds.toString().length()-1));
+									}else{
+										flowInstanceStepWork.setParticipantsName(participantNames.toString());
+								    	flowInstanceStepWork.setParticipants(participantIds.toString());
+									}
+								}
+								String postNamePrefix = postPersonRelation.getPostNamePrefix();
+								if(postNamePrefix != null){
+									postNamePrefix = postNamePrefix.replace("-", "/").substring(0, postNamePrefix.length()-1);
+									flowInstanceStepWork.setParticipantPostName(postNamePrefix);
+								}
+								flowInstanceStepWork.setOriginParticipant(origin);
+								
+								if(flowInstanceStep.getIsStart()==1){
+							
+									//构建第一个任务
+									FlowInstanceStepWorkTask flowInstanceStepWorkTask=	createFlowInstanceStepWorkTask(  flowInstanceStepWork);
+									flowInstanceStepWork.setStatus(WorkTypeStatus.STATUS_RUNNING);
+									List<FlowInstanceStepWorkTask> lstFlowInstanceStepWorkTask=new ArrayList<FlowInstanceStepWorkTask>();
+									lstFlowInstanceStepWorkTask.add(flowInstanceStepWorkTask);
+									flowInstanceStepWork.setLstFlowInstanceStepWorkTask(lstFlowInstanceStepWorkTask);
+									flowInstanceStep.setStatus(StepTypeStatus.STATUS_RUNNING);
+									flowInstanceVariableMap.add(new FlowInstanceVariable("startTaskId", flowInstanceStepWorkTask.getGuid()));
+								}
+								
+								flowInstanceStepWorks.add(flowInstanceStepWork);
+							}
+							
+							
+							
+							
+							
+						
+						}
+					}
+					
+					//抄送人的解析
+					String originCsList =flowInstanceStep.getOriginCsList();
+					if(StringUtils.isNotBlank(originCsList)){
+						String[] orginCs=originCsList.split(";");
+						StringBuffer sbIds=new StringBuffer();
+					//	StringBuffer sbNames=new StringBuffer();
+						for(String origin:orginCs){
+							List<PostPersonRelation>  postPersonRelations=getPostPersonRelation(origin, flowInstanceVariableMap);
+							for(PostPersonRelation postPersonRelation:postPersonRelations){
+								sbIds.append(postPersonRelation.getPersonIds()+",");
+								///sbNames.append(postPersonRelation.getPersonNames()+",");
+							}
+						}
+						if(sbIds.toString().endsWith(",")){
+							//剔除相同的Id
+							String[] userIds=sbIds.toString().substring(0,sbIds.toString().length()-1).split(",");
+							Set<String> set=new HashSet<String>();
+							for(String userId:userIds){
+								set.add(userId);
+							}
+							Object[] users=set.toArray();
+							String str=StringUtils.join(users, ",");
+							
+							flowInstanceStep.setCsListUserIds(str);
+						}
+					}
+					
+					//如果是连续跳过，则单一岗位，单一人员
+					
+				   if(flowInstanceStep.getDoWhenRepeatInSteps()== StepTypeStatus.doWhenRepeatConstantJump &&!( flowInstanceStep.getIsStart()==1 || StepTypeStatus.JG.equals(flowInstanceStep.getApprovalCode()) || StepTypeStatus.AUTOACTIVITE==flowInstanceStep.getIsAuto())){
+								if(flowInstanceStepWorks!=null && flowInstanceStepWorks.size()==1&& nextflowInstanceStepWorks!=null && nextflowInstanceStepWorks.size()==1){
+									FlowInstanceStepWork  nextflowInstanceStepWork=nextflowInstanceStepWorks.get(0);
+									FlowInstanceStepWork  flowInstanceStepWork=flowInstanceStepWorks.get(0);
+									if(nextflowInstanceStepWork.getParticipants()!=null && nextflowInstanceStepWork.getParticipants().equals(flowInstanceStepWork.getParticipants())){
+										flowInstanceStepWork.setParticipants(null);
+										flowInstanceStepWork.setParticipantsName(null);
+										List flowInstanceStepWorksnew=new ArrayList<FlowInstanceStepWork>();
+										flowInstanceStepWorksnew.add(flowInstanceStepWork);
+										nextflowInstanceStepWorks=flowInstanceStepWorks;
+										flowInstanceStepWorks=flowInstanceStepWorksnew;
+									}else{
+										nextflowInstanceStepWorks=flowInstanceStepWorks;
+									}
+									
+								}else{
+									nextflowInstanceStepWorks=flowInstanceStepWorks;
+								}
+								
+					}else{
+						nextflowInstanceStepWorks=flowInstanceStepWorks;
+					}
+					flowInstanceStep.setLstFlowInstanceStepWork(flowInstanceStepWorks);
+					flowInstanceStepList.add(flowInstanceStep);
+				}
+			}
+			//倒序排列
+			Collections.reverse(flowInstanceStepList);
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+			return null;
+		}
+		
+		return flowInstanceStepList;
+	}
+
+	
+	
+	
+	/**
+	 * 
+	 * 根据人员创建step下的work
+	 * @param 
+	 * @return
+	 */
+	public  List<FlowInstanceStepWork> createFlowInstanceStepWork(FlowInstanceStep  flowInstanceStep,String userIds){
+		List<FlowInstanceStepWork> flowInstanceStepWorks=new LinkedList<FlowInstanceStepWork>();
+		if(userIds!=null){
+			//参与人
+			String originParticipants =userIds;
+			//Role_1116:集团总会计师（标准角色）;Role_1037:集团综合法务总监（标准角色）;Role_1181:集团营销专审经理
+			if(originParticipants!=null &&!"".equals(originParticipants)){
+				String[] origins=originParticipants.split(";");				
+				for(String origin:origins){
+					
+					List<PostPersonRelation>  postPersonRelations=getPostPersonRelation(origin, null);
+					//解析人员
+					for(int n=postPersonRelations.size()-1 ; n>=0;n--){
+						PostPersonRelation postPersonRelation =postPersonRelations.get(n);
+						FlowInstanceStepWork  flowInstanceStepWork= new FlowInstanceStepWork();
+						flowInstanceStepWork.setGuid(IDGenerator.getUUID());
+						flowInstanceStepWork.setStepId(flowInstanceStep.getGuid());
+						flowInstanceStepWork.setFiId(flowInstanceStep.getFiId());
+						flowInstanceStepWork.setParticipantPostId(postPersonRelation.getPostId());
+						flowInstanceStepWork.setParticipantsDefineName(postPersonRelation.getPersonNames());
+						flowInstanceStepWork.setParticipantsDefine(postPersonRelation.getPersonIds());
+						flowInstanceStepWork.setStatus(WorkTypeStatus.STATUS_CREATED);
+						flowInstanceStepWork.setSort(IDGenerator.getTimeLongStr());
+						flowInstanceStepWork.setNum(IDGenerator.getNumberLongStr());
+						flowInstanceStepWork.setCreateTime(flowInstanceStep.getCreateTime());
+						flowInstanceStepWork.setParticipantsName(postPersonRelation.getPersonNames());
+				    	flowInstanceStepWork.setParticipants(postPersonRelation.getPersonIds());
+						String postNamePrefix = postPersonRelation.getPostNamePrefix();
+						if(postNamePrefix != null){
+							postNamePrefix = postNamePrefix.replace("-", "/").substring(0, postNamePrefix.length()-1);
+							flowInstanceStepWork.setParticipantPostName(postNamePrefix);
+						}
+						flowInstanceStepWork.setOriginParticipant(origin);
+						flowInstanceStepWorks.add(flowInstanceStepWork);
+					}
+				
+				}
+			}
+		}
+		return flowInstanceStepWorks;
+	}
+	
+	private FlowInstanceStepWorkTask createFlowInstanceStepWorkTask(FlowInstanceStepWork  flowInstanceStepWork){
+		//创建第一个节点任务
+		FlowInstanceStepWorkTask fiswTask = new FlowInstanceStepWorkTask();
+		fiswTask.setGuid(IDGenerator.getUUID());
+		fiswTask.setFiId(flowInstanceStepWork.getFiId());
+		fiswTask.setCreateTime(new Date());
+		fiswTask.setParticipant(flowInstanceStepWork.getParticipants());
+		fiswTask.setStepId(flowInstanceStepWork.getStepId());
+	//	fiswTask.setParticipantLoginName(fi.getCreateUserLoginName());
+		fiswTask.setParticipantUserName(flowInstanceStepWork.getParticipantsName());
+		fiswTask.setStatus(TaskTypeStatus.STATUS_RUNNING);
+		fiswTask.setFirstTask(true);
+		fiswTask.setOperCtrl(OpRelation.OP_USER_TYPE_CLR);
+		fiswTask.setSort(IDGenerator.getTimeLongStr());
+		fiswTask.setNum(IDGenerator.getNumberLongStr());
+		fiswTask.setWorkId(flowInstanceStepWork.getGuid());
+		fiswTask.setType(TaskTypeStatus.TaskType.ZC.getCode());
+		fiswTask.setIsEffectFlow(FlowInstanceConstant.IS_EFFECT_FLOW_EFFECT);
+		fiswTask.setOwnerId("fiId_"+flowInstanceStepWork.getFiId()+"_wiId_"+fiswTask.getGuid());
+		return fiswTask;
+	}
+	
+	/**
+	 * @param originId
+	 * @param startPostId
+	 * @return
+	 */
+	private   List<PostPersonRelation>  getPostPersonRelation(String originId,FlowInstanceVariableMap flowInstanceVariableMap){ 
+		Long startPostId=null;
+		String projectIds =null;
+		String startUserId =null;
+		if(flowInstanceVariableMap!=null){
+		 startPostId = flowInstanceVariableMap.get(FlowInstanceVariableType.FLOW_START_OP_POST_ID) == null ? null : Long.parseLong(String.valueOf(flowInstanceVariableMap.get(FlowInstanceVariableType.FLOW_START_OP_POST_ID)));
+		  //业务系统传递的项目
+		 projectIds = flowInstanceVariableMap.get(FlowInstanceVariableType.FLOW_START_PROJECT_IDS) == null ? null : String.valueOf(flowInstanceVariableMap.get(FlowInstanceVariableType.FLOW_START_PROJECT_IDS));
+		  //当前用户
+		 startUserId = flowInstanceVariableMap.get(FlowInstanceVariableType.FLOW_START_OP_USER_ID) == null ? null : String.valueOf(flowInstanceVariableMap.get(FlowInstanceVariableType.FLOW_START_OP_USER_ID));
+		}  
+		List<PostPersonRelation> postPersonRelations=new ArrayList<PostPersonRelation>();
+		if(originId!=null && !"".equals(originId)){
+			String[] ids=originId.split(":");
+			//如果配置的角色或者岗位
+			if(originId.startsWith(ParticipantType.ROLE_PREFIX)){
+				String id=ids[0].substring(ParticipantType.ROLE_PREFIX.length());
+				//首先查找岗位表
+				Role role=flowInstanceOrgnApI.getRoleByroleId(id);
+				if(role!=null){
+					if(role.TYPE_COMMON.equals(role.getType())){
+						PartyEntity partyEntity=flowInstanceOrgnApI.getPartyEntityByref_idAndType(id, PartyType.TYPE_ROLE);
+						if(partyEntity != null){
+							PostPersonRelation postPersonRelation=getPostPersonRelation(partyEntity);
+							postPersonRelations.add(postPersonRelation);
+						}
+					}else if(role.TYPE_STANDARD.equals(role.getType())){
+						//获取角色下启用的岗位
+						List<PartyEntity> 	partyEntitys=flowInstanceOrgnApI.getRoleForPostsBystartPostIdOrProjectId(role, startPostId, projectIds);
+						for(PartyEntity partyEntity: partyEntitys){
+							PostPersonRelation postPersonRelation=getPostPersonRelation(partyEntity);
+							postPersonRelations.add(postPersonRelation);
+						}
+					}
+				}
+			//如果配置岗位
+			}else if(originId.startsWith(ParticipantType.PART_PREFIX)){
+				
+				//历史问题如果是Part，有可能是人员，有可能是岗位，需要我们自己处理
+				String id=ids[0].substring(ParticipantType.PART_PREFIX.length());
+				PartyEntity partyEntity=flowInstanceOrgnApI.getPartyEntityByidAndType(id, PartyType.TYPE_ROLE);
+				if(partyEntity!=null){
+					PostPersonRelation postPersonRelation=getPostPersonRelation(partyEntity);
+					postPersonRelations.add(postPersonRelation);
+				
+				}else{
+					//用户
+				     partyEntity=flowInstanceOrgnApI.getPartyEntityByidAndType(id, PartyType.TYPE_USER);
+				     if(partyEntity!=null){
+				    	    User user=flowInstanceOrgnApI.getUserByuserId(String.valueOf(partyEntity.getRefId()));
+							PostPersonRelation postPersonRelation=new PostPersonRelation();
+							if(user.getMainRoleId() != null){
+								PartyEntity partyEntity1=flowInstanceOrgnApI.getPartyEntityByref_idAndType(user.getMainRoleId()+"", PartyType.TYPE_ROLE);
+								if(partyEntity1!=null){
+									postPersonRelation.setPostId(partyEntity1.getRefId());
+									postPersonRelation.setPostNamePrefix(partyEntity1.getNamePrefix());
+									postPersonRelation.setPostName(partyEntity1.getName());
+								}else{
+									System.out.println(user.getRealName()+"=="+user.getMainRoleId()+"========="+PartyType.TYPE_ROLE);
+								}
+							}
+							postPersonRelation.setPersonIds(String.valueOf(partyEntity.getRefId()));
+							postPersonRelation.setPersonNames(user.getRealName());
+							postPersonRelations.add(postPersonRelation);
+				     }
+				}
+			
+			//如果配置发起岗位
+			}else if(originId.startsWith(ParticipantType.PBIZ_PREFIX)){
+				//String id=ids[0].substring(ParticipantType.PBIZ_PREFIX.length());
+				User user=flowInstanceOrgnApI.getUserByuserId(startUserId);
+				PartyEntity partyEntity=flowInstanceOrgnApI.getPartyEntityByref_idAndType(startPostId+"", PartyType.TYPE_ROLE);
+				PostPersonRelation postPersonRelation=new PostPersonRelation();
+				postPersonRelation.setPostId(partyEntity.getRefId());
+				postPersonRelation.setPostNamePrefix(partyEntity.getNamePrefix());
+				postPersonRelation.setPostName(partyEntity.getName());
+				postPersonRelation.setPersonIds(user.getId().toString());
+				postPersonRelation.setPersonNames(user.getRealName());
+				postPersonRelations.add(postPersonRelation);
+			//如果配置是相对参与人	
+			}else if(originId.startsWith(ParticipantType.XDPA_PREFIX)){
+				//获取人员的对应岗位Xdpa_1:发起人部门领导
+				String id=ids[0].substring(ParticipantType.XDPA_PREFIX.length());
+				PostPersonRelation postPersonRelation=getPostPersonXdpaRelation( id, startPostId.toString());
+				postPersonRelations.add(postPersonRelation);
+			
+		    //如果配置是外部参与人
+			}else if(originId.startsWith(ParticipantType.OBJF_PREFIX)){
+//				/Objf_82001:版本名称;Objf_82002:预算总额;Objf_82003:发起人;Objf_82004:发起日期;Objf_82005:版本说明
+				String id=ids[0].substring(ParticipantType.OBJF_PREFIX.length());
+				String key=flowInstanceOrgnApI.getObjectById(id);
+				if(key!=null && !"".equals(key)){
+					if(flowInstanceVariableMap!=null){
+							String userIds = (String) (flowInstanceVariableMap.get(key) != null ? flowInstanceVariableMap.get(key) : null);
+							if(userIds!=null && !"".equals(userIds)){
+								String[] arrUserId = userIds.split(",");
+								for(String userId : arrUserId){
+									User user=flowInstanceOrgnApI.getUserByuserId(userId);
+									
+									PostPersonRelation postPersonRelation=new PostPersonRelation();
+									if(user.getMainRoleId() != null){
+										PartyEntity partyEntity=flowInstanceOrgnApI.getPartyEntityByref_idAndType(user.getMainRoleId()+"", PartyType.TYPE_ROLE);
+										if(partyEntity != null){
+											postPersonRelation.setPostId(partyEntity.getRefId());
+											postPersonRelation.setPostNamePrefix(partyEntity.getNamePrefix());
+											postPersonRelation.setPostName(partyEntity.getName());
+										}
+									}
+									postPersonRelation.setPersonIds(userId);
+									postPersonRelation.setPersonNames(user.getRealName());
+									postPersonRelations.add(postPersonRelation);
+								}
+							}
+					}
+				}
+			//如果配置是用户
+			}else if(originId.startsWith(ParticipantType.USER_PREFIX)){
+				String userIds=ids[0].substring(ParticipantType.USER_PREFIX.length());
+				if(userIds!=null && !"".equals(userIds)){
+					String[] arrUserId = userIds.split(",");
+					for(String userId : arrUserId){
+						User user=flowInstanceOrgnApI.getUserByuserId(userId);
+						PostPersonRelation postPersonRelation=new PostPersonRelation();
+						if(user.getMainRoleId() != null && user.getMainRoleId()!=0){
+							PartyEntity partyEntity=flowInstanceOrgnApI.getPartyEntityByref_idAndType(user.getMainRoleId()+"", PartyType.TYPE_ROLE);
+							postPersonRelation.setPostId(partyEntity.getRefId());
+							postPersonRelation.setPostNamePrefix(partyEntity.getNamePrefix());
+							postPersonRelation.setPostName(partyEntity.getName());
+						}
+						postPersonRelation.setPersonIds(userId);
+						postPersonRelation.setPersonNames(user.getRealName());
+						postPersonRelations.add(postPersonRelation);
+					}
+				}
+			}else if(originId.startsWith(ParticipantType.GENERAL_PREFIX)){
+			    String id=ids[0].substring(ParticipantType.PART_PREFIX.length());
+			    if(StringUtils.isNotBlank(id)){
+			    	List<String> rolePaticipantString = flowInstanceOrgnApI.getRoleByGeneralId(Long.parseLong(id)); //获取通用角色下的角色
+					for (String rolePaticipantStr : rolePaticipantString) {
+						String roleIds=rolePaticipantStr.substring(ParticipantType.ROLE_PREFIX.length());
+						String[] roleIdss=roleIds.split(":");
+						String roleId=roleIdss[0];
+					  	Role role=flowInstanceOrgnApI.getRoleByroleId(roleId);
+					  	List<PartyEntity> 	partyEntitys=flowInstanceOrgnApI.getRoleForPostsBystartPostIdOrProjectId(role, startPostId, projectIds);
+						for(PartyEntity partyEntity: partyEntitys){
+							PostPersonRelation postPersonRelation=getPostPersonRelation(partyEntity);
+							postPersonRelations.add(postPersonRelation);
+						}
+					}
+			    }
+		    }
+		}
+		return postPersonRelations;
+	}
+	
+	
+	/**
+	 * 
+	 * 内部人员封装
+	 * @param partyEntity
+	 * @return
+	 */
+	private PostPersonRelation  getPostPersonRelation(PartyEntity partyEntity){
+		PostPersonRelation postPersonRelation=new PostPersonRelation();
+		
+		if(partyEntity == null){
+			return postPersonRelation;
+		}
+		postPersonRelation.setPostId(partyEntity.getRefId());
+		postPersonRelation.setPostNamePrefix(partyEntity.getNamePrefix());
+		postPersonRelation.setPostName(partyEntity.getName());
+		
+		Map<String,Object> map=flowInstanceOrgnApI.getPartyEntityUsersByPrefix(partyEntity.getPrefix());
+
+		if(map!=null){
+			StringBuilder ref_ids=new StringBuilder();
+			StringBuilder names=new StringBuilder();
+			for(String key :map.keySet()){
+				ref_ids.append(key+",");
+				names.append(map.get(key)+",");
+			}
+			if(StringUtils.isNotBlank(ref_ids)){
+				ref_ids.deleteCharAt(ref_ids.toString().length()-1);
+				postPersonRelation.setPersonIds(ref_ids.toString());
+			}else{
+				postPersonRelation.setPersonIds("");
+			}
+			if(StringUtils.isNotBlank(names)){
+				names.deleteCharAt(names.toString().length()-1);
+				postPersonRelation.setPersonNames(names.toString());
+			}else{
+				postPersonRelation.setPersonNames("");
+			}
+		}
+		
+		return postPersonRelation;
+	}
+	
+	/**
+	 * @return
+	 */
+	private  PostPersonRelation  getPostPersonXdpaRelation(String xdpa_Id,String startPostId){
+		
+		PostPersonRelation postPersonRelation=new PostPersonRelation();
+		  //发起人部门领导
+        if(startPostId!= null&&!"".equals(startPostId)){
+        	PartyEntity  partyEntity=null;
+        	//获取发起岗位的上级岗位
+        	if("1".equals(xdpa_Id)){
+	            partyEntity=flowInstanceOrgnApI.getParentPartEntityByPostId(startPostId);
+	        	if(partyEntity!=null){
+	        		
+	        	}else{
+	        		//发起岗岗位对应的部门领导
+	        		//获取发起岗位所在部门
+	        		PartyEntity deptEntity=flowInstanceOrgnApI.getDeptByPostIdRefId(startPostId,PartyType.TYPE_DEPARTMENT);
+	        		if(deptEntity!=null && deptEntity.getRefId()!=null &&!"".equals(deptEntity.getRefId()))
+	        		partyEntity=flowInstanceOrgnApI.getParentDeptLeaderByDeptId(deptEntity.getRefId().toString());
+	        		
+	        	}
+        	}else if("2".equals(xdpa_Id)){
+        		
+        		  //GANGWEILINGDAO
+        		 partyEntity=flowInstanceOrgnApI.getParentUpPartEntityByPostId(startPostId);
+ 	        	if(partyEntity!=null){
+ 	        		
+ 	        	}else{
+ 	        		//发起岗岗位对应的部门领导
+ 	        		//获取发起岗位所在部门
+ 	        		PartyEntity deptEntity=flowInstanceOrgnApI.getContainPartyEntityByref_idAndType(startPostId,PartyType.TYPE_DEPARTMENT);
+ 	        		if(deptEntity!=null && deptEntity.getRefId()!=null &&!"".equals(deptEntity.getRefId()))
+ 	        		partyEntity=flowInstanceOrgnApI.getParentDeptUpLeaderByDeptId(deptEntity.getRefId().toString());
+ 	        		
+ 	        	}
+        	}else if("5".equals(xdpa_Id)){
+  
+	        		//一级单位领导
+        		PartyEntity deptEntity=flowInstanceOrgnApI.getRootDeptByPostIdRefId(startPostId,PartyType.TYPE_DEPARTMENT);
+        		if(deptEntity!=null && deptEntity.getRefId()!=null &&!"".equals(deptEntity.getRefId()))
+        		partyEntity=flowInstanceOrgnApI.getParentDeptLeaderByDeptId(deptEntity.getRefId().toString());
+      	    }
+        	if(partyEntity!=null){
+        	 postPersonRelation=getPostPersonRelation(partyEntity);
+        	}
+        }
+       return postPersonRelation;
+	}
+	
+	
+
+	 /**
+	  * 
+	  * 岗位人员关系内部类
+	 * @author Administrator
+	 *
+	 */
+	class PostPersonRelation{
+		private Long postId;//获取的sm_party_entity--->Id
+		private String postNamePrefix;//获取的sm_party_entity--->name_prefix
+		private String postName;
+		private String personIds;//获取的sm_party_entity--->Id
+        private String personNames;//获取的sm_party_entity--->name_prefix
+        private String personLoginNames;
+		public String getPostName() {
+			return postName;
+		}
+		public void setPostName(String postName) {
+			this.postName = postName;
+		}
+	
+		public String getPostNamePrefix() {
+			return postNamePrefix;
+		}
+		public void setPostNamePrefix(String postNamePrefix) {
+			this.postNamePrefix = postNamePrefix;
+		}
+		public Long getPostId() {
+			return postId;
+		}
+		public void setPostId(Long postId) {
+			this.postId = postId;
+		}
+		public String getPersonIds() {
+			return personIds;
+		}
+		public void setPersonIds(String personIds) {
+			this.personIds = personIds;
+		}
+		public String getPersonNames() {
+			return personNames;
+		}
+		public void setPersonNames(String personNames) {
+			this.personNames = personNames;
+		}
+		public String getPersonLoginNames() {
+			return personLoginNames;
+		}
+		public void setPersonLoginNames(String personLoginNames) {
+			this.personLoginNames = personLoginNames;
+		}
+		
+		
+		
+	}
+	
+	
+}

@@ -1,0 +1,7 @@
+package com.xinleju.platform.sa.dto.service;
+
+import com.xinleju.platform.base.dto.service.BaseDtoServiceCustomer;
+
+public interface SaBaseTaskJobServiceCustomer  extends BaseDtoServiceCustomer{
+	public String executeTask(String userJson, String taskCode);
+}

@@ -1,0 +1,162 @@
+package com.yds.att.service.impl;
+
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.springframework.stereotype.Service;
+
+import com.yds.att.bean.AttInfo;
+import com.yds.att.bean.Ye8021AttInfo;
+import com.yds.att.bean.Ye8021CondA;
+import com.yds.att.common.service.AttComService;
+import com.yds.att.common.service.AttInfoService;
+import com.yds.att.service.Ye8021Service;
+import com.yds.batch.service.BatchJobRun;
+import com.yds.util.service.DateUtil;
+
+
+
+@Service("ye8020Service")
+public class Ye8020ServiceImpl implements BatchJobRun {
+	
+
+	private Ye8021Service ye8021Service;          // batch子程序dao
+	private AttComService attComService;          // att共通子程序
+	private AttInfoService attInfoService;  // 考勤信息表通用程序
+	/** 日志. */
+	private static final Log LOG = LogFactory.getLog(Ye8020ServiceImpl.class);
+	
+	/**
+	 * @param attInfoService the attInfoService to set
+	 */
+	public void setAttInfoService(AttInfoService attInfoService) {
+		this.attInfoService = attInfoService;
+	}
+
+	/**
+	 * @param ye8021S the ye8021S to set
+	 */
+	public void setYe8021Service(Ye8021Service ye8021S) {
+		this.ye8021Service = ye8021S;
+	}
+
+	/**
+	 * @param acs the acs to set
+	 */
+	public void setAttComService(AttComService acs) {
+		this.attComService = acs;
+	}
+	
+	@Override
+	public void jobRun() throws Throwable {
+		LOG.info("日次ye8020程序开始");
+		
+		List<String> lockTbls = new ArrayList<String>();     // 锁表
+		String now = attComService.getParameter("com.yds.att.curday"); // 当前日期
+		String mon1 = now.substring(0, 6) + "01";            // 月初
+		Ye8021CondA ye8021CondA = new Ye8021CondA();         // 考勤详细检索条件
+		List<AttInfo> attInfos ; 
+		try{
+			/* 锁表 */
+			// 考勤信息表
+			lockTbls.add("ATT_INFO");
+			// 换休明细表
+			lockTbls.add("ATT_EXREST_INFO");
+			// 月次统计表
+			lockTbls.add("ATT_MON_REPORT");
+			// 不执行锁表
+//			ye8021Service.lockTables(lockTbls);
+			
+			/* 取得从月初到当天的考勤对象的数据*/
+			ye8021CondA.setStYmd(mon1);
+			ye8021CondA.setEdYmd(now);
+			// 选出需要计算的考勤数据
+			attInfos = ye8021Service.getAttInfos(ye8021CondA);
+			
+			/* 对取得的考勤数据进行检查处理*/
+			for(AttInfo ai : attInfos){
+				/* 考勤信息检查（实出退勤单个null）*/
+				if(!ye8021Service.chkAttInfos(ai)){
+					LOG.error("日次batch(Ye8020)实出退勤单个null检查修改处理  error:"
+							  +" empId=" + ai.getEmpId() + ","
+							  +" year=" + ai.getYear() + ","
+							  +" month=" + ai.getMonth() + ","
+							  +" day=" + ai.getDay() + " ;"
+							  );
+					throw new Exception();
+				}
+				
+				/* 班型部分，日期部分检查修改处理   */
+				try {
+					attInfoService.updateAttInfo(ai.getEmpId(), 
+							                     DateUtil.parse(ai.getYear()+ai.getMonth()+ai.getDay()));
+				} catch (Exception e) {
+					LOG.error("日次batch(Ye8020)班型部分，日期部分检查修改处理  error:"
+							  +" empId=" + ai.getEmpId() + ","
+							  +" year=" + ai.getYear() + ","
+							  +" month=" + ai.getMonth() + ","
+							  +" day=" + ai.getDay() + " ;"
+							  , e);
+					throw e;
+				}
+			}
+			
+			/* 换休信息检查 */
+			// 检索半天请假的考勤信息 
+			ye8021CondA.setRestFlg("1"); //检索条件追加条件（半天换休）
+			attInfos = ye8021Service.getAttInfos(ye8021CondA);
+			ye8021CondA.setRestFlg("");  //检索条件删除
+			for(AttInfo ai : attInfos){
+				// 换休明细表实际使用换休的检查（调用子程序）
+				try {
+					attInfoService.insertExrestInfo(ai);
+				} catch (Exception e) {
+					LOG.error("日次batch(Ye8020)换休明细检查修改（使用换休部分）处理  error:"
+							  +" empId=" + ai.getEmpId() + ","
+							  +" year=" + ai.getYear() + ","
+							  +" month=" + ai.getMonth() + ","
+							  +" day=" + ai.getDay() + " ;"
+							  , e);
+					throw e;
+				}
+			}
+			// 检索加班的考勤信息
+			List<Ye8021AttInfo> ye8021AttInfos = ye8021Service.getYe8021AttInfo(ye8021CondA);
+			for(Ye8021AttInfo ai : ye8021AttInfos){
+				// 考勤信息表对应的换休加班时间的检查
+				if(!ye8021Service.chkAttExrestInfos(ai)){
+					LOG.error("日次batch(Ye8020)考勤信息表对应的换休加班时间的检查处理  error:"
+							  +" empId=" + ai.getEmpId() + ","
+							  +" year=" + ai.getYear() + ","
+							  +" month=" + ai.getMonth() + ","
+							  +" day=" + ai.getDay() + " ;"
+							  );
+					throw new Exception();
+				}
+			}
+			
+			/* 考勤信息统计*/
+			if(!ye8021Service.accAttInfo(ye8021CondA)){
+				LOG.error("日次batch(Ye8020)考勤信息统计  error:");
+				throw new Exception();
+			}
+			
+			/* 考勤生成*/
+			if(!ye8021Service.crtAttInfo(DateUtil.parse(now))){
+				LOG.error("日次batch(Ye8020)考勤数据生成  error:");
+				throw new Exception();
+			}
+			
+		}finally{
+			/* 解表*/
+//			ye8021Service.unlockTables(lockTbls);
+			
+			LOG.info("日次ye8020程序结束");
+		}
+		
+	}
+
+}

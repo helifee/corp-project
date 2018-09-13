@@ -1,0 +1,14 @@
+package com.xinleju.platform.flow.service;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.flow.entity.InstanceCollection;
+
+/**
+ * 流程收藏服务
+ * 
+ * @author admin
+ */
+
+public interface InstanceCollectionService extends BaseService<String, InstanceCollection>{
+	
+}

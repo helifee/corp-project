@@ -1,0 +1,111 @@
+package com.xinleju.platform.sys.log.dto;
+
+import com.xinleju.platform.base.dto.BaseDto;
+
+
+import java.sql.Timestamp;
+
+
+
+/**
+ * @author admin
+ * 
+ *
+ */
+public class LogDubboDto extends BaseDto{
+
+		
+	//调用业务系统
+	private String sysCode;
+    
+  		
+	//调用dubbo方法
+	private String dubboMethod;
+    
+  		
+	//返回内容
+	private String returnContent;
+    
+  		
+	//开始调用时间
+	private Timestamp startTime;
+    
+  		
+	//结束调用时间
+	private Timestamp endTime;
+    
+  		
+	//调用耗时
+	private Long executeTime;
+    
+  		
+	//信息描述
+	private String info;
+	//运行结果状态
+	private String resFlag;
+	
+  		
+		
+	public String getResFlag() {
+		return resFlag;
+	}
+	public void setResFlag(String resFlag) {
+		this.resFlag = resFlag;
+	}
+	public String getSysCode() {
+		return sysCode;
+	}
+	public void setSysCode(String sysCode) {
+		this.sysCode = sysCode;
+	}
+    
+  		
+	public String getDubboMethod() {
+		return dubboMethod;
+	}
+	public void setDubboMethod(String dubboMethod) {
+		this.dubboMethod = dubboMethod;
+	}
+    
+  		
+	public String getReturnContent() {
+		return returnContent;
+	}
+	public void setReturnContent(String returnContent) {
+		this.returnContent = returnContent;
+	}
+    
+  		
+	public Timestamp getStartTime() {
+		return startTime;
+	}
+	public void setStartTime(Timestamp startTime) {
+		this.startTime = startTime;
+	}
+    
+  		
+	public Timestamp getEndTime() {
+		return endTime;
+	}
+	public void setEndTime(Timestamp endTime) {
+		this.endTime = endTime;
+	}
+    
+  		
+	public Long getExecuteTime() {
+		return executeTime;
+	}
+	public void setExecuteTime(Long executeTime) {
+		this.executeTime = executeTime;
+	}
+    
+  		
+	public String getInfo() {
+		return info;
+	}
+	public void setInfo(String info) {
+		this.info = info;
+	}
+    
+  		
+}

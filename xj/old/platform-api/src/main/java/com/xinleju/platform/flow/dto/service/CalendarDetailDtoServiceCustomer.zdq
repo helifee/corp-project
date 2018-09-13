@@ -1,0 +1,9 @@
+package com.xinleju.platform.flow.dto.service;
+
+import com.xinleju.platform.base.dto.service.BaseDtoServiceCustomer;
+
+public interface CalendarDetailDtoServiceCustomer extends BaseDtoServiceCustomer{
+
+	String initData(String userJson, String paramaterJson);
+
+}

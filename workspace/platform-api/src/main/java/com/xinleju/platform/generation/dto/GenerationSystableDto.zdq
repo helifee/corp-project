@@ -1,0 +1,115 @@
+package com.xinleju.platform.generation.dto;
+
+import com.xinleju.platform.base.dto.BaseDto;
+
+
+/**
+ * @author sy
+ * 
+ *
+ */
+public class GenerationSystableDto extends BaseDto{
+	
+	
+	private String issync;
+	
+	private String remarks;
+	
+	private String parentTableFk;
+	
+	private String parentTable;
+	
+	private String className;
+	
+	private String tableType;
+	
+	private String comments;
+	
+	private String showName;
+	
+	private String tableName;
+	
+	private String gDbinfoId;
+
+	public String getIssync() {
+		return issync;
+	}
+
+	public void setIssync(String issync) {
+		this.issync = issync;
+	}
+
+	public String getRemarks() {
+		return remarks;
+	}
+
+	public void setRemarks(String remarks) {
+		this.remarks = remarks;
+	}
+
+	public String getParentTableFk() {
+		return parentTableFk;
+	}
+
+	public void setParentTableFk(String parentTableFk) {
+		this.parentTableFk = parentTableFk;
+	}
+
+	public String getParentTable() {
+		return parentTable;
+	}
+
+	public void setParentTable(String parentTable) {
+		this.parentTable = parentTable;
+	}
+
+	public String getClassName() {
+		return className;
+	}
+
+	public void setClassName(String className) {
+		this.className = className;
+	}
+
+	public String getTableType() {
+		return tableType;
+	}
+
+	public void setTableType(String tableType) {
+		this.tableType = tableType;
+	}
+
+	public String getComments() {
+		return comments;
+	}
+
+	public void setComments(String comments) {
+		this.comments = comments;
+	}
+
+	public String getShowName() {
+		return showName;
+	}
+
+	public void setShowName(String showName) {
+		this.showName = showName;
+	}
+
+	public String getTableName() {
+		return tableName;
+	}
+
+	public void setTableName(String tableName) {
+		this.tableName = tableName;
+	}
+
+	public String getgDbinfoId() {
+		return gDbinfoId;
+	}
+
+	public void setgDbinfoId(String gDbinfoId) {
+		this.gDbinfoId = gDbinfoId;
+	}
+
+	
+}

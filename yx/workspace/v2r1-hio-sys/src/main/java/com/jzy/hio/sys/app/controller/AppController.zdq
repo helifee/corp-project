@@ -1,0 +1,246 @@
+package com.jzy.hio.sys.app.controller;
+
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.jzy.hio.base.anno.TargetIM;
+import com.jzy.hio.base.controller.BaseSysController;
+import com.jzy.hio.config.SysConfig;
+import com.jzy.hio.entity.OaSysApp;
+import com.jzy.hio.entity.OaSysUser;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.exception.HioMybatisUpdateException;
+import com.jzy.hio.sys.app.dto.AppImDto;
+import com.jzy.hio.sys.app.dto.AppItemDto;
+import com.jzy.hio.sys.app.dto.AppListDto;
+import com.jzy.hio.sys.app.dto.AppListImDto;
+import com.jzy.hio.sys.app.service.AppService;
+import com.jzy.hio.sys.role.dto.RolePermissionDto;
+import com.jzy.hio.sys.role.service.RolePermissionService;
+import com.jzy.hio.sys.user.service.UserService;
+
+/**
+ * 应用管理
+ * 
+ * @author wt.coffee<br/>
+ *         2018年3月5日下午7:24:19
+ */
+@RestController
+@RequestMapping("app")
+public class AppController extends BaseSysController {
+
+	@Autowired
+	private AppService appService;
+	@Autowired
+	private RolePermissionService rolePermissionService;
+	@Autowired
+	private SysConfig.App appConfig;
+	@Autowired
+	private UserService userService;
+
+	/**
+	 * 系统管理后台---查询应用列表
+	 * 
+	 * @return
+	 * @throws HioException
+	 */
+	@RequestMapping("queryAppList")
+	public List<AppListDto> queryAppList() throws HioException {
+		// key-应用分类--values 对应的应用列表
+		List<AppItemDto> items = appService.queryList();
+		if (isNotEmpty(items)) {
+			List<AppListDto> result = handleAppItem(items);
+			return result;
+		} else {
+			logger.warn("查询到的APP列表为空");
+			return null;
+		}
+
+	}
+
+	/**
+	 * 对app进行分组
+	 * 
+	 * @param items
+	 * @return
+	 */
+	private List<AppListDto> handleAppItem(List<AppItemDto> items) {
+		LinkedHashMap<String, List<AppItemDto>> map = new LinkedHashMap<>();
+		for (AppItemDto item : items) {
+			List<AppItemDto> values = map.get(item.getCategory());
+			if (values == null) {
+				values = new ArrayList<>();
+				map.put(item.getCategory(), values);
+			}
+			values.add(item);
+		}
+		// 组装返回结果
+		List<AppListDto> appList = new ArrayList<>();
+		for (String category : map.keySet()) {
+			AppListDto list = new AppListDto();
+			list.setCategory(category);
+			list.setItems(map.get(category));
+			appList.add(list);
+		}
+		return appList;
+	}
+
+	/**
+	 * 系统管理后台--- 修复状态、开关
+	 */
+	@PostMapping(value = "/update/{id}")
+	public Object update(@PathVariable("id") String id, @RequestBody OaSysApp app) throws HioMybatisUpdateException {
+		app.setId(id);
+		return appService.updateStatus(app);
+	}
+
+	/**
+	 * im-app/pc端查询具备权限的app列表
+	 * 
+	 * @param map
+	 *            tendId 租户id
+	 * @return
+	 */
+	@PostMapping("queryAppByRole")
+	@TargetIM
+	public List<AppListImDto> queryAppByRole(@RequestBody Map<String, Object> map) {
+		List<AppListImDto> resultList = new ArrayList<>();
+
+		List<String> tendIds = getList(map, "tendIds", String.class);
+		// tendIds = getLoginUser().getTendIds();
+		String imUserId = getUserIdIM();
+
+		for (String tendId : tendIds) {
+			AppListImDto listItem = new AppListImDto();
+			listItem.setTendId(tendId);
+			OaSysUser user;
+			try {
+				user = userService.getOaSysUserByImId(tendId, imUserId);
+			} catch (Exception e) {
+				// e.printStackTrace();
+				logger.warn("查询OA userId失败 {},{}", tendId, imUserId);
+				continue;
+			}
+			List<AppImDto> items = appService.queryListByRoleIM(tendId, user.getId());
+			// 人力资源 -- 签到 员工自助 我的团队
+			// 企业应用-- 日程 邮件 云盘 CRM 合同
+			List<String> enterpriceApp = appConfig.getImAppList();
+			if (isExternalUser(user.getUserType())) {
+				// 外部联系人只具备以下四个权限
+				enterpriceApp = appConfig.getExternalAppList();
+			}
+			for (Iterator<AppImDto> it = items.iterator(); it.hasNext();) {
+				AppImDto item = it.next();
+				if (enterpriceApp.contains(item.getName()) == false) {
+					it.remove();
+					continue;
+				} else {
+					item.setTendId(tendId);
+					item.setModuleSort("2");
+					item.setState("1");
+					item.setSort(getStr(enterpriceApp.indexOf(item.getName()) + 1));
+					if ("日程".equals(item.getName())) {
+						item.setType("0");// 原生
+					} else {
+						item.setType("1");// h5
+					}
+				}
+			}
+			//
+			if (isExternalUser(user.getUserType())) {
+				// 外部联系人不具备考勤应用
+			} else {
+				AppImDto tmp = appConfig.getImAppMap().get("考勤");
+				if (tmp != null) {
+					// 这边需要注意一下 sysConfig中的对象都是同一个对象，for循环操作会有问题
+					AppImDto signIn = new AppImDto();
+					copyProperties(tmp, signIn);
+					signIn.setTendId(tendId);
+					items.add(signIn);
+				} else {
+					logger.warn("sysConfig.getAppImMap().get(签到) == null");
+				}
+				// 菜单:自助管理--控制--培训中心，我的信息，我的薪资，我的考勤
+				// 菜单:员工管理--控制--团队信息，团队工资，团队考勤
+				String[] arr1 = new String[] { "培训中心", "我的信息", "我的薪资", };
+				String[] arr2 = new String[] { "团队信息", "团队薪资", "团队考勤" };
+				List<RolePermissionDto> hrPerms = rolePermissionService.queryHrRolePermission(tendId, user.getId());
+				for (RolePermissionDto perm : hrPerms) {
+					String menuName = perm.getMenuName();
+					if (menuName != null && menuName.contains("自助管理")) {
+						for (String item : arr1) {
+							tmp = appConfig.getImAppMap().get(item);
+							if (tmp != null) {
+								AppImDto htItem = new AppImDto();
+								copyProperties(tmp, htItem);
+								htItem.setTendId(tendId);
+								items.add(htItem);
+							} else {
+								logger.info("获取{}失败", item);
+							}
+						}
+					}
+					if (menuName != null && menuName.contains("员工管理")) {
+						for (String item : arr2) {
+							tmp = appConfig.getImAppMap().get(item);
+							if (tmp != null) {
+								AppImDto htItem = new AppImDto();
+								copyProperties(tmp, htItem);
+								htItem.setTendId(tendId);
+								items.add(htItem);
+							} else {
+								logger.info("获取{}失败", item);
+							}
+						}
+					}
+				}
+			}
+			// 排序
+			items.sort(new Comparator<AppImDto>() {
+				@Override
+				public int compare(AppImDto o1, AppImDto o2) {
+					// 注意 不能用 o1.getSort().compareTo(o2.getSort())  因为 sort是字符串, "10"会排在"2"之前
+					return Integer.valueOf(o1.getSort()) - Integer.valueOf(o2.getSort());
+				}
+			});
+			listItem.setList(items);
+			resultList.add(listItem);
+		}
+		return resultList;
+	}
+
+	/**
+	 * h5端查询首页显示的菜单(app列表)
+	 * 
+	 * @param paramMap
+	 *            userId
+	 * @return
+	 */
+	@PostMapping("queryByUserId")
+	public List<AppListDto> queryByUserId(@RequestBody Map<String, Object> paramMap) {
+		String tendId = getTendId();
+		String userId = getUserIdOA();
+		// 查询所有--具备权限的APP
+		List<AppItemDto> itemList = appService.queryListByRoleH5(tendId, userId);
+		// 分组
+		List<AppListDto> result = handleAppItem(itemList);
+		//
+		List<AppItemDto> items = appService.queryListByUserId(userId);
+		AppListDto visibleList = new AppListDto();
+		visibleList.setCategory("visible");
+		visibleList.setItems(items);
+		result.add(visibleList);
+		return result;
+	}
+}

@@ -1,0 +1,259 @@
+package com.xinleju.erp.flowengine.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.flow.dao.impl.AcDAO;
+import com.xinleju.erp.flow.dao.impl.FlDAO;
+import com.xinleju.erp.flow.dao.impl.TrDAO;
+import com.xinleju.erp.flow.models.Ac;
+import com.xinleju.erp.flow.models.Fl;
+import com.xinleju.erp.flow.models.OpGroup;
+import com.xinleju.erp.flow.models.Tr;
+import com.xinleju.erp.flowengine.dto.AcDto;
+import com.xinleju.erp.flowengine.models.FlowInstanceVariableMap;
+import com.xinleju.erp.flowengine.service.FlowInstanceCalculateAcService;
+import com.xinleju.erp.flowengine.utils.FormulaCalculationUtils;
+import com.xinleju.erp.frame.models.ServiceObjectDefineField;
+
+
+@Service(value="FlowInstanceCalculateAcService")
+public class FlowInstanceCalculateAcServiceImpl extends BaseService implements FlowInstanceCalculateAcService {
+
+	private static final int isStart = 1;
+
+	private static final int isEnd = 1;
+
+	/**
+	 * 环节定义DAO
+	 */
+	@Autowired
+	private AcDAO acDAO;
+
+	/**
+	 * 线条定义DAO
+	 */
+	@Autowired
+	private TrDAO trDAO;
+
+	/**
+	 * 模板DAo
+	 */
+	@Autowired
+	private FlDAO flDAO;
+
+	/**
+	 * 
+	 * 流程模型ID 流程业务单据对应的变量
+	 * 
+	 * @param flId
+	 * @param flowInstanceVariables
+	 * @return
+	 */
+	public List<AcDto> getAcDtos(Fl fl,
+			FlowInstanceVariableMap flowInstanceVariableMap) {
+		
+		//获取流程
+		Map<String,String> paramTypeMap=new  HashMap<String,String>();
+		if(fl.getServiceObjectDefineId()!=null){
+		    List<ServiceObjectDefineField> serviceObjectDefineFieldList=getDao().findByHQL(ServiceObjectDefineField.class, "from ServiceObjectDefineField where serviceObjectDefineId = ? ", new Object[]{fl.getServiceObjectDefineId()});
+		    if(serviceObjectDefineFieldList!=null && serviceObjectDefineFieldList.size()>0){
+		    	for(ServiceObjectDefineField serviceObjectDefineField:serviceObjectDefineFieldList ){
+		    		paramTypeMap.put(serviceObjectDefineField.getName(), serviceObjectDefineField.getFieldType());
+		    	}
+		    }
+		}
+
+		List<AcDto> acDtos = new ArrayList<AcDto>();
+		String flowCode = fl.getFlowCode();
+		String flowVersion = fl.getFlowVersion();
+		// 活的流程模板对应所有Ac
+		List<Ac> acList = acDAO.getAcList(flowCode, flowVersion);
+		Map<String, Ac> mapAc = new HashMap<String, Ac>();
+		Map<String, Tr> mapTr = new HashMap<String, Tr>();
+		// 活的流程模板对应所有Tr
+		List<Tr> trList = trDAO.getListByFlowCodeAndFlowVersion(flowCode,
+				flowVersion);
+		Ac firstAc = null;
+		for (Ac ac : acList) {
+			if (isStart == ac.getIsStart()) {
+				firstAc = ac;
+			}
+			mapAc.put(ac.getNodeId(), ac);
+		}
+		for (Tr tr : trList) {
+			mapTr.put(tr.getTrId(), tr);
+		}
+		// 获取可以通过所有AC
+		boolean flag = false;
+		if (firstAc != null) {
+			// 如果是聚合可能发生重复需要排除相同的
+			Map<String, Ac> result = getPassAC(firstAc,
+					flowInstanceVariableMap, mapAc, mapTr,paramTypeMap);
+			//装载发起节点
+			Map<String, Ac> passAcMap =new LinkedHashMap<String, Ac>();
+			passAcMap.put(firstAc.getNodeId(), firstAc);
+			passAcMap.putAll(result);
+			for (String key : passAcMap.keySet()) {
+				Ac tempAc = passAcMap.get(key);
+				AcDto acDto = new AcDto();
+				acDto.setCurrentAc(tempAc);
+				// 记录上一个节点
+				String preNodeId = tempAc.getFrom_1();
+				String[] prenodeIds = preNodeId.split("-");
+				List<Ac> preAcs = new ArrayList<Ac>();
+				if (prenodeIds != null && prenodeIds.length > 0) {
+					for (String nodeId : prenodeIds) {
+						preAcs.add(passAcMap.get(nodeId));
+					}
+				}
+				acDto.setPreAc(preAcs);
+				//过下一节点查找，如果通过下一个线查找，避免某些问题
+				/**
+				String nextNodeId = tempAc.getNext_1();
+				String[] nextnodeIds = nextNodeId.split("-");
+				List<Ac> nextAcs = new ArrayList<Ac>();
+				if (nextnodeIds != null && nextnodeIds.length > 0) {
+					for (String nodeId : nextnodeIds) {
+						Ac nextAc = passAcMap.get(nodeId);
+						if (nextAc == null) {
+							continue;
+						}
+						nextAcs.add(nextAc);
+					}
+				}
+				**/
+				List<Ac> nextAcs = new ArrayList<Ac>();
+				String next_trs = tempAc.getNext_tr_1();// 链接的线条
+				String[] next_tr = next_trs.split("-");
+				for(String tr_id:next_tr){
+					Tr tr = mapTr.get(tr_id);
+					if (tr != null) {
+						String cond = tr.getCond();
+						if (cond != null) {
+							boolean r = FormulaCalculationUtils.parseCond(cond,
+									flowInstanceVariableMap,paramTypeMap);
+							if (r) {
+								Ac nextAc = passAcMap.get(tr.getTarget());
+								nextAcs.add(nextAc);
+							}
+						} else {
+							Ac nextAc = passAcMap.get(tr.getTarget());
+							nextAcs.add(nextAc);
+						}
+					}
+				}
+				
+				acDto.setNextAc(nextAcs);
+				acDtos.add(acDto);
+				
+				if (isEnd == tempAc.getIsEnd()) {
+					flag = true;
+				}
+			}
+		}
+		if (!flag) {
+			System.out.println("===流程分之没有正常结束");
+		}
+		return acDtos;
+	}
+
+	public Fl getNewVersionFl(String flowCode) {
+
+		Fl fl = flDAO.getMaxVersionFl(flowCode);
+
+		return fl;
+
+	}
+	
+   public String getDefaultFlowCodeBySodIdAndBizId(Long sodId){
+		String flowCode = flDAO.getDefaultFlowCodeBySodIdAndBizId(sodId);
+    	return flowCode;
+    }
+
+	/**
+	 * 
+	 * 包含情况 1.找不到符合的条件分支，而且未结束 2.正常结束
+	 * 
+	 * 
+	 * 可以到达的AC节点
+	 * 
+	 * @param currentAC
+	 * @return
+	 */
+	private Map<String, Ac> getPassAC(Ac currentAC,
+			FlowInstanceVariableMap flowInstanceVariableMap,
+			Map<String, Ac> acMap, Map<String, Tr> trMap,Map<String,String> paramTypeMap) {
+		System.out.println("flowInstanceVariableMap==="+flowInstanceVariableMap.getValueMap());
+		
+		Map<String, Ac> passACs = new LinkedHashMap<String, Ac>();
+		String next_trs = currentAC.getNext_tr_1();// 链接的线条
+		String[] next_tr = next_trs.split("-");
+		List<Tr> passTrs = new ArrayList<Tr>(); // 获取本层可以通过的线条
+		for (String tr_id : next_tr) {
+			Tr tr = trMap.get(tr_id);
+			if (tr != null) {
+				String cond = tr.getCond();
+				
+				if (cond != null) {
+					boolean result = FormulaCalculationUtils.parseCond(cond,
+							flowInstanceVariableMap,paramTypeMap);
+					if (result) {
+						passTrs.add(tr);
+					}
+				} else {
+					passTrs.add(tr);
+				}
+			}
+		}
+		// 找不到符合的线条
+		if (passTrs.size() <= 0) {
+			return passACs;
+		} else {
+			for (Tr tr : passTrs) {
+				Ac ac = acMap.get(tr.getTarget());
+				if (passACs.get(ac.getNodeId()) != null) {
+					passACs.remove(ac.getNodeId());
+					passACs.put(ac.getNodeId(), ac);
+				} else {
+					passACs.put(ac.getNodeId(), ac);
+				}
+				if (isEnd == ac.getIsEnd()) {
+					return passACs;
+				}
+				Map<String, Ac> resultMap = getPassAC(ac,
+						flowInstanceVariableMap, acMap, trMap,paramTypeMap);
+				for (String key : resultMap.keySet()) {
+					Ac acTemp = resultMap.get(key);
+					if (passACs.get(key) != null) {
+						passACs.remove(key);
+						passACs.put(key, acTemp);
+					} else {
+						passACs.put(acTemp.getNodeId(), acTemp);
+					}
+				}
+			}
+			return passACs;
+		}
+	}
+
+	@Override
+	public OpGroup getOpGroup(String code) {
+		// TODO Auto-generated method stub
+		List<OpGroup> ops=getDao().findAll(OpGroup.class, " code = ? ",new Object[]{code});
+		if(ops!=null && ops.size()>0){
+			return ops.get(0);
+		}
+		return null;
+	}
+	
+	
+	
+}

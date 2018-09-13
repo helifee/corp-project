@@ -1,0 +1,143 @@
+package com.jzy.hio.platform.sentimentinfo.controller;
+
+import java.security.Principal;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.amqp.core.AmqpTemplate;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.jzy.hio.base.controller.BasePlatformController;
+import com.jzy.hio.config.QueueConfig;
+import com.jzy.hio.entity.SentimentInfo;
+import com.jzy.hio.exception.HioMybatisGetException;
+import com.jzy.hio.platform.constant.ComplainTypeEnum;
+import com.jzy.hio.platform.sentimentinfo.dto.ComplainTypeDto;
+import com.jzy.hio.platform.sentimentinfo.param.SentimentInfoParam;
+import com.jzy.hio.platform.sentimentinfo.service.SentimentInfoService;
+import com.jzy.hio.platform.utils.CommonUtils;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.springmvc.ApiResponse;
+
+/**
+ * 舆情投诉
+ * @author 
+ *
+ */
+@RestController
+@RequestMapping("/sentimentInfo")
+public class SentimentInfoController extends BasePlatformController<SentimentInfoService>{
+	
+	@Autowired
+    private QueueConfig queueConfig;
+	@Autowired
+    private AmqpTemplate rabbitTemplate;
+	
+	/**
+	 * 舆情投诉保存
+	 * @param token
+	 * @param receiverId
+	 * @param readFlag
+	 * @param happenTime
+	 * @param content
+	 */
+	@PostMapping("/save")
+	public ApiResponse<Void> save(Principal user, @RequestBody SentimentInfoParam infoParam) {
+		ApiResponse<Void> res = new ApiResponse<>(200, "投诉成功");
+		try {
+			String uid = getUserIdIM();
+			
+			// 验证数据
+			String receiverId = infoParam.getReceiverId();
+			Integer readFlag = infoParam.getReadFlag();
+			String dateTemp = infoParam.getHappenTime();
+			if(StringUtils.isEmpty(receiverId) || readFlag == null || StringUtils.isEmpty(dateTemp) ) {
+				res.setStatus(102);
+				res.setMessage("请完整填写必填信息");
+				return res;
+			}
+			
+			SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+			Date happenTime = null;
+			try {
+				happenTime = sdf.parse(dateTemp);
+			} catch (ParseException e) {
+				res.setStatus(102);
+				res.setMessage("时间格式不正确");
+				return res;
+			}
+			
+			String content = infoParam.getContent();
+			if (StringUtils.isNotEmpty(content)) {
+				content = content.trim();
+			} else {
+				content = "";
+			}
+			if(content.length() > 1000) {
+				res.setStatus(102);
+				res.setMessage("问题描述信息过长，请删减");
+				return res;
+			}
+			
+			SentimentInfo info = new SentimentInfo();
+			String tableName = CommonUtils.getTableName(info.getClass());
+			String id = CommonUtils.getTablePKId(tableName);
+			Date date = new Date();
+			info.setId(id);
+			info.setDelflag(0);
+			info.setCreateDate(date);
+			info.setUpdateDate(date);
+			info.setSendId(uid);
+			info.setReceiverId(receiverId);
+			info.setReadFlag(readFlag);
+			info.setContent(content);
+			info.setCreatePersonId(uid);
+			info.setCreatePersonName(uid);
+			info.setCreateDate(new Date());
+			info.setUpdatePersonId(uid);
+			info.setUpdatePersonName(uid);
+			info.setUpdateDate(new Date());
+			info.setHappenTime(happenTime);
+			
+			// 缓存保存
+			JedisUtil.hsetObject(tableName, id, info);
+			// mq 数据库保存
+			rabbitTemplate.convertAndSend(queueConfig.getImSentimentInfoQueue(), info);
+		} catch (Exception e) {
+			res.setStatus(500);
+			res.setMessage("系统出现错误，请稍后重试");
+			e.printStackTrace();
+			throw new HioMybatisGetException(e);
+		}
+		return res;
+	}
+	
+	/**
+	 * 投诉类型选项
+	 * @return
+	 */
+	@PostMapping("/complainList")
+	public ApiResponse<List<ComplainTypeDto>> complainList() {
+		ApiResponse<List<ComplainTypeDto>> res = new ApiResponse<>(200, "查询成功");
+		
+		// 枚举转为dto
+		List<ComplainTypeDto> cttlist = new ArrayList<>();
+		for (ComplainTypeEnum type : ComplainTypeEnum.values()) {
+			cttlist.add(new ComplainTypeDto(type.getValue(), type.getDesc()));
+		}
+		res.setResult(cttlist);
+		
+		return res;
+		
+	}
+	
+}
+

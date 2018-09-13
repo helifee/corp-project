@@ -1,0 +1,22 @@
+package com.xinleju.platform.generation.dto.service;
+
+import com.xinleju.platform.base.dto.service.BaseDtoServiceCustomer;
+
+public interface GenerationSchemeDtoServiceCustomer extends BaseDtoServiceCustomer{
+
+	
+	
+	/**
+	 * 生成并下载File
+	 * 
+	 * @param guuid-map
+	 */
+	public String downloadFile(String userInfo, String saveJson);
+	
+	/**
+	 * 创建表
+	 * 
+	 * @param guuid-map
+	 */
+	public String createTable(String userInfo, String paramater);
+}

@@ -1,0 +1,209 @@
+package com.creditease.b2bsettle.basedata.service.impl;
+
+import java.util.Date;
+import java.util.List;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.creditease.b2bsettle.basedata.constant.AuditStatus;
+import com.creditease.b2bsettle.basedata.constant.LockOperator;
+import com.creditease.b2bsettle.basedata.constant.OperateType;
+import com.creditease.b2bsettle.basedata.constant.UserStatus;
+import com.creditease.b2bsettle.basedata.exception.DuplicateKeyException;
+import com.creditease.b2bsettle.basedata.model.User;
+import com.creditease.b2bsettle.basedata.model.UserAudit;
+import com.creditease.b2bsettle.basedata.repository.UserAuditRepository;
+import com.creditease.b2bsettle.basedata.repository.UserRepository;
+import com.creditease.b2bsettle.basedata.service.UserService;
+
+/**
+ * 用户管理
+ * 
+ * @author daoqiangzhang
+ *
+ */
+@Service
+public class UserServiceImpl implements UserService {
+	
+	@Autowired
+	private UserRepository userRepository;
+	
+	@Autowired
+	private UserAuditRepository userAuditRepository;
+	
+	@Override
+	public User login(String userName, String password) {
+		return userRepository.findByNameAndPasswordAndDeleted(userName, password, false);
+	}
+
+	@Override
+	public long newUser(UserAudit user) throws DuplicateKeyException {
+		user.setAuditStatus(AuditStatus.Audit);
+		UserAudit save = userAuditRepository.save(user);
+		return save.getCid();
+	}
+	
+    //用户审核通过
+	@Override
+    public boolean pass(UserAudit userAudit) {
+		//同步数据到主表
+		OperateType operateType = userAudit.getOperateType();
+		if(OperateType.ADD.equals(operateType)) {
+			//新增用户
+			User user = new User();
+			convert(userAudit, user );
+			User save = userRepository.save(user);
+			userAudit.setId(save.getId());	//回写ID
+			
+		} else if(OperateType.UPDATE.toString().equals(operateType)) {
+			//修改用户
+			User user = userRepository.findOne(userAudit.getId());
+			convert(userAudit, user);
+			userRepository.save(user);
+			
+		} else if(OperateType.DELETE.toString().equals(operateType)) {
+			//删除用户
+			userRepository.delUserById(userAudit.getId(), new Date());
+		}
+		
+		userAudit.setDeleted(true);
+		userAuditRepository.save(userAudit);
+		
+    	return true;
+    }
+    
+    private void convert(UserAudit userAudit, User user) {
+    	user.setId(userAudit.getId());
+    	user.setName(userAudit.getName());
+    	user.setCardType(userAudit.getCardType());
+    	user.setCardNumber(userAudit.getCardNumber());
+    	user.setAddress(userAudit.getAddress());
+    	user.setCreator(userAudit.getCreator());
+    	user.setCreatedTime(userAudit.getCreatedTime());
+    	user.setDn(userAudit.getDn());
+    	user.setEmail(userAudit.getEmail());
+    	user.setTel(userAudit.getTel());
+    	user.setRealName(userAudit.getRealName());
+    	user.setPassword(userAudit.getPassword());
+    	user.setCanOperate(true);
+    	user.setSource(userAudit.getSource());
+    	user.setField1(userAudit.getField1());
+    	user.setField2(userAudit.getField2());
+    	user.setField3(userAudit.getField3());
+    	user.setStatus("1");
+	}
+
+	//用户审核拒绝
+	@Override
+    public boolean noPass(UserAudit userAudit) {
+		userAudit.setAuditStatus(AuditStatus.Refuse);
+		userAuditRepository.save(userAudit);
+		return true;
+	}
+
+	@Override
+	public boolean isUserExists(String name) {
+		User user = userRepository.findByNameAndDeleted(name, false);
+		return user != null;
+	}
+
+	@Override
+	public boolean deleteUserById(long userId) {
+		UserAudit userAudit = new UserAudit();
+		userAudit.setId(userId);
+		userAuditRepository.save(userAudit);
+		
+		User user = userRepository.findOne(userId);
+		user.setCanOperate(false);
+		
+		return true;
+	}
+
+	@Override
+	public boolean updateUser(UserAudit user) {
+		userAuditRepository.save(user);
+		
+		User user2 = userRepository.findOne(user.getId());
+		user2.setCanOperate(false);
+		userRepository.save(user2);
+		return true;
+	}
+
+	@Override
+	public User findById(long id) {
+		return userRepository.findOne(id);
+	}
+
+	@Override
+	public List<User> findAllValidUsers() {
+		return userRepository.findByDeleted(false);
+	}
+	
+	@Override
+	public List<UserAudit> findAllInvalidUser() {
+		return userAuditRepository.findByDeleted(false);
+	}
+
+	@Override
+	public boolean lockUser(long id, LockOperator operator) {
+		UserStatus status = UserStatus.Normal;
+		if(LockOperator.User.equals(operator)) {
+			status = UserStatus.LockManual;
+		} else if(LockOperator.System.equals(operator)) {
+			status = UserStatus.LockAuto;
+		}
+		int count = userRepository.setUserStatus(id, status);
+		return count == 1;
+		
+	}
+
+	@Override
+	public boolean unlockUser(long id) {
+		int count = userRepository.setUserStatus(id, UserStatus.Normal);
+		return count == 1;
+	}
+
+	@Override
+	public boolean isLocked(long id) {
+		String userStatus = userRepository.queryUserStatus(id);
+		if(UserStatus.Normal.name().equals(userStatus)) {
+			return false;
+		}
+		return true;
+	}
+
+	@Override
+	public boolean updateDN(String userName, String dn) {
+		int count = userRepository.updateDN(userName, dn);
+		return count == 1;
+	}
+
+	@Override
+	public boolean changePwd(String userName, String oldPwd, String newPwd) {
+		User user = login(userName, oldPwd);
+		if(user != null) {
+			userRepository.changPwd(userName, newPwd);
+			return true;
+		}
+		return false;
+	}
+
+	@Override
+	public User findByName(String userName) {
+		return userRepository.findByNameAndDeleted(userName, false);
+	}
+
+	@Override
+	public boolean setLoginTime(String userName, Date date) {
+		int count = userRepository.setLoginTime(userName, date);
+		return count != 0;
+	}
+
+	@Override
+	public boolean validate(String userName, String keyInfo) {
+		User user = userRepository.findByNameAndDnAndDeleted(userName, keyInfo, false);
+		return user != null;
+	}
+
+}

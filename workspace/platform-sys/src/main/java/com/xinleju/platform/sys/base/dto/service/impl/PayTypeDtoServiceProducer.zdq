@@ -1,0 +1,414 @@
+package com.xinleju.platform.sys.base.dto.service.impl;
+
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.sys.base.dto.service.PayTypeDtoServiceCustomer;
+import com.xinleju.platform.sys.base.entity.BaseProjectType;
+import com.xinleju.platform.sys.base.entity.PayType;
+import com.xinleju.platform.sys.base.service.PayTypeService;
+import com.xinleju.platform.tools.data.JacksonUtils;
+import org.springframework.transaction.annotation.Transactional;
+
+/**
+ * @author admin
+ * 
+ *
+ */
+ 
+public class PayTypeDtoServiceProducer implements PayTypeDtoServiceCustomer{
+	private static Logger log = Logger.getLogger(PayTypeDtoServiceProducer.class);
+	@Autowired
+	private PayTypeService payTypeService;
+
+	public String save(String userInfo, String saveJson){
+		// TODO Auto-generated method stub
+	   DubboServiceResultInfo info=new DubboServiceResultInfo();
+	   try {
+		   PayType payType=JacksonUtils.fromJson(saveJson, PayType.class);
+		   int i=  payTypeService.savePayType(payType);
+		   if(i==5){
+			   info.setSucess(false);
+			   info.setMsg("编码重复,保存对象失败!");
+		   }else{
+			   info.setSucess(true);
+			   info.setMsg("保存对象成功!");
+			   info.setResult(JacksonUtils.toJson(payType));
+		   }
+		} catch (Exception e) {
+		 log.error("保存对象失败!"+e.getMessage());
+		 info.setSucess(false);
+		 info.setMsg("保存对象失败!");
+		 info.setExceptionMsg(e.getMessage());
+		}
+	   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String saveBatch(String userInfo, String saveJsonList)
+			 {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public String updateBatch(String userInfo, String updateJsonList)
+			 {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public String update(String userInfo, String updateJson)  {
+		// TODO Auto-generated method stub
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   PayType payType=JacksonUtils.fromJson(updateJson, PayType.class);
+			   int result=   payTypeService.update(payType);
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("更新对象成功!");
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deleteObjectById(String userInfo, String deleteJson)
+	{
+		// TODO Auto-generated method stub
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   PayType payType=JacksonUtils.fromJson(deleteJson, PayType.class);
+			   int result= payTypeService.deleteObjectById(payType.getId());
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("删除对象成功!");
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deleteAllObjectByIds(String userInfo, String deleteJsonList)
+   {
+		// TODO Auto-generated method stub
+		 DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   if (StringUtils.isNotBlank(deleteJsonList)) {
+				   Map map=JacksonUtils.fromJson(deleteJsonList, HashMap.class);
+				   List<String> list=Arrays.asList(map.get("id").toString().split(","));
+				   int result= payTypeService.deleteAllObjectByIds(list);
+				   info.setResult(JacksonUtils.toJson(result));
+				   info.setSucess(true);
+				   info.setMsg("删除对象成功!");
+				}
+			} catch (Exception e) {
+			 log.error("删除对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getObjectById(String userInfo, String getJson)
+	 {
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			PayType payType=JacksonUtils.fromJson(getJson, PayType.class);
+			PayType	result = payTypeService.getObjectById(payType.getId());
+			info.setResult(JacksonUtils.toJson(result));
+		    info.setSucess(true);
+		    info.setMsg("获取对象成功!");
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getPage(String userInfo, String paramater) {
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map map=JacksonUtils.fromJson(paramater, HashMap.class);
+				Page page=payTypeService.getPage(map, (Integer)map.get("start"),  (Integer)map.get("limit"));
+				info.setResult(JacksonUtils.toJson(page));
+			    info.setSucess(true);
+			    info.setMsg("获取分页对象成功!");
+			}else{
+				Page page=payTypeService.getPage(new HashMap(), null, null);
+				info.setResult(JacksonUtils.toJson(page));
+			    info.setSucess(true);
+			    info.setMsg("获取分页对象成功!");
+			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取分页对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取分页对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String queryList(String userInfo, String paramater){
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map map=JacksonUtils.fromJson(paramater, HashMap.class);
+				List list=payTypeService.queryList(map);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}else{
+				List list=payTypeService.queryList(null);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取列表对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取列表对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	
+	/**
+	 * 查询符合条件的对象List列表 
+	 * @return
+	 */
+	@Override
+	public String queryAllPayType(String userInfo,String paramater){
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map map=JacksonUtils.fromJson(paramater, HashMap.class);
+				List<Map<String, Object>> res=payTypeService.getAllPayType(map);
+				info.setResult(JacksonUtils.toJson(res));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}else{
+				List<Map<String, Object>> res=payTypeService.getAllPayType(null);
+				info.setResult(JacksonUtils.toJson(res));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取列表对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取列表对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getCount(String userInfo, String paramater)  {
+		// TODO Auto-generated method stub
+		return null;
+	}
+	
+	@Override
+	public String deletePseudoObjectById(String userInfo, String deleteJson)
+	{
+		// TODO Auto-generated method stub
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   PayType payType=JacksonUtils.fromJson(deleteJson, PayType.class);
+			   int result= payTypeService.deletePseudoObjectById(payType.getId());
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("删除对象成功!");
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deletePseudoAllObjectByIds(String userInfo, String deleteJsonList)
+   {
+		// TODO Auto-generated method stub
+		 DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   if (StringUtils.isNotBlank(deleteJsonList)) {
+				   Map map=JacksonUtils.fromJson(deleteJsonList, HashMap.class);
+				   List<String> list=Arrays.asList(map.get("id").toString().split(","));
+				   int result= payTypeService.deletePseudoAllObjectByIds(list);
+				   info.setResult(JacksonUtils.toJson(result));
+				   info.setSucess(true);
+				   info.setMsg("删除对象成功!");
+				}
+			} catch (Exception e) {
+			 log.error("删除对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.sys.base.dto.service.PayTypeDtoServiceCustomer#payTypeListData(java.lang.String, java.lang.String)
+	 */
+	@Override
+	public String payTypeParanetList(String userJson, String paramater) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map map=JacksonUtils.fromJson(paramater, HashMap.class);
+				List list=payTypeService.payTypeParanetList();
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}else{
+				List list=payTypeService.payTypeParanetList();
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取列表对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取列表对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.sys.base.dto.service.PayTypeDtoServiceCustomer#getTypetree(java.lang.String, java.lang.String)
+	 */
+	@Override
+	public String getTypetree(String userJson, String paramater) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map map=JacksonUtils.fromJson(paramater, HashMap.class);
+				List list=payTypeService.getTypetree();
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}else{
+				List list=payTypeService.getTypetree();
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取列表对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取列表对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.sys.base.dto.service.PayTypeDtoServiceCustomer#deletePayType(java.lang.String, java.lang.String)
+	 */
+	@Override
+	public String deletePayType(String userJson, String id) {
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   PayType payType=JacksonUtils.fromJson(id, PayType.class);
+			   int result= payTypeService.deletePayType(payType.getId());
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("删除对象成功!");
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.sys.base.dto.service.PayTypeDtoServiceCustomer#updateStatus(java.lang.String, java.lang.String)
+	 */
+	@Override
+	public String updateStatus(String userJson, String updateJson) {
+		  DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   PayType payType=JacksonUtils.fromJson(updateJson, PayType.class);
+			   Map<String,Object> paramMap = JacksonUtils.fromJson (updateJson,Map.class);
+			   PayType object= payTypeService.getObjectById(payType.getId());
+			   int result=   payTypeService.updateStatus(object,paramMap);
+			   info.setMsg("更新对象成功");
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.sys.base.dto.service.PayTypeDtoServiceCustomer#updatePayType(java.lang.String, java.lang.String)
+	 */
+	@Override
+	public String updatePayType(String userJson, String updateJson) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   PayType payType=JacksonUtils.fromJson(updateJson, PayType.class);
+			   int result=   payTypeService.updatePayType(payType);
+			   if(result==5){
+				   info.setSucess(false);
+				   info.setMsg("编码重复,保存对象失败!");
+			   }else{
+				   info.setResult(JacksonUtils.toJson(result));
+				   info.setSucess(true);
+				   info.setMsg("更新对象成功!");
+			   }
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+
+}

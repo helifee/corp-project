@@ -1,0 +1,343 @@
+package com.cnaps.hvps.action.transfer;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.InputStreamReader;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Date;
+import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.struts.action.ActionForm;
+import org.apache.struts.action.ActionForward;
+import org.apache.struts.action.ActionMapping;
+
+import com.bancstone.action.BaseAction;
+import com.bancstone.common.exception.PicpMessageException;
+import com.bancstone.hibernate.systemManage.Systemusersmanage;
+import com.bancstone.service.systemManage.impl.CommonServices;
+import com.cnaps.coreservices.CommonXMLEntity;
+import com.cnaps.coreservices.TransCodeEntity;
+import com.cnaps.coreservices.TransServices;
+import com.cnaps.hvps.form.transfer.PaySignupCreateForm;
+import com.cnaps.hvps.form.transfer.PaySignupQueryForm;
+import com.cnaps.hvps.form.transfer.RegularCreditForm;
+import com.cnaps.hvps.persistence.messages.Hvpspartyinfo;
+import com.cnaps.hvps.persistence.transfer.RegularCredit;
+import com.cnaps.hvps.persistence.transfer.RegularDebit;
+import com.cnaps.hvps.persistence.transfer.Signup;
+import com.cnaps.hvps.persistence.transfer.TransferOfTransit;
+
+/**
+ * @包名 com.cnaps.hvps.action.transfer
+ * @文件名 RegularCreditAction.java
+ * @作者 zcx
+ * @创建日期 Jun 7, 2011
+ * @版本 V 1.0
+ * 
+ * 定期贷记明细建立
+ */
+public class RegularCreditAction extends BaseAction {
+	
+	public ActionForward queryList(ActionMapping mapping, ActionForm form,
+			HttpServletRequest request, HttpServletResponse response) {
+		// request.setAttribute("selectxml", getFile());
+
+		String syspara = request.getParameter("syspara");
+		String selectFlag = request.getParameter("selectFlag");
+
+		if ("selectFlag".equals(selectFlag)) {
+			return mapping.findForward("selectFlag");
+		}
+		// 界面查询条件
+		RegularCreditForm voform = (RegularCreditForm) form;
+		RegularCredit hpo = voform.getPo();
+
+		if (!StringUtils.isEmpty(hpo.getPaymentGroupNum())
+				&& !"".equals(hpo.getPaymentGroupNum().trim())) {
+
+			voform.getConditions().add(
+					"pmtgrpid:" + hpo.getPaymentGroupNum().trim());// 支付组号查询
+		}
+		if (!StringUtils.isEmpty(hpo.getPayerAcount())
+				&& !"".equals(hpo.getPayerAcount().trim())) {
+
+			voform.getConditions().add("dbtracct:" + hpo.getPayerAcount());// 付款人帐号
+		}
+
+		if (!StringUtils.isEmpty(hpo.getProposerCstmrId())
+				&& !"".equals(hpo.getProposerCstmrId().trim())) {
+
+			voform.getConditions().add(
+					"ProposerCstmrId:" + hpo.getProposerCstmrId().trim());
+		}
+		if ("cxzfjyzh".equals(syspara)) {
+
+			String pmtgrpid = request.getParameter("pmtgrpid");
+			voform.getConditions().add("pmtgrpid:" + pmtgrpid);// 支付组号查询
+
+		}
+	
+		// 报文头
+		String transactionid = TransCodeEntity.QUERYCD;// 功能代码
+		commSetToXML(voform, request, transactionid);
+
+		voform.setQueryCd(TransCodeEntity.SEND_BEPS_RegularCreditTurnAction_QUERYMSG);
+		this.setFenYe(voform);
+		
+		try {
+
+			TransServices transServices = (TransServices) this
+					.getBean("transServices");
+			CommonXMLEntity commonXMLEntity = transServices
+					.transProcess(voform, TransCodeEntity.QUERYCD,
+							"transaction", voform.getQueryCd());// 新版查询方法
+			if (!commonXMLEntity.getProcessCode().equals("000000")) {
+				throw new PicpMessageException("错误码：["
+						+ commonXMLEntity.getProcessCode() + "] 错误信息：["
+						+ commonXMLEntity.getProcessDes() + "]");
+			}
+
+			if (commonXMLEntity.getRecordcount() == null) {
+				voform.setTotalSize(0);
+			} else {
+				voform.setTotalSize(Integer.parseInt(commonXMLEntity
+						.getRecordcount()));
+			}
+
+			this.setQueryPageValue(voform, true);
+			ArrayList<RegularCredit> list = (ArrayList<RegularCredit>) commonXMLEntity
+					.getResults();
+
+			
+			request.setAttribute("RegularCreditDetailParentlist", list);
+			request.setAttribute("queryList", list);
+
+			this.setPageInfo(request, voform);
+
+			this.setObjectToRequest(request, "queryList", list);
+		} catch (Exception e) {
+
+			e.printStackTrace();
+			return toFailedPage(mapping, request, e.getMessage());
+		}
+
+		return mapping.findForward("queryList");
+
+	}
+
+	public ActionForward queryDelete(ActionMapping mapping, ActionForm form,
+			HttpServletRequest request, HttpServletResponse response) {
+		String deleteParent = request.getParameter("flag");
+		String id = request.getParameter("id");
+
+		// 父表删除
+		if ("deleteParent".equals(deleteParent)) {
+
+			RegularCreditForm pvpform = (RegularCreditForm) form;
+			String transactionid = TransCodeEntity.SEND_BEPS_RegularCreditAction_queryDelete;// 功能代码
+			commSetToXML(pvpform, request, transactionid);
+			pvpform.getPo().setId(id);//设置按主键删除
+			String reslutmessage = "";
+			CommonXMLEntity commonXMLEntity;
+			try {
+				TransServices transServices = (TransServices) this
+						.getBean("transServices");
+
+				commonXMLEntity = transServices
+						.transProcess(
+								pvpform,
+								TransCodeEntity.SEND_BEPS_RegularCreditAction_queryDelete,
+								"transaction","");
+
+				if (!commonXMLEntity.getProcessCode().equals("000000")) {
+					throw new PicpMessageException("错误码："
+							+ commonXMLEntity.getProcessCode() + "错误信息："
+							+ commonXMLEntity.getProcessDes());
+				} else {
+
+					reslutmessage = "处理成功码：" + commonXMLEntity.getProcessCode()
+							+ "删除成功！";
+
+				}
+
+				return toSuccessPage(mapping, request, reslutmessage);
+			} catch (Exception e) {
+
+				return toFailedPage(mapping, request, e.getMessage());
+			}
+
+		}
+		return toFailedPage(mapping, request, "操作未成功");
+
+	}
+
+	/**
+	 * 查询定期贷记明细签发的查询
+	 * @param mapping
+	 * @param form
+	 * @param request
+	 * @param response
+	 * @return
+	 */
+	public ActionForward queryParentDetail(ActionMapping mapping,
+			ActionForm form, HttpServletRequest request,
+			HttpServletResponse response) {
+		String id = request.getParameter("id");
+		RegularCreditForm voform = (RegularCreditForm) form;
+		// 报文头
+		String transactionid = TransCodeEntity.QUERYCD;// 功能代码
+		commSetToXML(voform, request, transactionid);
+		voform.getConditions().add("ID:" + id);// 按主键查询
+		voform.setQueryCd(TransCodeEntity.SEND_BEPS_RegularCreditTurnAction_QUERYMSG);
+		CommonXMLEntity commonXMLEntity = null;
+		try {
+
+			TransServices transServices = (TransServices) this
+					.getBean("transServices");
+			commonXMLEntity = transServices
+					.transProcess(voform, TransCodeEntity.QUERYCD,
+							"transaction", voform.getQueryCd());// 新版查询方法
+			if (!commonXMLEntity.getProcessCode().equals("000000")) {
+				throw new PicpMessageException("错误码：["
+						+ commonXMLEntity.getProcessCode() + "] 错误信息：["
+						+ commonXMLEntity.getProcessDes() + "]");
+			}
+
+			ArrayList<RegularCredit> list = (ArrayList<RegularCredit>) commonXMLEntity
+					.getResults();
+
+		
+			RegularCredit obj = new RegularCredit();
+			if (list.size() > 0) {
+				obj = (RegularCredit) list.get(0);
+
+			}
+			request.setAttribute("sap", obj);
+		} catch (Exception e) {
+			e.printStackTrace();
+			return toFailedPage(mapping, request, e.getMessage());
+		}
+		return mapping.findForward("regularCreditDetail");
+
+	}
+
+	public ActionForward queryParentModify(ActionMapping mapping,
+			ActionForm form, HttpServletRequest request,
+			HttpServletResponse response) {
+		System.out.println("  父表修改  ");
+
+		return mapping.findForward("ParentDetail");
+
+	}
+
+	
+	/**
+	 * 生成支付组号和报文标识号 再进入录入页面
+	 * 
+	 * @param mapping
+	 * @param form
+	 * @param request
+	 * @param response
+	 * @return
+	 */
+
+	public ActionForward createMsgid(ActionMapping mapping, ActionForm form,
+			HttpServletRequest request, HttpServletResponse response) {
+
+		CommonServices commonService = (CommonServices) this
+				.getBean("CommonServices");
+		String workdate = request.getSession().getAttribute("workDate")
+				.toString();// 工作日期
+		String msgId = commonService.getSEQTransId(workdate);
+		
+		request.setAttribute("paymentno", msgId);//存储报文标识号
+		return mapping.findForward("inputdetail");
+
+	}
+	
+	
+	/**
+	 * 创建定期贷记明细信息
+	 * @param mapping
+	 * @param form
+	 * @param request
+	 * @param response
+	 * @return
+	 */
+	public ActionForward createParentDetail(ActionMapping mapping,
+			ActionForm form, HttpServletRequest request,
+			HttpServletResponse response) {
+		
+		// 报文头
+		RegularCreditForm pvpform = (RegularCreditForm) form;
+		String transactionid = TransCodeEntity.SEND_BEPS_RegularCreditAction_createParentDetail;// 功能代码
+		commSetToXML(pvpform, request, transactionid);
+		
+		pvpform.getPo().setProposerAcct(pvpform.getPo().getPayerAcount());
+		pvpform.setPmtGrpId(pvpform.getPo().getPaymentGroupNum());// 支付交易组号
+		String reslutmessage = "";
+		CommonXMLEntity commonXMLEntity;
+		try {
+			TransServices transServices = (TransServices) this
+					.getBean("transServices");
+
+			commonXMLEntity = transServices
+					.transProcess(
+							pvpform,
+							TransCodeEntity.SEND_BEPS_RegularCreditAction_createParentDetail,
+							"transaction", "");
+
+			if (!commonXMLEntity.getProcessCode().equals("000000")) {
+				throw new PicpMessageException("错误码："
+						+ commonXMLEntity.getProcessCode() + "错误信息："
+						+ commonXMLEntity.getProcessDes());
+			} else {
+
+				reslutmessage = "处理成功码：" + commonXMLEntity.getProcessCode()
+						+ "处理成功！";
+
+			}
+			return toSuccessPage(mapping, request, reslutmessage + "支付交易组号为【"
+					+ pvpform.getPo().getPaymentGroupNum() + "】");
+		} catch (Exception e) {
+
+			return toFailedPage(mapping, request, e.getMessage());
+		}
+	}
+
+	public String getFile() {
+		System.out.println("-------------------------------"
+				+ this.getClass().getClassLoader().getResource("/"));
+		String st;
+		String str = "";
+		String path = this.getClass().getClassLoader().getResource("/")
+				.getFile();
+		String filePath = path + "com/cnaps/hvps/action/transfer/NewInfo.xml";
+
+		try {
+			InputStreamReader read = new InputStreamReader(new FileInputStream(
+					filePath), "utf-8");
+
+			BufferedReader reader = new BufferedReader(read);
+			while ((st = reader.readLine()) != null) {
+
+				str = str + st;
+
+			}
+		} catch (Exception e) {
+
+			e.printStackTrace();
+		}
+		return str;
+	}
+}

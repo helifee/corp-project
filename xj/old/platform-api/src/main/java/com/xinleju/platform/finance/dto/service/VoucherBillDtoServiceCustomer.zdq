@@ -1,0 +1,48 @@
+package com.xinleju.platform.finance.dto.service;
+
+import java.util.List;
+
+import com.xinleju.erp.flow.flowutils.bean.FlowResult;
+import com.xinleju.erp.sm.extend.dto.FinaData;
+import com.xinleju.erp.sm.extend.dto.FinaQueryParams;
+import com.xinleju.platform.base.dto.service.BaseDtoServiceCustomer;
+import com.xinleju.platform.finance.dto.VoucherBillEntryDto;
+import com.xinleju.platform.finance.dto.VoucherTemplateDto;
+import com.xinleju.platform.finance.utils.QMap;
+
+public interface VoucherBillDtoServiceCustomer extends BaseDtoServiceCustomer{
+	/**
+	 * @param object
+	 * @param paramaterJson
+	 * @return
+	 */
+	String getVoucherById(String userInfo, String paramaterJson);
+	
+	/**
+	 * 生成NC系统能识别的同步xml
+	 * 
+	 * @param voucher
+	 * @param entryDataList
+	 * @param accountSetDto 所属系统 SA：销售，CO：成本，EX：费用
+	 * @return
+	 */
+	public String createSyncXml2NC(String voucher, List<VoucherBillEntryDto> entryDataList,String appCode,String sender);
+	
+	/**
+	 * @param object
+	 * @param paramaterJson
+	 * @return
+	 */
+	String getVoucherBillPage(String userInfo, String paramaterJson);
+	
+	/**
+	 * @param selectedList
+	 * @param params
+	 * @param paramMap
+	 * @param companyId
+	 * @return
+	 */
+	FlowResult<String> createVoucher(String userJson,List<FinaData> selectedList, FinaQueryParams params, QMap paramMap,String companyId);
+	
+	FlowResult<String> rewrite(List<String> ids, VoucherTemplateDto voucherTemplateDto, String appCode);
+}

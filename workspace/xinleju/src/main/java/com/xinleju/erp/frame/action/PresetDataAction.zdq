@@ -1,0 +1,255 @@
+package com.xinleju.erp.frame.action;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.xinleju.erp.base.app.action.BaseAction;
+import com.xinleju.erp.frame.models.BaseEntity;
+import com.xinleju.erp.frame.models.Company;
+import com.xinleju.erp.frame.models.Dept;
+import com.xinleju.erp.frame.models.PartyEntity;
+import com.xinleju.erp.frame.models.PresetDataEntity;
+import com.xinleju.erp.frame.models.PresetDataRole;
+import com.xinleju.erp.frame.models.PresetDataRoleStation;
+import com.xinleju.erp.frame.models.PresetDataRoleStationUser;
+import com.xinleju.erp.frame.models.Role;
+import com.xinleju.erp.frame.models.User;
+import com.xinleju.erp.frame.service.PartyStructService;
+import com.xinleju.erp.frame.service.UserService;
+import com.xinleju.erp.frame.utils.Md5Utils;
+/**
+ * 数据预置用action
+ * 组维护
+ * @author   jdq
+ * @version  $Id$
+ * @since
+ * @see
+ */
+public class PresetDataAction  extends BaseAction {
+	@Autowired
+	private PartyStructService partyStructService;
+	
+	@Autowired
+	private UserService userService;
+	
+	public String insertEntity() {
+		this.insertPresetEntity();
+		
+		return "";
+	}
+	
+	public void insertPresetEntity() {
+		List<String[]> lst = new ArrayList<String[]>();
+		lst.add(new String[]{"组织机构根节点", "corp1", "公司1", "COMPANY"});
+		lst.add(new String[]{"组织机构根节点", "corp11", "公司11", "COMPANY"});
+		lst.add(new String[]{"组织机构根节点-公司1", "corp2", "公司2", "COMPANY"});
+		lst.add(new String[]{"组织机构根节点-公司1-公司2", "corp3", "公司3", "COMPANY"});
+		lst.add(new String[]{"组织机构根节点-公司1-公司2", "corp4", "公司4", "COMPANY"});
+		lst.add(new String[]{"组织机构根节点-公司1-公司2-公司3", "dept1", "部门1", "DEPTARTMENT"});
+		lst.add(new String[]{"组织机构根节点-公司1-公司2-公司3-部门1", "dept2", "部门2", "DEPTARTMENT"});
+		
+		Map<String, PresetDataEntity> entityMap = new HashMap<String, PresetDataEntity>();
+		PresetDataEntity tmpEntity = null;
+		for ( String[] str : lst ) {
+			tmpEntity = new PresetDataEntity();
+			tmpEntity.setCode(str[1]);
+			tmpEntity.setName(str[2]);
+			tmpEntity.setPrntFullPath(str[0]);
+			tmpEntity.setType(str[3]);
+			
+			tmpEntity.setFullPath( tmpEntity.getPrntFullPath() == null || tmpEntity.getPrntFullPath().length() == 0 ? tmpEntity.getName() + "-" : tmpEntity.getPrntFullPath() + "-" + tmpEntity.getName() + "-" );
+			entityMap.put(tmpEntity.getFullPath(), tmpEntity);
+		}
+		
+		PresetDataEntity root = new PresetDataEntity();
+		
+		for ( String fullPath : entityMap.keySet() ) {
+			tmpEntity = entityMap.get(fullPath);
+			if ( tmpEntity.getPrntFullPath() == null || tmpEntity.getPrntFullPath().length() == 0 ) {
+				root.getChldEntityLst().add(tmpEntity);
+			} else {
+				if (entityMap.containsKey( tmpEntity.getPrntFullPath() + "-" )) {
+					entityMap.get( tmpEntity.getPrntFullPath() + "-" ).getChldEntityLst().add(tmpEntity);
+				} else {
+					root.getChldEntityLst().add(tmpEntity);
+				}
+			}
+		}
+		
+		for ( PresetDataEntity chld : root.getChldEntityLst() ) {
+			createCorpAndDept(chld);
+		}
+	}
+	
+	private void createCorpAndDept(PresetDataEntity node) {
+		Long parentEntityId = null;
+		List<PartyEntity> peLst = getCommonService().findByHQL(PartyEntity.class, " from PartyEntity where namePrefix = ? ", node.getPrntFullPath()+"-");
+		if ( peLst != null && peLst.size() > 0 ) {
+			parentEntityId = peLst.get(0).getId();
+		}
+
+		// TODO: 缺少查重的过程，目前不支持重复导入更新功能
+		if ( PresetDataEntity.TYPE_COMPANY.equals( node.getType() ) ) {
+			Company company = new Company();
+			company.setCode(node.getCode());
+			company.setName(node.getName());
+			company.setStatus(BaseEntity.STATUS_ENABLE);
+			
+			partyStructService.processCompanyPartyStruct(company , parentEntityId, 1L);
+			
+		} else if ( PresetDataEntity.TYPE_DEPT.equals( node.getType() ) ) {
+			Dept dept = new Dept();
+			dept.setCode(node.getCode());
+			dept.setName(node.getName());
+			dept.setStatus(BaseEntity.STATUS_ENABLE);
+			
+			partyStructService.processDeptPartyStruct(dept, parentEntityId, 1L);
+			
+		}
+		
+		for ( PresetDataEntity chld : node.getChldEntityLst() ) {
+			createCorpAndDept(chld);
+		}
+	}
+	
+	public void insertPresetData() {
+		// 整理数据（标准角色-多岗位）
+		List<PresetDataRole> presetRoleLst = reversRoleData();
+		
+		// 整理数据（用户）
+		List<PresetDataRoleStationUser> presetUserLst = reversUserData();
+		
+		// 插入角色和岗位
+		for ( PresetDataRole presetRole : presetRoleLst ) {
+			insertRole( presetRole );
+		}
+		
+		// 插入用户
+		for ( PresetDataRoleStationUser user : presetUserLst ) {
+			insertUser(user);
+		}
+	}
+	
+
+	private void insertRole(PresetDataRole presetRole) {
+		List<Role> existRole = getCommonService().findByHQL(Role.class, " from Role where name = ? ", presetRole.getRoleName());
+		Role role = null;
+		if ( existRole != null && existRole.size() > 0 ) {
+			role = existRole.get(0);
+		} else {
+			role = new Role();
+			role.setName( presetRole.getRoleName() );
+			role.setType("standard");
+			role.setTypeCode("company");
+			role.setStatus(0);
+			
+			getCommonService().save(role);
+		}
+		
+		Long parentEntityId = null;
+		for ( PresetDataRoleStation station : presetRole.getStationLst() ) {
+			List<PartyEntity> peLst = getCommonService().findByHQL(PartyEntity.class, " from PartyEntity where namePrefix = ? ", station.getStationGroup() + "-");
+			if ( peLst != null && peLst.size() > 0 ) {
+				parentEntityId = peLst.get(0).getId();
+				partyStructService.processRolePartyStruct( role, parentEntityId, 1L);
+			}
+			
+		}
+	}
+
+	private void insertUser(PresetDataRoleStationUser pUser) {
+		List<PartyEntity> stationPeLst = getCommonService().findByHQL(PartyEntity.class, " from PartyEntity where namePrefix = ? ", pUser.getUserStation() + "-");
+		
+		
+		PartyEntity mainRolePe = new PartyEntity();
+		if ( stationPeLst != null && stationPeLst.size() > 0 ) {
+			mainRolePe = stationPeLst.get(0);
+		}
+		
+		Long parentEntityId = null;
+		List<PartyEntity> peLst = getCommonService().findByHQL(PartyEntity.class, " from PartyEntity where namePrefix = ? ", pUser.getUserGroup() + "-");
+		if ( peLst != null && peLst.size() > 0 ) {
+			parentEntityId = peLst.get(0).getId();
+		}
+
+		User user = null;
+		List<User> existUser = getCommonService().findByHQL(User.class, " from User where loginName = ? ", pUser.getUserCode());
+		if ( existUser != null && existUser.size() > 0 ) {
+			user = existUser.get(0);
+		} else {
+			user = new User();
+			user.setLoginname( pUser.getUserCode() );
+			user.setRealName( pUser.getUserName() );
+			user.setStatus(0);
+			user.setGwh("false");
+			user.setPassword(Md5Utils.makeMd5("123"));
+			user.setPosition( mainRolePe.getName() );
+			user.setRb("false");
+			user.setType("false");
+			user.setZjjh("false");
+		}
+		
+		user.setMainRoleId( mainRolePe.getRefId() );
+		userService.save(user, parentEntityId, 1L);
+	}
+
+	private List<PresetDataRoleStationUser> reversUserData() {
+		String[][] str = new String[][] {
+				{"组织机构根节点-公司1", "组织机构根节点-公司1-公司2-成本管理部副经理XX", "AAA", "aaa"},
+				{"组织机构根节点-公司1", "组织机构根节点-公司1-公司2-成本管理部副经理XX", "BBB", "bbb"},
+				{"组织机构根节点-公司1", "组织机构根节点-公司1-公司2-成本管理部副经理XX", "CCC", "ccc"},
+				{"组织机构根节点-公司1", "组织机构根节点-公司1-公司2-公司3-成本管理部副职员XX", "DDD", "ddd"},
+				{"组织机构根节点-公司1", "组织机构根节点-公司1-公司2-公司3-部门1-成本管理部副职员XX", "EEE", "eee"},
+		};
+		
+		List<PresetDataRoleStationUser> userLst = new ArrayList<PresetDataRoleStationUser>();
+		PresetDataRoleStationUser tmpUser = null;
+		for (String[] s : str) {
+			tmpUser = new PresetDataRoleStationUser();
+			tmpUser.setUserGroup( s[0] );
+			tmpUser.setUserStation(s[1]);
+			tmpUser.setUserName(s[2]);
+			tmpUser.setUserCode(s[3]);
+			
+			userLst.add(tmpUser);
+		}
+		
+		return userLst;
+	}
+
+	private List<PresetDataRole> reversRoleData() {
+		String[][] str = new String[][] {
+				{"成本管理部副经理XX", "组织机构根节点-公司1-公司2"},
+				{"成本管理部副职员XX", "组织机构根节点-公司1-公司2-公司3"},
+				{"成本管理部副职员XX", "组织机构根节点-公司1-公司2-公司3-部门1"},
+		};
+		
+		List<PresetDataRole> roleLst = new ArrayList<PresetDataRole>();
+		Map<String, PresetDataRole> roleMap = new HashMap<String, PresetDataRole>();
+		PresetDataRole tmpRole = null;
+		for ( String[] s : str ) {
+			if ( roleMap.containsKey( s[0] ) ) { // 相同角色
+				tmpRole = roleMap.get(s[0]);
+			} else {
+				tmpRole = new PresetDataRole();
+				tmpRole.setRoleName( s[0] );
+				
+				roleLst.add(tmpRole);
+			}
+			
+			PresetDataRoleStation station = new PresetDataRoleStation();
+			station.setStationName(s[0]);
+			station.setStationGroup(s[1]);
+			tmpRole.getStationLst().add(station);
+			
+			roleMap.put(tmpRole.getRoleName(), tmpRole);
+		}
+		
+		return roleLst;
+	}
+	
+}

@@ -1,0 +1,839 @@
+package com.jzy.hio.oa.content.util;
+
+import java.lang.reflect.Field;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import javax.persistence.Column;
+import javax.persistence.Id;
+import javax.persistence.Table;
+
+import org.apache.commons.lang.StringUtils;
+
+import com.jzy.tools.data.JacksonUtils;
+
+/**
+ * Created by admin on 2017/5/22.
+ */
+public class SqlStatementUtil {
+	/**
+	 * 生成分页查询sql语句
+	 * 
+	 * @param paramMap
+	 * @param clazz
+	 * @return
+	 */
+	public static String getPageSqlStatment(Map<String, Object> paramMap, Class clazz) {
+
+		String sortFieldStr = (String) paramMap.get("sortFields");
+		Map<String, String> sortFieldMap = JacksonUtils.fromJson(sortFieldStr, Map.class);
+
+		StringBuffer buffer = new StringBuffer();
+		buffer.append("select \n");
+		// Class clazz = ContentRowAttribute.class;
+
+		Map<String, String> fieldColumnMap = new HashMap<String, String>();
+
+		// 获取实体字段-列定义
+		Field[] fieldArr = clazz.getDeclaredFields();
+		for (Field field : fieldArr) {
+			String fieldName = field.getName();
+			Column column = field.getAnnotation(Column.class);
+			if (column != null) {
+				String columnName = column.name();
+				buffer.append(columnName + " as " + fieldName + ", \n");
+				fieldColumnMap.put(fieldName, columnName);
+			}
+
+		}
+
+		// 添加新闻已读/未读排序
+		if (paramMap.containsKey("readIdList")) {
+			List<String> readIds = (List<String>) paramMap.get("readIdList");
+			if (readIds != null && readIds.size() > 0) {
+				buffer.append(" customSortNum as customSortNum, ");
+			}
+		}
+
+		// 新闻or文档列表排序时按状态排序
+		if (sortFieldMap != null && sortFieldMap.containsKey("newsCustomStatus")) {
+			buffer.append(" newsCustomStatus as newsCustomStatus, ");
+		}
+
+		// 获取实体超类字段-列定义
+		Class superClazz = clazz.getSuperclass();
+		Field[] superFieldArr = superClazz.getDeclaredFields();
+		for (Field field : superFieldArr) {
+			String fieldName = field.getName();
+			Column column = field.getAnnotation(Column.class);
+			String columnName = null;
+			// 获取column
+			if (column != null) {
+				columnName = column.name();
+				columnName = getFieldColumn(fieldName);
+				fieldColumnMap.put(fieldName, columnName);
+			}
+
+			// 获取主键
+			Id key = field.getAnnotation(Id.class);
+			if (key != null) {
+				columnName = "id";
+				columnName = getFieldColumn(fieldName);
+				fieldColumnMap.put(fieldName, columnName);
+			}
+
+			// 获取版本列
+			// Version version = field.getAnnotation(Version.class);
+			// if (version != null) {
+			// columnName = version.value();
+			// columnName = getFieldColumn(fieldName);
+			// fieldColumnMap.put(fieldName,columnName);
+			// }
+			buffer.append(columnName + " as " + fieldName + ", \n");
+		}
+
+		buffer = buffer.replace(buffer.lastIndexOf(","), buffer.length() - 1, "");
+
+		Table table = (Table) clazz.getAnnotation(Table.class);
+
+		Map<String, Object> attributeMap = new HashMap<String, Object>();
+		if (table.name().equals("OA_CONTENT_ROW_TYPE")) {
+			// 遍历paramMap中的扩展字段
+			if (paramMap.get("extendAttarFields") != null) {
+				String extendAttribute = (String) paramMap.get("extendAttarFields");
+				Map<String, Object> extendAttributes = JacksonUtils.fromJson(extendAttribute, Map.class);
+				Iterator<Map.Entry<String, Object>> entries = extendAttributes.entrySet().iterator();
+				while (entries.hasNext()) {
+					Map.Entry<String, Object> entry = entries.next();
+					System.out.println("Key = " + entry.getKey() + ", Value = " + entry.getValue());
+					if (!fieldColumnMap.containsKey(entry.getKey())) {
+						attributeMap.put(entry.getKey(), entry.getValue());
+					}
+				}
+			}
+		}
+
+		// 分组字段
+		String groupByField = (String) paramMap.get("groupByFields");
+		List<String> groupByFields = JacksonUtils.fromJson(groupByField, List.class);
+		paramMap.remove("groupByFields");
+		if (groupByFields != null && groupByFields.size() > 0 && table.name().equals("OA_CONTENT_ROW_TYPE")) {
+			buffer.append(" from ( select * \n");
+			if (paramMap.containsKey("readIdList")) {
+				List<String> readIds = (List<String>) paramMap.get("readIdList");
+				if (readIds != null && readIds.size() > 0) {
+					buffer.append("  ,case when id in(");
+					String idSql = "";
+					for (String id : readIds) {
+						idSql += "'" + id + "',";
+					}
+					if (idSql.endsWith(",")) {
+						buffer.append(idSql.substring(0, idSql.lastIndexOf(",")));
+					}
+					buffer.append(") ");
+					buffer.append(" then 0 ");
+					buffer.append(" when (TO_DAYS(NOW())-TO_DAYS(publish_date)) > " + ((Integer) paramMap.get("newIconDays")) + " then 0 ");
+					buffer.append(" else 1 end as customSortNum ");
+				}
+			}
+
+			// 新闻or文档列表排序时按状态排序
+			if (sortFieldMap != null && sortFieldMap.containsKey("newsCustomStatus")) {
+				buffer.append(
+						" ,case when status='DRAFT' then 0 when status='APPROVALING' then 1 when status='APPROVED' then 2 when status='PUBLISHED' then 3 end as newsCustomStatus ");
+			}
+			buffer.append(" from OA_CONTENT_ROW_TYPE \n");
+		} else {
+			buffer.append("from " + table.name() + " \n");
+		}
+
+		buffer.append(" where 1=1 ");
+
+		// 模糊查询字段
+		String fuzzyQueryField = (String) paramMap.get("fuzzyQueryFields");
+		List<String> fuzzyQueryFields = JacksonUtils.fromJson(fuzzyQueryField, List.class);
+		paramMap.remove("fuzzyQueryFields");
+
+		// 时间区间查询字段
+		String dateField = (String) paramMap.get("dateFields");
+		List<String> dateFields = JacksonUtils.fromJson(dateField, List.class);
+		paramMap.remove("dateFields");
+
+		// 排序字段
+		String sortField = (String) paramMap.get("sortFields");
+		Map<String, String> sortFields = JacksonUtils.fromJson(sortField, Map.class);
+		paramMap.remove("sortFields");
+
+		// 分组过滤字段
+		String havingField = (String) paramMap.get("havingFields");
+		List<String> havingFields = JacksonUtils.fromJson(havingField, List.class);
+		paramMap.remove("havingFields");
+
+		// 数据授权部门字段
+		String deptFields = (String) paramMap.get("deptFields");
+		paramMap.remove("deptFields");
+
+		Integer start = (Integer) paramMap.get("start");
+		paramMap.remove("start");
+
+		Integer limit = (Integer) paramMap.get("limit");
+		paramMap.remove("limit");
+
+		// 添加where条件
+		Set<Map.Entry<String, Object>> entrySet = paramMap.entrySet();
+		Map<String, String> fuzzyMap = new HashMap<String, String>();
+		Map<String, String> dateMap = new HashMap<String, String>();
+		Map<String, String> havingMap = new HashMap<String, String>();
+		for (Map.Entry<String, Object> entry : entrySet) {
+			String key = entry.getKey();
+			Object value = entry.getValue();
+
+			// 临时补充 新闻目录的判断，此处有待优化
+			if (key != null && key.equals("contentChildId") && value != null) {
+				if (fieldColumnMap.containsKey(key)) {
+					StringBuffer contentChildIdBF = new StringBuffer();
+					String[] contentChildIds = value.toString().split(",");
+					for (String childId : contentChildIds) {
+						contentChildIdBF.append("\"").append(childId).append("\",");
+					}
+					buffer.append(" and content_child_id in (" + contentChildIdBF.substring(0, contentChildIdBF.lastIndexOf(",")) + ")");
+				}
+				continue;
+			}
+
+			if (fuzzyQueryFields != null && fuzzyQueryFields.contains(key)) {
+				// buffer.append(" and " + fieldColumnMap.get(key) + " like '%" + value + "%' \n");
+				fuzzyMap.put(key, String.valueOf(value));
+				continue;
+			}
+
+			if (dateFields != null && dateFields.contains(key)) {
+				// buffer.append(" and " + fieldColumnMap.get(key) + " like '%" + value + "%' \n");
+				dateMap.put(key, String.valueOf(value));
+				continue;
+			}
+			if (havingFields != null && havingFields.contains(key)) {
+				// buffer.append(" and " + fieldColumnMap.get(key) + " like '%" + value + "%' \n");
+				havingMap.put(key, String.valueOf(value));
+				continue;
+			}
+
+			if (value instanceof String) {
+				if (fieldColumnMap.containsKey(key)) {
+					buffer.append("and " + fieldColumnMap.get(key) + " = '" + value + "' \n");
+				} else if ((fuzzyQueryFields == null || (fuzzyQueryFields != null && !fuzzyQueryFields.contains(key))) && "extendAttarFields".equalsIgnoreCase(key)) {
+					if (attributeMap.size() > 0) {
+						if (!attributeMap.containsKey("FuzzyQuery")) {
+							Iterator<Map.Entry<String, Object>> entriesEX = attributeMap.entrySet().iterator();
+							StringBuffer extendBF = new StringBuffer();
+							// buffer.append("and attribute_value like '%"+key+":"+attributeMap.get(key)+"%' \n");
+							buffer.append("and (");
+							while (entriesEX.hasNext()) {
+								Map.Entry<String, Object> entryEX = entriesEX.next();
+								System.out.println("Key = " + entryEX.getKey() + ", Value = " + entryEX.getValue());
+								extendBF.append("attribute_value like '%\"" + entryEX.getKey() + "\":\"" + entryEX.getValue() + "%\"%' \n or ");
+							}
+							buffer.append(extendBF.substring(0, extendBF.lastIndexOf("or")) + ")");
+						}
+					}
+				}
+			}
+
+			if (value instanceof Integer || value instanceof Double || value instanceof Float || value instanceof Short || value instanceof Long) {
+				if (fieldColumnMap.containsKey(key)) {
+					buffer.append("and " + fieldColumnMap.get(key) + " = " + value + " \n");
+				}
+			}
+
+			if (value instanceof Boolean) {
+				if (fieldColumnMap.containsKey(key)) {
+					buffer.append("and " + fieldColumnMap.get(key) + " = " + (Boolean.FALSE.equals(value) ? 0 : 1) + " \n");
+				}
+			}
+		}
+
+		// 添加模糊查询
+		if ((fuzzyQueryFields != null && fuzzyQueryFields.size() > 0) || (attributeMap.containsKey("FuzzyQuery"))) {
+			StringBuffer fuzzyQueryStatment = new StringBuffer();
+			for (String fuzzyField : fuzzyQueryFields) {
+				if (fieldColumnMap.containsKey(fuzzyField) && fuzzyMap.containsKey(fuzzyField)) {
+					fuzzyQueryStatment.append(" or " + fieldColumnMap.get(fuzzyField) + " like '%" + fuzzyMap.get(fuzzyField) + "%' \n");
+				} else if (attributeMap.containsKey(fuzzyField)) {
+					fuzzyQueryStatment.append(" or " + attributeMap.get(fuzzyField) + " like '%" + attributeMap.get(fuzzyField) + "%' \n");
+					/*
+					 * Iterator<Map.Entry<String, Object>> entriesFuzz = attributeMap.entrySet().iterator(); StringBuffer extendBFFuzz = new StringBuffer();
+					 * //buffer.append("and attribute_value like '%"+key+":"+attributeMap.get(key)+"%' \n"); buffer.append("and ("); while (entriesFuzz.hasNext()) {
+					 * Map.Entry<String, Object> entryFuzz = entriesFuzz.next(); System.out.println("Key = " + entryFuzz.getKey() + ", Value = " + entryFuzz.getValue());
+					 * extendBFFuzz.append("attribute_value like '%\""+entryFuzz.getKey()+"\":\"%"+entryFuzz.getValue()+"\"%' \n or "); } buffer.append(extendBFFuzz.substring
+					 * (0,extendBFFuzz.lastIndexOf ("or")) +")");
+					 */
+				}
+
+			}
+			if (attributeMap.containsKey("FuzzyQuery")) {
+				Iterator<Map.Entry<String, Object>> entriesFuzz = attributeMap.entrySet().iterator();
+
+				StringBuffer extendFuzzyBF = new StringBuffer();
+				fuzzyQueryStatment.append("or (");
+				while (entriesFuzz.hasNext()) {
+					Map.Entry<String, Object> entryFuzzTEM = entriesFuzz.next();
+					System.out.println("Key = " + entryFuzzTEM.getKey() + ", Value = " + entryFuzzTEM.getValue());
+					extendFuzzyBF.append("attribute_value like '%\"" + entryFuzzTEM.getKey() + "\":\"" + entryFuzzTEM.getValue() + "%\"%' \n or ");
+				}
+				fuzzyQueryStatment.append(extendFuzzyBF.substring(0, extendFuzzyBF.lastIndexOf("or")) + ")");
+
+			}
+			String fuzzyQueryStatmentStr = fuzzyQueryStatment.toString();
+			if (StringUtils.isNotBlank(fuzzyQueryStatmentStr)) {
+				fuzzyQueryStatmentStr = fuzzyQueryStatmentStr.substring(fuzzyQueryStatmentStr.indexOf("or") + 2);
+				buffer.append("and (" + fuzzyQueryStatmentStr + ")");
+			}
+
+		}
+
+		// 添加时间区间查询
+		if (dateFields != null && dateFields.size() > 0) {
+			StringBuffer dateFieldsStatment = new StringBuffer();
+			for (String dateFieldCode : dateFields) {
+				String dateFieldColumn = dateFieldCode.split("_")[0];
+				if (fieldColumnMap.containsKey(dateFieldColumn) && dateMap.containsKey(dateFieldCode)) {
+					if (dateFieldCode.indexOf("starttime") > -1) {
+						dateFieldsStatment.append(" and DATE_FORMAT(" + fieldColumnMap.get(dateFieldColumn) + ",'%Y-%m-%d') = '" + dateMap.get(dateFieldCode) + "' \n");
+					}
+					if (dateFieldCode.indexOf("endtime") > -1) {
+						dateFieldsStatment.append(" and DATE_FORMAT(" + fieldColumnMap.get(dateFieldColumn) + ",'%Y-%m-%d') = '" + dateMap.get(dateFieldCode) + "' \n");
+					}
+				}
+
+			}
+			String dateFieldsStatmentStr = dateFieldsStatment.toString();
+			if (StringUtils.isNotBlank(dateFieldsStatmentStr)) {
+				dateFieldsStatmentStr = dateFieldsStatmentStr.substring(dateFieldsStatmentStr.indexOf("and") + 3);
+				buffer.append("and (" + dateFieldsStatmentStr + ")");
+			}
+
+		}
+
+		// 添加数据权限部门字段
+		if (StringUtils.isNotBlank(deptFields)) {
+			buffer.append(" and belong_dept_id in (" + deptFields + ")");
+		}
+
+		if (table.name().equals("OA_BBS_FORUM_USER")) { // 过滤禁言用户
+			String filterStr = " and ( now() between ban_start_date and ban_end_date) \n";
+			buffer.append(filterStr);
+		}
+
+		Boolean isAdminUser = (Boolean) paramMap.get("isAdminUser");
+		if (groupByFields != null && groupByFields.size() > 0 && table.name().equals("OA_CONTENT_ROW_TYPE")) {
+			if (sortFieldMap != null && sortFieldMap.containsKey("newsCustomStatus") && !isAdminUser) {
+				buffer.append(" or (create_person_id = '" + paramMap.get("currentUserId") + "' and delflag=0  ");
+				if (paramMap.containsKey("contentTypeId")) {
+					buffer.append(" and content_type_id = '" + paramMap.get("contentTypeId").toString() + "'  ");
+				}
+				if (paramMap.containsKey("contentChildId")) {
+					String contentChildIds = paramMap.get("contentChildId").toString();
+					String[] contentChildIdArr = contentChildIds.split(",");
+					String contentChildIdResult = "";
+					for (String childId : contentChildIdArr) {
+						contentChildIdResult += "'" + childId + "',";
+					}
+					if (contentChildIdResult.endsWith(",")) {
+						contentChildIdResult = contentChildIdResult.substring(0, contentChildIdResult.lastIndexOf(","));
+					}
+					buffer.append(" and content_child_id in(" + contentChildIdResult + ") ");
+				}
+				buffer.append(") ");
+			}
+			buffer.append(" order by big_version desc,minor_version desc ) t \n ");
+		}
+		// 添加分组
+		if (groupByFields != null && groupByFields.size() > 0) {
+			StringBuffer groupByStatment = new StringBuffer();
+			for (String groupBy : groupByFields) {
+				if (fieldColumnMap.containsKey(groupBy)) {
+					groupByStatment.append(" , " + fieldColumnMap.get(groupBy) + " \n");
+				}
+
+			}
+			String groupByStatmentStr = groupByStatment.toString();
+			if (StringUtils.isNotBlank(groupByStatmentStr)) {
+				groupByStatmentStr = groupByStatmentStr.substring(groupByStatmentStr.indexOf(",") + 1);
+				buffer.append("group by " + groupByStatmentStr);
+			}
+
+		}
+		// 添加分组过滤
+		if (havingFields != null && havingFields.size() > 0) {
+			StringBuffer havingStatment = new StringBuffer();
+			for (String having : havingFields) {
+				if (fieldColumnMap.containsKey(having) && havingMap.containsKey(having)) {
+					havingStatment.append(" and " + fieldColumnMap.get(having) + " = '" + havingMap.get(having) + "' \n");
+				}
+
+			}
+			String havingStatmentStr = havingStatment.toString();
+			if (StringUtils.isNotBlank(havingStatmentStr)) {
+				havingStatmentStr = havingStatmentStr.substring(havingStatmentStr.indexOf("and") + 3);
+				buffer.append("having " + havingStatmentStr);
+			}
+
+		}
+
+		// 添加排序
+		if (sortFields != null && sortFields.size() > 0) {
+			Set<Map.Entry<String, String>> sortEntrySet = sortFields.entrySet();
+			// buffer.append("order by ");
+			String sortSql = "order by ";
+			for (Map.Entry<String, String> sortEntry : sortEntrySet) {
+				String key = sortEntry.getKey();
+				String value = sortEntry.getValue();
+				if ("customSortNum".equals(key)) {
+					sortSql += key + " " + value + ", \n";
+				}
+				if ("newsCustomStatus".equals(key)) {
+					sortSql += key + " " + value + ", \n";
+				}
+				if (fieldColumnMap.containsKey(key)) {
+					// buffer.append(fieldColumnMap.get(key) + " " + value +", \n");
+					sortSql += fieldColumnMap.get(key) + " " + value + ", \n";
+				}
+			}
+
+			if (sortSql.lastIndexOf(",") >= 0) {
+				sortSql = sortSql.substring(0, sortSql.lastIndexOf(",")) + " \n";
+			}
+
+			buffer.append(sortSql);
+		}
+
+		// 添加分页
+		if (start != null && limit != null && limit != -1) {
+			buffer.append("limit " + start + "," + limit + " \n");
+		}
+
+		return buffer.toString();
+	}
+
+	public static String getPageCountSqlStatment(Map<String, Object> paramMap, Class clazz) {
+		String sortFieldStr = (String) paramMap.get("sortFields");
+		Map<String, String> sortFieldMap = JacksonUtils.fromJson(sortFieldStr, Map.class);
+
+		StringBuffer buffer = new StringBuffer();
+		buffer.append("select \n");
+		// Class clazz = ContentRowAttribute.class;
+
+		Map<String, String> fieldColumnMap = new HashMap<String, String>();
+
+		// 获取实体字段-列定义
+		Field[] fieldArr = clazz.getDeclaredFields();
+		for (Field field : fieldArr) {
+			String fieldName = field.getName();
+			Column column = field.getAnnotation(Column.class);
+			if (column != null) {
+				String columnName = column.name();
+				// buffer.append(columnName + " as " + fieldName + ", \n");
+				fieldColumnMap.put(fieldName, columnName);
+			}
+
+		}
+
+		// 添加新闻已读/未读排序
+		if (paramMap.containsKey("readIdList")) {
+			List<String> readIds = (List<String>) paramMap.get("readIdList");
+			if (readIds != null && readIds.size() > 0) {
+				buffer.append(" customSortNum as customSortNum, ");
+			}
+		}
+
+		// 获取实体超类字段-列定义
+		Class superClazz = clazz.getSuperclass();
+		Field[] superFieldArr = superClazz.getDeclaredFields();
+		for (Field field : superFieldArr) {
+			String fieldName = field.getName();
+			Column column = field.getAnnotation(Column.class);
+			String columnName = null;
+			// 获取column
+			if (column != null) {
+				columnName = column.name();
+				columnName = getFieldColumn(fieldName);
+				fieldColumnMap.put(fieldName, columnName);
+			}
+
+			// 获取主键
+			// Key key = field.getAnnotation(Key.class);
+			// if (key != null) {
+			// columnName = key.value();
+			// columnName = getFieldColumn(fieldName);
+			// fieldColumnMap.put(fieldName,columnName);
+			// }
+
+			// 获取版本列
+			// Version version = field.getAnnotation(Version.class);
+			// if (version != null) {
+			// columnName = version.value();
+			// columnName = getFieldColumn(fieldName);
+			// fieldColumnMap.put(fieldName,columnName);
+			// }
+			// buffer.append(columnName + " as " + fieldName + ", \n");
+		}
+
+		buffer.append(" count(id) \n");
+		// buffer = buffer.replace(buffer.lastIndexOf(","),buffer.length()-1,"");
+		// 分组字段
+		String groupByField = (String) paramMap.get("groupByFields");
+		List<String> groupByFields = JacksonUtils.fromJson(groupByField, List.class);
+		paramMap.remove("groupByFields");
+		Table table = (Table) clazz.getAnnotation(Table.class);
+
+		Map<String, Object> attributeMap = new HashMap<String, Object>();
+		if (table.name().equals("OA_CONTENT_ROW_TYPE")) {
+			// 遍历paramMap中的扩展字段
+			if (paramMap.get("extendAttarFields") != null) {
+				String extendAttribute = (String) paramMap.get("extendAttarFields");
+				Map<String, Object> extendAttributes = JacksonUtils.fromJson(extendAttribute, Map.class);
+				Iterator<Map.Entry<String, Object>> entries = extendAttributes.entrySet().iterator();
+				while (entries.hasNext()) {
+					Map.Entry<String, Object> entry = entries.next();
+					System.out.println("Key = " + entry.getKey() + ", Value = " + entry.getValue());
+					if (!fieldColumnMap.containsKey(entry.getKey())) {
+						attributeMap.put(entry.getKey(), entry.getValue());
+					}
+				}
+			}
+		}
+
+		if (groupByFields != null && groupByFields.size() > 0 && table.name().equals("OA_CONTENT_ROW_TYPE")) {
+			buffer.append(" from ( select * \n");
+			if (paramMap.containsKey("readIdList")) {
+				List<String> readIds = (List<String>) paramMap.get("readIdList");
+				if (readIds != null && readIds.size() > 0) {
+					buffer.append("  ,case when id in(");
+					String idSql = "";
+					for (String id : readIds) {
+						idSql += "'" + id + "',";
+					}
+					if (idSql.endsWith(",")) {
+						buffer.append(idSql.substring(0, idSql.lastIndexOf(",")));
+					}
+					buffer.append(") ");
+					buffer.append(" then 0 ");
+					buffer.append(" when (TO_DAYS(NOW())-TO_DAYS(publish_date)) > " + ((Integer) paramMap.get("newIconDays")) + " then 0 ");
+					buffer.append(" else 1 end as customSortNum ");
+				}
+			}
+			buffer.append(" from OA_CONTENT_ROW_TYPE \n");
+		} else {
+			buffer.append("from " + table.name() + " \n");
+		}
+		buffer.append(" where 1=1 ");
+
+		// 模糊查询字段
+		String fuzzyQueryField = (String) paramMap.get("fuzzyQueryFields");
+		List<String> fuzzyQueryFields = JacksonUtils.fromJson(fuzzyQueryField, List.class);
+		paramMap.remove("fuzzyQueryFields");
+
+		// 时间区间查询字段
+		String dateField = (String) paramMap.get("dateFields");
+		List<String> dateFields = JacksonUtils.fromJson(dateField, List.class);
+		paramMap.remove("dateFields");
+
+		// 排序字段
+		String sortField = (String) paramMap.get("sortFields");
+		Map<String, String> sortFields = JacksonUtils.fromJson(sortField, Map.class);
+		paramMap.remove("sortFields");
+
+		// 分组过滤字段
+		String havingField = (String) paramMap.get("havingFields");
+		List<String> havingFields = JacksonUtils.fromJson(havingField, List.class);
+		paramMap.remove("havingFields");
+		// 数据授权部门字段
+		String deptFields = (String) paramMap.get("deptFields");
+		paramMap.remove("deptFields");
+
+		Integer start = (Integer) paramMap.get("start");
+		paramMap.remove("start");
+
+		Integer limit = (Integer) paramMap.get("limit");
+		paramMap.remove("limit");
+
+		// 添加where条件
+		Set<Map.Entry<String, Object>> entrySet = paramMap.entrySet();
+		Map<String, String> fuzzyMap = new HashMap<String, String>();
+		Map<String, String> dateMap = new HashMap<String, String>();
+		Map<String, String> havingMap = new HashMap<String, String>();
+		for (Map.Entry<String, Object> entry : entrySet) {
+			String key = entry.getKey();
+			Object value = entry.getValue();
+
+			// 临时补充 新闻目录的判断，此处有待优化
+			if (key != null && key.equals("contentChildId") && value != null) {
+				if (fieldColumnMap.containsKey(key)) {
+					StringBuffer contentChildIdBF = new StringBuffer();
+					String[] contentChildIds = value.toString().split(",");
+					for (String childId : contentChildIds) {
+						contentChildIdBF.append("\"").append(childId).append("\",");
+					}
+					buffer.append(" and content_child_id in (" + contentChildIdBF.substring(0, contentChildIdBF.lastIndexOf(",")) + ")");
+				}
+				continue;
+			}
+
+			// 新闻/知识置顶条件，为portal列表查询使用
+			if (key.equals("isStick")) {
+				Boolean isStick = (Boolean) value;
+				if (isStick) {
+					buffer.append(" and stick>0 ");
+				} else {
+					buffer.append(" and (stick=0 or stick is null) ");
+				}
+			}
+
+			// 新闻未读id列表
+			if (key.equals("outReadIdList")) {
+				List<String> readIds = (List<String>) value;
+				if (readIds != null && readIds.size() > 0) {
+					buffer.append(" and id not in(");
+					String idSql = "";
+					for (String id : readIds) {
+						idSql += "'" + id + "',";
+					}
+					if (idSql.endsWith(",")) {
+						buffer.append(idSql.substring(0, idSql.lastIndexOf(",")));
+					}
+					buffer.append(") ");
+				}
+			}
+
+			// 新闻已读id列表
+			if (key.equals("readIdList")) {
+				List<String> readIds = (List<String>) value;
+				if (readIds != null && readIds.size() > 0) {
+					buffer.append(" and id in(");
+					String idSql = "";
+					for (String id : readIds) {
+						idSql += "'" + id + "',";
+					}
+					if (idSql.endsWith(",")) {
+						buffer.append(idSql.substring(0, idSql.lastIndexOf(",")));
+					}
+					buffer.append(") ");
+				}
+			}
+
+			if (fuzzyQueryFields != null && fuzzyQueryFields.contains(key)) {
+				// buffer.append(" and " + fieldColumnMap.get(key) + " like '%" + value + "%' \n");
+				fuzzyMap.put(key, String.valueOf(value));
+				continue;
+			}
+
+			if (dateFields != null && dateFields.contains(key)) {
+				// buffer.append(" and " + fieldColumnMap.get(key) + " like '%" + value + "%' \n");
+				dateMap.put(key, String.valueOf(value));
+				continue;
+			}
+
+			if (havingFields != null && havingFields.contains(key)) {
+				// buffer.append(" and " + fieldColumnMap.get(key) + " like '%" + value + "%' \n");
+				havingMap.put(key, String.valueOf(value));
+				continue;
+			}
+
+			if (value instanceof String) {
+				if (fieldColumnMap.containsKey(key)) {
+					buffer.append("and " + fieldColumnMap.get(key) + " = '" + value + "' \n");
+				} else if ((fuzzyQueryFields == null || (fuzzyQueryFields != null && !fuzzyQueryFields.contains(key))) && "extendAttarFields".equalsIgnoreCase(key)) {
+					if (attributeMap.size() > 0) {
+						if (!attributeMap.containsKey("FuzzyQuery")) {
+							Iterator<Map.Entry<String, Object>> entriesEX = attributeMap.entrySet().iterator();
+							StringBuffer extendBF = new StringBuffer();
+							// buffer.append("and attribute_value like '%"+key+":"+attributeMap.get(key)+"%' \n");
+							buffer.append("and (");
+							while (entriesEX.hasNext()) {
+								Map.Entry<String, Object> entryEX = entriesEX.next();
+								System.out.println("Key = " + entryEX.getKey() + ", Value = " + entryEX.getValue());
+								// extendBF.append("attribute_value like '%\""+entryEX.getKey()+"\":\""+entryEX.getValue()+"\"%' \n or ");
+								extendBF.append("attribute_value like '%\"" + entryEX.getKey() + "\":\"" + entryEX.getValue() + "%\"%' \n or ");
+							}
+							buffer.append(extendBF.substring(0, extendBF.lastIndexOf("or")) + ")");
+						}
+					}
+				}
+			}
+
+			if (value instanceof Integer || value instanceof Double || value instanceof Float || value instanceof Short || value instanceof Long) {
+				if (fieldColumnMap.containsKey(key)) {
+					buffer.append("and " + fieldColumnMap.get(key) + " = " + value + " \n");
+				}
+			}
+
+			if (value instanceof Boolean) {
+				if (fieldColumnMap.containsKey(key)) {
+					buffer.append("and " + fieldColumnMap.get(key) + " = " + (Boolean.FALSE.equals(value) ? 0 : 1) + " \n");
+				}
+			}
+		}
+
+		// 添加模糊查询
+		if ((fuzzyQueryFields != null && fuzzyQueryFields.size() > 0) || (attributeMap.containsKey("FuzzyQuery"))) {
+			String fuzzyQueryStatment = "";
+			for (String fuzzyField : fuzzyQueryFields) {
+				if (fieldColumnMap.containsKey(fuzzyField) && fuzzyMap.containsKey(fuzzyField)) {
+					fuzzyQueryStatment += " or " + fieldColumnMap.get(fuzzyField) + " like '%" + fuzzyMap.get(fuzzyField) + "%' \n";
+				} else if (attributeMap.containsKey(fuzzyField)) {
+					fuzzyQueryStatment += (" or " + attributeMap.get(fuzzyField) + " like '%" + attributeMap.get(fuzzyField) + "%' \n");
+				}
+			}
+			if (attributeMap.containsKey("FuzzyQuery")) {
+				Iterator<Map.Entry<String, Object>> entriesFuzz = attributeMap.entrySet().iterator();
+
+				StringBuffer extendFuzzyBF = new StringBuffer();
+				fuzzyQueryStatment += ("or (");
+				while (entriesFuzz.hasNext()) {
+					Map.Entry<String, Object> entryFuzzTEM = entriesFuzz.next();
+					System.out.println("Key = " + entryFuzzTEM.getKey() + ", Value = " + entryFuzzTEM.getValue());
+					extendFuzzyBF.append("attribute_value like '%\"" + entryFuzzTEM.getKey() + "\":\"" + entryFuzzTEM.getValue() + "%\"%' \n or ");
+				}
+				fuzzyQueryStatment += (extendFuzzyBF.substring(0, extendFuzzyBF.lastIndexOf("or")) + ")");
+
+			}
+			if (StringUtils.isNotBlank(fuzzyQueryStatment)) {
+				fuzzyQueryStatment = fuzzyQueryStatment.substring(fuzzyQueryStatment.indexOf("or") + 2);
+				buffer.append("and (" + fuzzyQueryStatment + ")");
+			}
+
+		}
+		// 添加时间区间查询
+		if (dateFields != null && dateFields.size() > 0) {
+			StringBuffer dateFieldsStatment = new StringBuffer();
+			for (String dateFieldCode : dateFields) {
+				String dateFieldColumn = dateFieldCode.split("_")[0];
+				if (fieldColumnMap.containsKey(dateFieldColumn) && dateMap.containsKey(dateFieldCode)) {
+					if (dateFieldCode.indexOf("starttime") > -1) {
+						dateFieldsStatment.append(" and DATE_FORMAT(" + fieldColumnMap.get(dateFieldColumn) + ",'%Y-%m-%d') = '" + dateMap.get(dateFieldCode) + "' \n");
+					}
+					if (dateFieldCode.indexOf("endtime") > -1) {
+						dateFieldsStatment.append(" and DATE_FORMAT(" + fieldColumnMap.get(dateFieldColumn) + ",'%Y-%m-%d') = '" + dateMap.get(dateFieldCode) + "' \n");
+					}
+				}
+
+			}
+			String dateFieldsStatmentStr = dateFieldsStatment.toString();
+			if (StringUtils.isNotBlank(dateFieldsStatmentStr)) {
+				dateFieldsStatmentStr = dateFieldsStatmentStr.substring(dateFieldsStatmentStr.indexOf("and") + 3);
+				buffer.append("and (" + dateFieldsStatmentStr + ")");
+			}
+
+		}
+		// 添加数据权限部门字段
+		if (StringUtils.isNotBlank(deptFields)) {
+			buffer.append(" and belong_dept_id in (" + deptFields + ")");
+		}
+		if (table.name().equals("OA_BBS_FORUM_USER")) { // 过滤禁言用户
+			String filterStr = " and ( now() between ban_start_date and ban_end_date) \n";
+			buffer.append(filterStr);
+		}
+
+		Boolean isAdminUser = (Boolean) paramMap.get("isAdminUser");
+		if (groupByFields != null && groupByFields.size() > 0 && table.name().equals("OA_CONTENT_ROW_TYPE")) {
+			if (sortFieldMap != null && sortFieldMap.containsKey("newsCustomStatus") && !isAdminUser) {
+				buffer.append(" or (create_person_id = '" + paramMap.get("currentUserId") + "'  and delflag=0  ");
+				if (paramMap.containsKey("contentTypeId")) {
+					buffer.append(" and content_type_id  = '" + paramMap.get("contentTypeId").toString() + "' ");
+				}
+				if (paramMap.containsKey("contentChildId")) {
+					String contentChildIds = paramMap.get("contentChildId").toString();
+					String[] contentChildIdArr = contentChildIds.split(",");
+					String contentChildIdResult = "";
+					for (String childId : contentChildIdArr) {
+						contentChildIdResult += "'" + childId + "',";
+					}
+					if (contentChildIdResult.endsWith(",")) {
+						contentChildIdResult = contentChildIdResult.substring(0, contentChildIdResult.lastIndexOf(","));
+					}
+					buffer.append(" and content_child_id in (" + contentChildIdResult + ") ");
+				}
+				buffer.append(") ");
+			}
+			buffer.append(" order by big_version desc,minor_version desc )t \n ");
+		}
+		// 添加分组
+		if (groupByFields != null && groupByFields.size() > 0) {
+			StringBuffer groupByStatment = new StringBuffer();
+			for (String groupBy : groupByFields) {
+				if (fieldColumnMap.containsKey(groupBy)) {
+					groupByStatment.append(" , " + fieldColumnMap.get(groupBy) + " \n");
+				}
+
+			}
+			String groupByStatmentStr = groupByStatment.toString();
+			if (StringUtils.isNotBlank(groupByStatmentStr)) {
+				groupByStatmentStr = groupByStatmentStr.substring(groupByStatmentStr.indexOf(",") + 1);
+				buffer.append("group by " + groupByStatmentStr);
+			}
+
+		}
+		// 添加分组过滤
+		if (havingFields != null && havingFields.size() > 0) {
+			StringBuffer havingStatment = new StringBuffer();
+			for (String having : havingFields) {
+				if (fieldColumnMap.containsKey(having) && havingMap.containsKey(having)) {
+					havingStatment.append(" and " + fieldColumnMap.get(having) + " = '" + havingMap.get(having) + "' \n");
+				}
+
+			}
+			String havingStatmentStr = havingStatment.toString();
+			if (StringUtils.isNotBlank(havingStatmentStr)) {
+				havingStatmentStr = havingStatmentStr.substring(havingStatmentStr.indexOf("and") + 3);
+				buffer.append("having " + havingStatmentStr);
+			}
+
+		}
+		if (groupByFields != null && groupByFields.size() > 0) {
+			buffer.insert(0, "select count(*) from ( \n");
+			buffer.append(") t");
+		}
+		/*
+		 * //添加排序 if (sortFields != null) { Set<Map.Entry<String,String>> sortEntrySet = sortFields.entrySet(); for (Map.Entry<String,String> sortEntry:sortEntrySet) { String key =
+		 * sortEntry.getKey(); String value = sortEntry.getValue(); if(fieldColumnMap.containsKey(key)){ buffer.append("order by " + fieldColumnMap.get(key) + " " + value +" \n");
+		 * } } }
+		 */
+
+		// 添加分页
+		/*
+		 * if (start != null && limit != null) { buffer.append("limit "+start + "," + limit); }
+		 */
+
+		return buffer.toString();
+	}
+
+	/**
+	 * 获取实体数据库字段
+	 * 
+	 * @param fieldName
+	 * @return
+	 */
+	private static String getFieldColumn(String fieldName) {
+		String columnName = null;
+		if (StringUtils.isBlank(columnName)) {
+			String regEx = "[A-Z]";
+			Pattern pattern = Pattern.compile(regEx);
+			Matcher matcher = pattern.matcher(fieldName);
+			StringBuffer buf = new StringBuffer();
+			int startPoint = 0;
+			while (matcher.find()) {
+				buf.append(fieldName.substring(startPoint, matcher.start()).toLowerCase());
+				buf.append("_");
+				startPoint = matcher.start();
+			}
+			buf.append(fieldName.substring(startPoint).toLowerCase());
+			columnName = buf.toString();
+		}
+		return columnName;
+	}
+}

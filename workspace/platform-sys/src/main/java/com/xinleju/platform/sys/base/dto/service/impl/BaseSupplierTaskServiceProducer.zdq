@@ -1,0 +1,111 @@
+package com.xinleju.platform.sys.base.dto.service.impl;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.base.utils.MessageInfo;
+import com.xinleju.platform.finance.dto.SysRegisterDto;
+import com.xinleju.platform.finance.entity.SysRegister;
+import com.xinleju.platform.finance.service.SysRegisterService;
+import com.xinleju.platform.sys.base.dto.BaseSupplierDto;
+import com.xinleju.platform.sys.base.dto.service.BaseSupplierTaskServiceCustomer;
+import com.xinleju.platform.sys.base.entity.BaseSupplier;
+import com.xinleju.platform.sys.base.service.BaseSupplierService;
+import com.xinleju.platform.sys.base.utils.NCSendData;
+import com.xinleju.platform.sys.base.utils.NCXMlParse;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+public class BaseSupplierTaskServiceProducer implements BaseSupplierTaskServiceCustomer{
+	private static Logger log = Logger.getLogger(BaseSupplierTaskServiceProducer.class);
+	public static final String SUPPLIERTONC="SUPPLIERTONC";
+	
+	@Autowired
+	private BaseSupplierService baseSupplierService;
+	@Autowired
+	private SysRegisterService sysRegisterService;
+	
+	@Override
+	public String executeTask(String userJson, String jsontaskCode) {
+		System.out.println("------MD----taskCode-----"+jsontaskCode);
+		log.error("*****************************主数据供方同步NC定时任务--"+jsontaskCode+"--");
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		String msg = "异常结束！";
+		if (StringUtils.isNotBlank(jsontaskCode)) {
+			Map<String, String> code = JacksonUtils.fromJson(jsontaskCode, HashMap.class);
+			String taskCode = code.get("taskCode").trim();
+			if(SUPPLIERTONC.equals(taskCode.trim())){
+				try{
+					sendSupplierToNC();
+					msg = "任务正常结束！";
+				}catch (Exception e) {
+					e.printStackTrace();
+					msg = "业务系统执行  供方档案推送到辅助核算 任务失败，异常结束!";
+				}
+			}
+		} 
+		
+		info.setSucess(true);
+		info.setMsg(msg);
+		log.error("*****************************执行完成"+JacksonUtils.toJson(info));
+		return JacksonUtils.toJson(info);
+	}
+
+	private void sendSupplierToNC(){
+		try{
+			String xmlFile = "";
+			// NC系统返回的xml字符串
+			String res = null;
+			Map<String,Object> supplierMap = new HashMap<String,Object>();
+			supplierMap.put("delflag", 0);
+			supplierMap.put("messageType", 0);
+			List<BaseSupplier> supplierList = baseSupplierService.queryList(supplierMap);
+			Map<String,Object> map = new HashMap<String,Object>();
+			map.put("status", 1);
+			map.put("delflag", 0);
+			List<SysRegister> list=sysRegisterService.queryList(map);
+			if(list != null && list.size() > 0){
+				SysRegister sysDto = list.get(0);
+				// NC接口相关
+				String webUrl = sysDto.getWebUrl();
+				String companyCode = "0001"; // 集团账套？
+				// 获得财务系统url
+				String url = webUrl + "?account=02&receiver=" + companyCode;
+				for(BaseSupplier baseSupplierDto : supplierList){
+					String createJson = JacksonUtils.toJson(baseSupplierDto);
+					xmlFile = baseSupplierService.createSyncXml2NC(createJson, sysDto.getSender());
+					if (xmlFile != null && !xmlFile.trim().equals("") && !url.trim().equals("") && url != null) {
+						res = NCSendData.getPostResponse(url, xmlFile);
+					}
+					System.out.println("NC返回的信息===="+res);
+					if (null != res) {
+						if (NCXMlParse.XmlErrorCode(res) >= 0) {
+							baseSupplierDto.setFinanceCode(baseSupplierDto.getCode());
+							baseSupplierDto.setMessageType("1");// 输出成功
+							baseSupplierDto.setMessageInfo("");
+						} else {
+							String errorinfo = NCXMlParse.XmlErrorInfo(res);
+							Integer errCode = NCXMlParse.XmlErrorCode(res);
+							baseSupplierDto.setMessageType("2");//  输出失败
+							if(StringUtils.isBlank(baseSupplierDto.getFinanceCode()))
+								baseSupplierDto.setFinanceCode(baseSupplierDto.getCode());
+							String error = "错误代码：" + errCode.toString() + " 错误内容："+ errorinfo;
+							baseSupplierDto.setMessageInfo(error);
+						}
+					} else {
+						baseSupplierDto.setMessageType("0");// 未输出
+						baseSupplierDto.setMessageInfo("生成xml文件失败，未输出！");
+					}
+					baseSupplierService.update(baseSupplierDto);
+				}
+			}
+		}catch(Exception e){
+			throw new RuntimeException(e);
+		}
+	}
+}

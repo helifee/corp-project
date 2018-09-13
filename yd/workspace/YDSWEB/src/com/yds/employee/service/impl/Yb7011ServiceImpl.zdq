@@ -1,0 +1,672 @@
+/*
+ * @(#)Yb7011ServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东计算机社内网
+ *    SubSystem: 人员管理
+ */
+package com.yds.employee.service.impl;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.sql.Date;
+import java.util.Calendar;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.ListIterator;
+import java.util.Map;
+
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.yds.base.service.AbstractBaseService;
+import com.yds.common.bean.EmpInfo;
+import com.yds.common.bean.EmpOrgInfo;
+import com.yds.employee.bean.EmpGrpHis;
+import com.yds.employee.bean.EmpStaffOrgRelation;
+import com.yds.employee.bean.Yb7010CondA;
+import com.yds.employee.bean.Yb7011CondA;
+import com.yds.employee.bean.Yb7011CondB;
+import com.yds.employee.dao.Yb7010Dao;
+import com.yds.employee.dao.Yb7011Dao;
+import com.yds.employee.service.Yb7011Service;
+import com.yds.util.service.DateUtil;
+import com.yds.util.service.SendMessage;
+
+
+/**
+ * @see com.yds.employee.service.Yb7011Service
+ */
+@Service("yb7011Service")
+public class Yb7011ServiceImpl extends AbstractBaseService implements Yb7011Service {
+	
+	private Yb7010Dao yb7010Dao;
+	private Yb7011Dao yb7011Dao;
+	
+	private Map<String,List<Yb7011CondB>> empInfoMap;
+	private Map<String,Integer> empOrgLevMap1;	
+	private Map<String,Integer> empOrgLevMap2;	
+	private List<Yb7011CondA> yb7011CondAList;
+	private Date currentTime;
+	private static final java.util.Date MAX_DATE = DateUtil.parse("9999-12-31");
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	@Transactional(propagation = Propagation.REQUIRES_NEW, timeout = 60)	
+	public void getOldData() {
+		
+		List<Yb7011CondB> yb7011CondBList;
+		this.empInfoMap = new HashMap<String,List<Yb7011CondB>>();
+		
+		// 获取项目表信息
+		yb7011CondAList = yb7011Dao.getOldProgramInfoList();
+		
+		// 获取人员表信息
+		for (Yb7011CondA yb7011CondA : yb7011CondAList) {
+			
+			//取得项目对应的人员
+			yb7011CondBList = yb7011Dao.getOldStaffInfoList(yb7011CondA);
+			this.empInfoMap.put(yb7011CondA.getPrjId(), yb7011CondBList);
+		}		
+
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Transactional(propagation = Propagation.REQUIRES_NEW, timeout = 60)
+	@Override
+	public void newDBOperation()throws Exception  {
+		
+		// 删除新表对象数据
+		this.deleteNewData();	
+		
+		// 更新新数据库
+		this.empOrgInfoMove();
+		
+		// 整合新数据库
+		this.empOrgInfoIntegrate();			
+
+	}
+	
+	/**
+	 * 将新数据库中组织表、员工组织历史表、员工组织表中对象数据删除
+	 * 只删除动态组织，即ORG_STATE_FLG = 1
+	 */		
+	private void deleteNewData() {
+		
+		//删除员工组织关系表
+		this.yb7010Dao.deleteStaffOrgRelation();
+		
+		//zhangdaoqiang add 2010/12/23)
+		//删除员工历史组织表
+		this.yb7010Dao.deleteEmpGrpHis();
+		//zhangdaoqiang add 2010/12/23)
+		
+		//删除组织关系表		
+		this.yb7010Dao.deleteEmpOrgInfo();
+		
+		
+	}
+	
+	/**
+	 * 将旧数据库中的数据编辑后插入新数据库
+	 * 
+	 * @throws Exception 
+	 */
+	private void empOrgInfoMove() throws Exception {
+		
+		currentTime = new Date(System.currentTimeMillis());
+		empOrgLevMap1 = new HashMap<String,Integer>();
+		empOrgLevMap2 = new HashMap<String,Integer>();		
+		Map<String, Integer> empOrgIDMap = new HashMap<String,Integer>();		
+		Yb7011CondB yb7011CondB;
+	
+		for (Yb7011CondA yb7011CondA : yb7011CondAList) {
+			String tempManager = "";			
+			String temOrgId = this.generateOrgId(yb7011CondA.getPrjId(), empOrgIDMap);
+			
+			// 为组织表设定主管ID			
+			ListIterator<Yb7011CondB> empIter1 = empInfoMap.get(yb7011CondA.getPrjId()).listIterator(); 
+			while (empIter1.hasNext()) {	
+				yb7011CondB = empIter1.next();				
+				if ("0".equals(yb7011CondB.getPrjFlag())){
+					tempManager = yb7011CondB.getPrjEmpId();
+				}
+			}
+			// 插入组织表信息
+			yb7010Dao.insertEmpOrgInfo(editEmpOrgInfo(tempManager,temOrgId,yb7011CondA));
+			
+			// ①项目的实际结束日期为【0000-00-00】或者比当前日期大的项目中的成员 （并且项目开始时间小于当前时间 add by zhangdaoqiang 2011/01/04）
+			if (((null == yb7011CondA.getPrjTeDate()) ||
+					currentTime.compareTo(yb7011CondA.getPrjTeDate()) < 0 ) && (currentTime.compareTo(yb7011CondA.getPrjTbDate()) >= 0)){
+				ListIterator<Yb7011CondB> empIter = empInfoMap.get(yb7011CondA.getPrjId()).listIterator(); 
+				while (empIter.hasNext()) {	
+					yb7011CondB = empIter.next();
+					// ②项目成员的中途调出时间（PRJ_ENDDATE）不为【0000-00-00】 或 中途调出时间比当前日期大的成员
+					if 	((null == yb7011CondB.getPrjEndDate()) || 
+							((currentTime.compareTo(yb7011CondB.getPrjEndDate()) < 0 ) && 
+							(!(null ==yb7011CondB.getPrjBegDate())&& currentTime.compareTo(yb7011CondB.getPrjBegDate()) > 0))){	
+							// 插入员工组织关系表信息
+							yb7010Dao.insertEmpStaffOrgRelationInfo(editEmpStaffOrgInfo(yb7011CondB.getPrjEmpId(),temOrgId));
+					}
+				}				
+			}
+			
+			//插入员工组织历史表start(zhangdaoqiang add 2010/12/23)
+			insertEmpGrpHis(yb7011CondA, temOrgId, empInfoMap);
+			//插入员工组织历史表end(zhangdaoqiang add 2010/12/23)
+		}
+	}
+	
+	/**
+	 * 根据项目ID生成组织ID
+	 * 
+	 * @param prjId ： 项目ID
+	 * @param empOrgIDMap : 存入所有组织ID
+	 * @return 组织ID
+	 */
+	private String generateOrgId(String prjId, Map<String, Integer> empOrgIDMap) {
+		
+		String orgId = "";
+		
+		String temPrjId = prjId.trim().substring(4,6);
+		if (temPrjId.compareTo("50") < 0) {
+			orgId = "20" + temPrjId;
+		}else{
+			orgId = "19" + temPrjId;
+		}
+
+		if (empOrgIDMap.containsKey(orgId)){
+			empOrgIDMap.put(orgId, empOrgIDMap.get(orgId) + 1);
+			orgId = orgId + String.format("%06d", empOrgIDMap.get(orgId));	
+			
+		} else {
+			empOrgIDMap.put(orgId,0);
+			orgId = orgId + String.format("%06d", empOrgIDMap.get(orgId));
+		}
+		
+		return orgId;
+	}
+	
+	/**
+	 * 指定项目员工历史组织数据作成
+	 * 
+	 * @param yb7011CondA ： 某个项目信息 
+	 * @param orgId ： 待作成历史组织ID
+	 * @param empInfoMap ： 所有项目对应的人员
+	 */
+	private void insertEmpGrpHis(Yb7011CondA yb7011CondA, String orgId, Map<String, List<Yb7011CondB>> empInfoMap) {
+		
+		//取得项目ID
+		String prjId = yb7011CondA.getPrjId();
+		
+		//取得项目对应的人员
+		List<Yb7011CondB> empList = empInfoMap.get(prjId);
+		
+		Iterator<Yb7011CondB> iter = empList.iterator();
+		while(iter.hasNext()) {
+			Yb7011CondB yb7011CondB = iter.next();
+			EmpGrpHis empGrpHis = new EmpGrpHis();
+			
+			empGrpHis.setOrgId(orgId);
+			empGrpHis.setEmpId(yb7011CondB.getPrjEmpId());
+			
+			//设置开始时间
+			java.util.Date sDate = yb7011CondB.getPrjBegDate();	//员工开始参加项目时间
+			java.util.Date prjTbDate = yb7011CondA.getPrjTbDate();	//项目实现开始时间
+			
+			//员工开始时间为空或小于项目开始时间
+			if(null == sDate || sDate.before(prjTbDate)) {
+				empGrpHis.setStartTime(prjTbDate);
+			} else {
+				empGrpHis.setStartTime(sDate);
+			}
+			
+			//设置结束时间
+			java.util.Date eDate = yb7011CondB.getPrjEndDate();	//员工退出项目时间
+			java.util.Date prjEdate = yb7011CondA.getPrjTeDate();	//项目实现结束时间
+			
+			//修正项目结束时间
+			if(null == prjEdate) {
+				prjEdate = MAX_DATE;
+			}
+			//员工退出时间为空或大于项目结束时间
+			if(null == eDate || eDate.after(prjEdate)) {
+				empGrpHis.setEndTime(prjEdate);
+			} else {
+				empGrpHis.setEndTime(eDate);
+			}
+			
+			//设置更新时间
+			empGrpHis.setUpdateTime(new java.util.Date());
+			
+			//插入表
+			this.yb7010Dao.insertEmpGrpHis(empGrpHis);
+			
+		}
+	}
+	
+	/**
+	 * 编辑旧的项目表和项目人员表生成新的组织表
+	 * 
+	 * @param tempManager  主管ID
+	 *        temOrgId     组织ID
+	 *        yb7011CondA  旧项目表
+	 * @return EmpOrgInfo 新组织表
+	 */
+	private EmpOrgInfo editEmpOrgInfo(String tempManager,String temOrgId,Yb7011CondA yb7011CondA) throws Exception {
+		EmpOrgInfo empOrgInfo = new EmpOrgInfo();
+		String temString = "";
+		//组织ID	
+		empOrgInfo.setOrgId(temOrgId);
+		//组织名称	
+		empOrgInfo.setOrgNm(yb7011CondA.getPrjNm().trim());
+		//组织略称
+		empOrgInfo.setOrgSnm(yb7011CondA.getPrjId().trim());
+		//有效开始时间
+		empOrgInfo.setOrgStDate(yb7011CondA.getPrjTbDate());
+		//有效结束时间
+		SimpleDateFormat sdf =   new SimpleDateFormat( "yyyy-MM-dd" );
+		if ((null == yb7011CondA.getPrjTeDate())){
+			empOrgInfo.setOrgEndDate( sdf.parse("9999-12-31"));
+		}else {
+			empOrgInfo.setOrgEndDate( sdf.parse(sdf.format(yb7011CondA.getPrjTeDate())));		
+		}
+		//态别FLG
+		empOrgInfo.setOrgStateFlg("1");
+		//特性ID
+		empOrgInfo.setOrgProId("0005");
+		//阶层
+		if ("2".equals(yb7011CondA.getPrjDepId().trim().substring(0,1))){
+			// 20
+			if("0".equals(yb7011CondA.getPrjDepId().trim().substring(1,2))){
+				if(empOrgLevMap1.containsKey("0000100002")){
+					empOrgLevMap1.put("0000100002", empOrgLevMap1.get("0000100002")+ 1);				
+				}else{
+					empOrgLevMap1.put("0000100002",yb7010Dao.getEmpOrgSameDepMax1("0000100002"));
+				}
+				temString = "0000100002" + String.format("%05d", empOrgLevMap1.get("0000100002"));
+				temString = temString + String.format("%085d",0);
+				empOrgInfo.setOrgLev(temString);				
+			}else{
+				if(empOrgLevMap2.containsKey("00001000020000"+ yb7011CondA.getPrjDepId().trim().substring(1,2))){
+					empOrgLevMap2.put("00001000020000"+ yb7011CondA.getPrjDepId().trim().substring(1,2), 
+							empOrgLevMap2.get("00001000020000"+ yb7011CondA.getPrjDepId().trim().substring(1,2))+ 1);				
+				}else{
+					empOrgLevMap2.put("00001000020000"+ yb7011CondA.getPrjDepId().trim().substring(1,2)
+							,yb7010Dao.getEmpOrgSameDepMax2("00001000020000"+ yb7011CondA.getPrjDepId().trim().substring(1,2)));
+				}
+				temString = "00001000020000" + yb7011CondA.getPrjDepId().trim().substring(1,2);
+				temString = temString + String.format("%05d", 
+						empOrgLevMap2.get("00001000020000"+ yb7011CondA.getPrjDepId().trim().substring(1,2)));
+				temString = temString + String.format("%080d",0);
+				empOrgInfo.setOrgLev(temString);
+			}
+		}else{
+			if("1".equals(yb7011CondA.getPrjDepId().trim().substring(0,1))){
+				// 20
+				if("0".equals(yb7011CondA.getPrjDepId().trim().substring(1,2))){
+					if(empOrgLevMap1.containsKey("0000100001")){
+						empOrgLevMap1.put("0000100001", empOrgLevMap1.get("0000100001")+ 1);				
+					}else{
+						empOrgLevMap1.put("0000100001",yb7010Dao.getEmpOrgSameDepMax1("0000100001"));
+					}
+					temString = "0000100001" + String.format("%05d", empOrgLevMap1.get("0000100001"));
+					temString = temString + String.format("%085d",0);
+					empOrgInfo.setOrgLev(temString);				
+				}else{				
+					if(empOrgLevMap2.containsKey("00001000010000")){
+						empOrgLevMap2.put("00001000010000"+ yb7011CondA.getPrjDepId().trim().substring(1,2)
+								, empOrgLevMap2.get("00001000010000"+ yb7011CondA.getPrjDepId().trim().substring(1,2))+ 1);				
+					}else{
+						empOrgLevMap2.put("00001000010000"+ yb7011CondA.getPrjDepId().trim().substring(1,2)
+								,yb7010Dao.getEmpOrgSameDepMax2("00001000010000"+ yb7011CondA.getPrjDepId().trim().substring(1,2)));
+					}
+					temString = "00001000010000" + yb7011CondA.getPrjDepId().trim().substring(1,2);
+					temString = temString + String.format("%05d",
+							empOrgLevMap2.get("00001000010000"+ yb7011CondA.getPrjDepId().trim().substring(1,2)));
+					temString = temString + String.format("%080d",0);	
+					empOrgInfo.setOrgLev(temString);	
+				}
+			}else{
+				empOrgInfo.setOrgLev("");
+			}
+			
+		}
+		//可见FLG	
+		if (!(null == yb7011CondA.getPrjTeDate()) && (yb7011CondA.getPrjTeDate().compareTo(currentTime) < 0 )){
+			empOrgInfo.setOrgViewFlg("0");	
+		}else{
+			empOrgInfo.setOrgViewFlg("1");	
+		}
+		//主管ID
+		if (!"".equals(tempManager)){
+			empOrgInfo.setOrgMnger(tempManager);	
+		}
+		//组织节点描述
+		empOrgInfo.setOrgDesc("");
+		//更新者
+		empOrgInfo.setUpdateUser("");
+		//更新时间
+
+		empOrgInfo.setUpdateTime(currentTime);
+		
+		return empOrgInfo;
+	}
+	
+	/**
+	 * 编辑旧项目人员表生成新的员工组织关系表
+	 * 
+	 * @param empId 人员ID
+	 *        orgId 项目ID
+	 * 
+	 * @return EmpOrgInfo 新员工组织关系表
+	 */	
+	private EmpStaffOrgRelation editEmpStaffOrgInfo(String empId,String orgId) {
+		EmpStaffOrgRelation empStaffOrgRelation = new EmpStaffOrgRelation();
+		//员工ID
+		empStaffOrgRelation.setEmpId(empId);
+		//组织ID
+		empStaffOrgRelation.setOrgId(orgId);
+		//主关系标志
+		empStaffOrgRelation.setMainFlg("0");
+		return empStaffOrgRelation;
+	}
+	
+	/**
+	 * 将生成的新数据库员工组织数据整合
+	 * @throws ParseException 
+	 */	
+	private void empOrgInfoIntegrate() throws ParseException {
+		Yb7010CondA yb7010CondA;
+		ListIterator<Yb7010CondA> empOrgIter = yb7010Dao.getEmpOrgInfoList().listIterator();
+		String oldEmpId = "";
+		Integer conflictFlg = 0;
+		while(empOrgIter.hasNext()){
+		
+			yb7010CondA = empOrgIter.next(); 			
+
+			// 当一个员工的数据中，不存在【ORG_ID】且【QUIT_DATE】为空的时候，说明此员工无项目
+			// 则为其增加一条EMP_ID,ORG_ID为EMP_ID,CHARGE_ORG_ID的数据到员工组织关系表中
+	
+			if ((null == yb7010CondA.getOrgId() || "".equals(yb7010CondA.getOrgId())) && 
+					null == yb7010CondA.getQuitDate()){
+					EmpStaffOrgRelation empStaffOrgRelation= new EmpStaffOrgRelation();
+					empStaffOrgRelation.setEmpId(yb7010CondA.getEmpId());
+					empStaffOrgRelation.setOrgId(yb7010CondA.getChargeOrgId());
+					empStaffOrgRelation.setMainFlg("0");
+					yb7010Dao.insertEmpStaffOrgRelationInfo(empStaffOrgRelation);
+			}
+			if(null == yb7010CondA.getOrgStateFlg()){
+				// 当一个员工的数据中【ORG_STATE_FLG】为【null】时，从员工组织关系表中删除此数据
+				yb7010Dao.deleteStaffOrgByKey(yb7010CondA);
+			}
+			if  (!(oldEmpId.equals(yb7010CondA.getEmpId()))){
+				if (conflictFlg == 3){
+					// 当一个员工的数据中同时存在【ORG_STATE_FLG】为【0】和【1】的数据时，删除【0】的数据
+					yb7010Dao.deleteQuitStaffOrgRelation(oldEmpId);	
+				}
+				if (!(null ==yb7010CondA.getOrgStateFlg()) && "0".equals(yb7010CondA.getOrgStateFlg())){
+					conflictFlg = 1;
+				}else if (!(null ==yb7010CondA.getOrgStateFlg()) && "1".equals(yb7010CondA.getOrgStateFlg())){
+					conflictFlg = 2;
+				}else{
+					conflictFlg = 0;
+				}
+				oldEmpId = yb7010CondA.getEmpId();
+			}else if(!(null ==yb7010CondA.getOrgStateFlg()) && "0".equals(yb7010CondA.getOrgStateFlg()) && conflictFlg == 2){
+				conflictFlg = 3;
+			}else if(!(null ==yb7010CondA.getOrgStateFlg()) && "1".equals(yb7010CondA.getOrgStateFlg()) && conflictFlg == 1){
+				conflictFlg = 3;
+			}else if (!(null ==yb7010CondA.getOrgStateFlg()) && "0".equals(yb7010CondA.getOrgStateFlg()) && conflictFlg == 0){
+				conflictFlg = 1;
+			}else if (!(null ==yb7010CondA.getOrgStateFlg()) && "1".equals(yb7010CondA.getOrgStateFlg()) && conflictFlg == 0){
+				conflictFlg = 2;
+			}			
+			// 当一个员工的【QUIT_DATE】不为空时，则此人已经离职，从员工组织关系表中删除全部相关数据
+			if (!(null == yb7010CondA.getQuitDate())) {
+				yb7010Dao.deleteStaffOrgByID(yb7010CondA.getEmpId());
+			}
+		}
+		// 处理最后一条数据
+		if (conflictFlg == 3){
+			// 当一个员工的数据中同时存在【ORG_STATE_FLG】为【0】和【1】的数据时，删除【0】的数据
+			yb7010Dao.deleteQuitStaffOrgRelation(oldEmpId);	
+		}
+		
+//整合员工历史组织表start(zhangdaoqiang add 2010/12/23)
+		
+		//取得所有员工
+		List<EmpInfo> empList = this.yb7010Dao.getAllEmpInfoList();
+		Iterator<EmpInfo> iter = empList.iterator();
+		while(iter.hasNext()) {
+			
+			//取得员工信息
+			EmpInfo empInfo = iter.next();
+			String chargeOrgId = empInfo.getChargeOrgId();		//主管组织ID
+			java.util.Date joinDate = empInfo.getStartDate();	//入职时间
+			java.util.Date quitDate = empInfo.getEndDate();		//离职时间
+			//修正离职日期
+			if(null == quitDate) {
+				quitDate = MAX_DATE;
+			}
+			
+			
+			//取得指定员工对应的历史组织信息（ORDER BY START_TIME, END_TIME）
+			List<EmpGrpHis> empHisList = this.yb7010Dao.getEmpGrpHisBy(empInfo.getEmpId());
+			
+			//如果某个员工没有历史组织
+			if(null == empHisList || empHisList.size() == 0) {
+				EmpGrpHis newEmpGrpHis = new EmpGrpHis();
+				newEmpGrpHis.setEmpId(empInfo.getEmpId());
+				newEmpGrpHis.setOrgId(empInfo.getChargeOrgId());
+				newEmpGrpHis.setStartTime(joinDate);
+				newEmpGrpHis.setUpdateTime(new java.util.Date());
+				
+				if(null == quitDate) {
+					newEmpGrpHis.setEndTime(MAX_DATE);
+				} else {
+					newEmpGrpHis.setEndTime(quitDate);
+				}
+				
+				//插入历史组织数据
+				this.yb7010Dao.insertEmpGrpHis(newEmpGrpHis);
+				
+			} else {
+				
+				//临时比较变量
+				java.util.Date tmpDate;
+				
+				//处理第一条历史组织信息
+				EmpGrpHis firstEmpGrpHis = empHisList.get(0);
+				java.util.Date sDate = firstEmpGrpHis.getStartTime();	//项目开始时间
+				java.util.Date eDate = firstEmpGrpHis.getEndTime();		//项目结束时间
+				
+				if(sDate.before(joinDate)) {
+					
+					//更新开始时间为入职时间
+					this.yb7010Dao.deleteEmpGrpHisByKey(firstEmpGrpHis);
+					firstEmpGrpHis.setStartTime(joinDate);
+					this.yb7010Dao.insertEmpGrpHis(firstEmpGrpHis);
+					
+				} else {
+					
+					//补全入职到开始项目前一天之间的数据
+					EmpGrpHis newEmpGrpHis = new EmpGrpHis();
+					newEmpGrpHis.setEmpId(empInfo.getEmpId());
+					newEmpGrpHis.setStartTime(joinDate);
+					newEmpGrpHis.setEndTime(DateUtil.dateAdd(sDate, Calendar.DAY_OF_MONTH, -1));
+					newEmpGrpHis.setOrgId(chargeOrgId);
+					newEmpGrpHis.setUpdateTime(new java.util.Date());
+					this.yb7010Dao.insertEmpGrpHis(newEmpGrpHis);
+				}
+				tmpDate = sDate;
+				
+				//循环全部历史数据
+				for(int i=0; i<empHisList.size(); i++) {
+					EmpGrpHis empGrpHis = empHisList.get(i);
+					sDate = empGrpHis.getStartTime();	//项目开始时间
+					eDate = empGrpHis.getEndTime();		//项目结束时间
+					
+					//判断数据是否整合
+					if(eDate.before(sDate)) {
+						String msg = "组织移行数据不整合（项目ID： " + empGrpHis.getOrgId() + ")";
+						SendMessage.sendToAdmin(msg, empGrpHis.getOrgId());
+						continue;
+					}
+		
+					//开始日期与临时变量比较
+					if(sDate.after(tmpDate)) {
+						if(quitDate.compareTo(tmpDate) == 0) {
+							//删除此条数据
+							this.yb7010Dao.deleteEmpGrpHisByKey(empGrpHis);
+							
+						} else {
+							
+							//插入临时变量-开始日期前一天隶属于主管组织的数据
+							empGrpHis.setStartTime(tmpDate);
+							empGrpHis.setEndTime(DateUtil.dateAdd(sDate, Calendar.DAY_OF_MONTH, -1));
+							empGrpHis.setOrgId(chargeOrgId);
+							this.yb7010Dao.insertEmpGrpHis(empGrpHis);
+							
+						}
+					}
+					
+					//结束日期与临时变量比较
+					if(eDate.after(tmpDate)) {
+						java.util.Date eDatePlusOne = DateUtil.dateAdd(eDate, Calendar.DAY_OF_MONTH, 1);
+						if(null == quitDate) {
+							tmpDate = eDatePlusOne;
+						} else {
+							tmpDate = quitDate.before(eDatePlusOne) ? quitDate : eDatePlusOne;
+						}
+					}
+					
+					//比较离职日期与结束日期
+					if(null != quitDate && quitDate.before(eDate)) {
+						//更新结束日期为离职日期
+						this.yb7010Dao.deleteEmpGrpHisByKey(empGrpHis);
+						empGrpHis.setEndTime(quitDate);
+						this.yb7010Dao.insertEmpGrpHis(empGrpHis);
+					}
+					
+					//处理到最后一条历史数据
+					if(i == empHisList.size() - 1) {
+						if(null == quitDate) {
+							if(MAX_DATE.compareTo(tmpDate) != 0) {
+								//插入一条从临时变量到最大值隶属于主管组织的数据
+								empGrpHis.setStartTime(tmpDate);
+								empGrpHis.setEndTime(MAX_DATE);
+								empGrpHis.setOrgId(chargeOrgId);
+								this.yb7010Dao.insertEmpGrpHis(empGrpHis);
+							}
+						} else {
+							if(tmpDate.before(quitDate)) {
+								//插入一条从临时变量到离职日期隶属于主管组织的数据
+								empGrpHis.setStartTime(tmpDate);
+								empGrpHis.setEndTime(quitDate);
+								empGrpHis.setOrgId(chargeOrgId);
+								this.yb7010Dao.insertEmpGrpHis(empGrpHis);
+							}
+						}
+					}
+					
+					//性能优化
+					if(MAX_DATE.compareTo(eDate) == 0) {
+						break;
+					}
+				}
+			}
+		}
+		
+//整合员工历史组织表end(zhangdaoqiang add 2010/12/23)
+	}
+
+	/**
+	 * @return the yb7010Dao
+	 */
+	public Yb7010Dao getYb7010Dao() {
+		return yb7010Dao;
+	}
+
+	/**
+	 * @param yb7010Dao the yb7010Dao to set
+	 */
+	public void setYb7010Dao(Yb7010Dao yb7010Dao) {
+		this.yb7010Dao = yb7010Dao;
+	}
+
+	/**
+	 * @return the yb7011Dao
+	 */
+	public Yb7011Dao getYb7011Dao() {
+		return yb7011Dao;
+	}
+
+	/**
+	 * @param yb7011Dao the yb7011Dao to set
+	 */
+	public void setYb7011Dao(Yb7011Dao yb7011Dao) {
+		this.yb7011Dao = yb7011Dao;
+	}
+
+	/**
+	 * @return the yb7011CondAList
+	 */
+	public List<Yb7011CondA> getYb7011CondAList() {
+		return yb7011CondAList;
+	}
+
+	/**
+	 * @param yb7011CondAList the yb7011CondAList to set
+	 */
+	public void setYb7011CondAList(List<Yb7011CondA> yb7011CondAList) {
+		this.yb7011CondAList = yb7011CondAList;
+	}
+
+	/**
+	 * @return the empOrgLevMap1
+	 */
+	public Map<String,Integer> getEmpOrgLevMap1() {
+		return empOrgLevMap1;
+	}
+
+	/**
+	 * @param empOrgLevMap1 the empOrgLevMap1 to set
+	 */
+	public void setEmpOrgLevMap1(Map<String,Integer> empOrgLevMap1) {
+		this.empOrgLevMap1 = empOrgLevMap1;
+	}
+
+	/**
+	 * @return the empOrgLevMap1
+	 */
+	public Map<String,Integer> getEmpOrgLevMap2() {
+		return empOrgLevMap2;
+	}
+
+	/**
+	 * @param empOrgLevMap1 the empOrgLevMap1 to set
+	 */
+	public void setEmpOrgLevMap2(Map<String,Integer> empOrgLevMap2) {
+		this.empOrgLevMap2 = empOrgLevMap2;
+	}
+	/**
+	 * @return the currentTime
+	 */
+	public Date getCurrentTime() {
+		return currentTime;
+	}
+
+	/**
+	 * @param currentTime the currentTime to set
+	 */
+	public void setCurrentTime(Date currentTime) {
+		this.currentTime = currentTime;
+	}
+
+}

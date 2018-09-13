@@ -1,0 +1,68 @@
+package com.xinleju.platform.flow.utils;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.log4j.Logger;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.platform.base.utils.LoginUtils;
+import com.xinleju.platform.base.utils.SecurityUserBeanInfo;
+import com.xinleju.platform.flow.dto.AcDto;
+import com.xinleju.platform.flow.service.impl.FlServiceImpl;
+import com.xinleju.platform.sys.org.dto.FlowAcPostDto;
+import com.xinleju.platform.sys.org.dto.service.PostDtoServiceCustomer;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+/**
+ * 流程审批人工具类
+ */
+@Service
+public class FlowApproverUtils {
+	
+	private static Logger log = Logger.getLogger(FlowApproverUtils.class);
+
+	private static PostDtoServiceCustomer postDtoServiceCustomer;
+
+	public static List<FlowAcPostDto> parsePost(Map<String, Object> businessVariable, AcDto acDto) {
+
+		List<AcDto> acDtos = new ArrayList<AcDto>();
+		acDtos.add(acDto);
+
+		return parsePost(businessVariable, acDtos);
+	}
+
+	@SuppressWarnings("unchecked")
+	public static List<FlowAcPostDto> parsePost(Map<String, Object> businessVariable, List<AcDto> acDtos) {
+		
+		log.info("流程发起时查询岗位信息：");
+		log.info("请求报文：businessVariable=" + businessVariable);
+		log.info("请求报文：acDtos=" + acDtos);
+
+		SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+		String userInfo = JacksonUtils.toJson(securityUserBeanInfo);
+
+		Map<String, Object> postBodyMap = new HashMap<String, Object>();
+		postBodyMap.put("flow_business_variable_data", JacksonUtils.toJson(businessVariable));
+		postBodyMap.put("flow_ac_data", JacksonUtils.toJson(acDtos));
+
+		String flowPostDataStr = postDtoServiceCustomer.getFlowPostData(userInfo, JacksonUtils.toJson(postBodyMap));
+		Map<String, Object> flowPostDataMap = JacksonUtils.fromJson(flowPostDataStr, Map.class);
+		List<FlowAcPostDto> flowAcPostDtoList = JacksonUtils.fromJson((String) flowPostDataMap.get("result"),
+				ArrayList.class, FlowAcPostDto.class);
+
+		log.info("响应报文：flowAcPostDtoList=" + flowAcPostDtoList);
+		return flowAcPostDtoList;
+	}
+
+	public static PostDtoServiceCustomer getPostDtoServiceCustomer() {
+		return postDtoServiceCustomer;
+	}
+
+	public static void setPostDtoServiceCustomer(PostDtoServiceCustomer postDtoServiceCustomer) {
+		FlowApproverUtils.postDtoServiceCustomer = postDtoServiceCustomer;
+	}
+
+}

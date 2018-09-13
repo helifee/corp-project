@@ -1,0 +1,238 @@
+/*
+ * @(#)ExcelSheetToTable.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 共通测试系统
+ */
+package com.yds.base.test;
+
+import java.io.FileInputStream;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.poi.hssf.usermodel.HSSFRow;
+import org.apache.poi.hssf.usermodel.HSSFSheet;
+import org.apache.poi.hssf.usermodel.HSSFWorkbook;
+import org.apache.poi.poifs.filesystem.POIFSFileSystem;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.Row;
+
+/**
+ * 测试方法调用前利用excel文件初始化数据库. 每个Sheet对应一个表，每个表对应一个XleTable对象 主要为插入数据库做准备.
+ * 
+ * @author tianjian
+ */
+public class ExcelSheetToTable {
+	/** 插入Sql语句List. */
+	private List<String> _insertSqlList;
+	/** 插入Sql语句参数MapList. */
+	private List<Map<String, Object>> _paramsMapList;
+	/** 能偶直接运行的插入Sql的语句List. */
+	private List<String> _insertSqlWithValueList;
+	/** 当前表所对应的Sheet. */
+	private HSSFSheet _sheet;
+	/** 表名. */
+	private String _tableName;
+
+	/**
+	 * table对象初始化.
+	 * 
+	 * @param sheetName
+	 *            sheet名
+	 * @param sheet
+	 *            sheet对象
+	 */
+	public ExcelSheetToTable(HSSFSheet sheet)
+			throws Exception {
+		_sheet = sheet;
+		_tableName = sheet.getSheetName();
+		_insertSqlList = new ArrayList<String>();
+		_paramsMapList = new ArrayList<Map<String, Object>>();
+		_insertSqlWithValueList = new ArrayList<String>();
+		setSheetTableInfo(_insertSqlList, _paramsMapList,
+				_insertSqlWithValueList, sheet);
+	}
+
+	/**
+	 * 设定_insertSqlList，_paramsMapList属性.
+	 * 
+	 * @param insertSqlList
+	 *            插入数据insert语句list
+	 * @param paramsMapList
+	 *            insert语句中参数list
+	 * @param sheet
+	 *            shee对象
+	 */
+	private void setSheetTableInfo(List<String> insertSqlList,
+			List<Map<String, Object>> paramsMapList,
+			List<String> insertSqlWithValueList, HSSFSheet sheet)
+			throws Exception {
+		// 得到列名List
+		List<String> colList = getColumnList(sheet.getRow(0));
+		// 得到值List
+		setTableList(sheet, colList, insertSqlList, paramsMapList,insertSqlWithValueList);
+	}
+
+	/**
+	 * 设置列名List.
+	 * 
+	 * @param row
+	 *            excel中每一行对象
+	 * @return List 返回列名list
+	 */
+	private List<String> getColumnList(HSSFRow row) {
+		List<String> columnList = new ArrayList<String>();
+		for (Cell cell : row) {
+			if (null == cell) {
+				break;
+			}
+			String columnName = cell.getStringCellValue();
+			if (columnName != null) {
+				columnName = columnName.trim();
+			} else {
+				break;
+			}
+			if (columnName.length() <= 0) {
+				break;
+			}
+
+			columnList.add(columnName);
+
+		}
+		return columnList;
+
+	}
+
+	/**
+	 * 设置Inert语句参数List和Insert语句List.
+	 * 
+	 * @param sheet
+	 *            表所对应的Sheet对象
+	 * @param colList
+	 *            表的列名List
+	 * @param insertSqlList
+	 *            Insert语句List
+	 * @param paramMapList
+	 *            Sql参数List
+	 */
+	private void setTableList(HSSFSheet sheet, List<String> colList,
+			List<String> insertSqlList, List<Map<String, Object>> paramMapList,
+			List<String> insertSqlWithValueList) {
+		String columnName = "";
+		for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+			Row row = sheet.getRow(i);
+
+			Map<String, Object> valueMap = new HashMap<String, Object>();
+			StringBuffer colSql = new StringBuffer();
+			StringBuffer valSql = new StringBuffer();
+			StringBuffer valSqlWithValue = new StringBuffer();
+			// 插入sql语句
+			String insertSql = "";
+			String insertSqlWithValue = "";
+			for (int j = 0; j < colList.size(); j++) {
+				Cell cell = row.getCell(j);
+				// 对应的列有值的时候，insert语句List插入一条，insert参数List插入一条
+				if (null != cell && !"".equals(ExcelUtil.getCellValue(cell)) && null != ExcelUtil.getCellValue(cell)) {
+					columnName = colList.get(j);
+					colSql.append(columnName + ",");
+					valSql.append(":" + columnName + ",");
+					Object value = ExcelUtil.getCellValue(cell);
+					//如果在cell中是空字符串，需要手动转化
+					if( ExcelUtil.BLANK.equals(value)){
+						value = "";
+					}
+					valueMap.put(colList.get(j), value);
+					valSqlWithValue.append("'" + value
+							+ "',");
+				}
+			}
+			insertSql = "INSERT INTO "
+					+ sheet.getSheetName()
+					+ "("
+					+ colSql.toString().substring(0,
+							colSql.toString().lastIndexOf(","))
+					+ ") VALUES("
+					+ valSql.toString().substring(0,
+							valSql.toString().lastIndexOf(",")) + ")";
+			insertSqlWithValue = "INSERT INTO "
+					+ sheet.getSheetName()
+					+ "("
+					+ colSql.toString().substring(0,
+							colSql.toString().lastIndexOf(","))
+					+ ") VALUES("
+					+ valSqlWithValue.toString().substring(0,
+							valSqlWithValue.toString().lastIndexOf(",")) + ")";
+
+			insertSqlList.add(insertSql);
+			paramMapList.add(valueMap);
+			insertSqlWithValueList.add(insertSqlWithValue);
+		}
+	}
+	
+
+	/**
+	 * 从excel各个sheet读取数据，得到SheetTable对象数组。
+	 * 
+	 * @param path
+	 *            excel文件路径
+	 * @return ExcelSheetToTable[] 把excel中的各个sheet转化成table对象数组
+	 */
+	public static ExcelSheetToTable[] getSheetTables(String path)
+			throws Exception {
+		// 生成excel文档对象
+		HSSFWorkbook wb = getHSSFWorkbook(path);
+		// 表对象List
+		List<ExcelSheetToTable> sheetTableList = new ArrayList<ExcelSheetToTable>();
+		// excel文件中Sheet的个数
+		int sheetNum = wb.getNumberOfSheets();
+		for (int i = 0; i < sheetNum; i++) {
+			HSSFSheet sheet = wb.getSheetAt(i);
+			int rowCount = sheet.getLastRowNum();
+			// sheet对应的是真实表，得到SheetTable对象数组，一个表对应一个SheetTable对象
+			if (rowCount > 0 && sheet.getRow(0) != null) {
+				ExcelSheetToTable st = new ExcelSheetToTable(sheet);
+				sheetTableList.add(st);
+			}
+		}
+		return sheetTableList.toArray(new ExcelSheetToTable[sheetTableList
+				.size()]);
+	}
+	
+
+
+	/**
+	 * 从excel各个sheet读取数据，得到SheetTable对象数组。
+	 * 
+	 * @param path
+	 *            excel文件路径
+	 * @return HSSFWorkbook 返回一个Excel对象
+	 */
+	public static HSSFWorkbook getHSSFWorkbook(String path) throws Exception {
+		POIFSFileSystem pOIFSFileSystem = new POIFSFileSystem(
+				new FileInputStream(path));
+		return new HSSFWorkbook(pOIFSFileSystem);
+	}
+
+	public List<String> get_insertSqlList() {
+		return _insertSqlList;
+	}
+
+	public List<Map<String, Object>> get_paramsMapList() {
+		return _paramsMapList;
+	}
+
+	public List<String> get_insertSqlWithValueList() {
+		return _insertSqlWithValueList;
+	}
+
+	public HSSFSheet get_sheet() {
+		return _sheet;
+	}
+
+	public String getTableName() {
+		return _tableName;
+	}
+}

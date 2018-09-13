@@ -1,0 +1,160 @@
+package com.jzy.hio.oa.office.controller;
+
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.jzy.hio.base.controller.BaseOaController;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.exception.HioMybatisGetException;
+import com.jzy.hio.exception.HioMybatisInsertException;
+import com.jzy.hio.exception.HioMybatisQueryException;
+import com.jzy.hio.oa.office.dto.OfficeInDto;
+import com.jzy.hio.oa.office.dto.OfficeInOutParam;
+import com.jzy.hio.oa.office.service.OfficeInService;
+import com.jzy.hio.utils.LoginUser;
+import com.jzy.hio.utils.Page;
+
+/**
+ * 办公用品入库表
+ *
+ * @author shangb
+ * @date 2018年3月15日 上午10:43:35
+ */
+@RestController
+@RequestMapping("office/officeIn")
+public class OfficeInController extends BaseOaController {
+	
+	private static Logger logger = LoggerFactory.getLogger(OfficeInController.class);
+
+	@Autowired
+	private OfficeInService officeInService;
+	
+	/**
+	 * 根据Id获取入库，包含物品详情列表
+	 * 
+	 * @param id 业务对象主键
+	 * @return 业务对象
+	 */
+	@RequestMapping(value = "/get/{id}", method = RequestMethod.GET)
+	public Object get(@PathVariable("id") String id) throws HioMybatisGetException {
+		OfficeInDto officeInDto = officeInService.queryOfficeInById(id);
+		return officeInDto;
+	}
+	
+	/**
+	 * 分页返回符合条件的物品入库列表
+	 * 
+	 * @param map
+	 * @return
+	 */
+	@RequestMapping(value = "/page", method = { RequestMethod.POST }, consumes = "application/json")
+	public Page page(@RequestBody Map<String, Object> map) throws HioMybatisQueryException {
+		if (map != null && StringUtils.isEmpty((String)map.get("theme"))) {
+			map.remove("theme");
+		}
+		if (map != null && StringUtils.isEmpty((String)map.get("orderBy"))) {
+			map.remove("orderBy");
+		}
+		if (map != null && !StringUtils.isEmpty((String)map.get("orderBy"))) {
+			String orderByStr = (String) map.get("orderBy");
+			map.remove("orderBy");
+			map.put("orderBy", orderByStr.replace("createDate", "create_Date"));
+		}
+		if (map != null && map.get("createDate") != null) {
+			List<String> orderByList = (List<String>)(List)map.get("createDate");
+			map.remove("createDate");
+			if (orderByList != null && orderByList.size() > 0) {
+				String[] lastOrderByarr = new String[2];
+				lastOrderByarr[0] = new String(orderByList.get(0) + " 00:00:00");
+				lastOrderByarr[1] = new String(orderByList.get(1)+ " 23:59:59");
+				Date[] lastOrderByDatearr = new Date[2];
+				SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+				try {
+					lastOrderByDatearr[0] = sdf.parse(lastOrderByarr[0]);
+					lastOrderByDatearr[1] = sdf.parse(lastOrderByarr[1]);
+				} catch (ParseException e) {
+					e.printStackTrace();
+					logger.info("日期格式化失败！");
+				}
+				map.put("createDate", lastOrderByDatearr);
+			}
+		}
+		
+		map.put("delflag", 0);
+		Page page = officeInService.queryOfficeInPage(map);
+		return page;
+	}
+	
+	/**
+	 * 分页返回符合条件的物品入库列表，自己写的sql，新写的，等前端有时间了，跟前端联调这个，把原来的接口替换了
+	 * 
+	 * @param map
+	 * @return
+	 */
+	@RequestMapping(value = "/newPage", method = { RequestMethod.POST }, consumes = "application/json")
+	public Object newPage(@RequestBody OfficeInOutParam officeInParam) throws HioMybatisQueryException {
+		String beginDate = officeInParam.getBeginDate();// 开始时间
+		String endDate = officeInParam.getEndDate();// 结束时间
+		String orderBy = officeInParam.getOrderBy();// 排序createDate asc
+		if (!StringUtils.isEmpty(beginDate)) {
+			officeInParam.setBeginDate(beginDate + " 00:00:00");
+		}
+		if (!StringUtils.isEmpty(endDate)) {
+			officeInParam.setEndDate(endDate + " 23:59:59");
+		}
+		if (!StringUtils.isEmpty(orderBy)) {
+			if ("createDate asc".equals(orderBy) || "createDate desc".equals(orderBy)) {
+				orderBy = orderBy.replace("createDate", "create_date");
+			} else if ("create_date asc".equals(orderBy) || "create_date desc".equals(orderBy)) {
+				
+			} else {
+				return HioException.orderByError;
+			}
+		}
+		
+		Page page = officeInService.queryOfficeInListDtoPage(officeInParam);
+		return page;
+	}
+
+	/**
+	 * 保存单个入库表，包含入库详单表
+	 * 
+	 * @param json
+	 * @return
+	 */
+	@RequestMapping(value = "/save", method = RequestMethod.POST, consumes = "application/json")
+	public Object save(@RequestBody OfficeInDto officeInDto) throws HioMybatisInsertException {
+		LoginUser loginUser = super.getLoginUser();// 获取当前登录用户
+		String loginUserId = loginUser.getUserId();// 当前登录用户的userID
+		officeInDto.setInPerson(loginUserId);
+		return officeInService.saveOfficeIn(officeInDto);
+	}
+	
+	/**
+	 * 生成入库单编号
+	 *
+	 * @author shangb
+	 * @date 2018年3月24日 下午2:56:57
+	 * @return
+	 * @throws HioMybatisQueryException
+	 */
+	@RequestMapping(value = "/createOfficeInCode", method = RequestMethod.GET, consumes = "application/json")
+	public Object createOfficeInCode() throws HioMybatisQueryException {
+		return officeInService.createOfficeInCode();
+	}
+	
+	
+}

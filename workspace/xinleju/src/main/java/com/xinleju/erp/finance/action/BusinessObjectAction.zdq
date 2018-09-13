@@ -1,0 +1,477 @@
+package com.xinleju.erp.finance.action;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import net.sf.json.JSONObject;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.MatchMode;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.alibaba.fastjson.JSON;
+import com.xinleju.erp.base.app.action.BaseAction;
+import com.xinleju.erp.base.utils.JsonUtils;
+import com.xinleju.erp.co.voucher.service.SyncFinaCoData;
+import com.xinleju.erp.ex.service.SyncFinaExData;
+import com.xinleju.erp.finance.models.FiBizObject;
+import com.xinleju.erp.finance.models.FiBoFieldsinfo;
+import com.xinleju.erp.finance.models.FiBusinessobject;
+import com.xinleju.erp.finance.service.FiBizObjectService;
+import com.xinleju.erp.finance.service.SyncFinaDataService;
+import com.xinleju.erp.flow.utils.LoginInfoUtils;
+import com.xinleju.erp.frame.dao.AppDao;
+import com.xinleju.erp.frame.enums.FiBusinessTypeEnum;
+import com.xinleju.erp.frame.enums.FiFieldFlagEnum;
+import com.xinleju.erp.frame.enums.FiFieldTypeEnum;
+import com.xinleju.erp.frame.models.BusinessObject;
+import com.xinleju.erp.frame.utils.BillImplProxy;
+import com.xinleju.erp.frame.utils.CommonUtil;
+import com.xinleju.erp.frame.utils.DataGridJson;
+import com.xinleju.erp.sa.service.SyncFinaSaData;
+
+/**
+ * 业务对象注册
+ * @author songjunjie
+ */
+public class BusinessObjectAction extends BaseAction {
+	
+	private static final Log log = LogFactory.getLog(BusinessObjectAction.class);
+	
+	@Autowired
+	private AppDao appDao;
+	@Autowired
+	private FiBizObjectService fiBizObjectService;
+	@Autowired
+	private BillImplProxy billImplProxy;
+	
+	private FiBusinessobject businessObject;
+//	@Autowired
+//	private FiBusinessService fiBusinessService;
+
+	private List<FiBoFieldsinfo> boFieldInfoList;
+	
+	@Autowired
+	private SyncFinaDataService syncFinaDataService;
+	
+	private static final String RCBX_TYPE = "日常报销";
+	private static final String FYBX_TYPE = "费用报销类";
+	private static final String BXCYFK_TYPE = "报销冲预付款";
+	private static final String BXCJK_TYPE = "报销冲借款";
+	
+	private static final String HTFK_TYPE = "合同付款";
+	private static final String LJK_TYPE = "事项请示";
+	private static final String HK_TYPE = "领借款还款";
+	
+	private static final String KMFT = "科目分摊";
+	private static final String CZMX = "冲账明细";
+
+	/**
+	 * 业务对象注册页面
+	 * 
+	 * @return
+	 */
+	public String list() {
+		HashMap<String,String> appMap = (HashMap<String, String>) getSysModel();
+	
+		request.setAttribute("appMap", appMap);
+		request.setAttribute("botypeMap", FiBusinessTypeEnum.getMap());//业务类型
+		request.setAttribute("statusMap", FiBusinessobject.getStatusMap());//启用状态
+		Map<String,String> jsMap = new HashMap<String,String>();
+		jsMap.put("vsyscode_ref", CommonUtil.transRef(appMap).toString());
+		jsMap.put("status_ref", CommonUtil.transRef(BusinessObject.getStatusMap()).toString());
+		request.setAttribute("refs", jsMap);
+		return "list";
+	}
+	
+	@Deprecated
+	protected void setRefs(Map<String,String> jsMap){
+		request.setAttribute("refs", jsMap);
+	}
+	
+	/**
+	 * 页面对象列表页面加载业务对象列表(ajax)
+	 */
+	public void loadlist(){
+		String vsyscode = request.getParameter("vsyscode");
+		String keyword = request.getParameter("keyword");
+		String sta = request.getParameter("status");
+		//String botype = request.getParameter("botype");
+		String vtype = request.getParameter("vtype");
+		DetachedCriteria dc = DetachedCriteria.forClass(FiBusinessobject.class);
+		if (StringUtils.isNotBlank(vsyscode)) {
+			dc.add(Restrictions.eq("vsyscode", vsyscode));
+		}
+		if (StringUtils.isNotBlank(keyword)) {
+			dc.add(Restrictions.like("vobject", keyword, MatchMode.ANYWHERE));
+		}
+		if (StringUtils.isNotBlank(sta)) {
+			Integer status = Integer.valueOf(sta);
+			dc.add(Restrictions.eq("status", status));
+		}
+		if (StringUtils.isNotBlank(vtype)) {
+			//chc edit 2016.6.15  start 业务类型查询失败
+//			dc.add(Restrictions.eq(vtype, "true"));
+			dc.add(Restrictions.eq("vtype", vtype));
+			//chc edit 2016.6.15  end
+		}
+		limit = getParameterInt("rows");
+		start = (getParameterInt("page") - 1)*limit;
+		
+		page = getCommonService().findPage(dc, start, limit);
+		
+		List<FiBusinessobject> list = page.getItems();
+		
+		String json = new DataGridJson(page).toJsonString();
+		//JSONObject jobj = CommonUtil.transListResult(page.getTotal(), list, BusinessObjectExtender.class); //.transListResult(page.getTotal(), page.getItems(),BusinessObjectExtender.class);
+		//JSONObject jobj = CommonUtil.transListResult(page.getTotal(),list);
+		renderJson(json);
+	}
+	
+	
+	/**
+	 * 返回业基本档案对象的列表(json格式) 
+	 */
+	public void getBaseDataObject(){
+		List<FiBusinessobject> list = this.fiBizObjectService.findBizObjectByType(1);
+		this.renderJson(list);
+	}
+
+
+	public List<FiBoFieldsinfo> getBoFieldInfoList() {
+		return boFieldInfoList;
+	}
+
+	public void setBoFieldInfoList(List<FiBoFieldsinfo> boFieldInfoList) {
+		this.boFieldInfoList = boFieldInfoList;
+	}
+
+	/**
+	 * 业务对象编辑页面
+	 * 
+	 * @return
+	 */
+	@SuppressWarnings("unchecked")
+	public String edit() throws Exception {
+		try {
+			Long id = getParameterLong("id");
+			List<FiBoFieldsinfo> boFieldList = null;
+			if (id != null) {
+				businessObject = this.fiBizObjectService.getFiBusinessobjectById(id);
+				if(businessObject!=null){
+					Long boid = businessObject.getId();
+					boFieldList = this.fiBizObjectService.getAllBoField(boid);
+				}		
+			}
+			String boFiledJson = "[]";
+			if(boFieldList!=null){
+				boFiledJson = JSON.toJSONString(boFieldList);
+			}
+			
+//			Map<String, App> apps = appDao.getAppMap();
+//			Map<String, String> appMap = new HashMap<String,String>();
+//			for(App app : apps.values()){
+//				appMap.put(app.getCode(), app.getName());
+//			}
+			
+			HashMap<String,String> appMap = (HashMap<String, String>) getSysModel();
+			
+			List<FiBusinessobject> boList = this.fiBizObjectService.findBizObjectByType(3);
+			if(boList!=null){
+				request.setAttribute("boList", JSON.toJSONString(boList));
+			}else{
+				request.setAttribute("boList", "[]");
+			}
+			request.setAttribute("sysList", CommonUtil.transRef(appMap).toString());
+			request.setAttribute("flag_ref", CommonUtil.transRef(FiFieldFlagEnum.getMap()).toString());
+			request.setAttribute("vtype_ref", CommonUtil.transRef(FiFieldTypeEnum.getMap()).toString());
+			request.setAttribute("fieldInfoList", boFiledJson);
+		} catch (Exception e) {
+			log.error("",e);
+			throw e;
+		}
+		return "edit";
+	}
+
+	/**
+	 * 保存业务对象
+	 */
+	public void save() throws Exception {
+		
+		Map<String, Object> result = new HashMap<String, Object>();
+		try {
+			if (businessObject.getId() != null) {
+				businessObject.setEditDate(new Date());
+				businessObject.setEditUserId(LoginInfoUtils.getLoginInfoUserDtoId(request));
+			} else {
+				businessObject.setCreateDate(new Date());
+				businessObject.setStatus(0);
+				businessObject.setCreateUserId(LoginInfoUtils.getLoginInfoUserDtoId(request));
+			}
+			String boFieldInfos = request.getParameter("boFieldInfoList");
+			List<FiBoFieldsinfo> boFieldInfoList = JsonUtils.parseArray(getParameter("boFieldInfoList"), FiBoFieldsinfo.class);
+			
+			//如果页面没有选择业务类型，抛出异常。
+			/*if(!"true".equals(businessObject.getBdobject()) && !"true".equals(businessObject.getFormobject())){
+				throw new ValidateException("请选择[业务类型]");
+			}*/	
+			//设置对应注册的对象类型是基本档案还是业务对象
+			String type = businessObject.getVtype();
+			if(type.equals("1"))
+				businessObject.setBdobject("1");
+			else
+				businessObject.setFormobject("1");
+			
+			this.fiBizObjectService.saveOrUpdate(businessObject, boFieldInfoList);
+			result.put("success", true);
+			result.put("msg", "保存成功");
+			renderJson(result);
+		} catch (Exception e) {
+			result.put("success", false);
+			result.put("msg", e.getMessage());
+			renderJson(result);			
+		}/*catch (Exception e){
+			log.error("",e);
+			throw e;
+		}*/
+	}
+
+	
+
+	/**
+	 *  删除业务对象
+	 */
+	public void delete() {
+		Map<String, Object> result = new HashMap<String, Object>();
+		try {
+			String ids = request.getParameter("id");
+			if (ids != null) {
+				Long[] idAry = CommonUtil.transformIds(ids.split(";"));
+				this.fiBizObjectService.delete(idAry);
+			}
+			result.put("success", true);
+		} catch (Exception e) {
+			result.put("success", false);
+			result.put("msg", e.getMessage());
+			log.error("",e);
+		}
+		renderJson(result);
+	}
+	
+	public void test(){
+		System.out.println("sdfsfdsfdsaf");
+	}
+	
+
+	/**
+	 * 加载业务对象的注册字段
+	 */
+	public void loadFields() {
+		if(businessObject == null){
+			return;
+		}
+		
+		boFieldInfoList = new ArrayList<FiBoFieldsinfo>();
+		
+		String sysCode = businessObject.getVsyscode();
+		//获取对象类型
+		String billType = businessObject.getBtype();
+		if(sysCode.equals("1")){
+			//销售
+			SyncFinaSaData syncFinaSaData = syncFinaDataService.getSyncFinaSaData();
+			if (syncFinaSaData != null) {
+				FiBoFieldsinfo fieldInfo = null;
+				Map<String,Map<String,List<String>>> results = syncFinaSaData.getAllAttr("");
+	            Map<String,List<String>> rcbxMaps = results.get(billType);
+	            
+	            for (String rKey : rcbxMaps.keySet()) {
+	            	 List<String> rcFileds = rcbxMaps.get(rKey);
+	            	 fieldInfo = new FiBoFieldsinfo();
+	            	 fieldInfo.setFieldkey(rcFileds.get(0));
+	            	 fieldInfo.setFieldname(rcFileds.get(1));
+	            	 fieldInfo.setVtype(rcFileds.get(2));
+	            	 boFieldInfoList.add(fieldInfo);
+	            }
+	         
+			}
+			
+			
+		}else if(sysCode.equals("2")){
+			//成本
+			
+			SyncFinaCoData syncFinaCoData = syncFinaDataService.getSyncFinaCoData();
+			if (syncFinaCoData != null) {
+				FiBoFieldsinfo fieldInfo = null;
+				Map<String,Map<String,List<String>>> results = syncFinaCoData.getAllAttr(billType);
+	            Map<String,List<String>> rcbxMaps = results.get(billType);
+	            
+	            for (String rKey : rcbxMaps.keySet()) {
+	            	 List<String> rcFileds = rcbxMaps.get(rKey);
+	            	 fieldInfo = new FiBoFieldsinfo();
+	            	 fieldInfo.setFieldkey(rcFileds.get(0));
+	            	 fieldInfo.setFieldname(rcFileds.get(1));
+	            	 fieldInfo.setVtype(rcFileds.get(2));
+	            	 boFieldInfoList.add(fieldInfo);
+	            }
+	         
+			}
+
+		}else{
+			
+			SyncFinaExData syncFinaExData = syncFinaDataService.getSyncFinaExData();
+
+			if (syncFinaExData != null) {
+				FiBoFieldsinfo fieldInfo = null;
+				Map<String,Map<String,List<String>>> results = syncFinaExData.getAllAttr(billType);
+	            Map<String,List<String>> rcbxMaps = results.get(billType);
+	            
+	            for (String rKey : rcbxMaps.keySet()) {
+	            	 List<String> rcFileds = rcbxMaps.get(rKey);
+	            	 fieldInfo = new FiBoFieldsinfo();
+	            	 fieldInfo.setFieldkey(rcFileds.get(0));
+	            	 fieldInfo.setFieldname(rcFileds.get(1));
+	            	 fieldInfo.setVtype(rcFileds.get(2));
+	            	 boFieldInfoList.add(fieldInfo);
+	            }
+	            if(!billType.equals(HK_TYPE)){
+	                Map<String,List<String>> kmftMaps = results.get(KMFT);
+	                Map<String,List<String>> czMaps = results.get(CZMX);
+	                
+	                for(String dtailKey:czMaps.keySet()){
+	                	 List<String> rcFileds = czMaps.get(dtailKey);
+	                	 fieldInfo = new FiBoFieldsinfo();
+	                	 fieldInfo.setFieldkey(rcFileds.get(0));
+	                	 fieldInfo.setFieldname(rcFileds.get(1));
+	                	 fieldInfo.setVtype(rcFileds.get(2));
+	                	 boFieldInfoList.add(fieldInfo);
+	                }
+	                
+	                for(String kmKey:kmftMaps.keySet()){
+		               	 List<String> kmFileds = kmftMaps.get(kmKey);
+		               	 fieldInfo = new FiBoFieldsinfo();
+		               	 fieldInfo.setFieldkey(kmFileds.get(0));
+		               	 fieldInfo.setFieldname(kmFileds.get(1));
+		               	 fieldInfo.setVtype(kmFileds.get(2));
+		               	 boFieldInfoList.add(fieldInfo);
+	                }
+				
+	            }
+			}
+		
+			
+			
+		}
+
+		JSONObject jobj = CommonUtil.transListResult(boFieldInfoList.size(), boFieldInfoList);
+		renderJson(jobj.toString());
+		
+	
+		
+		
+//		String fetchdataclass = businessObject.getVfetchdataclass();
+//		try {
+//			Class bussClass = Class.forName(fetchdataclass);
+//		    App.getBean(bussClass);
+//			
+//		} catch (ClassNotFoundException e) {
+//			// TODO Auto-generated catch block
+//			e.printStackTrace();
+//		}
+		
+	}
+	
+	/**
+	 * 启用
+	 */
+	public void enable() {
+		Map<String, Object> result = new HashMap<String, Object>();
+		try {
+			String ids = request.getParameter("id");
+			if (ids != null) {
+				Long[] idAry = CommonUtil.transformIds(ids.split(";"));
+				this.fiBizObjectService.setBizObjectStatus(idAry, 0);
+			}
+			result.put("success", true);
+		} catch (Exception e) {
+			result.put("success", false);
+			result.put("msg", e.getMessage());
+			log.error("",e);
+		}
+		renderJson(result);
+	}
+
+	/**
+	 * 禁用
+	 */
+	public void unable() {
+		Map<String, Object> result = new HashMap<String, Object>();
+		try {
+			String ids = request.getParameter("id");
+			if (ids != null) {
+				Long[] idAry = CommonUtil.transformIds(ids.split(";"));
+				this.fiBizObjectService.setBizObjectStatus(idAry, 1);
+			}
+			result.put("success", true);
+		} catch (Exception e) {
+			result.put("success", false);
+			result.put("msg", e.getMessage());
+			log.error("",e);
+		}
+		renderJson(result);
+	}
+	
+	protected Map<String,String> getSysModel(){
+		Map<String, String> appMap = new HashMap<String,String>();
+		/*for(App app : appDao.getAppMap().values()){
+			appMap.put(app.getCode(), app.getName());
+		}*/
+		//设置系统来源
+		appMap.put(String.valueOf(FiBizObject.SYSCODE_CO), "成本系统");
+		appMap.put(String.valueOf(FiBizObject.SYSCODE_SA), "销售系统");
+		appMap.put(String.valueOf(FiBizObject.SYSCODE_EX), "费用系统");
+		
+		return appMap;
+	}
+
+	/**
+	 * 左边菜单
+	 * 
+	 * @return
+	 */
+	public String leftMenu() {
+		return "leftMenu";
+	}
+
+	/**
+	 * @return
+	 */
+	public String index() {
+		return "index";
+	}
+
+	public FiBusinessobject getBusinessObject() {
+		return businessObject;
+	}
+
+	public void setBusinessObject(FiBusinessobject businessObject) {
+		this.businessObject = businessObject;
+	}
+	
+	/*public static void main(String[] args) {
+		
+		List<FiBusinessobject> list = new ArrayList<FiBusinessobject>();
+		FiBusinessobject fb = new FiBusinessobject();
+		fb.setId(2l);
+		list.add(fb);
+		
+		System.out.println(JSON.toJSONString(list));
+	}
+*/
+}

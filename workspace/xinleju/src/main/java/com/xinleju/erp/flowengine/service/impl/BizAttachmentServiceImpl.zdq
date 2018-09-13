@@ -1,0 +1,153 @@
+package com.xinleju.erp.flowengine.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.flow.models.Upload;
+import com.xinleju.erp.flowengine.dto.BizAttachment;
+import com.xinleju.erp.flowengine.service.BizAttachmentService;
+import com.xinleju.erp.flowengine.utils.FileUtils;
+import com.xinleju.erp.flowengine.utils.FlowInstanceConstant;
+
+@Service
+public class BizAttachmentServiceImpl extends BaseService implements BizAttachmentService {
+
+	@Value("#{appProperties['file_disk_path']?:''}")
+    private String file_disk_path;
+	@Override
+	public Map<String,Object> getBizAttachment(BizAttachment bizAttachment,Long fiId) {
+		
+		Map<String, Object> mapReturnValue = new HashMap<String, Object>();
+		
+		String appCode = bizAttachment.getProofreadBeforeCode();
+		if(StringUtils.isBlank(appCode)){
+			return mapReturnValue;
+		}
+    	switch (appCode.toUpperCase()) {
+			case FlowInstanceConstant.APP_CODE_SUPPLY:
+				mapReturnValue = getNormalBizAttachment(bizAttachment.getProofreadBeforeCode(), bizAttachment.getProofreadBeforeOwnId(), false);
+				break;
+			case FlowInstanceConstant.APP_CODE_EX:
+				if(isExistsProofreadStep(fiId) == true){
+					mapReturnValue = getProofreadBizAttachment(
+							new String[]{bizAttachment.getProofreadBeforeCode(),bizAttachment.getProofreadAfterCode()},
+							new String[]{bizAttachment.getProofreadBeforeOwnId(),bizAttachment.getProofreadAfterOwnId()},
+							new Boolean[]{false,true});
+				}else{
+					mapReturnValue = getNormalBizAttachment(bizAttachment.getProofreadBeforeCode(), bizAttachment.getProofreadBeforeOwnId(), false);
+				}
+				break;
+			default:
+				mapReturnValue = getNormalBizAttachment(bizAttachment.getProofreadBeforeCode(), bizAttachment.getProofreadBeforeOwnId(), false);
+				break;
+		}
+		return mapReturnValue;
+	}
+	
+	private boolean isExistsProofreadStep(Long flId) {
+		
+		Integer proofreadStepCont = getDao().findIntBySQL("SELECT\n" +
+				"	COUNT(1)\n" +
+				"FROM\n" +
+				"	tf_fl l,\n" +
+				"	tf_ac c,\n" +
+				"	tf_op_group og\n" +
+				"WHERE\n" +
+				"	l.flow_code = c.flow_code\n" +
+				"AND l.flow_version = c.flow_version\n" +
+				"AND c.op_groups = og.id\n" +
+				"AND l.id = ?\n" +
+				"AND og.`code` = 'JG'",flId);
+		
+		if(proofreadStepCont == 0){
+			return false;
+		}else{
+			return true;
+		}
+	}
+	
+	/**
+	 * @param appCode 应用编码
+	 * @param ownId 附件所属ID
+	 * @param isUseIn 是否为多个附件所属ID
+	 * @return
+	 */
+	public Map<String, Object> getNormalBizAttachment(String appCode,String ownId, boolean isMultiple){
+		
+		Map<String, Object> mapReturnValue = new HashMap<String, Object>();
+		
+		if (StringUtils.isBlank(appCode) || StringUtils.isBlank(ownId)) {
+
+			return mapReturnValue;
+		} 
+		
+		DetachedCriteria dc = DetachedCriteria.forClass(Upload.class);
+
+		dc.add(Restrictions.eq("category", appCode));
+		if (isMultiple) {
+			dc.add(Restrictions.in("ownerId",ownId.split(",")));
+		} else {
+			dc.add(Restrictions.eq("ownerId", ownId));
+		}
+
+		List<Upload> lstUpload = getDao().findByCriteria(dc);
+		
+		for(Upload upload : lstUpload){
+			upload.setFileSize(FileUtils.getFileSize(file_disk_path+upload.getPath()));
+		}
+		
+		mapReturnValue.put("lstUpload", lstUpload);
+		mapReturnValue.put("isDisplay", lstUpload.size() > 0);
+		mapReturnValue.put("templateName", FlowInstanceConstant.ATTACHMENT_TYPE_NORMAL);
+
+		return mapReturnValue;
+	}
+
+	/**
+	 * @param appCode 应用编码
+	 * @param ownId 附件所属ID
+	 * @param isUseIn 是否为多个附件所属ID
+	 * @return
+	 */
+	@SuppressWarnings("unchecked")
+	private Map<String,Object> getProofreadBizAttachment(String[] appCode,String[] ownId, Boolean[] isMultiple){
+		
+		Map<String, Object> mapReturnValue = new HashMap<String, Object>();
+		
+		List<Upload> lstProofreadBefore = (List<Upload>) getNormalBizAttachment(appCode[0],ownId[0],isMultiple[0]).get("lstUpload");
+		List<Upload> lstProofreadAfter = (List<Upload>) getNormalBizAttachment(appCode[1],ownId[1],isMultiple[1]).get("lstUpload");
+		
+		//如果校稿后没有附件 直接把校稿前附件赋给校稿后
+		if(lstProofreadBefore.size()>0 && lstProofreadAfter.size() == 0){
+			lstProofreadAfter.addAll(lstProofreadBefore);
+		}
+		
+		int maxCount = Math.max(lstProofreadBefore.size(), lstProofreadAfter.size());
+		
+		List<Map<String, Upload>> lstMapUpload = new ArrayList<Map<String,Upload>>();
+		for(int index=0;index<maxCount;index++){
+			
+			Map<String,Upload> mapUpload = new LinkedHashMap<String, Upload>();
+			mapUpload.put("proofreadBefore", lstProofreadBefore.get(index));
+			mapUpload.put("proofreadAfter", lstProofreadAfter.get(index));
+			
+			lstMapUpload.add(mapUpload);
+		}
+		
+		mapReturnValue.put("lstMapUpload", lstMapUpload);
+		mapReturnValue.put("isDisplay", lstProofreadBefore.size() >0 || lstProofreadAfter.size()>0);
+		mapReturnValue.put("templateName", FlowInstanceConstant.ATTACHMENT_TYPE_PROOFREAD);
+
+		return mapReturnValue;
+	}
+}

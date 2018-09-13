@@ -1,0 +1,77 @@
+package com.xinleju.platform.flow.dto.utils;
+
+import java.io.Serializable;
+
+import javax.xml.bind.annotation.XmlRootElement;
+
+
+@XmlRootElement
+public class FlowResult<T> implements Serializable {
+
+    /**
+     * 序列化ID
+     */
+    private static final long serialVersionUID = -8737028071874504119L;
+
+    
+    public FlowResult() {
+        this.isSuccess = true;
+    }
+    
+    public FlowResult<T> get() {
+        return this;
+    }
+    
+    public FlowResult(Class<T> tc) {
+
+        try {
+           
+            this.result = tc.newInstance();
+        } catch (InstantiationException e) {
+        } catch (IllegalAccessException e) {
+        }
+        this.isSuccess = true;
+    }
+    
+    
+    public static void main(String[] a){
+        FlowResult<Boolean> x = new FlowResult<Boolean>();
+        x.setResult(true);
+        System.out.println(x.getResult());
+    }
+    private T result;
+
+    private boolean isSuccess = true;
+
+    private String msg;
+
+    public T getResult() {
+        return result;
+    }
+
+    public void setResult(T result) {
+        this.result = result;
+    }
+    public void faliure() {
+        this.setSuccess(false);
+    }
+    public void success() {
+        this.setSuccess(true);
+    }
+
+    public boolean isSuccess() {
+        return isSuccess;
+    }
+
+    public void setSuccess(boolean isSuccess) {
+        this.isSuccess = isSuccess;
+    }
+
+	public String getMsg() {
+		return msg;
+	}
+
+	public void setMsg(String msg) {
+		this.msg = msg;
+	}
+}

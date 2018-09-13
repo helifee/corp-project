@@ -1,0 +1,95 @@
+package com.xinleju.platform.univ.attachment.dao.impl;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.springframework.dao.DataAccessException;
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.platform.base.dao.impl.BaseDaoImpl;
+import com.xinleju.platform.base.utils.AttachmentDto;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.univ.attachment.dao.AttachmentDao;
+import com.xinleju.platform.univ.attachment.entity.Attachment;
+
+/**
+ * @author haoqp
+ * 
+ * 
+ */
+
+@Repository
+public class AttachmentDaoImpl extends BaseDaoImpl<String,Attachment> implements AttachmentDao{
+
+	public AttachmentDaoImpl() {
+		super();
+	}
+
+	@Override
+	public List<AttachmentDto> queryListByCategoryIds(String[] ids) {
+		Map<String, String[]> parameter = new HashMap<>();
+		parameter.put("ids", ids);
+//		parameter.put("ids", "'" + StringUtils.join(ids, "','") + "'");
+		return getSqlSession().selectList(Attachment.class.getName() + ".queryListByCategoryIds", parameter);
+	}
+
+	@Override
+	public List<AttachmentDto> queryListWithCategoryName(String statementName, Map<String, Object> paramater) {
+		return getSqlSession().selectList(statementName, paramater);
+	}
+
+	@Override
+	public Page getPageByCategoryIds(Map<String, Object> paramater, Integer start,
+			Integer limit) throws DataAccessException {
+		Page page=new Page();
+		if(limit==null){
+			limit=page.getLimit();
+		}
+		if(start==null){
+			start=page.getStart();
+		}
+				
+		paramater.put("limit", limit);
+		paramater.put("start", start);
+		paramater.put("orderby", StringUtils.join(new String[]{" order by", toUnderLineAndLower(paramater.get("sidx").toString()), paramater.get("sord").toString(), " "}, ' '));
+		List<AttachmentDto> list=getSqlSession().selectList(Attachment.class.getName()+".pageByCategoryIds", paramater);
+		int total=getSqlSession().selectOne(Attachment.class.getName()+".countByCategoryIds", paramater);
+		page.setList(list);
+		page.setLimit(limit);
+		page.setStart(start);
+		page.setTotal(total);
+		return page;
+	}
+	
+	@Override
+	public List<AttachmentDto> queryListByObject(Map<String, Object> paramater) throws DataAccessException {
+		return getSqlSession().selectList(Attachment.class.getName() + ".queryListByObject", paramater);
+	}
+
+	@Override
+	public List<Attachment> queryFlowList(Map<String, Object> paramater) throws DataAccessException {
+		return getSqlSession().selectList(Attachment.class.getName() + ".queryFlowList", paramater);
+	}
+
+	private static String toUnderLineAndLower(String src) {
+		if (StringUtils.isNotEmpty(src)) {
+			StringBuffer lowerBuffer = new StringBuffer(src.toLowerCase());
+			for(int i = lowerBuffer.length() - 1; i > 0; i--) {
+				if (lowerBuffer.charAt(i) != src.charAt(i)) {
+					lowerBuffer.replace(i, i + 1, "_" + lowerBuffer.charAt(i));
+				}
+			}
+			return lowerBuffer.toString();
+		}
+		
+		return src;
+	}
+	
+	public static void main(String[] args) {
+		System.out.println(StringUtils.join(new String[]{"111","222","111","333",},' '));
+	}
+
+	
+}

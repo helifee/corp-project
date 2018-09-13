@@ -1,0 +1,149 @@
+package com.xinleju.erp.finance.utils;
+
+import java.util.List;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import javax.sql.DataSource;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.dao.DataAccessException;
+import org.springframework.jdbc.core.BeanPropertyRowMapper;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.stereotype.Component;
+
+/**
+ * 这个组建是使用Spring jdbc做出的扩展
+ * 
+ * @author walden
+ * 
+ */
+@Component
+public class SmartJdbcTemplate extends NamedParameterJdbcTemplate implements ISmartJdbc {
+
+	private Log logger = LogFactory.getLog(getClass());
+
+	@Autowired
+	public SmartJdbcTemplate(DataSource dataSource) {
+		super(dataSource);
+	}
+
+	public void execute(CharSequence sql) {
+		sqlExecuteLogger(sql);
+		getJdbcOperations().execute(sql.toString());
+	}
+
+	public int update(CharSequence sql, Map<String, ?> paramMap) throws DataAccessException {
+		sqlExecuteLogger(sql, paramMap);
+		return super.update(sql.toString(), paramMap);
+	}
+
+	public int[] batchUpdate(CharSequence sql, Map<String, ?>[] batchValues) throws DataAccessException {
+		sqlExecuteLogger(sql, batchValues);
+		return super.batchUpdate(sql.toString(), batchValues);
+	}
+
+	public <D> D get(CharSequence sql, Map<String, Object> paramMap, Class<D> domain) {
+		return getSingleResult(findList(sql, paramMap, domain));
+	}
+
+	public Integer getInteger(CharSequence sql, Map<String, Object> paramMap) {
+		sqlExecuteLogger(sql, paramMap);
+		return queryForObject(sql.toString(), paramMap, Integer.class);
+	}
+
+	public Long getLong(CharSequence sql, Map<String, Object> paramMap) {
+		sqlExecuteLogger(sql, paramMap);
+		return queryForObject(sql.toString(), paramMap, Long.class);
+	}
+
+	public Double getDouble(CharSequence sql, Map<String, Object> paramMap) {
+		sqlExecuteLogger(sql, paramMap);
+		return queryForObject(sql.toString(), paramMap, Double.class);
+	}
+
+	public <D> List<D> findList(CharSequence sql, Map<String, Object> paramMap, Class<D> domain) {
+		sqlExecuteLogger(sql, paramMap);
+		return query(sql.toString(), paramMap, new BeanPropertyRowMapper<D>(domain));
+	}
+
+	public <D> List<D> findColumnList(CharSequence sql, Map<String, Object> paramMap, Class<D> domain) {
+		sqlExecuteLogger(sql, paramMap);
+		return queryForList(sql.toString(), paramMap, domain);
+	}
+
+	public <D> List<D> findPageList(CharSequence sql, Map<String, Object> paramMap, int startRow, int pageSize, Class<D> domain) {
+		sql = getMysqlLimitString(sql.toString(), startRow, pageSize);
+		sqlExecuteLogger(sql, paramMap);
+		return query(sql.toString(), paramMap, new BeanPropertyRowMapper<D>(domain));
+	}
+
+	public <D> List<D> findTopList(CharSequence sql, Map<String, Object> paramMap, int top, Class<D> domain) {
+		return findPageList(sql, paramMap, 0, top, domain);
+	}
+
+	/**
+	 * 根据查询列表的语句生成select count(*) 语句查到总条数
+	 */
+	public int getTotalCount(CharSequence sql, Map<String, Object> paramMap) {
+		String sqlStr = sql.toString().toLowerCase();
+		Pattern pattern = Pattern.compile("(\\s*select\\s+)|(\\s+from\\s+)");
+		Matcher matcher = pattern.matcher(sqlStr);
+		int blance = 0;
+		while (matcher.find()) {
+			String m = matcher.group();
+			if ("select".equals(m.trim()))
+				--blance;
+			else
+				++blance;
+
+			if (blance == 0)
+				break;
+		}
+		String whereSql = sqlStr.substring(matcher.end());
+		int orderbyIndex = whereSql.lastIndexOf(" order ");
+		if (orderbyIndex != -1) {
+			whereSql = whereSql.substring(0, orderbyIndex);
+		}
+		return getInteger(String.format("select count(*) from %s", whereSql), paramMap);
+	}
+
+	/**
+	 * 从List<D> result中返回一个值，如果为空就返回null
+	 */
+	public <D> D getSingleResult(List<D> result) {
+		if (result == null || result.size() == 0) {
+			return null;
+		} else {
+			if (result.size() > 1)
+				logger.error(">>>>查询结果大于1!");
+			return result.get(0);
+		}
+	}
+
+	private void sqlExecuteLogger(CharSequence sql, Map<String, ?>[] batchValues) {
+		logger.info(">>>> " + sql.toString());
+		for (Map<String, ?> paramMap : batchValues)
+			logger.info(">>>> " + paramMap);
+	}
+
+	private void sqlExecuteLogger(CharSequence sql, Map<String, ?> paramMap) {
+		logger.info(">>>> " + sql.toString());
+		logger.info(">>>> " + paramMap);
+	}
+
+	private void sqlExecuteLogger(CharSequence sql) {
+		logger.info(">>>> " + sql.toString());
+	}
+
+	/**
+	 * 给语句添加mysql的分页语句
+	 */
+	public String getMysqlLimitString(String sql, int offset, int limit) {
+		return new StringBuffer(sql.length() + 20).append(sql).append(String.format(" limit %s offset %s", limit, offset)).toString();
+	}
+}

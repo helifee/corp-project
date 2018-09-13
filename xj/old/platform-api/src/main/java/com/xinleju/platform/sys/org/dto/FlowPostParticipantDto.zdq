@@ -1,0 +1,78 @@
+package com.xinleju.platform.sys.org.dto;
+
+/**
+ * @author 流程岗位参与者
+ *
+ */
+public class FlowPostParticipantDto {
+	
+	//组织机构id
+	private String orgId;
+	//组织机构类型
+	private String orgType;
+	//岗位id
+	private String postId;
+	//岗位名称
+	private String postName;
+	//岗位名称全名
+	private String postPrefixName;
+	//用户id
+	private String userId;
+	//账号 
+	private String loginName;
+	//用户名称 
+	private String userName;
+	public String getOrgId() {
+		return orgId;
+	}
+	public void setOrgId(String orgId) {
+		this.orgId = orgId;
+	}
+	public String getOrgType() {
+		return orgType;
+	}
+	public void setOrgType(String orgType) {
+		this.orgType = orgType;
+	}
+	public String getPostId() {
+		return postId;
+	}
+	public void setPostId(String postId) {
+		this.postId = postId;
+	}
+	public String getPostName() {
+		return postName;
+	}
+	public void setPostName(String postName) {
+		this.postName = postName;
+	}
+	public String getPostPrefixName() {
+		return postPrefixName;
+	}
+	public void setPostPrefixName(String postPrefixName) {
+		this.postPrefixName = postPrefixName;
+	}
+	public String getUserId() {
+		return userId;
+	}
+	public void setUserId(String userId) {
+		this.userId = userId;
+	}
+	public String getLoginName() {
+		return loginName;
+	}
+	public void setLoginName(String loginName) {
+		this.loginName = loginName;
+	}
+	public String getUserName() {
+		return userName;
+	}
+	public void setUserName(String userName) {
+		this.userName = userName;
+	}
+	
+	
+	
+	
+
+}

@@ -1,0 +1,114 @@
+package com.xinleju.platform.sys.base.dto;
+
+import com.xinleju.platform.base.dto.BaseDto;
+
+
+
+
+
+/**
+ * @author admin
+ * 
+ *
+ */
+public class BaseRegionDto extends BaseDto{
+    
+    private String name;
+    
+    private String code;
+    
+    
+    private String sort;
+    
+    private String prefixId;
+ 
+	private String parentId;
+	
+	private String parentName;
+    
+	
+	//上级节点
+	private Long level;
+	//加载是否完成
+	private Boolean loaded;
+	
+	private Boolean isLeaf;
+	
+	private Boolean expanded;	
+		
+	private Boolean isrepat;
+	
+	public String getName() {
+		return name;
+	}
+	public void setName(String name) {
+		this.name = name;
+	}
+    
+  		
+	public String getCode() {
+		return code;
+	}
+	public void setCode(String code) {
+		this.code = code;
+	}
+    
+  		
+	public String getParentId() {
+		return parentId;
+	}
+	public void setParentId(String parentId) {
+		this.parentId = parentId;
+	}
+
+	public String getSort() {
+		return sort;
+	}
+	public void setSort(String sort) {
+		this.sort = sort;
+	}
+	public String getPrefixId() {
+		return prefixId;
+	}
+	public void setPrefixId(String prefixId) {
+		this.prefixId = prefixId;
+	}
+	public Long getLevel() {
+		return level;
+	}
+	public void setLevel(Long level) {
+		this.level = level;
+	}
+	public Boolean getLoaded() {
+		return loaded;
+	}
+	public void setLoaded(Boolean loaded) {
+		this.loaded = loaded;
+	}
+	public Boolean getIsLeaf() {
+		return isLeaf;
+	}
+	public void setIsLeaf(Boolean isLeaf) {
+		this.isLeaf = isLeaf;
+	}
+	public Boolean getExpanded() {
+		return expanded;
+	}
+	public void setExpanded(Boolean expanded) {
+		this.expanded = expanded;
+	}
+	public Boolean getIsrepat() {
+		return isrepat;
+	}
+	public void setIsrepat(Boolean isrepat) {
+		this.isrepat = isrepat;
+	}
+	public String getParentName() {
+		return parentName;
+	}
+	public void setParentName(String parentName) {
+		this.parentName = parentName;
+	}
+    
+  		
+}

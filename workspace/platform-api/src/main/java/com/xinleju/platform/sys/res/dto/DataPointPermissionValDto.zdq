@@ -1,0 +1,42 @@
+package com.xinleju.platform.sys.res.dto;
+
+import com.xinleju.platform.base.dto.BaseDto;
+
+
+
+
+
+/**
+ * @author admin
+ * 
+ *
+ */
+public class DataPointPermissionValDto extends BaseDto{
+
+		
+	//数据授权id
+	private String dataPermissionId;
+    
+  		
+	//值
+	private String val;
+    
+  		
+		
+	public String getDataPermissionId() {
+		return dataPermissionId;
+	}
+	public void setDataPermissionId(String dataPermissionId) {
+		this.dataPermissionId = dataPermissionId;
+	}
+    
+  		
+	public String getVal() {
+		return val;
+	}
+	public void setVal(String val) {
+		this.val = val;
+	}
+    
+  		
+}

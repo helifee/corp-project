@@ -1,0 +1,179 @@
+package com.xinleju.platform.flow.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Table(value="PT_FLOW_BUSINESS_OBJECT_VARIABLE",desc="业务对象变量")
+public class BusinessObjectVariable extends BaseEntity{
+	
+		
+	@Column(value="code",desc="编号")
+	private String code;
+    
+  		
+	@Column(value="name",desc="名称")
+	private String name;
+    
+  		
+	@Column(value="type",desc="变量类型: 1:字符串，2:整数，3:浮点数,4:布尔，5:日期，6:对象")
+	private String type;
+    
+  		
+	@Column(value="relation_code",desc="关联组件编号")
+	private String relationCode;
+    
+  		
+	@Column(value="business_object_id",desc="业务对象id")
+	private String businessObjectId;
+    
+  		
+	@Column(value="parent_id",desc="上级")
+	private String parentId;
+    
+	//以下是0307@zhengjiajie新增的
+	@Column(value="key_name",desc="键名")
+	private String keyName;//键名
+	
+	@Column(value="system_app_id",desc="所属系统")
+	private String systemAppId;//所属系统
+	
+	@Column(value="relate_business_object",desc="关联业务对象")
+	private String relateBusinessObject;//关联业务对象
+	
+	@Column(value="for_flow_branch",desc="是否用于流程分支")
+	private Boolean forFlowBranch;//是否用于流程分支
+	
+	@Column(value="for_finance",desc="是否用于财务接口")
+	private Boolean forFinance;//是否用于财务接口
+	
+	@Column(value="comment",desc="说明")
+	private String comment;//说明
+	
+	@Column(value="prefix_id",desc="全路径Id")
+	private String prefixId;
+	@Column(value="prefix_sort",desc="全路径排序")
+	private String prefixSort;
+	@Column(value="prefix_name",desc="全路径名称")
+	private String prefixName;
+	
+	@Column(value="sort",desc="排序")
+	private String sort;
+		
+	public String getCode() {
+		return code;
+	}
+	public void setCode(String code) {
+		this.code = code;
+	}
+    
+  		
+	public String getName() {
+		return name;
+	}
+	public void setName(String name) {
+		this.name = name;
+	}
+    
+  		
+	public String getType() {
+		return type;
+	}
+	public void setType(String type) {
+		this.type = type;
+	}
+    
+  		
+	public String getRelationCode() {
+		return relationCode;
+	}
+	public void setRelationCode(String relationCode) {
+		this.relationCode = relationCode;
+	}
+    
+  		
+	public String getBusinessObjectId() {
+		return businessObjectId;
+	}
+	public void setBusinessObjectId(String businessObjectId) {
+		this.businessObjectId = businessObjectId;
+	}
+    
+  		
+	public String getParentId() {
+		return parentId;
+	}
+	public void setParentId(String parentId) {
+		this.parentId = parentId;
+	}
+	public String getKeyName() {
+		return keyName;
+	}
+	public void setKeyName(String keyName) {
+		this.keyName = keyName;
+	}
+	public String getSystemAppId() {
+		return systemAppId;
+	}
+	public void setSystemAppId(String systemAppId) {
+		this.systemAppId = systemAppId;
+	}
+	public String getRelateBusinessObject() {
+		return relateBusinessObject;
+	}
+	public void setRelateBusinessObject(String relateBusinessObject) {
+		this.relateBusinessObject = relateBusinessObject;
+	}
+	public Boolean getForFlowBranch() {
+		return forFlowBranch;
+	}
+	public void setForFlowBranch(Boolean forFlowBranch) {
+		this.forFlowBranch = forFlowBranch;
+	}
+	public Boolean getForFinance() {
+		return forFinance;
+	}
+	public void setForFinance(Boolean forFinance) {
+		this.forFinance = forFinance;
+	}
+	public String getComment() {
+		return comment;
+	}
+	public void setComment(String comment) {
+		this.comment = comment;
+	}
+	public String getPrefixId() {
+		return prefixId;
+	}
+	public void setPrefixId(String prefixId) {
+		this.prefixId = prefixId;
+	}
+	public String getPrefixSort() {
+		return prefixSort;
+	}
+	public void setPrefixSort(String prefixSort) {
+		this.prefixSort = prefixSort;
+	}
+	public String getPrefixName() {
+		return prefixName;
+	}
+	public void setPrefixName(String prefixName) {
+		this.prefixName = prefixName;
+	}
+	public String getSort() {
+		return sort;
+	}
+	public void setSort(String sort) {
+		this.sort = sort;
+	}
+    
+  		
+	
+}

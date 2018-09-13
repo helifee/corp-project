@@ -1,0 +1,147 @@
+package com.xinleju.platform.flow.dto;
+
+import com.xinleju.platform.base.dto.BaseDto;
+
+
+
+
+
+/**
+ * @author admin
+ * 
+ *
+ */
+public class InstanceStepDto extends BaseDto{
+
+		
+	//流程实例id
+	private String fiId;
+    
+  		
+	//名称
+	private String name;
+    
+  		
+	//模板连线id
+	private String stepId;
+    
+  		
+	//源节点
+	private String sourceId;
+    
+  		
+	//目标结点
+	private String targetId;
+    
+  		
+	//开始点x坐标
+	private Long startX;
+    
+  		
+	//开始点y坐标
+	private Long startY;
+    
+  		
+	//目标点x坐标
+	private Long targetX;
+    
+  		
+	//目标点y坐标
+	private Long targetY;
+    
+  		
+	//状态
+	private String status;
+    
+  		
+	//是否有效
+	private Boolean disable;
+    
+  		
+		
+	public String getFiId() {
+		return fiId;
+	}
+	public void setFiId(String fiId) {
+		this.fiId = fiId;
+	}
+    
+  		
+	public String getName() {
+		return name;
+	}
+	public void setName(String name) {
+		this.name = name;
+	}
+  		
+	public String getSourceId() {
+		return sourceId;
+	}
+	public void setSourceId(String sourceId) {
+		this.sourceId = sourceId;
+	}
+    
+  		
+	public String getTargetId() {
+		return targetId;
+	}
+	public void setTargetId(String targetId) {
+		this.targetId = targetId;
+	}
+    
+  		
+	public Long getStartX() {
+		return startX;
+	}
+	public void setStartX(Long startX) {
+		this.startX = startX;
+	}
+    
+  		
+	public Long getStartY() {
+		return startY;
+	}
+	public void setStartY(Long startY) {
+		this.startY = startY;
+	}
+    
+  		
+	public Long getTargetX() {
+		return targetX;
+	}
+	public void setTargetX(Long targetX) {
+		this.targetX = targetX;
+	}
+    
+  		
+	public Long getTargetY() {
+		return targetY;
+	}
+	public void setTargetY(Long targetY) {
+		this.targetY = targetY;
+	}
+    
+  		
+	public String getStatus() {
+		return status;
+	}
+	public void setStatus(String status) {
+		this.status = status;
+	}
+    
+  		
+	public Boolean getDisable() {
+		return disable;
+	}
+	public void setDisable(Boolean disable) {
+		this.disable = disable;
+	}
+	public String getStepId() {
+		return stepId;
+	}
+	public void setStepId(String stepId) {
+		this.stepId = stepId;
+	}
+    
+  		
+}

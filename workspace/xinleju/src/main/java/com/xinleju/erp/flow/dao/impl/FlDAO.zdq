@@ -1,0 +1,196 @@
+package com.xinleju.erp.flow.dao.impl;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.collections.map.LinkedMap;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.Property;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.erp.base.app.bean.Page;
+import com.xinleju.erp.base.utils.CollectionUtils;
+import com.xinleju.erp.base.utils.StringHelper;
+import com.xinleju.erp.flow.flowutils.bean.FlowDTO;
+import com.xinleju.erp.flow.flowutils.bean.PageBean;
+import com.xinleju.erp.flow.models.Fl;
+
+/**
+ * 
+ * 
+ * <p>
+ * </p>
+ * <p>
+ * </p>
+ * 
+ * @author 孙朝辉
+ * @version $Id: FlDAO.java 2185 2014-12-25 06:42:56Z sunchaohui $
+ * @since
+ * 
+ */
+@Repository
+public class FlDAO extends BaseDAO {
+
+    /**
+     * 
+     * <p>
+     * 获取当前版本
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param flowCode
+     *            流程编码
+     * @return 流程版本
+     */
+    public String getMaxVersion(String flowCode) {
+        return getDao().findString("select max(flowVersion) from Fl where flowCode=? and isCommited = ?", flowCode, 1);
+    }
+    /**
+     * 获取流程
+     * @param flowCodes
+     * @return
+     */
+    public List<Fl> getFlList(String... flowCodes){
+    	if (null != flowCodes && flowCodes.length > 0){
+            return getDao().findByHQL(Fl.class, "from Fl t where t.isCommited = ? and t.flowVersion = "
+            		+ "(select max(flowVersion) from Fl where flowCode = t.flowCode)"
+            		+ " and t.flowCode in('" + StringHelper.join(flowCodes, "','") + "') order by t.flSort asc,t.id asc"
+            		, 1);
+    	} else {
+    		return new ArrayList<Fl>();
+    	}
+    }
+    
+    /**
+     * 
+     * <p>
+     * 获取当前版本的流程
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param flowCode
+     *            流程编码
+     * @return 流程
+     */
+    public Fl getFl(String flowCode) {
+    	List<Fl> flList = this.getFlList(flowCode);
+    	if (null != flList && flList.size() > 0){
+    		return flList.get(0);
+    	}
+        return new Fl();
+    }
+    
+    /**
+     * 
+     * 获取流程模板
+     * @param flowCode
+     * @param flowVersion
+     * @return
+     */
+    public Fl getFl(String flowCode,String flowVersion) {
+        return getDao().findFirstByHQL(Fl.class,
+                "from Fl t where t.flowVersion =? and flowCode = ?", flowVersion,flowCode);
+    }
+    
+    /**
+     * 
+     * 获取当前流程编号的最大版模板
+     * @param flowCode
+     * @return
+     */
+    public Fl getMaxVersionFl(String flowCode) {
+        return getDao().findFirstByHQL(Fl.class,
+                "from Fl t where t.flowVersion =(select max(l.flowVersion) from Fl l where l.flowCode=t.flowCode) and t.flowCode = ?",flowCode);
+    }
+    
+    /**
+     * 通过类型查找模板
+     * @param sodId
+     * @return
+     */
+    public  String getDefaultFlowCodeBySodIdAndBizId(Long sodId){
+    	String flowCode = null;
+    	if (null != sodId){
+    		flowCode = getDao().findString("select max(flowCode) from Fl where serviceObjectDefineId = ? and isDefault = ? ", sodId, 1);
+    	}
+    	return flowCode;
+    }
+    
+    public Page getFlPage(Long categoryId, Integer start, Integer limit, Map<String, Object> extParm){
+    	if (null == start){
+    		start = 0;
+    	}
+    	if (null == limit){
+    		limit = 15;
+    	}
+    	DetachedCriteria dcAs = DetachedCriteria.forClass(Fl.class, "flowAs");
+    	dcAs.setProjection(Property.forName("flowVersion").max());
+    	dcAs.add(Property.forName("flowAs.flowCode").eqProperty("flowObj.flowCode"));
+    	DetachedCriteria dc = DetachedCriteria.forClass(Fl.class, "flowObj");
+    	dc.add(Property.forName("flowVersion").eq(dcAs));
+    	dc.add(Restrictions.or(Restrictions.isNull("isDisabled"), Restrictions.eq("isDisabled", 0)));
+    	if (categoryId != null && categoryId != 0){
+    		dc.add(Restrictions.eq("ctId", categoryId));
+    	}
+    	if (null != extParm){
+    		if (extParm.containsKey("flName")){
+    			dc.add(Restrictions.like("flowName", "%" + String.valueOf(null != extParm.get("flName") ? extParm.get("flName") : "").trim() + "%"));
+    		}
+    		if (extParm.containsKey("flCode")){
+    			dc.add(Restrictions.like("flowCode", "%" + String.valueOf(null != extParm.get("flCode") ? extParm.get("flCode") : "").trim() + "%"));
+    		}
+			if (extParm.containsKey("serviceObjectDefineId")){
+				dc.add(Restrictions.eq("serviceObjectDefineId", Long.parseLong((String)(null != extParm.get("serviceObjectDefineId") ? extParm.get("serviceObjectDefineId") : "0"))));
+			}
+    	}
+    	return getDao().findPage(dc, start, limit);
+    }
+    public PageBean<FlowDTO> getFlowDTOPage(Long categoryId, Integer start, Integer limit, Map<String, Object> extParm){
+    	PageBean<FlowDTO> flowDTOPage = new PageBean<FlowDTO>();
+    	Page page = this.getFlPage(categoryId, start, limit, extParm);
+    	if (null != page){
+    		flowDTOPage.setLimit(page.getLimit());
+    		flowDTOPage.setStart(page.getStart());
+    		flowDTOPage.setTotal(page.getTotal());
+    		List<FlowDTO> flowDTOList = new ArrayList<FlowDTO>();
+    		if (null != page.getItems() && page.getItems().size() > 0){
+    			FlowDTO flowDTO = null;
+    			for (Object fl : page.getItems()){
+    				if (fl instanceof Fl){
+    					flowDTO = new FlowDTO();
+    					flowDTO.setFlowCode(((Fl) fl).getFlowCode());
+    					flowDTO.setFlowName(((Fl) fl).getFlowName());
+    					flowDTOList.add(flowDTO);
+    				}
+    			}
+    		}
+    		flowDTOPage.setItems(flowDTOList);
+    	}
+    	return flowDTOPage;
+    }
+    
+    /**
+     * 获取
+     * @param flowCodes
+     * @return
+     */
+    @SuppressWarnings("unchecked")
+	public Map<String, String> getFlowNamesMapByFlowCodes(String... flowCodes){
+    	Map<String, String> flowNamesMap = new LinkedMap();
+    	if (null != flowCodes && flowCodes.length > 0){
+    		List<Fl> flList = this.getFlList(flowCodes);
+    		if (null != flList && flList.size() > 0){
+    			for(Fl fl : flList){
+    				flowNamesMap.put(fl.getFlowCode(), fl.getFlowName());
+    	    	}
+    		}
+    	}
+    	return flowNamesMap;
+    }
+}

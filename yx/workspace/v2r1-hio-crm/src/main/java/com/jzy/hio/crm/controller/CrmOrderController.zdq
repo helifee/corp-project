@@ -1,0 +1,171 @@
+package com.jzy.hio.crm.controller;
+
+import java.util.Date;
+
+import com.jzy.hio.crm.service.CrmCustomerService;
+import com.jzy.hio.entity.CrmCustomer;
+import com.jzy.hio.exception.HioException;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.controller.BaseController;
+import com.jzy.hio.constant.CrmConstant;
+import com.jzy.hio.crm.dto.AttachmentParamDto;
+import com.jzy.hio.crm.dto.CrmOrderDto;
+import com.jzy.hio.crm.dto.CrmOrderUploadParamDto;
+import com.jzy.hio.crm.param.CrmOrderSearchParam;
+import com.jzy.hio.crm.service.CrmOrderService;
+import com.jzy.hio.crm.utils.PageResult;
+import com.jzy.hio.entity.CrmOrder;
+import com.jzy.hio.springmvc.ApiResponse;
+
+/**
+ * 订单
+ * @author 
+ *
+ */
+@RestController
+@RequestMapping("/order")
+public class CrmOrderController extends BaseController {
+
+	@Autowired
+	private CrmOrderService crmOrderService;
+	@Autowired
+	private CrmCustomerService crmCustomerService;
+	
+	/**
+	 * 获取上传参数和业务id
+	 * @return
+	 */
+	@PostMapping("/getAttachmentParam")
+	public ApiResponse<CrmOrderUploadParamDto> getAttachmentParam(){
+		ApiResponse<CrmOrderUploadParamDto> res = new ApiResponse<>(200, "查询成功");
+		
+		String id = Base.generatePk(CrmOrder.class);
+		CrmOrderUploadParamDto orderUploadParamDto = new CrmOrderUploadParamDto();
+		// 附件上传参数
+		AttachmentParamDto attachmentParamDto = new AttachmentParamDto();
+		attachmentParamDto.setApp(BaseConstants.App.CRM.getId());
+		attachmentParamDto.setCategory(BaseConstants.AttachmentCategory.CRM_ORDER.getId());
+		attachmentParamDto.setBusinessId(id);
+		orderUploadParamDto.setAttachmentParam(attachmentParamDto);
+		
+		// 合同上传参数
+		AttachmentParamDto contractParam = new AttachmentParamDto();
+		contractParam.setApp(BaseConstants.App.CRM.getId());
+		contractParam.setCategory(BaseConstants.AttachmentCategory.CRM_ORDER_CONTRACT.getId());
+		contractParam.setBusinessId(id);
+		orderUploadParamDto.setContractParam(contractParam);
+		res.setResult(orderUploadParamDto);
+		
+		return res;
+	}
+	
+	/**
+	 * 新增和修改订单
+	 * @param orderDto
+	 * @return
+	 */
+	@PostMapping("/save")
+	public ApiResponse<Void> save(@RequestBody CrmOrderDto orderDto) {
+		ApiResponse<Void> res = new ApiResponse<>(200, "保存成功");
+
+		boolean falg = crmOrderService.saveOrder(orderDto);
+		// 返回值为false没有保存成功
+		if (!falg) {
+			res.setMessage("保存失败");
+			res.setStatus(102);
+			return res;
+		}
+		
+		return res;
+	}
+	
+	/**
+	 * 查询订单
+	 * @param id
+	 * @return
+	 */
+	@PostMapping("/get/{id}")
+	public ApiResponse<CrmOrderDto> get(@PathVariable("id") String id) {
+		ApiResponse<CrmOrderDto> res = new ApiResponse<>(200, "查询成功");
+		// 查询产品
+		CrmOrderDto orderDto = crmOrderService.selectOrder(id);
+		if (orderDto == null) {
+			res.setMessage("订单不存在或已删除");
+			res.setStatus(101);
+			return res;
+		}
+		res.setResult(orderDto);
+		
+		return res;
+	}
+	
+	/**
+	 * 删除订单
+	 * @param id
+	 * @return
+	 */
+	@PostMapping("/delete/{id}")
+	public ApiResponse<Void> delete(@PathVariable("id") String id) {
+		ApiResponse<Void> res = new ApiResponse<>(200, "删除成功");
+		String uid = getUserIdOA();
+		CrmOrder orderFind = crmOrderService.getObjectById(id);
+		if(orderFind == null || orderFind.getDelflag().equals(CrmConstant.DEL_TRUE)) {
+			res.setMessage("订单不存在或已删除");
+			res.setStatus(101);
+			return res;
+		}
+		
+		if (orderFind.getOrderStatus().equals(CrmConstant.ORDER_BESIGNED)) {
+			res.setMessage("已签订单不能删除");
+			res.setStatus(101);
+			return res;
+		}
+		if (!isRolePermission(BaseConstants.MYSQL_MENU_CODE_CRM_MANAGE)) {
+			CrmCustomer customer = crmCustomerService.getObjectById(orderFind.getCustomerId());
+			if (customer == null) {
+				throw new HioException("未找到客户");
+			}
+			if (!customer.getOwnerPersonId().equals(uid)) {
+				throw new HioException("您没有该客户权限");
+			}
+		}
+		
+		CrmOrder order = new CrmOrder();
+		order.setId(id);
+		order.setDelflag(CrmConstant.DEL_TRUE);
+		order.setUpdateDate(new Date());
+		order.setUpdatePersonId(uid);
+		// 删除产品
+		crmOrderService.update(order);
+		
+		return res;
+	}
+
+	/**
+	 * 订单分页
+	 * @param crmOrderSearchParam
+	 * @return
+	 */
+	@PostMapping("/page")
+	public ApiResponse<PageResult> page(@RequestBody CrmOrderSearchParam crmOrderSearchParam) {
+		ApiResponse<PageResult> res = new ApiResponse<>(200, "查询成功");
+		
+		if (!isRolePermission(BaseConstants.MYSQL_MENU_CODE_CRM_MANAGE)) {
+			String uid = getUserIdOA();
+			crmOrderSearchParam.setUid(uid);
+		}
+		PageResult page = crmOrderService.getPageOrders(crmOrderSearchParam);
+		res.setResult(page);
+		return res;
+	}
+	
+	
+}

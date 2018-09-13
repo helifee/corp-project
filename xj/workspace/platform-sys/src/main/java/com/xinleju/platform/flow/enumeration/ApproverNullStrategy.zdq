@@ -1,0 +1,39 @@
+package com.xinleju.platform.flow.enumeration;
+
+/**
+ * 审批人为空策略
+ * 
+ * @author daoqi
+ *
+ */
+public enum ApproverNullStrategy {
+
+	CANNOT_START("不允许发起", "1"), 
+	START_HUANGUP("允许发起，挂起", "2"), 
+	START_SKIP_DISPLAY("允许起发，跳过，并显示该行", "3"),
+	START_SKIP_DISPLAY_NONE("允许起发，跳过，不显示该行", "4");
+
+	private String name;
+	private String value;
+
+	private ApproverNullStrategy(String name, String value) {
+		this.name = name;
+		this.value = value;
+	}
+
+	public String getName() {
+		return name;
+	}
+
+	public void setName(String name) {
+		this.name = name;
+	}
+
+	public String getValue() {
+		return value;
+	}
+
+	public void setValue(String value) {
+		this.value = value;
+	}
+}

@@ -1,0 +1,25 @@
+package com.xinleju.platform.flow.service;
+
+import java.util.List;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.flow.entity.Step;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface StepService extends  BaseService <String,Step>{
+
+	/**
+	 * 检查指定变量编码是否在流程中使用，如果被使用，返回
+	 * @param businessObjectId
+	 * @param varCode
+	 * @return
+	 */
+	public List<String> bizVarBeUsedInFlow(String businessObjectId, String varCode);
+	
+	public List<Step> queryStepsBy(String flId);
+}

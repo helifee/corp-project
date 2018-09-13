@@ -1,0 +1,175 @@
+package com.xinleju.platform.flow.service.impl;
+
+import java.util.List;
+
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.flow.dao.ApproveTypeDao;
+import com.xinleju.platform.flow.dto.ApproveOperationDto;
+import com.xinleju.platform.flow.dto.ApproveTypeDto;
+import com.xinleju.platform.flow.dto.OperationTypeDto;
+import com.xinleju.platform.flow.entity.ApproveOperation;
+import com.xinleju.platform.flow.entity.ApproveType;
+import com.xinleju.platform.flow.service.ApproveOperationService;
+import com.xinleju.platform.flow.service.ApproveTypeService;
+import com.xinleju.platform.flow.service.OperationTypeService;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class ApproveTypeServiceImpl extends  BaseServiceImpl<String,ApproveType> implements ApproveTypeService{
+	
+
+	@Autowired
+	private ApproveTypeDao approveTypeDao;
+	@Autowired 
+	private OperationTypeService operationTypeService;
+	@Autowired 
+	private ApproveOperationService approveOperationService;
+	
+	@Override
+	public ApproveTypeDto getApproveTypeAndOperationData(String approveTypeId) {
+		ApproveTypeDto approveTypeDto =new ApproveTypeDto();
+		ApproveType obj = approveTypeDao.getObjectById(approveTypeId);
+		BeanUtils.copyProperties(obj, approveTypeDto);
+		
+		//给两个List对象赋值
+		List<OperationTypeDto> operationTypeList = operationTypeService.queryAllObjectDtoList(); 
+		approveTypeDto.setOperationTypeList(operationTypeList);
+		List<ApproveOperationDto> approvOperationList = approveOperationService.queryObjectListByApproveId(approveTypeId); 	
+		approveTypeDto.setApproveOperationList(approvOperationList);
+		
+		return approveTypeDto;
+	}
+
+	@Override
+	public int updateApproveTypeAndOperationData(ApproveTypeDto approveTypeDto) throws Exception {
+		//步骤一、更新ApproveType的对象
+		ApproveType approveType = new ApproveType();
+		BeanUtils.copyProperties(approveTypeDto, approveType);
+		int result = approveTypeDao.update(approveType);
+		//步骤二、根据approveTypeId删除approveOperation的相关联的对象
+		result = approveOperationService.deletePseudoAllObjectByApproveTypeIds(approveType.getId());
+		
+		//步骤三、逐条插入approveOperation对象
+		List<ApproveOperationDto> tempLst = approveTypeDto.getApproveOperationList();
+		for(ApproveOperationDto tempDto : tempLst){
+			ApproveOperation targetItem = new ApproveOperation();
+			BeanUtils.copyProperties(tempDto, targetItem);
+			targetItem.setId(IDGenerator.getUUID());
+			targetItem.setApproveId(approveType.getId());
+			targetItem.setDelflag(false);
+			targetItem.setConcurrencyVersion(new Integer(0));
+			approveOperationService.save(targetItem);
+		}
+		
+		return result;
+		
+	}
+
+	/**
+	 * 重置基础类型的数据 (code=approve审批类型; code=operation 操作类型)
+	 * @param t
+	 * @return
+	 */
+	@Override
+	public int resetBasicTypeData(ApproveTypeDto approveTypeDto) throws Exception {
+		String code = approveTypeDto.getCode();
+		int sum = 0;
+		if("approve".equals(code)){
+			sum = approveTypeDao.resetApproveTypeData();
+			//最后要更新pt_flow_approve_operation的数据
+			//先逻辑删除所有的映射关系
+			approveTypeDao.deleteAllMapDataByDelflag();
+			resetAllMapDefaultData();
+			System.out.println("\n\n --------------------------resetAllMapDefaultData() is done....--------------------");
+		}else if("operation".equals(code)){
+			sum = approveTypeDao.resetOperationTypeData();
+		}
+		
+		return sum;
+	}
+
+	private void resetAllMapDefaultData() throws Exception {
+		//approve_id, approve_role, operation_id,show_name, default_note,note_type,sort
+		//basic-approve-type-003
+		//先保存003审核  004审批  005核对 006办理四个通用的数据
+		String approveIds[] =   {"003","004","005","006"};
+		String approveRoles[] = {"2","2","2","2", "3"  };// 1,发起人,2,审批人,3 被协办人',
+		String operationIds[] = {"001","004","002","003", "005"};
+		String showNames[]    = {"通过","协办","转办","打回", "回复"};
+		String defaultNotes[] = {"","","","", ""};
+		String sorts[] = {"1","2","3","4", "1"};
+		for(int idx=0; idx<approveIds.length; idx++){
+			for(int idx2=0; idx2<approveRoles.length; idx2++){
+				System.out.println(approveIds[idx]+" idx="+idx);
+				ApproveOperation itemData = new ApproveOperation();
+				itemData.setId(IDGenerator.getUUID());
+				itemData.setDelflag(false);
+				itemData.setApproveId("basic-approve-type-"+approveIds[idx]);
+				itemData.setApproveRole(approveRoles[idx2]);
+				itemData.setOperationId("basic-operation-type-"+operationIds[idx2]);
+				itemData.setShowName(showNames[idx2]);
+				itemData.setDefaultNote(defaultNotes[idx2]);
+				itemData.setSort(Long.parseLong(sorts[idx2]));
+				itemData.setNoteType(false);// note_type '是否需要填写意见',
+				approveOperationService.save(itemData);
+			}
+			
+		}//end for-loop
+		
+		//002-校稿 JG
+		String approveRoles2[] = {"2","2"};// 1,发起人,2,审批人,3 被协办人',
+		String operationIds2[] = {"001", "003"};
+		String showNames2[]    = {"提交", "打回" };
+		String defaultNotes2[] = {"",""};
+		String sorts2[] = {"1","2"};
+		for(int idx=0; idx<approveRoles2.length; idx++){
+			System.out.println("002-校稿 JG idx="+idx);
+			ApproveOperation itemData = new ApproveOperation();
+			itemData.setId(IDGenerator.getUUID());
+			itemData.setDelflag(false);
+			itemData.setApproveId("basic-approve-type-002");//002-校稿 JG
+			itemData.setApproveRole(approveRoles2[idx]);
+			itemData.setOperationId("basic-operation-type-"+operationIds2[idx]);
+			itemData.setShowName(showNames2[idx]);
+			itemData.setDefaultNote(defaultNotes2[idx]);
+			itemData.setSort(Long.parseLong(sorts2[idx]));
+			itemData.setNoteType(false);// note_type '是否需要填写意见',
+			approveOperationService.save(itemData);
+		}
+		
+		//001-会签 HQ
+		String approveRoles3[] = {"2","2","2","2",   "3","3",   "1","1","1"};// 1,发起人,2,审批人,3 被协办人',
+		String operationIds3[] = {"007","006","004","002",   "005","006",  "005","008","009"};
+		String showNames3[]    = {"无异议","沟通发起人","协办","转办",  "回复","沟通发起人",  "回复","接受","不接受"};
+		String defaultNotes3[] = {"","","","",    "","",    "","",""};
+		String sorts3[] = {"1","2","3","4",  "1","2",   "1","2","3"};
+		
+		for(int idx=0; idx<approveRoles3.length; idx++){
+			System.out.println("001-会签 HQ idx="+idx);
+			ApproveOperation itemData = new ApproveOperation();
+			itemData.setId(IDGenerator.getUUID());
+			itemData.setDelflag(false);
+			itemData.setApproveId("basic-approve-type-001");//001-会签 HQ
+			itemData.setApproveRole(approveRoles3[idx]);
+			itemData.setOperationId("basic-operation-type-"+operationIds3[idx]);
+			itemData.setShowName(showNames3[idx]);
+			itemData.setDefaultNote(defaultNotes3[idx]);
+			itemData.setSort(Long.parseLong(sorts3[idx]));
+			itemData.setNoteType(false);// note_type '是否需要填写意见',
+			approveOperationService.save(itemData);
+		}
+		
+	}
+	
+
+}

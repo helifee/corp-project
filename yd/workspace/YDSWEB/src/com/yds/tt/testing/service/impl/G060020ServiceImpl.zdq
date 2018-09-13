@@ -1,0 +1,591 @@
+/*
+ * @(#)G060020ServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 教育考试培训系统
+ *    SubSystem: 考试子系统
+ */
+package com.yds.tt.testing.service.impl;
+
+import java.text.ParseException;
+import java.util.Calendar;
+import java.util.Iterator;
+import java.util.List;
+
+import org.springframework.stereotype.Service;
+
+import com.yds.base.service.AbstractBaseService;
+import com.yds.batch.service.BatchJobRun;
+import com.yds.common.bean.UserInfo;
+import com.yds.common.dao.UserSelectDao;
+import com.yds.tt.manager.bean.MessageReminding;
+import com.yds.tt.manager.dao.TtCommonDao;
+import com.yds.tt.manager.service.TtCommonService;
+import com.yds.tt.manager.service.TtCommonUtil;
+import com.yds.tt.manager.service.TtConstants;
+import com.yds.tt.testing.bean.G060020ExamineInfo;
+import com.yds.tt.testing.dao.G060020Dao;
+import com.yds.tt.testing.service.G060020Service;
+import com.yds.util.service.DateUtil;
+
+/**
+ * @see G060020Service,BatchJobRun
+ */
+@Service("g060020Service")
+public class G060020ServiceImpl extends AbstractBaseService implements 
+	G060020Service, BatchJobRun {
+	
+	private static final int TODAY_ADD = 0;
+	
+	private static final int TOMORROW_ADD = 1;
+	
+	private static final int AFTER_TOMORROW_ADD = 2;
+	
+	private static final String ALL_USER = "99999999";
+	
+ 	private G060020Dao g060020Dao;
+	
+ 	private TtCommonService ttCommonService;
+	
+ 	private TtCommonDao ttCommonDao;
+ 	
+	private UserSelectDao userSelectDao;
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void insertPublishedExamMsg() {
+
+		// 考试可见标识更新
+		g060020Dao.updateExamVisible();
+		
+		// 发布的考试信息检索
+		List<G060020ExamineInfo> examineInfos = g060020Dao.getPublishedExams();
+		
+		for (Iterator<G060020ExamineInfo> iter = examineInfos.iterator();  iter.hasNext();) {
+
+			// 插入提醒消息
+			insertMsg(getPublishedExamMsg(iter.next()));
+		}
+	}
+
+	/**
+	 * 得到发布的考试消息
+	 * 
+	 * @param examineInfo 考试
+	 * 
+	 * @return
+	 */
+	private MessageReminding getPublishedExamMsg(G060020ExamineInfo examineInfo) {
+		
+		MessageReminding msg = new MessageReminding();
+		
+		// 设置消息模式为考试发布
+		msg.setMode(TtConstants.REMIND_MODE.KSY05.value());
+		
+		// 设置消息参数
+		msg.setParameter(examineInfo.getExamineId());
+		
+		// 设置用户ID
+		msg.setUserId(ALL_USER);
+					
+		// 设置提醒内容
+		msg.setContent(propMgr.getMessage("yds.tt.remind.KSY05", examineInfo.getExamineName()));
+		
+		// 上方信息栏显示的信息 
+		msg.setInformationFlg(TtConstants.REMIND_FLG.TOP.value());
+		
+		// 设置消息 失效时间（当前日期） + （滚动消息失效时间）
+		Calendar cal = Calendar.getInstance();
+		cal.add(Calendar.DATE, Integer.parseInt(ttCommonDao.getPeizhiInfo("MSG_INVALID_TIME")));
+		msg.setLosetime(cal.getTime());
+		
+		return msg;
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void updateWhenExamEnd() {
+		
+		// 未提交试卷将状态置为放弃考试
+		g060020Dao.updateDropExamEmployee();
+		
+		// 将考试状态置为评分中
+		g060020Dao.updateToMarking();
+		
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void insertExamImplementMsg() {
+		
+		// 得到需要批准的考试列表
+		List<G060020ExamineInfo> examineInfos = g060020Dao.getExamsForApproval();
+		
+		for (Iterator<G060020ExamineInfo> iter = examineInfos.iterator();  iter.hasNext();) {
+					
+			// 插入提醒消息
+			insertMsg(getExamImplementMsg(iter.next()));
+
+		}
+	}
+	
+	/**
+	 * 得到发布的考试消息
+	 * 
+	 * @param examineInfo 考试
+	 * 
+	 * @return
+	 */
+	private MessageReminding getExamImplementMsg(G060020ExamineInfo examineInfo) {
+		
+		MessageReminding msg = new MessageReminding();
+		
+		// 设置消息模式为报名等待审批
+		msg.setMode(TtConstants.REMIND_MODE.KSY06.value());
+		
+		// 设置消息参数
+		msg.setParameter(examineInfo.getExamineId());
+		
+		// 设置用户ID
+		msg.setUserId(examineInfo.getImplementer());		
+			
+		// 设置提醒内容
+		msg.setContent(propMgr.getMessage("yds.tt.remind.KSY06", examineInfo.getExamineName()));
+		
+		// 左方提醒栏显示的消息
+		msg.setInformationFlg(TtConstants.REMIND_FLG.LEFT.value());
+		
+		// 设置消息 失效时间为考试开始时间
+		msg.setLosetime(examineInfo.getExamineStartTime());
+		
+		return msg;
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void updateExamStatusWhenEntryEnd() {
+		
+		// 检索考试报名截止的考试
+		List<G060020ExamineInfo> examineInfos = g060020Dao.getEntryEndExams();
+		
+		// 考试信息
+		G060020ExamineInfo examineInfo = null;
+		
+		for (Iterator<G060020ExamineInfo> iter = examineInfos.iterator();  iter.hasNext();) {
+			
+			examineInfo = iter.next();
+			
+			// wanqiuhong 10/22 修改： 如果考试没有人报名，则设置考试状态为考试不批准
+			if (TtConstants.C13.C13_2.value() == examineInfo.getApplyConfirmFlg()) {
+				
+				// 报名需要批准，设置考试状态为报名结束
+				examineInfo.setExamineStatus(TtConstants.R12.R12_5.value());
+
+			} else if (TtConstants.C13.C13_1.value() == examineInfo.getApplyConfirmFlg()) {
+				// 如果考试有人报名
+				if (g060020Dao.hasEntrant(examineInfo)) {
+
+					// 报名不需要批准，设置考试状态为报名已批准
+					examineInfo.setExamineStatus(TtConstants.R12.R12_6.value());
+				} else {
+					
+					// 如果考试没有人报名，则设置考试状态为考试不批准
+					examineInfo.setExamineStatus(TtConstants.R12.R12_5.value());
+				}
+			}
+			
+			// 更新考试状态
+			g060020Dao.updateExamineStatus(examineInfo);
+		}
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void insertEnrollTomorrowEndMsg() throws Exception {
+		
+		// 需要提醒的考试检索
+		List<G060020ExamineInfo> examineInfos = g060020Dao.getEnrollTomorrowEndExams(getParamEnrollTomorrowEnd());
+			
+		for (Iterator<G060020ExamineInfo> iter = examineInfos.iterator(); iter.hasNext();) {
+			
+			// 明天报名截止的考试提醒消息
+			insertEnrollTomorrowEndMsg(iter.next());
+			
+		}
+	}
+	
+	/**
+	 * 得到检索用考试信息(明天报名截止的考试)
+	 * 
+	 * @return 考试信息
+	 * 
+	 * @throws ParseException
+	 */
+	private G060020ExamineInfo getParamEnrollTomorrowEnd() throws ParseException {
+		
+		// 考试信息参数
+		G060020ExamineInfo paramExamineInfo = new G060020ExamineInfo();
+		
+		// 考试标志设为普通考试
+		paramExamineInfo.setExamineFlg(TtConstants.C08.C08_1.value());
+		
+		// 报名批准标志设为报名需要批准
+		paramExamineInfo.setApplyConfirmFlg(TtConstants.C13.C13_2.value());
+		
+		// 考试状态设为考试已批准
+		paramExamineInfo.setExamineStatus(TtConstants.R12.R12_3.value());
+		
+		// 报名截止日期判断区间
+		paramExamineInfo.setParamDateBegin(DateUtil.ymdDateAdd(Calendar.DATE, TOMORROW_ADD));		
+		paramExamineInfo.setParamDateEnd(DateUtil.ymdDateAdd(Calendar.DATE, AFTER_TOMORROW_ADD));
+		
+		return paramExamineInfo;
+		
+	}
+	
+	/**
+	 * 插入指定考试的明天报名截止消息
+	 * 
+	 * @param examineInfo指定考试
+	 * 
+	 * @throws Exception
+	 */
+	private void insertEnrollTomorrowEndMsg(G060020ExamineInfo examineInfo) throws Exception {
+		
+		// 检索考试相关人员
+		List<UserInfo> users = getExamObjectUsers(examineInfo);
+		
+		for (Iterator<UserInfo> userIter = users.iterator(); userIter.hasNext();) {
+			
+			// 插入提醒消息
+			insertMsg(getEnrollTomorrowEndMsg(examineInfo, userIter.next()));
+			
+		}
+	}
+	
+	/**
+	 * 得到考试相关员工
+	 * 
+	 * @param examineInfo 考试信息
+	 * 
+	 * @return 相关员工
+	 * 
+	 * @throws NumberFormatException
+	 * @throws ParseException
+	 */
+	private List<UserInfo> getExamObjectUsers(G060020ExamineInfo examineInfo)
+			throws NumberFormatException, ParseException {
+
+		// 针对全员
+		if (examineInfo.getObjectType() == TtConstants.C12.C12_1.value()) {
+			return userSelectDao.getUser();
+		}
+
+		// 针对项目组
+		if (examineInfo.getObjectType() == TtConstants.C12.C12_2.value()) {
+			return g060020Dao.getProjectUsers(examineInfo);
+		}
+
+		// 针对工龄
+		if (examineInfo.getObjectType() == TtConstants.C12.C12_3.value()) {
+			return g060020Dao.getWorkAgeUsers(DateUtil.ymdDateAdd(Calendar.YEAR,
+					0 - Integer.parseInt(examineInfo.getObjectValue())));
+		}
+		
+		// 针对个人
+		if (examineInfo.getObjectType() == TtConstants.C12.C12_4.value()) {
+			return g060020Dao.getPersonalUsers(examineInfo);
+		}
+
+		return null;
+	}
+	
+	/**
+	 * 得到考试明天报名截止消息
+	 * 
+	 * @param examineInfo 考试
+	 * @param user 通知对象
+	 * 
+	 * @return
+	 */
+	private MessageReminding getEnrollTomorrowEndMsg(G060020ExamineInfo examineInfo, UserInfo user) {
+		
+		MessageReminding msg = new MessageReminding();
+		
+		// 设置用户ID
+		msg.setUserId(user.getUserId());	
+		
+		// 设置消息模式为考试报名截止前提醒
+		msg.setMode(TtConstants.REMIND_MODE.KSY07.value());
+		
+		// 设置消息参数
+		msg.setParameter(examineInfo.getExamineId());
+			
+		// 设置提醒内容
+		msg.setContent(propMgr.getMessage("yds.tt.remind.KSY07", examineInfo.getExamineName()));
+		
+		// 左方提醒栏显示的消息
+		msg.setInformationFlg(TtConstants.REMIND_FLG.LEFT.value());
+		
+		// 设置消息 失效时间为报名截止日时
+		msg.setLosetime(examineInfo.getApplyClosingTime());
+		
+		return msg;
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void insertTodayExamMsg() throws Exception {
+		
+		// 需要提醒的考试检索
+		List<G060020ExamineInfo> examineInfos = g060020Dao.getTodayExams(getParamTodayExam());
+			
+		for (Iterator<G060020ExamineInfo> iter = examineInfos.iterator(); iter.hasNext();) {
+			
+			// 插入今天考试提醒消息
+			insertMsgTodayExam(iter.next());
+			
+		}
+	}
+	
+	/**
+	 * 得到检索用考试信息(今天的考试)
+	 * 
+	 * @return 考试信息
+	 * 
+	 * @throws ParseException
+	 */
+	private G060020ExamineInfo getParamTodayExam() throws ParseException {
+		
+		// 考试信息参数
+		G060020ExamineInfo paramExamineInfo = new G060020ExamineInfo();
+		
+		// 考试标志设为普通考试
+		paramExamineInfo.setExamineFlg(TtConstants.C08.C08_1.value());
+		
+		// 考试状态设为报名已批准
+		paramExamineInfo.setExamineStatus(TtConstants.R12.R12_6.value());
+		
+		// 报名截止日期判断区间
+		paramExamineInfo.setParamDateBegin(DateUtil.ymdDateAdd(Calendar.DATE, TODAY_ADD));		
+		paramExamineInfo.setParamDateEnd(DateUtil.ymdDateAdd(Calendar.DATE, TOMORROW_ADD));
+		
+		return paramExamineInfo;
+		
+	}
+	
+	/**
+	 * 插入今天考试的消息
+	 * 
+	 * @param examineInfo 考试
+	 * 
+	 * @throws Exception
+	 */
+	private void insertMsgTodayExam(G060020ExamineInfo examineInfo) throws Exception {
+		
+		// 检索考试相关人员
+		List<UserInfo> users = g060020Dao.getExamEntrantUsers(examineInfo);
+		
+		for (Iterator<UserInfo> userIter = users.iterator(); userIter.hasNext();) {
+			
+			// 插入提醒消息
+			insertMsg(getTodayExamMsg(examineInfo, userIter.next()));
+			
+		}
+	}
+	
+	/**
+	 * 得到今天考试的提醒消息
+	 * 
+	 * @param examineInfo 考试
+	 * @param user 通知对象
+	 * 
+	 * @return
+	 */
+	private MessageReminding getTodayExamMsg(G060020ExamineInfo examineInfo, UserInfo user) {
+		
+		MessageReminding msg = new MessageReminding();
+		
+		// 设置用户ID
+		msg.setUserId(user.getUserId());
+		
+		// 设置消息模式为考试开始提醒
+		msg.setMode(TtConstants.REMIND_MODE.KSY08.value());
+		
+		// 设置消息参数
+		msg.setParameter(examineInfo.getExamineId());
+			
+		// 设置提醒内容
+		msg.setContent(propMgr.getMessage("yds.tt.remind.KSY08", examineInfo.getExamineName()));
+		
+		// 左方提醒栏显示的消息
+		msg.setInformationFlg(TtConstants.REMIND_FLG.LEFT.value());
+		
+		// 设置消息 失效时间为考试结束日时
+		msg.setLosetime(examineInfo.getExamineEndTime());
+		
+		return msg;
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void insertMarkExamMsg() {
+		
+		// 检索出评分中的考试
+		List<G060020ExamineInfo> examineInfos = g060020Dao.getMarkingExams();
+			
+		for (Iterator<G060020ExamineInfo> iter = examineInfos.iterator(); iter.hasNext();) {
+			
+			// 插入今天考试提醒消息
+			insertMarkExamMsg(iter.next());
+			
+		}
+		
+	}
+	
+	/**
+	 * 插入考试评分提醒信息
+	 * 
+	 * @param examineInfo 考试
+	 */
+	private void insertMarkExamMsg(G060020ExamineInfo examineInfo){
+		
+		// 检索考试评分者
+		List<UserInfo> users = g060020Dao.getExamMarker(examineInfo);
+		
+		for (Iterator<UserInfo> userIter = users.iterator(); userIter.hasNext();) {
+			
+			// 插入提醒消息
+			insertMsg(getMarkExamMsg(examineInfo, userIter.next()));
+			
+		}
+	}
+	
+	/**
+	 * 得到考试评分提醒信息
+	 * 
+	 * @param examineInfo 考试
+	 * @param user 通知对象
+	 * 
+	 * @return 提醒信息
+	 */
+	private MessageReminding getMarkExamMsg(G060020ExamineInfo examineInfo, UserInfo user) {
+		
+		MessageReminding msg = new MessageReminding();
+		
+		// 设置评分者ID
+		msg.setUserId(user.getUserId());
+		
+		// 设置消息模式为考试评分
+		msg.setMode(TtConstants.REMIND_MODE.KSY09.value());
+		
+		// 设置消息参数
+		msg.setParameter(examineInfo.getExamineId());
+			
+		// 设置提醒内容
+		msg.setContent(propMgr.getMessage("yds.tt.remind.KSY09", examineInfo.getExamineName()));
+		
+		// 左方提醒栏显示的消息
+		msg.setInformationFlg(TtConstants.REMIND_FLG.LEFT.value());
+		
+		// 设置消息 失效时间为（默认值）
+		msg.setLosetime(TtCommonUtil.getMaxDate());
+		
+		return msg;
+	}
+
+	/**
+	 * 插入提醒消息
+	 * 
+	 * @param msg 提醒消息
+	 */
+	private void insertMsg(MessageReminding msg) {		
+		
+		if (!g060020Dao.hasSameMsg(msg)) {
+			
+			// 设置消息ID序号
+			msg.setInformationId(ttCommonService.getSequence(TtConstants.SEQID.Information));
+			
+			ttCommonDao.insertMessageReminding(msg);
+		}
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void jobRun() throws Throwable {
+		
+		// 插入考试公告信息
+		insertPublishedExamMsg();
+		
+		// 考试结束状态设定
+		updateWhenExamEnd();
+		
+		// 考试实施者信息设定
+		insertExamImplementMsg();
+		
+		// 考试报名截止时，修改考试状态
+		updateExamStatusWhenEntryEnd();
+		
+		// 报名截止日期前一天，写入提醒信息
+		insertEnrollTomorrowEndMsg();
+		
+		// 考试开始当天，写入提醒考试信息
+		insertTodayExamMsg();
+		
+		// 给评分中的考试的评分者发送提醒消息
+		insertMarkExamMsg();
+		
+	}
+
+	/**
+	 * @param dao the g060020Dao to set
+	 */
+	public void setG060020Dao(G060020Dao dao) {
+		g060020Dao = dao;
+	}
+
+	/**
+	 * @param ttCommonService the ttCommonService to set
+	 */
+	public void setTtCommonService(TtCommonService ttCommonService) {
+		this.ttCommonService = ttCommonService;
+	}
+
+	/**
+	 * @param ttCommonDao the ttCommonDao to set
+	 */
+	public void setTtCommonDao(TtCommonDao ttCommonDao) {
+		this.ttCommonDao = ttCommonDao;
+	}
+
+	/**
+	 * @return the userSelectDao
+	 */
+	public UserSelectDao getUserSelectDao() {
+		return userSelectDao;
+	}
+
+	/**
+	 * @param userSelectDao the userSelectDao to set
+	 */
+	public void setUserSelectDao(UserSelectDao userSelectDao) {
+		this.userSelectDao = userSelectDao;
+	}
+
+}

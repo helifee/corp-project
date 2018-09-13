@@ -1,0 +1,22 @@
+package com.xinleju.platform.flow.exception;
+
+public class FlowException extends RuntimeException {
+
+	private static final long serialVersionUID = 6082045735836433528L;
+
+	public FlowException() {
+		super();
+	}
+
+	public FlowException(String message, Throwable cause) {
+		super(message, cause);
+	}
+
+	public FlowException(String message) {
+		super(message);
+	}
+
+	public FlowException(Throwable cause) {
+		super(cause);
+	}
+}

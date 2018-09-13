@@ -1,0 +1,57 @@
+package com.xinleju.platform.univ.attachment.service;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.base.utils.AttachmentDto;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.univ.attachment.entity.Attachment;
+
+/**
+ * @author haoqp
+ * 
+ * 
+ */
+
+public interface AttachmentService extends  BaseService <String,Attachment>{
+	
+	
+	
+	/**
+	 * 根据附件分类ID数组查询附件列表
+	 * 
+	 * @param ids
+	 * @return
+	 */
+	List<AttachmentDto> queryListByCategoryIds(String[] ids);
+
+	/**
+	 * 根据附件分类ID数组查询附件列表，列表信息包含附件分类名信息
+	 * @param paramater
+	 * @return
+	 * @throws Exception
+	 */
+	List<AttachmentDto> queryListWithCategoryName(Map<String, Object> paramater) throws Exception;
+	
+	/**
+	 * 根据附件分类ID列表分页查询附件列表
+	 * @param paramater
+	 * @param start
+	 * @param pageSize
+	 * @return
+	 * @throws Exception
+	 */
+	Page getPageByCategoryIds(Map<String, Object> paramater, Integer start,
+			Integer pageSize) throws Exception;
+	/**
+	 * 根据appId，businessId（列表），categoryId查询附件列表
+	 * @param paramater
+	 * @return
+	 * @throws Exception
+	 */
+	List<AttachmentDto> queryListByObject(Map<String, Object> paramater) throws Exception;
+
+
+    List<Attachment> queryFlowList(Map<String, Object> paramater)throws Exception;
+}

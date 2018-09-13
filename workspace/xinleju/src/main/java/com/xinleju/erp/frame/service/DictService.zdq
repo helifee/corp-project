@@ -1,0 +1,159 @@
+package com.xinleju.erp.frame.service;
+
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.frame.models.Dict;
+import com.xinleju.erp.frame.models.LabelValueBean;
+
+
+@Service
+@Transactional
+public class DictService extends BaseService{
+	/**
+	 * 职能
+	 */
+	public static final String GWZJ = "GWZJ";
+
+	/**
+	 * 省市区
+	 */
+	public static final String SSQ = "SSQ";
+
+	/**
+	 * 
+	 * @param code
+	 * @return
+	 */
+	public List<LabelValueBean> getChildDictByCode(String code) {
+		List<LabelValueBean> result = new ArrayList<LabelValueBean>();
+		LabelValueBean labelValueBean = null;
+		String sql = "select c.name,c.code from sm_dict c left join sm_dict f on c.parent_id=f.id"
+				+ " where (c.disabled='false' or c.disabled is null ) and f.code = ?";
+		List<Object[]> objectsList = null;
+		try {
+			objectsList = (List<Object[]>) getDao().findListBySQL(sql, new Object[]{code});
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		for(Object[] objects:objectsList){
+			labelValueBean = new LabelValueBean(String.valueOf(objects[0]),String.valueOf(objects[1]));
+			result.add(labelValueBean);
+		}
+		return result;
+	}
+	public List<Object[]> getDictObjectArrayListBySql(String sql, Object[] objects){
+		if (StringUtils.isNotBlank(sql) && null != objects){
+			return (List<Object[]>) getDao().findListBySQL(sql, objects);
+		}
+		return new ArrayList<Object[]>();
+	}
+	/**
+	 * 获取最大排序
+	 * @param parentId
+	 * @return
+	 */
+	public Integer getMaxPosition(Long parentId){
+		Integer maxPosition = 1;
+		if(parentId!=null && parentId!=0){
+			maxPosition = getDao().findInt("select max(position) from Dict where parent_id = ?",new Object[]{parentId})+1;
+		}else{
+			maxPosition = getDao().findInt("select max(position) from Dict where parent_id is null")+1;
+		}
+		return maxPosition;
+	}
+	/**
+	 * 迭代获取儿子并删除（删除不了给提示）
+	 * @param parentId 字典父亲id
+	 * @return
+	 */
+	public Map<String, String> getSonsAndDelete(Long parentId){
+		Map<String,String> map=new HashMap<String,String>();
+		String successDeleteIdsStr = "";
+		String failDeleteIdsStr="";
+		if(parentId!=null){
+			//取儿子一级
+			List<Dict> sonList = this.getByListPid(parentId);
+			for(Dict son : sonList){
+				//自迭代取儿子的儿子...
+				Map<String,String> mapChild =this.getSonsAndDelete(son.getId());
+				successDeleteIdsStr+=mapChild.get("successDeleteIdsStr");
+				failDeleteIdsStr+=mapChild.get("failDeleteIdsStr");
+			}
+			try{
+				//能删除的
+				getDao().delete(Dict.class,parentId);
+				successDeleteIdsStr+=(String.valueOf(parentId)+",");
+			}catch (Exception e) {
+				//不能删除的
+				failDeleteIdsStr=(String.valueOf(parentId)+",");
+			}
+			map.put("successDeleteIdsStr", successDeleteIdsStr);
+			map.put("failDeleteIdsStr", failDeleteIdsStr);
+		}
+		return map;
+	}
+	/**
+	 * 根据父ID查找list
+	 * @param pid
+	 * @return
+	 */
+	public List<Dict> getByListPid(Long pid){
+		List<Dict> children = getDao().findByHQL(Dict.class,"from Dict d where d.parent.id = ? and (d.disabled=? or d.disabled is NULL) order by d.position asc", pid, "false");
+		return children;
+	}
+	/**
+	 * 获取历史层级
+	 * @param parentId
+	 * @return
+	 */
+	public String getPrefix(Long parentId,String prefix){
+		if(parentId!=null){
+			Dict parent = getDao().getById(Dict.class,parentId);
+			if(parent!=null&&parent.getParent()!=null){
+				if(StringUtils.isBlank(prefix)){
+					prefix=("("+String.valueOf(parent.getId()+")"));
+				}else{
+					prefix += ("("+String.valueOf(parent.getId())+")");
+				}
+				prefix = this.getPrefix(parent.getParent_id(),prefix);
+			}else{
+				prefix += (  "("+String.valueOf(parent!=null ? parent.getId():null)+")"  );
+			}
+		}
+		return prefix;
+	}
+	public List<Dict> getChildrenByListCode(String parentCode){
+		List<Dict> children = getDao().findByHQL(Dict.class,"select d from Dict d left join fetch d.parent p where p.code = ? and (d.disabled=? or d.disabled is NULL) and (p.disabled=? or p.disabled is NULL) order by d.position asc",parentCode, "false", "false");
+		return children;
+	}
+	/**
+	 * Description: 检查编码是否重复<br>
+	 * @param code 模块编码
+	 * @param dictId 字典ID,如果是新增则dictId为空
+	 * @return true:存在 false: 不存在
+	 * @see
+	 */
+
+	public boolean checkExistsByCode(String code, Long dictId) {
+		StringBuffer hql = new StringBuffer();
+		Long count = 0L;
+		if (dictId == null) {
+			hql.append("select count(*) from Dict d where lower(d.code) = ?");
+			count = getDao().findLong(hql.toString(), code.toLowerCase());
+		} else {
+			hql.append("select count(*) from Dict d where lower(d.code) = ? and d.id <> ?");
+			count = getDao().findLong(hql.toString(), code.toLowerCase(), dictId);
+		}
+		return count == 0 ? false : true;
+	}
+}

@@ -1,0 +1,1084 @@
+/*
+ * @(#)Ye0010ServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 考勤系统
+ */
+package com.yds.att.service.impl;
+
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.List;
+
+import org.springframework.stereotype.Service;
+
+import com.yds.att.bean.AttInfo;
+import com.yds.att.bean.AttMonReport;
+import com.yds.att.bean.Ye0010CalInfo;
+import com.yds.att.bean.Ye0010CondA;
+import com.yds.att.common.service.DateRelationService;
+import com.yds.att.dao.Ye0010Dao;
+import com.yds.att.service.Ye0010Service;
+import com.yds.att.service.AttConstants.AppStatus;
+import com.yds.att.service.AttConstants.AppStatusText;
+import com.yds.att.service.AttConstants.AttCalShow;
+import com.yds.att.service.AttConstants.CalColor;
+import com.yds.att.service.AttConstants.CalHref;
+import com.yds.att.service.AttConstants.DateTypeEnum;
+import com.yds.att.service.AttConstants.RestFlg;
+import com.yds.att.service.AttConstants.TimeFormat;
+import com.yds.att.service.AttConstants.VacationType;
+import com.yds.att.service.AttConstants.VacationTypeText;
+import com.yds.base.service.AbstractBaseService;
+import com.yds.common.service.SessionService;
+import com.yds.util.service.DateUtil;
+
+/**
+ * @see com.yds.att.service.Ye0010Service
+ */
+@Service("ye0010Service")
+public class Ye0010ServiceImpl extends AbstractBaseService implements
+		Ye0010Service {
+
+	/** 注入Dao. */
+	private Ye0010Dao ye0010Dao;
+	private DateRelationService dateRelationService;
+
+	/**
+	 * 取得月计信息 {@inheritDoc}
+	 */
+	@Override
+	public void getMonReport(Ye0010CondA ye0010CondA) {
+		// 取得登陆者Id
+		String empId = SessionService.getLoginUserId();
+		ye0010CondA.setEmpId(empId);
+		
+		// 取得月计信息
+		AttMonReport attMonInfo = ye0010Dao.getMonReport(ye0010CondA);	
+		
+		//平日加班: HHmm
+		ye0010CondA.setMonWorkdayOtMin(minToHm(attMonInfo.getWorkdayOtMin()));
+		//休日加班: HHmm
+		ye0010CondA.setMonErestMin(minToHm(attMonInfo.getErestMin()));			
+		//迟到时间: HHmm
+		ye0010CondA.setMonBelateMin(minToHm(attMonInfo.getBelateMin()));		
+		//迟到次数
+		ye0010CondA.setMonBelateCnt(attMonInfo.getBelateCnt());			
+		//早退时间: HHmm
+		ye0010CondA.setMonLveEarlyMin(minToHm(attMonInfo.getLveEarlyMin()));		
+		//早退次数
+		ye0010CondA.setMonLveEarlyCnt(attMonInfo.getLveEarlyCnt());		
+		//早到早退: HHmm
+		ye0010CondA.setMonLateTotalMin(minToHm(attMonInfo.getBelateMin()+attMonInfo.getLveEarlyMin()));	
+		//其他欠时（事欠+病欠）: HHmm
+		ye0010CondA.setMonOtherMin(minToHm(attMonInfo.getSickMin()+attMonInfo.getPerMin()));				
+	}
+
+	/**
+	 * 取得年计信息 {@inheritDoc}
+	 */
+	@Override
+	public void getYearReport(Ye0010CondA ye0010CondA) {
+		Double annRemain;
+		int eremain;
+		
+		// 取得登陆者Id
+		String empId = SessionService.getLoginUserId();
+		ye0010CondA.setEmpId(empId);
+		// 取得全年信息
+		ye0010CondA.setMonth("00");
+		
+		//取得年计信息
+		AttMonReport attYearInfo = ye0010Dao.getMonReport(ye0010CondA);	
+		
+		//平日加班: HHmm
+		ye0010CondA.setYearWorkdayOtMin(minToHm(attYearInfo.getWorkdayOtMin()));		
+		//休日加班: HHmm
+		ye0010CondA.setYearErestMin(minToHm(attYearInfo.getErestMin()));		
+		//迟到次数
+		ye0010CondA.setYearBelateCnt(attYearInfo.getBelateCnt());	
+		//早退次数
+		ye0010CondA.setYearLveEarlyCnt(attYearInfo.getLveEarlyCnt());	
+		//早到早退: HHmm
+		ye0010CondA.setYearLateTotalMin(minToHm(attYearInfo.getBelateMin()+attYearInfo.getLveEarlyMin()));	
+		//其他欠时: HHmm
+		ye0010CondA.setYearOtherMin(minToHm(attYearInfo.getSickMin()+attYearInfo.getPerMin()));	
+		
+		try {
+			//取得本年年休剩余
+			annRemain = dateRelationService.getPtoDays(ye0010CondA.getYear(), ye0010CondA.getEmpId());
+			//double -> int
+			int annRemainInt = (int)Math.floor(annRemain);
+			//本年年休剩余： 取整
+			ye0010CondA.setAnnRestRemain(annRemainInt);
+			
+			//取得本年换休剩余
+			eremain = dateRelationService.getExrestTime(ye0010CondA.getEmpId());
+			//本年换休剩余: HHmm
+			ye0010CondA.setERestRemain(minToHm(eremain));
+			
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+	}
+
+	/**
+	 * 取得个人考勤信息日历 {@inheritDoc}
+	 */
+	@Override
+	public List<Ye0010CalInfo> getAttInfo(Ye0010CondA ye0010CondA) {
+		// 日历信息
+		List<Ye0010CalInfo> ye0010CalInfo = new ArrayList<Ye0010CalInfo>();
+		Ye0010CalInfo aInfo;
+
+		// 格式化：实际出退勤日历显示时间
+		SimpleDateFormat timeHM = new SimpleDateFormat(TimeFormat.TIME_HM.value());
+		
+		// 取得登陆者Id
+		String empId = SessionService.getLoginUserId();
+		ye0010CondA.setEmpId(empId);
+
+		// 取得个人考勤信息
+		List<AttInfo> attInfoList = ye0010Dao.getAttInfo(ye0010CondA);
+
+		// 今天的年月日
+		Calendar cal = Calendar.getInstance();
+		cal.add(Calendar.DAY_OF_YEAR, 0);
+		Date today = cal.getTime();
+
+		//取出年月日字符串
+		SimpleDateFormat timeYMD = new SimpleDateFormat(TimeFormat.TIME_YMD.value());
+		//今天（年月日）
+		String todayStr = timeYMD.format(today);
+		
+		//取得考勤月的天数
+		cal.set(Integer.parseInt(ye0010CondA.getYear()), Integer.parseInt(ye0010CondA.getMonth())-1, 1);
+		cal.add(Calendar.MONTH, 1);
+		cal.add(Calendar.DAY_OF_YEAR, -1);
+		int days = cal.get(Calendar.DAY_OF_MONTH);
+		
+		// 设定日历信息
+		if (attInfoList.size() > 0) {
+			
+			//取出的数据与该月日数不相等
+			if(days != attInfoList.size()){
+				//如果数据库中没有某一天的记录,补上一条空数据.
+				for(int mdate = 0; mdate < days; mdate++){
+					
+					if(mdate < attInfoList.size()){
+						//如果数据存在
+						if(mdate+1 == Integer.parseInt(attInfoList.get(mdate).getDay())){
+							continue;
+						//如果数据不存在
+						}else{
+							//增加一条空纪录
+							AttInfo aInfoNull = addNewRecord(ye0010CondA,mdate);
+							//将空记录加到attInfoList里
+							attInfoList.add(mdate, aInfoNull);
+						}
+					}else{
+						//增加一条空纪录
+						AttInfo aInfoNull = addNewRecord(ye0010CondA,mdate);
+						//将空记录加到attInfoList里
+						attInfoList.add(mdate, aInfoNull);
+					}
+				}
+			}
+			
+			// 按天循环
+			for (int i = 0; i < attInfoList.size(); i++) {
+				
+				// 考勤年月日
+				String day = attInfoList.get(i).getYear() + attInfoList.get(i).getMonth()+attInfoList.get(i).getDay();
+				Date attday = DateUtil.parse(day);
+
+				//舍弃秒后的字符串
+				String attdayStr = timeYMD.format(attday);
+				
+				// 如果考勤年月日大于等于今天
+				if(attday.after(today)){
+					continue;
+				}
+				
+				aInfo = new Ye0010CalInfo();
+				ye0010CalInfo.add(aInfo);
+
+				// 员工Id
+				ye0010CalInfo.get(i).setEmpId(attInfoList.get(i).getEmpId());
+				// 年
+				ye0010CalInfo.get(i).setYear(attInfoList.get(i).getYear());
+				// 月
+				ye0010CalInfo.get(i).setMonth(attInfoList.get(i).getMonth());
+				// 日
+				ye0010CalInfo.get(i).setDay(attInfoList.get(i).getDay());
+
+				//日期类型：0.上班
+				if(DateTypeEnum.WORK.value().equals(attInfoList.get(i).getDayFlg())){
+					// 日期颜色
+					ye0010CalInfo.get(i).setDayColor("");
+					
+				//日期类型：1.周末、远东假日
+				}else if(DateTypeEnum.HOLIDAY.value().equals(attInfoList.get(i).getDayFlg())){
+					// 日期颜色
+					ye0010CalInfo.get(i).setDayColor(CalColor.PINK.value());	
+				
+				//日期类型：2.法定节假日
+				}else if(DateTypeEnum.REST.value().equals(attInfoList.get(i).getDayFlg())){
+					// 日期颜色
+					ye0010CalInfo.get(i).setDayColor(CalColor.RED.value());	
+				}
+
+				//应出勤日时：舍弃秒
+				ye0010CalInfo.get(i).setPstartTimeComp(getTimeFormate(attInfoList.get(i).getPstartTime()));
+				//应退勤日时：舍弃秒
+				ye0010CalInfo.get(i).setPendTimeComp(getTimeFormate(attInfoList.get(i).getPendTime()));
+				//首次打卡日时：舍弃秒
+				ye0010CalInfo.get(i).setFirstTimeComp(getTimeFormate(attInfoList.get(i).getFirstTime()));
+				//末次打卡日时：舍弃秒
+				ye0010CalInfo.get(i).setLastTimeComp(getTimeFormate(attInfoList.get(i).getLastTime()));
+				//实际出勤日时：舍弃秒
+				ye0010CalInfo.get(i).setRstartTimeComp(getTimeFormate(attInfoList.get(i).getRstartTime()));
+				//实际退勤日时：舍弃秒
+				ye0010CalInfo.get(i).setRendTimeComp(getTimeFormate(attInfoList.get(i).getRendTime()));
+				
+				// 实际出勤日时和实际退勤日时都为null
+				if (ye0010CalInfo.get(i).getRstartTimeComp() == null
+						&& ye0010CalInfo.get(i).getRendTimeComp() == null) {
+
+					// 没有任何申请
+					if (attInfoList.get(i).getAppId() == null
+							&& attInfoList.get(i).getAppIdAddi() == null
+							&& attInfoList.get(i).getAttStatusCor() == null) {
+
+						//日期类型：0.上班 && 不是今天
+						if(DateTypeEnum.WORK.value().equals(attInfoList.get(i).getDayFlg())
+								&& !attdayStr.equals(todayStr)){
+							// 旷工信息
+							ye0010CalInfo.get(i).setAttCorInfo(AttCalShow.ABSENTEEISM.value());
+							// 旷工颜色
+							ye0010CalInfo.get(i).setAttCorColor(CalColor.RED.value());
+						}
+						
+					//有申请
+					} else{
+
+						// 有考勤更正申请
+						if(attInfoList.get(i).getAttStatusCor() != null){
+							// 取得考勤更正画面显示信息
+							setAttCorShowInfo(attInfoList.get(i), ye0010CalInfo.get(i));	
+						}
+						
+						// 有休假申请
+						if(attInfoList.get(i).getAppStatus() != null
+								|| attInfoList.get(i).getAppStatusAddi() != null){
+							// 取得请假休假画面显示信息
+							setAttRestShowInfo(attInfoList.get(i), ye0010CalInfo.get(i));
+							// 旷工信息
+							ye0010CalInfo.get(i).setAttCorInfo(null);
+						}
+					}
+
+				// 实际出勤日时和实际退勤日时都不为null
+				} else if(ye0010CalInfo.get(i).getRstartTimeComp() != null
+							&& ye0010CalInfo.get(i).getRendTimeComp() != null){ 
+					
+					// 漏考:实际出勤日时 = 实际退勤日时
+					if (ye0010CalInfo.get(i).getRstartTimeComp().equals(ye0010CalInfo.get(i).getRendTimeComp())){
+
+						// 漏考信息
+						ye0010CalInfo.get(i).setAttCorInfo(AttCalShow.NOTATTENDANCE.value());
+						// 漏考颜色
+						ye0010CalInfo.get(i).setAttCorColor(CalColor.RED.value());
+						// 漏考链接
+						ye0010CalInfo.get(i).setAttCorHref(CalHref.COR.value());
+						// 考勤更正申请编号
+						ye0010CalInfo.get(i).setAppIdCor(null);
+
+						// 午休结束日时、应出退勤日时不为空
+						if(attInfoList.get(i).getLunchTimeEnd() != null
+								&& attInfoList.get(i).getPstartTime() != null
+								&& attInfoList.get(i).getPendTime() != null){
+
+							//下午漏考
+							if(ye0010CalInfo.get(i).getRstartTimeComp().before(attInfoList.get(i).getLunchTimeEnd())){
+								
+								// 实际出勤日时:画面显示HH:mm
+								ye0010CalInfo.get(i).setRstartTime(timeHM.format(ye0010CalInfo.get(i).getRstartTimeComp()));
+								// 实际退勤日时:null
+								ye0010CalInfo.get(i).setRendTime(null);
+								
+								//迟到
+								if(ye0010CalInfo.get(i).getRstartTimeComp().after(attInfoList.get(i).getPstartTime())){
+									// 实际出勤颜色
+									ye0010CalInfo.get(i).setRstartColor(CalColor.RED.value());
+								//早上正常出勤
+								}else{
+									// 实际出勤颜色
+									ye0010CalInfo.get(i).setRstartColor(null);
+								}
+							//上午漏考
+							}else{
+
+								// 实际出勤日时:null
+								ye0010CalInfo.get(i).setRstartTime(null);
+								// 实际退勤日时:画面显示HH:mm
+								ye0010CalInfo.get(i).setRendTime(timeHM.format(ye0010CalInfo.get(i).getRendTimeComp()));
+								
+								//早退
+								if(ye0010CalInfo.get(i).getRendTimeComp().before(attInfoList.get(i).getPendTime())){
+									// 实际退勤颜色
+									ye0010CalInfo.get(i).setRendColor(CalColor.RED.value());
+								//晚上正常退勤
+								}else{
+									// 实际退勤颜色
+									ye0010CalInfo.get(i).setRendColor(null);
+								}
+							}
+						}
+						
+						// 有考勤更正
+						if (attInfoList.get(i).getAttStatusCor() != null) {
+							// 取得考勤更正画面显示信息
+							setAttCorShowInfo(attInfoList.get(i), ye0010CalInfo.get(i));
+						}
+						
+						// 有休假申请
+						if (attInfoList.get(i).getAppStatus() != null
+								|| attInfoList.get(i).getAppStatusAddi() != null) {
+							// 取得请假休假画面显示信息
+							setAttRestShowInfo(attInfoList.get(i), ye0010CalInfo.get(i));
+						}
+						
+						// 有加班申请  （上午漏考才判断）
+						if (attInfoList.get(i).getAttStatusOt() != null) {
+							// 取得加班画面显示信息
+							setAttOtShowInfo(attInfoList.get(i), ye0010CalInfo.get(i));
+						}
+						
+					//非漏考:实际出勤日时 != 实际退勤日时
+					}else{
+						
+						// 实际出勤日时:画面显示HH:mm
+						ye0010CalInfo.get(i).setRstartTime(timeHM.format(ye0010CalInfo.get(i).getRstartTimeComp()));
+						// 实际退勤日时:画面显示HH:mm
+						ye0010CalInfo.get(i).setRendTime(timeHM.format(ye0010CalInfo.get(i).getRendTimeComp()));
+						
+						// 应出勤日时、应退勤日时都不为空
+						if(ye0010CalInfo.get(i).getPstartTimeComp() != null
+								&& ye0010CalInfo.get(i).getPendTimeComp() != null){
+							// 正常出退勤:应出勤日时 >= 实际出勤日时 && 实际退勤日时 >= 应退勤日时
+							if ((ye0010CalInfo.get(i).getRstartTimeComp().before(ye0010CalInfo.get(i).getPstartTimeComp())
+									|| ye0010CalInfo.get(i).getRstartTimeComp().equals(ye0010CalInfo.get(i).getPstartTimeComp()))
+									&& (ye0010CalInfo.get(i).getRendTimeComp().after(ye0010CalInfo.get(i).getPendTimeComp())
+									|| ye0010CalInfo.get(i).getRendTimeComp().equals(ye0010CalInfo.get(i).getPendTimeComp()))) {
+
+								// 有考勤更正
+								if (attInfoList.get(i).getAttStatusCor() != null) {
+									// 取得考勤更正画面显示信息
+									setAttCorShowInfo(attInfoList.get(i), ye0010CalInfo.get(i));
+								}
+								
+								// 有休假申请
+								if (attInfoList.get(i).getAppStatus() != null
+										|| attInfoList.get(i).getAppStatusAddi() != null) {
+									// 取得请假休假画面显示信息
+									setAttRestShowInfo(attInfoList.get(i),ye0010CalInfo.get(i));
+								}
+								
+								// 有加班申请
+								if (attInfoList.get(i).getAttStatusOt() != null) {
+									// 取得加班画面显示信息
+									setAttOtShowInfo(attInfoList.get(i), ye0010CalInfo.get(i));
+								}
+								
+							//迟到早退
+							} else {
+								//应出勤日时不为空
+								if(attInfoList.get(i).getPstartTime() != null){
+
+									// 迟到：实际出勤日时 > 应出勤日时
+									if (ye0010CalInfo.get(i).getRstartTimeComp().after(ye0010CalInfo.get(i).getPstartTimeComp())) {
+
+										// 实际出勤颜色
+										ye0010CalInfo.get(i).setRstartColor(CalColor.RED.value());
+
+										// 是否有考勤更正
+										if (attInfoList.get(i).getAttStatusCor() != null) {
+											// 取得考勤更正画面显示信息
+											setAttCorShowInfo(attInfoList.get(i),ye0010CalInfo.get(i));
+										}
+										
+										// 是否有休假申请
+										if (attInfoList.get(i).getAppStatus() != null
+												|| attInfoList.get(i).getAppStatusAddi() != null) {
+											// 取得请假休假画面显示信息
+											setAttRestShowInfo(attInfoList.get(i),ye0010CalInfo.get(i));
+										}
+										
+										// 是否有加班
+										if (attInfoList.get(i).getAttStatusOt() != null) {
+											// 取得加班画面显示信息
+											setAttOtShowInfo(attInfoList.get(i),ye0010CalInfo.get(i));
+										}
+									}
+								}
+								
+								// 应退勤日时不为空
+								if(attInfoList.get(i).getPendTime() != null){
+
+									// 早退：实际退勤日时 < 应退勤日时
+									if (ye0010CalInfo.get(i).getRendTimeComp().before(ye0010CalInfo.get(i).getPendTimeComp())) {
+
+										//班型:非临时班型
+										if("0".equals(attInfoList.get(i).getTypeFlg())){
+											// 实际退勤颜色
+											ye0010CalInfo.get(i).setRendColor(CalColor.RED.value());
+										}
+										
+										// 是否有考勤更正
+										if (attInfoList.get(i).getAttStatusCor() != null) {
+											// 取得考勤更正画面显示信息
+											setAttCorShowInfo(attInfoList.get(i),ye0010CalInfo.get(i));
+										}
+										
+										// 是否有休假申请
+										if (attInfoList.get(i).getAppStatus() != null
+												|| attInfoList.get(i).getAppStatusAddi() != null) {
+											// 取得请假休假画面显示信息
+											setAttRestShowInfo(attInfoList.get(i),ye0010CalInfo.get(i));
+										}
+										
+										// 是否有加班
+										if (attInfoList.get(i).getAttStatusOt() != null) {
+											// 取得加班画面显示信息
+											setAttOtShowInfo(attInfoList.get(i),ye0010CalInfo.get(i));
+										}
+									}
+								}
+							}
+						}
+					}
+				// 实际出勤日时不为空，实际退勤日时为空。（漏考数据不整合！）
+				}else if(ye0010CalInfo.get(i).getRstartTimeComp() != null
+							&& ye0010CalInfo.get(i).getRendTimeComp() == null){
+					//今天
+					if(attdayStr.equals(todayStr)){
+						// 实际出勤日时:画面显示HH:mm
+						ye0010CalInfo.get(i).setRstartTime(timeHM.format(ye0010CalInfo.get(i).getRstartTimeComp()));
+						
+						//应出勤日时不为空
+						if(attInfoList.get(i).getPstartTime() != null){
+							//实际出勤日时 > 应出勤日时
+							if(ye0010CalInfo.get(i).getRstartTimeComp().after(attInfoList.get(i).getPstartTime())){
+								// 实际出勤日时颜色
+								ye0010CalInfo.get(i).setRstartColor(CalColor.RED.value());
+							}
+						}
+					//漏考
+					}else{
+						// 漏考信息
+						ye0010CalInfo.get(i).setAttCorInfo(AttCalShow.NOTATTENDANCE.value());
+						// 漏考颜色
+						ye0010CalInfo.get(i).setAttCorColor(CalColor.RED.value());
+						// 漏考链接
+						ye0010CalInfo.get(i).setAttCorHref(CalHref.COR.value());
+						// 考勤更正申请编号
+						ye0010CalInfo.get(i).setAppIdCor(null);
+						
+						// 午休结束日时、应出退勤日时不为空
+						if(attInfoList.get(i).getLunchTimeEnd() != null
+								&& attInfoList.get(i).getPstartTime() != null
+								&& attInfoList.get(i).getPendTime() != null){
+							//下午漏考
+							if(ye0010CalInfo.get(i).getRstartTimeComp().before(attInfoList.get(i).getLunchTimeEnd())){
+								
+								// 实际出勤日时:画面显示HH:mm
+								ye0010CalInfo.get(i).setRstartTime(timeHM.format(ye0010CalInfo.get(i).getRstartTimeComp()));
+								// 实际退勤日时:null
+								ye0010CalInfo.get(i).setRendTime(null);
+								
+								//迟到
+								if(ye0010CalInfo.get(i).getRstartTimeComp().after(attInfoList.get(i).getPstartTime())){
+									// 实际出勤颜色
+									ye0010CalInfo.get(i).setRstartColor(CalColor.RED.value());
+								//早上正常出勤
+								}else{
+									// 实际出勤颜色
+									ye0010CalInfo.get(i).setRstartColor(null);
+								}
+							//上午漏考
+							}else{
+
+								// 实际出勤日时:null
+								ye0010CalInfo.get(i).setRstartTime(null);
+								// 实际退勤日时:画面显示HH:mm
+								ye0010CalInfo.get(i).setRendTime(timeHM.format(ye0010CalInfo.get(i).getRstartTimeComp()));
+								
+								//早退
+								if(ye0010CalInfo.get(i).getRstartTimeComp().before(attInfoList.get(i).getPendTime())){
+									// 实际退勤颜色
+									ye0010CalInfo.get(i).setRendColor(CalColor.RED.value());
+								//晚上正常退勤
+								}else{
+									// 实际退勤颜色
+									ye0010CalInfo.get(i).setRendColor(null);
+								}
+							}
+						}
+						
+						// 有考勤更正
+						if (attInfoList.get(i).getAttStatusCor() != null) {
+							// 取得考勤更正画面显示信息
+							setAttCorShowInfo(attInfoList.get(i), ye0010CalInfo.get(i));
+						}
+						
+						// 有休假申请
+						if (attInfoList.get(i).getAppStatus() != null
+								|| attInfoList.get(i).getAppStatusAddi() != null) {
+							// 取得请假休假画面显示信息
+							setAttRestShowInfo(attInfoList.get(i), ye0010CalInfo.get(i));
+						}
+						
+						// 有加班申请  （上午漏考才判断）
+						if (attInfoList.get(i).getAttStatusOt() != null) {
+							// 取得加班画面显示信息
+							setAttOtShowInfo(attInfoList.get(i), ye0010CalInfo.get(i));
+						}
+					}
+				}
+			}
+		}
+
+		return ye0010CalInfo;
+	}
+	
+	/**
+	 * 添加新纪录{@inheritDoc}
+	 */
+	private AttInfo addNewRecord(Ye0010CondA ye0010CondA, int mdate) {
+		//空记录
+		AttInfo aInfoNull = new AttInfo();
+		
+		//设定空记录的年
+		aInfoNull.setYear(ye0010CondA.getYear());
+		
+		//设定空记录的月
+		aInfoNull.setMonth(ye0010CondA.getMonth());
+		
+		//设定空记录的日(格式化)
+		if(mdate+1<10){
+			//1位
+			aInfoNull.setDay("0"+(mdate+1));
+		}else{
+			//2位
+			aInfoNull.setDay(mdate+1+"");
+		}
+		
+		//设定空记录的日期类型
+		aInfoNull.setDayFlg(dateRelationService.getDateType(DateUtil.parse(aInfoNull.getYear()+aInfoNull.getMonth()+aInfoNull.getDay())).value());
+
+		return aInfoNull;
+	}
+
+	/**
+	 * 格式化分钟：HH:mm {@inheritDoc}
+	 */
+	private String minToHm(Integer min) {
+		//时
+		String h = null;
+		//分
+		String m = null;
+		//补零
+		String zeroStr = null;
+		
+		//判断正负数
+		if(min > 0){
+			//整数补零
+			zeroStr = "0";
+		}else if(min < 0){
+			//负数补零
+			zeroStr = "-0";
+			//取绝对值
+			min = Math.abs(min);
+		}else{
+			return null;
+		}
+		
+		if(min == null || min == 0){
+			//格式化：HH：mm
+			return TimeFormat.CAL_HM.value();
+		}else{
+			//小时格式化
+			if(min/60 < 10 && min/60 >= 0){
+				h = zeroStr + min/60;
+			}else{
+				h = min/60 + "";
+			}
+			//分钟格式化
+			if(min%60 < 10){
+				m = zeroStr + min%60;
+			}else{
+				m = min%60 + "";
+			}
+			//格式化：HH：mm
+			return (h + ":" + m);
+		}
+	}
+
+	/**
+	 * 格式化日时：舍弃秒 {@inheritDoc}
+	 */
+	private Date getTimeFormate(Date timeBef) {
+		
+		// 格式化：实际出退勤、应出退勤、首末次打卡比较时间
+		SimpleDateFormat timeS = new SimpleDateFormat(TimeFormat.TIME_YMDHM.value());
+		
+		//实际出勤日时和实际退勤日时：舍弃秒后String->Date
+		Date timeDate = null;
+		
+		//如果日时不为空
+		if(timeBef != null){
+			//舍弃秒后的字符串
+			String timeStr = timeS.format(timeBef);
+
+			try {
+				//舍弃秒后的日期型
+				timeDate = timeS.parse(timeStr);
+			} catch (ParseException e) {
+				e.printStackTrace();
+			}
+		}
+		
+		//返回日期型
+		return timeDate;
+	}
+
+	/**
+	 * 设定审批状态画面显示文字 {@inheritDoc}
+	 */
+	private String setRestShowStr(String appStatus) {
+		
+		//审批状态显示文字
+		String statusInfo = "";
+		
+		// 审批状态:1.待审批
+		if (AppStatus.PENDING.value().equals(appStatus)) {
+			// 审批状态文字
+			statusInfo = AppStatusText.PENDING_SHOW.value();
+
+		// 审批状态：2.审批中
+		} else if (AppStatus.APP_ING.value().equals(appStatus)) {
+			// 审批状态文字
+			statusInfo = AppStatusText.APP_ING.value();
+
+		// 审批状态：3.已审批
+		} else if (AppStatus.APPROVED.value().equals(appStatus)) {
+			// 审批状态文字
+			statusInfo = "";
+		}
+
+		return statusInfo;
+	}
+
+	/**
+	 * 设定加班画面显示信息 {@inheritDoc}
+	 */
+	private void setAttOtShowInfo(AttInfo attInfo, Ye0010CalInfo calInfo) {
+
+		// 加班审批状态：1.待审批
+		if (AppStatus.PENDING.value().equals(attInfo.getAttStatusOt())) {
+			// 加班信息
+			calInfo.setOverTimeInfo(AttCalShow.OVERTIME.value());
+
+		// 加班审批状态：3.已批准
+		} else if (AppStatus.APPROVED.value().equals(attInfo.getAttStatusOt())) {
+			// 加班信息
+			calInfo.setOverTimeInfo(AttCalShow.OVERTIME.value());
+			// 加班颜色
+			calInfo.setOverTimeColor(CalColor.LIGHTGREEN.value());
+
+		// 加班审批状态：其他
+		} else {
+			// 加班信息
+			calInfo.setOverTimeInfo(null);
+		}
+	}
+
+	/**
+	 * 设定请假休假画面显示信息 {@inheritDoc}
+	 */
+	private void setAttRestShowInfo(AttInfo attInfo, Ye0010CalInfo calInfo) {
+		//flag：1
+		String restFlg = RestFlg.FIR.value();
+
+		// 第一组请假数据：不为空
+		if(attInfo.getAppId() != null){
+
+			// 第一组请假数据：全天 [第二组一定为空]
+			if (attInfo.getRestType().length() == 1) {
+				
+				// 第一组请假数据：待审批、审批中、已批准
+				if(AppStatus.PENDING.value().equals(attInfo.getAppStatus())
+						|| AppStatus.APP_ING.value().equals(attInfo.getAppStatus())
+						|| AppStatus.APPROVED.value().equals(attInfo.getAppStatus())){
+					
+					// 第一组请假数据：取得整天休假信息
+					setAllDayInfo(attInfo,calInfo);
+				}
+				
+			// 第一组请假数据：半天 [第二组一定为半天]
+			} else if (attInfo.getRestType().trim().length() == 2) {
+
+				// 第一组请假数据：半天
+				// 第一组请假数据：待审批、审批中、已批准
+				if(AppStatus.PENDING.value().equals(attInfo.getAppStatus())
+						|| AppStatus.APP_ING.value().equals(attInfo.getAppStatus())
+						|| AppStatus.APPROVED.value().equals(attInfo.getAppStatus())){
+					
+					// 第一组请假数据：取得半天休假信息
+					setHalfDayInfo(attInfo,calInfo,restFlg);
+				}
+
+				// 第二组请假数据：半天
+				// 第二组请假数据：待审批、审批中、已批准
+				if(AppStatus.PENDING.value().equals(attInfo.getAppStatusAddi())
+						|| AppStatus.APP_ING.value().equals(attInfo.getAppStatusAddi())
+						|| AppStatus.APPROVED.value().equals(attInfo.getAppStatusAddi())){
+					//flag：2
+					restFlg = RestFlg.SEC.value();
+
+					// 第二组请假数据：取得半天休假信息
+					setHalfDayInfo(attInfo,calInfo,restFlg);
+				}
+			}
+		//第一组请假数据：为空
+		}else{
+			//flag：2
+			restFlg = RestFlg.SEC.value();
+			
+			// 第二组请假数据：半天
+			// 第二组请假数据：待审批、审批中、已批准
+			if(AppStatus.PENDING.value().equals(attInfo.getAppStatusAddi())
+					|| AppStatus.APP_ING.value().equals(attInfo.getAppStatusAddi())
+					|| AppStatus.APPROVED.value().equals(attInfo.getAppStatusAddi())){
+
+				// 第二组请假数据：取得半天休假信息
+				setHalfDayInfo(attInfo,calInfo,restFlg);
+			}
+		}
+	}
+
+	/**
+	 * 设定半天休假显示信息 {@inheritDoc}
+	 * @param lunchEndTime 
+	 */
+	private void setHalfDayInfo(AttInfo attInfo, Ye0010CalInfo calInfo, String flg) {
+		//休假类型
+		String restType = null;
+		//休假状态
+		String appStatus = null;
+		//申请编号
+		String appId = null;
+		//休假类型文字
+		String strType = null;
+		//审批状态文字
+		String strStu = null;
+		
+		//如果是第一组数据
+		if(RestFlg.FIR.value().equals(flg)){
+			//休假类型
+			restType = attInfo.getRestType();
+			//休假状态
+			appStatus = attInfo.getAppStatus();
+			//申请编号
+			appId = attInfo.getAppId();
+		//如果是第二组数据
+		}else if(RestFlg.SEC.value().equals(flg)){
+			//休假类型
+			restType = attInfo.getRestTypeAddi();
+			//休假状态
+			appStatus = attInfo.getAppStatusAddi();
+			//申请编号
+			appId = attInfo.getAppIdAddi();
+		}
+		
+		// 休假类型文字
+		strType = getRestType(restType);
+		// 审批状态文字
+		strStu = setRestShowStr(appStatus);
+
+		//休假类型：上午
+		if(VacationType.AM.value().equals(restType.trim().substring(1))){
+
+			// 设定请假休假申请编号
+			calInfo.setAppRestId(appId);
+			
+			// 上午/全天休假信息
+			calInfo.setAmRestInfo(strType + strStu);
+			// 上午/全天休假链接
+			calInfo.setAmRestHref(CalHref.REST.value());
+			// 上午/全天休假颜色
+			calInfo.setAmRestColor(CalColor.ORANGE.value());
+			
+			// 休假已批准：任何时间出勤都算正常出勤
+			if (AppStatus.APPROVED.value().equals(appStatus)) {
+				// 上午/全天休假颜色
+				calInfo.setAmRestColor(CalColor.DARKGREEN.value());
+
+				// 午休结束日时不为空
+				if(attInfo.getLunchTimeEnd() != null){
+
+					//迟到： 实际出勤日时 > 午休结束日时
+					if(calInfo.getRstartTimeComp().after(attInfo.getLunchTimeEnd())){
+						//实际出勤日时颜色
+						calInfo.setRstartColor(CalColor.RED.value());
+					}else{
+						// 实际出勤日时颜色
+						calInfo.setRstartColor(null);
+					}
+				}
+				
+				//早退： 实际退勤日时 < 应退勤日时
+				if(calInfo.getRendTimeComp().before(calInfo.getPendTimeComp())){
+					// 实际退勤日时颜色
+					calInfo.setRendColor(CalColor.RED.value());
+				}else{
+					// 实际退勤日时颜色
+					calInfo.setRendColor(null);
+				}
+			}
+			
+		//休假类型：下午	
+		}else if(VacationType.PM.value().equals(restType.trim().substring(1))){
+
+			// 设定请假休假申请编号
+			calInfo.setAppRestIdAddi(appId);
+			
+			// 下午休假信息
+			calInfo.setPmRestInfo(strType + strStu);
+			// 下午休假链接
+			calInfo.setPmRestHref(CalHref.REST.value());
+			// 下午休假颜色
+			calInfo.setPmRestColor(CalColor.ORANGE.value());
+			
+			// 休假已批准：任何时间出勤都算正常出勤
+			if (AppStatus.APPROVED.value().equals(appStatus)) {
+				// 下午休假颜色
+				calInfo.setPmRestColor(CalColor.DARKGREEN.value());
+				
+				//应出勤日时不为空
+				if(calInfo.getPstartTimeComp() != null){
+					//迟到： 实际出勤日时 > 应出勤日时
+					if(calInfo.getRstartTimeComp().after(calInfo.getPstartTimeComp())){
+						//实际出勤日时颜色
+						calInfo.setRstartColor(CalColor.RED.value());
+					}else{
+						// 实际出勤日时颜色
+						calInfo.setRstartColor(null);
+					}
+				}
+				
+				//午休结束日时不为空
+				if(attInfo.getLunchTimeSt() != null){
+					//早退： 实际退勤日时 < 午休结束日时
+					if(calInfo.getRendTimeComp().before(attInfo.getLunchTimeSt())){
+						// 实际退勤日时颜色
+						calInfo.setRendColor(CalColor.RED.value());
+					}else{
+						// 实际退勤日时颜色
+						calInfo.setRendColor(null);
+					}
+				}
+			}
+		}
+	}
+	
+	/**
+	 * 设定整天休假显示信息 {@inheritDoc}
+	 */
+	private void setAllDayInfo(AttInfo attInfo, Ye0010CalInfo calInfo) {
+		
+		// 休假类型
+		String strType = getRestType(attInfo.getRestType());
+		// 审批状态文字
+		String strStu = setRestShowStr(attInfo.getAppStatus());
+		
+		// 设定请假休假申请编号
+		calInfo.setAppRestId(attInfo.getAppId());
+		
+		// 全天休假信息
+		calInfo.setAmRestInfo(strType + strStu);
+		// 全天休假链接
+		calInfo.setAmRestHref(CalHref.REST.value());
+		// 全天休假颜色
+		calInfo.setAmRestColor(CalColor.ORANGE.value());
+		
+		// 休假已批准：任何时间出勤都算正常出勤
+		if (AppStatus.APPROVED.value().equals(attInfo.getAppStatus())) {
+			// 实际出勤日时颜色
+			calInfo.setRstartColor(null);
+			// 实际退勤日时颜色
+			calInfo.setRendColor(null);
+			// 日期颜色
+			calInfo.setDayColor(CalColor.RED.value());
+			// 全天休假颜色
+			calInfo.setAmRestColor(CalColor.DARKGREEN.value());
+		}
+	}
+
+	/**
+	 * 设定考勤更正画面显示信息 {@inheritDoc}
+	 */
+	private void setAttCorShowInfo(AttInfo attInfo, Ye0010CalInfo calInfo) {
+		
+		//取得审批状态画面显示文字
+		String strStaCor = setRestShowStr(attInfo.getAttStatusCor());
+		
+		// 考勤更正申请编号
+		calInfo.setAppIdCor(attInfo.getAppIdCor());
+
+		// 考勤更正审批状态：1.待审批 或者 2.审批中
+		if (AppStatus.PENDING.value().equals(attInfo.getAttStatusCor())
+				|| AppStatus.APP_ING.value().equals(attInfo.getAttStatusCor())) {
+			
+			// 考勤更正信息
+			calInfo.setAttCorInfo(AttCalShow.ATTENDANCE.value() + strStaCor);
+			// 考勤更正链接
+			calInfo.setAttCorHref(CalHref.COR.value());
+			// 考勤更正颜色
+			calInfo.setAttCorColor(CalColor.ORANGE.value());
+
+		// 考勤更正审批状态：3.已审批
+		} else if (AppStatus.APPROVED.value().equals(attInfo.getAttStatusCor())) {
+			
+			// 考勤更正信息：清空信息
+			calInfo.setAttCorInfo(null);
+			
+			//更正实际出勤日时：实际出勤日时 != 首次打卡日时
+			if(calInfo.getRstartTimeComp().equals(calInfo.getFirstTimeComp()) == false){
+				// 实际出勤链接
+				calInfo.setRstartHref(CalHref.COR.value());
+				// 实际出勤颜色
+				calInfo.setRstartColor(CalColor.DARKGREEN.value());
+			}
+			
+			// 非漏考：末次打卡日时不为空
+			if(calInfo.getLastTimeComp() != null){
+
+				// 更正实际退勤日时：实际退勤日时 != 末次打卡日时
+				if(calInfo.getRendTimeComp().equals(calInfo.getLastTimeComp()) == false){
+					// 实际退勤链接
+					calInfo.setRendHref(CalHref.COR.value());
+					// 实际退勤颜色
+					calInfo.setRendColor(CalColor.DARKGREEN.value());
+				}
+			
+			// 漏考：末次打卡日时为空	
+			}else{
+
+				// 更正实际退勤日时：实际退勤日时 != 末次打卡日时
+				if(calInfo.getRendTimeComp().equals(calInfo.getFirstTimeComp()) == false){
+					// 实际退勤链接
+					calInfo.setRendHref(CalHref.COR.value());
+					// 实际退勤颜色
+					calInfo.setRendColor(CalColor.DARKGREEN.value());
+				}
+			}
+		}
+	}
+
+	/**
+	 * 取得休假类型名称 {@inheritDoc}
+	 */
+	private String getRestType(String restType) {
+		// 请假休假类型名称
+		String strType = null;
+
+		// 公出
+		if (restType.equals(VacationType.BUSINESS_TRIP.value())) {
+			strType = VacationTypeText.BUSINESS_TRIP.value();
+		// 上午公出
+		} else if (restType.equals(VacationType.BUSINESS_TRIP_S.value())) {
+			strType = VacationTypeText.AM.value()
+					+ VacationTypeText.BUSINESS_TRIP.value();
+		// 下午公出
+		} else if (restType.equals(VacationType.BUSINESS_TRIP_X.value())) {
+			strType = VacationTypeText.PM.value()
+					+ VacationTypeText.BUSINESS_TRIP.value();
+		// 换休
+		} else if (restType.equals(VacationType.FOR_HUGH.value())) {
+			strType = VacationTypeText.FOR_HUGH.value();
+		// 上午换休
+		} else if (restType.equals(VacationType.FOR_HUGH_S.value())) {
+			strType = VacationTypeText.AM.value()
+					+ VacationTypeText.FOR_HUGH.value();
+		// 下午换休
+		} else if (restType.equals(VacationType.FOR_HUGH_X.value())) {
+			strType = VacationTypeText.PM.value()
+					+ VacationTypeText.FOR_HUGH.value();
+		// 事假
+		} else if (restType.equals(VacationType.LEAVE.value())) {
+			strType = VacationTypeText.LEAVE.value();
+		// 上午事假
+		} else if (restType.equals(VacationType.LEAVE_S.value())) {
+			strType = VacationTypeText.AM.value()
+					+ VacationTypeText.LEAVE.value();
+		// 下午事假
+		} else if (restType.equals(VacationType.LEAVE_X.value())) {
+			strType = VacationTypeText.PM.value()
+					+ VacationTypeText.LEAVE.value();
+		// 病假
+		} else if (restType.equals(VacationType.SICK_LEAVE.value())) {
+			strType = VacationTypeText.SICK_LEAVE.value();
+		// 上午病假
+		} else if (restType.equals(VacationType.SICK_LEAVE_S.value())) {
+			strType = VacationTypeText.AM.value()
+					+ VacationTypeText.SICK_LEAVE.value();
+		// 下午病假
+		} else if (restType.equals(VacationType.SICK_LEAVE_X.value())) {
+			strType = VacationTypeText.PM.value()
+					+ VacationTypeText.SICK_LEAVE.value();
+		// 出差
+		} else if (restType.equals(VacationType.TRAVEL.value())) {
+			strType = VacationTypeText.TRAVEL.value();
+		// 年休
+		} else if (restType.equals(VacationType.ANNUAL_LEAVE.value())) {
+			strType = VacationTypeText.ANNUAL_LEAVE.value();
+		// 特假
+		} else if (restType.equals(VacationType.SPECIAL_LEAVE.value())) {
+			strType = VacationTypeText.SPECIAL_LEAVE.value();
+		// 产假
+		} else if (restType.equals(VacationType.MATERNITY_LEAVE.value())) {
+			strType = VacationTypeText.MATERNITY_LEAVE.value();
+		// 丧假
+		} else if (restType.equals(VacationType.BEREAVEMENT_LEAVE.value())) {
+			strType = VacationTypeText.BEREAVEMENT_LEAVE.value();
+		// 婚假
+		} else if (restType.equals(VacationType.MARRIAGE_LEAVE.value())) {
+			strType = VacationTypeText.MARRIAGE_LEAVE.value();
+		}
+
+		return strType;
+	}
+
+	public void setYe0010Dao(Ye0010Dao ye0010Dao) {
+		this.ye0010Dao = ye0010Dao;
+	}
+
+	public Ye0010Dao getYe0010Dao() {
+		return ye0010Dao;
+	}
+
+	public void setDateRelationService(DateRelationService dateRelationService) {
+		this.dateRelationService = dateRelationService;
+	}
+
+	public DateRelationService getDateRelationService() {
+		return dateRelationService;
+	}
+
+}

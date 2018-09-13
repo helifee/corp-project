@@ -1,0 +1,10 @@
+package com.xinleju.platform.sys.sync.dto.service;
+
+import com.xinleju.platform.base.dto.service.BaseDtoServiceCustomer;
+
+public interface SyncDataDtoServiceCustomer extends BaseDtoServiceCustomer{
+
+	public String syncData(String userJson,String id)throws Exception;
+	
+	public String syncDataOne(String userJson,String id)throws Exception;
+}

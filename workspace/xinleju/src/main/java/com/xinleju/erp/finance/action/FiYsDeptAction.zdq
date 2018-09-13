@@ -1,0 +1,208 @@
+package com.xinleju.erp.finance.action;
+
+import java.util.ArrayList;
+
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import net.sf.json.JSONObject;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.MatchMode;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.xinleju.erp.base.app.action.BaseAction;
+import com.xinleju.erp.base.utils.JsonUtils;
+import com.xinleju.erp.co.voucher.service.SyncFinaCoData;
+import com.xinleju.erp.ex.service.SyncFinaExData;
+import com.xinleju.erp.finance.models.FiBizObject;
+import com.xinleju.erp.finance.models.FiBudgetCap;
+import com.xinleju.erp.finance.models.FiVoucherTempType;
+import com.xinleju.erp.finance.models.FiVoucherTemplate;
+import com.xinleju.erp.finance.models.FiYsDept;
+import com.xinleju.erp.finance.service.FiAssMappingService;
+import com.xinleju.erp.finance.service.FiYsDeptService;
+import com.xinleju.erp.finance.service.SyncFinaDataService;
+import com.xinleju.erp.flow.flowutils.bean.FlowResult;
+import com.xinleju.erp.flow.flowutils.bean.PageBean;
+import com.xinleju.erp.flow.utils.LoginInfoUtils;
+import com.xinleju.erp.frame.models.Dept;
+import com.xinleju.erp.frame.utils.CommonUtil;
+import com.xinleju.erp.sm.extend.dto.FinaData;
+import com.xinleju.erp.sm.extend.dto.FinaQueryParams;
+
+/**
+ * 预算部门对照
+ * @author ztl
+ *
+ */
+public class FiYsDeptAction extends BaseAction {
+	
+	private static final Log log = LogFactory.getLog(FiYsDeptAction.class);
+	
+	@Autowired
+	private FiYsDeptService fiYsDeptService;
+	
+	@Autowired
+	private SyncFinaDataService syncFinaDataService;
+	
+	@Autowired
+	private FiAssMappingService fiAssMappingService;
+	
+	private FiYsDept fiYsDept;
+	
+	private FinaQueryParams finaQueryParams = new FinaQueryParams();
+	
+	
+	/**
+	 * 辅助核算对照主页面
+	 * 
+	 * @return
+	 */
+	public String list() {
+		
+		List<Dept> depts = fiAssMappingService.getDepts();
+		Map<String, String> bdmap = new HashMap<String, String>(depts.size());
+		for (Dept dept : depts) {
+			bdmap.put(String.valueOf(dept.getId()), dept.getName());
+		}
+
+		request.setAttribute("depts", bdmap);
+		return "list";
+	}
+
+	/**
+	 * 查询辅助核算数据
+	 */
+	public void loadlist() {
+		try {
+			int current = getParameterInt("page");
+			
+			start = (current-1)*limit+1;
+			
+			String keyword = request.getParameter("keyword");
+			
+			DetachedCriteria dc = DetachedCriteria.forClass(FiYsDept.class);
+			if (StringUtils.isNotBlank(keyword)) {
+				dc.add(Restrictions.like("vdeptname", keyword, MatchMode.ANYWHERE));
+			}
+			
+			page = getCommonService().findPage(dc, start, limit);
+			JSONObject jobj = CommonUtil.transListResult(page.getTotal(), page.getItems());
+			renderJson(jobj.toString());
+		} catch (Exception ex) {
+			ex.printStackTrace();
+		}
+	}
+	
+	/**
+	 * 根据id查出 预算部门信息
+	 */
+	public void getFiYsDeptById() {
+		Long id = this.getParameterLong("id");
+		FiYsDept dept = fiYsDeptService.getFiYsDeptById(id);
+		this.renderJson(dept);
+	}
+	
+	
+	/**
+	 * 保存对象
+	 */
+	public void saveFiYsDept() throws Exception {
+		Map<String, Object> result = new HashMap<String, Object>();
+		if (fiYsDept.getId() != null) {
+			fiYsDept.setEditDate(new Date());
+			fiYsDept.setEditUserId(LoginInfoUtils.getLoginInfoUserDtoId(request));
+		} else {
+			fiYsDept.setCreateDate(new Date());
+			fiYsDept.setStatus(0);
+			fiYsDept.setCreateUserId(LoginInfoUtils.getLoginInfoUserDtoId(request));
+		}
+		try {
+			fiYsDeptService.saveFiYsDept(fiYsDept);
+			result.put("success", true);
+			result.put("msg", "保存成功");
+			String json = JsonUtils.toJSONString(result);
+			render(json, "text/html;charset=UTF-8");
+		} catch (Exception e) {
+			result.put("success", false);
+			result.put("msg", e.getMessage());
+			log.error("", e);
+			String json = JsonUtils.toJSONString(result);
+			render(json, "text/html;charset=UTF-8");
+		}
+	}
+	
+	
+	
+	
+	/**
+	 * 
+	 * 从费用系统加载预算部门数据
+	 */
+	public void loadYsDepts() {
+        Long companyId= Long.valueOf(request.getParameter("companyId"));
+		SyncFinaCoData syncFinaCoData = syncFinaDataService.getSyncFinaCoData();
+		if (syncFinaCoData != null) {
+			Map<Long,List<Map<String,Object>>> returnmap = syncFinaCoData.findSub(companyId);
+			List<Map<String,Object>> list = returnmap.get(companyId);
+			List<FiBudgetCap> fcList = new ArrayList<FiBudgetCap>();
+			for(int i=0;i<list.size();i++){
+				FiBudgetCap bc = new FiBudgetCap();
+				Map<String,Object> mpa = list.get(i);
+				String id = String.valueOf(mpa.get("id"));
+				String pid = String.valueOf(mpa.get("parentId"));
+				String code = String.valueOf(mpa.get("fullCode"));
+				String name = String.valueOf(mpa.get("name"));
+			   
+				bc.setCode(code);
+				bc.setName(name);
+				try {
+					bc.setParentId(Long.parseLong(pid));
+				} catch (Exception e) {
+					bc.setParentId(0L);
+				}
+				bc.setBid(Long.parseLong(id));
+				bc.setCompanyId(companyId);
+				fcList.add(bc);
+			
+			}
+		
+			fiYsDeptService.saveAllFcs(fcList);
+		}
+		
+		
+			
+			
+			//String json = CommonUtil.transListResult(flowResult.getResult().getTotal(), flowResult.getResult().getItems()).toString();
+			//renderHtml(JsonUtils.toJSONString(flowResult.getResult()));
+			
+//		}else {
+//			result.put("success", false);
+//			result.put("msg", "操作失败");
+//			renderHtml(JsonUtils.toJSONString(result));
+//		}
+	}
+	
+	
+
+	public FiYsDept getFiYsDept() {
+		return fiYsDept;
+	}
+
+	public void setFiYsDept(FiYsDept fiYsDept) {
+		this.fiYsDept = fiYsDept;
+	}
+	
+	
+	
+
+}

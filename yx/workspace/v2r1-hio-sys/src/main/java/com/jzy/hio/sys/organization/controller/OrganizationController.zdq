@@ -1,0 +1,676 @@
+package com.jzy.hio.sys.organization.controller;
+
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.BaseTendParam;
+import com.jzy.hio.annotation.ResponseMessage;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.anno.TargetIM;
+import com.jzy.hio.base.controller.BaseSysController;
+import com.jzy.hio.entity.OaSysExternalContact;
+import com.jzy.hio.entity.OaSysOrganization;
+import com.jzy.hio.entity.OaSysUser;
+import com.jzy.hio.exception.HioMybatisQueryException;
+import com.jzy.hio.exception.HioMybatisUpdateException;
+import com.jzy.hio.feign.PlatformFeignService;
+import com.jzy.hio.platform.constant.UserOrFriendConstant;
+import com.jzy.hio.platform.dto.tenantcompanyinfo.TenantCompanyInfoDto;
+import com.jzy.hio.platform.dto.tenantcompanyinfo.TendUserInfoDto;
+import com.jzy.hio.platform.redis.PlatformRedis;
+import com.jzy.hio.sys.external.dto.ExternalContactDto;
+import com.jzy.hio.sys.external.service.ExternalContactService;
+import com.jzy.hio.sys.organization.dto.CompanyOrganizationInfoImDto;
+import com.jzy.hio.sys.organization.dto.CompanyOrganizationListImDto;
+import com.jzy.hio.sys.organization.dto.GeneralDto;
+import com.jzy.hio.sys.organization.dto.OrganizationDto;
+import com.jzy.hio.sys.organization.dto.OrganizationUserCountDto;
+import com.jzy.hio.sys.organization.dto.SkyDriveDto;
+import com.jzy.hio.sys.organization.param.IMOrgCreateParam;
+import com.jzy.hio.sys.organization.param.OrgCopyParam;
+import com.jzy.hio.sys.organization.param.OrgDragParam;
+import com.jzy.hio.sys.organization.param.OrgSaveParam;
+import com.jzy.hio.sys.organization.param.OrganizationDeleteParam;
+import com.jzy.hio.sys.organization.param.OrganizationDetailParam;
+import com.jzy.hio.sys.organization.param.OrganizationUserParam;
+import com.jzy.hio.sys.organization.param.SkyDriveParam;
+import com.jzy.hio.sys.organization.service.OrganizationService;
+import com.jzy.hio.sys.role.service.RoleService;
+import com.jzy.hio.sys.user.dto.UserDto;
+import com.jzy.hio.sys.user.service.UserService;
+import com.jzy.hio.utils.StringUtil;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * @author kimchou
+ * @create 2018-03-31 17:24
+ * @desc 组织机构相关
+ **/
+@RestController
+@RequestMapping("organization")
+public class OrganizationController extends BaseSysController {
+
+	@Autowired
+	private OrganizationService organizationService;
+	@Autowired
+	private UserService userService;
+	@Autowired
+	private PlatformFeignService platformFeignService;
+	@Autowired
+	private ExternalContactService externalContactService;
+	@Autowired
+	private RoleService roleService;
+	@Autowired
+	private PlatformRedis platformRedis;
+
+	/**
+	 * 新增组织机构【IM端-PC端】==》调用 【IM】需要传递tendId，IM端可以在多个租户间进行操作；【PC】端无需直接从session获取当前租户
+	 * 
+	 * @param apiParam
+	 * @return java.lang.Object
+	 * @author kimchou
+	 * @date 2018/3/16 下午1:10
+	 */
+	@RequestMapping(value = "/save", method = RequestMethod.POST, consumes = "application/json")
+	@ResponseMessage(message = "部门保存成功")
+	public Object save(@RequestBody @Validated OrgSaveParam apiParam) {
+		return organizationService.saveOrganization(apiParam.getTendId(), apiParam);
+	}
+
+	/**
+	 * 获取组织详情【IM端-PC端】==》调用 【IM】需要传递tendId，IM端可以在多个租户间进行操作；【PC】端无需直接从session获取当前租户
+	 *
+	 * @param apiParam
+	 * @return
+	 */
+	@RequestMapping(value = "/get", method = RequestMethod.POST)
+	public Object get(@RequestBody OrganizationDetailParam apiParam) {
+		return organizationService.queryOrganizationDetails(apiParam.getTendId(), apiParam.getOrganizationId());
+	}
+
+	/**
+	 * 编辑组织机构【IM端-PC端】==》调用 【IM】需要传递tendId，IM端可以在多个租户间进行操作；【PC】端无需直接从session获取当前租户
+	 *
+	 * @param apiParam
+	 * @return java.lang.Object
+	 * @author kimchou
+	 * @date 2018/3/16 下午1:10
+	 */
+	@RequestMapping(value = "/updateOrganization", method = RequestMethod.POST, consumes = "application/json")
+	@ResponseMessage(message = "部门设置成功")
+	public Object update(@RequestBody @Validated OrgSaveParam apiParam) {
+		if (apiParam.getOrganizationId() == null) {
+			throw new HioMybatisUpdateException("请输入organizationId");
+		}
+		return organizationService.updateOrganization(apiParam.getTendId(), apiParam);
+	}
+
+	/**
+	 * 查找组织机构树--默认不包括外部联系人
+	 *
+	 * @param map
+	 *            external false、true(连外部联系人一起查询)
+	 * @return
+	 * @throws HioMybatisQueryException
+	 */
+	@RequestMapping(value = "queryTree", method = RequestMethod.POST, consumes = "application/json")
+	public OrganizationDto queryTree(@RequestBody Map<String, Object> map) throws HioMybatisQueryException {
+		OrganizationDto root = queryOrganizationOrUser(map, true);
+		return root;
+	}
+
+	/**
+	 * 查询组织、 根据条件不同 可能需要查询外部联系人
+	 *
+	 * @param map
+	 * @param countUser
+	 *            是否需要统计部门下面的员工数量
+	 */
+	@SuppressWarnings("unchecked")
+	private OrganizationDto queryOrganizationOrUser(Map<String, Object> map, boolean countUser) {
+		map.put("orderBy", "prefix_sort asc");
+		map.put("delflag", "0");
+		List<OaSysOrganization> items = super.queryList(map);
+		List<OrganizationDto> result = copyProperties(items, OrganizationDto.class);
+		//
+		List<OrganizationDto> tree = (List<OrganizationDto>) list2Tree(result);
+		OrganizationDto root = tree.get(0);
+
+		// 默认不带外部联系人
+		boolean external = getBool(map, "external", false);
+		if (external) {
+			// 2、把外部联系人添加到result结果集合中
+			String tendId = getTendId();
+			String oaUserId = getUserIdOA();
+			List<ExternalContactDto> externalList = externalContactService.queryListByUserWithRole(tendId, oaUserId);
+			for (ExternalContactDto item : externalList) {
+				OrganizationDto org = new OrganizationDto();
+				org.setId(item.getId());
+				org.setName(item.getName());
+				// 外部联系人的父id 设置为rootId
+				org.setParentId(root.getId());
+				org.setImUserId(item.getImUserId());
+				org.setType(BaseConstants.MYSQL_ORGANIZATION_TYPE_EXTERNAL);
+				org.setPinyinFirst(item.getPinyinFirst());
+				org.setPinyinFull(item.getPinyinFull());
+				root.getChildren().add(org);
+			}
+		} else {
+			// 不做处理
+		}
+		if (countUser) {
+			// 1、统计部门下面的员工数量
+			List<OrganizationUserCountDto> userCoutList = organizationService.queryUserCountByOrgnizationId(null);
+			for (OrganizationDto org : result) {
+				for (OrganizationUserCountDto userCount : userCoutList) {
+					if (isEquals(org.getId(), userCount.getOrganizationId())) {
+						org.setUserCount(userCount.getUserCount() + "");
+					}
+				}
+			}
+			// 2、统计部门下面所有的员工数量 (包含部门以及所有子部门的员工)
+			countUser(root);
+		} else {
+			// 不做处理
+		}
+		return root;
+	}
+
+	/**
+	 * 统计组织所有人员的总数
+	 *
+	 * @param root
+	 * @author coffee
+	 */
+	private void countUser(OrganizationDto root) {
+		List<OrganizationDto> children = root.getChildren();
+		if (children != null) {
+			int total = root.getUserCount() == null ? 0 : Integer.valueOf(root.getUserCount());
+			for (OrganizationDto org : children) {
+				int childCount = org.getUserCount() == null ? 0 : Integer.valueOf(org.getUserCount());
+				total += childCount;
+				// 递归
+				this.countUser(org);
+			}
+			root.setUserCount(total + "");
+		}
+	}
+
+	/**
+	 * 查找用户树(角色用) 不包含外部联系人
+	 *
+	 * @param map
+	 *            external false 是否查询外部联系人<br>
+	 *            confirm false 是否查询oa_sys_user表中邀请未确认的人员<br>
+	 *            mainOrg true表示只查询主部门人员
+	 * @return
+	 * @throws HioMybatisQueryException
+	 */
+	@RequestMapping(value = "queryTreeWithUser", method = RequestMethod.POST, consumes = "application/json")
+	public OrganizationDto queryTreeWithUser(@RequestBody Map<String, Object> map) throws HioMybatisQueryException {
+		OrganizationDto root = this.queryOrganizationOrUser(map, false);
+		local.set(0);
+		boolean mainOrg = getBool(map,"mainOrg",false);
+		setTreeNodeType(root, true,mainOrg);
+		local.remove();
+		return root;
+	}
+
+	/**
+	 * 查询指定的用户所在的组织 、以及指定的用户id信息、然后组装成树
+	 *
+	 * @param
+	 * @param externalIds
+	 *            注意只能查询带有权限的外部联系人
+	 * @return
+	 * @throws HioMybatisQueryException
+	 */
+	@SuppressWarnings("unchecked")
+	@PostMapping("queryOrganizationTreeByUserIds")
+	public OrganizationDto queryOrganizationTreeByUserIds(@RequestParam("tendId") String tendId, //
+			@RequestParam("userIds") String userIds, //
+			@RequestParam(required = false, value = "externalIds") String externalIds) throws HioMybatisQueryException {
+		OrganizationDto root = transformTrees(tendId, userIds, externalIds,false);
+		return root;
+	}
+
+	private OrganizationDto transformTrees(String tendId,String userIds,String externalIds,boolean isSinleUser) {
+		//查出所有的组织
+		List<OrganizationDto> resultIds = organizationService.queryOrganizationTreeByUserIds(tendId, userIds);
+		List<String> orgIds = new ArrayList<>();
+		if (isNotEmpty(resultIds)){
+			resultIds.forEach(item->{
+				orgIds.addAll(Arrays.asList(item.getPrefixId().split("/")));
+			});
+		}
+		List<OrganizationDto> result = organizationService.queryOrganizationByOrgIds(tendId,orgIds);
+		List<UserDto> userList = userService.queryUserByIds(tendId, userIds);
+		// key 组织Id --
+		Map<String, List<UserDto>> map = new HashMap<>();
+
+		if (!isSinleUser){
+			for (UserDto item : userList) {
+				String key = item.getOrganizationId();
+				if (map.get(key) == null) {
+					map.put(key, new ArrayList<>());
+				}
+				map.get(key).add(item);
+			}
+			for (OrganizationDto item : result) {
+				List<UserDto> users = map.get(item.getId());
+				item.setUsers(users);
+			}
+		}else {
+			//处理当个用户，不需要下发人员，只需要部门，并且需要告知部门是否能选中
+			userList.forEach(user->{
+				result.forEach(organizationDto -> {
+					if (user.getOrganizationId().equals(organizationDto.getId())){
+						organizationDto.setCanSelected(true);
+						organizationDto.setDefault(user.getIsDefault() == "0" ? false: true);
+					}
+				});
+			});
+		}
+
+		List<OrganizationDto> tree = (List<OrganizationDto>) list2Tree(result);
+		OrganizationDto root = tree.get(0);
+		//
+		if (!isSinleUser && externalIds != null) {
+			String[] idsArr = externalIds.split(",");
+			List<String> ids = new ArrayList<>();
+			ids.addAll(Arrays.asList(idsArr));
+			// 2、把外部联系人添加到result结果集合中
+			List<ExternalContactDto> externalList = externalContactService.queryExternalUsersByIdsWithRole(ids, getUserIdOA());
+			for (ExternalContactDto item : externalList) {
+				OrganizationDto org = new OrganizationDto();
+				org.setId(item.getId());
+				org.setName(item.getName());
+				// 外部联系人的父id 设置为rootId
+				org.setParentId(root.getId());
+				org.setImUserId(item.getImUserId());
+				org.setType(BaseConstants.MYSQL_ORGANIZATION_TYPE_EXTERNAL);
+				root.getChildren().add(org);
+			}
+		}
+		local.set(0);
+		setTreeNodeType(root, false,false);
+		local.remove();
+		return root;
+	}
+
+	private ThreadLocal<Integer> local = new ThreadLocal<>();
+
+	/**
+	 * 给树设置nodeId 、type
+	 *
+	 * @param root
+	 * @param mainOrg  是否只查询主部门
+	 */
+	private void setTreeNodeType(OrganizationDto root, boolean withUser,boolean mainOrg) {
+		local.set(local.get() + 1);
+		root.setNodeId(local.get() + "");
+		if (isNotEquals(root.getType(), BaseConstants.MYSQL_ORGANIZATION_TYPE_USER) //
+				&& isNotEquals(root.getType(), BaseConstants.MYSQL_ORGANIZATION_TYPE_EXTERNAL)) {
+			if (isEmpty(root.getParentId())) {
+				root.setType(BaseConstants.MYSQL_ORGANIZATION_TYPE_COMPANY);
+			} else {
+				root.setType(BaseConstants.MYSQL_ORGANIZATION_TYPE_DEPT);
+			}
+		}
+		//
+		if (isNotEmpty(root.getChildren())) {
+			// user 信息
+			for (Object child : root.getChildren()) {
+				if (child instanceof OrganizationDto) {
+					OrganizationDto org = (OrganizationDto) child;
+					setTreeNodeType(org, withUser,mainOrg);
+				}
+			}
+		}
+		if (withUser) {
+			// 查询该组织下的人员
+			if (isNotEquals(root.getType(), BaseConstants.MYSQL_ORGANIZATION_TYPE_USER) //
+					&& isNotEquals(root.getType(), BaseConstants.MYSQL_ORGANIZATION_TYPE_EXTERNAL)) {
+				List<UserDto> users = userService.queryList(root.getId(),Integer.valueOf(BaseConstants.UserWorkStatus.JOB.getWorkStatus()),mainOrg);
+				for (UserDto user : users) {
+					String resourceImgUrl = platformRedis.getHeadIcon(user.getImUserId());
+					user.setResourceImgUrl(resourceImgUrl);
+					local.set(local.get() + 1);
+					user.setNodeId(local.get() + "");
+				}
+				root.setUsers(users);
+			}
+		}
+	}
+
+	/**
+	 * 删除组织机构
+	 *
+	 * @param id
+	 * @return java.lang.Object
+	 * @author kimchou
+	 * @date 2018/3/15 下午6:22
+	 */
+	@ResponseMessage(message = "删除部门成功")
+	@DeleteMapping("deletePseudo/{id}")
+	@Override
+	public Object deletePseudo(@PathVariable("id") String id) {
+		return organizationService.deleteOrgById(null, id);
+	}
+
+	/**
+	 * 移动端删除组织机构
+	 * 
+	 * @param apiParam
+	 * @return
+	 */
+	@ResponseMessage(message = "删除部门成功")
+	@PostMapping("deleteByIM")
+	public Object deleteByIM(@RequestBody @Validated OrganizationDeleteParam apiParam) {
+		return organizationService.deleteOrgById(apiParam.getTendId(), apiParam.getOrganizationId());
+	}
+
+	/**
+	 * 更新组织机构拖拽
+	 *
+	 * @param apiParam
+	 * @return java.lang.Object
+	 * @author kimchou
+	 * @date 2018/3/15 下午6:28
+	 */
+	@PostMapping("updateOrgBelongs")
+	public Object updateOrgBelongs(@RequestBody @Validated OrgDragParam apiParam) {
+		return organizationService.updateOrgBelongs(apiParam);
+	}
+
+	/**
+	 * @param apiParam
+	 * @return
+	 */
+	@PostMapping("queryNameByOrgAndRoleAndUser")
+	public List<SkyDriveDto> queryOrganization(@RequestBody SkyDriveParam apiParam) {
+		return organizationService.queryNameByOrgAndRoleAndUser(apiParam.getTendId(), apiParam);
+	}
+
+	/**
+	 * 创建团队(IM)
+	 *
+	 * @return
+	 */
+	@TargetIM
+	@PostMapping("createTeam")
+	public Object createOrganizationForIm(@RequestBody @Validated IMOrgCreateParam apiParam) {
+		if (StringUtil.isBlank(apiParam.getTendId())) {
+			throw new HioMybatisUpdateException("租户不存在");
+		}
+		if (StringUtil.isBlank(apiParam.getTeamName())) {
+			throw new HioMybatisUpdateException("团队名称不能为空");
+		}
+		if (StringUtil.isBlank(apiParam.getAdminName())) {
+			throw new HioMybatisUpdateException("admin名称不能为空");
+		}
+		if (StringUtil.isBlank(apiParam.getAdminUserId())) {
+			throw new HioMybatisUpdateException("adminId不能为空");
+		}
+		return organizationService.createTeam(apiParam.getTendId(), apiParam);
+	}
+
+	/**
+	 * 企业信息更新
+	 * 
+	 * @param apiParam
+	 * @return
+	 */
+	@PostMapping("tendInfo/upload")
+	@ResponseMessage(message = "更新企业信息成功！")
+	public Object uploadTendInfo(@RequestBody @Validated TenantCompanyInfoDto apiParam) {
+		boolean b = organizationService.updateTenantCompanyInfo(apiParam.getTendId(), apiParam);
+		return b;
+	}
+
+	/**
+	 * 企业信息查询
+	 *
+	 * @return
+	 */
+	@PostMapping("tendInfo/query")
+	public Object queryTendInfo(@RequestBody BaseTendParam apiParam) {
+		String tendId = apiParam.getTendId();
+		if (isEmpty(apiParam.getTendId())) {
+			tendId = getTendId();
+		}
+		TenantCompanyInfoDto infoDto = new TenantCompanyInfoDto();
+		infoDto.setTendId(tendId);
+		ApiFeignResponse<TenantCompanyInfoDto> info = platformFeignService.queryTenantCompanyInfoByTendId(infoDto);
+		if (info == null || info.getStatus() != 200) {
+			throw new HioMybatisQueryException("查询失败");
+		}
+		return info.getResult();
+	}
+
+	/**
+	 * 通过用户ID查询 所在的组织机构
+	 *
+	 * @param userId
+	 * @param tendId
+	 * @return
+	 */
+	@PostMapping("queryOrganizationsByUserId")
+	public List<OrganizationDto> queryOrganizationsByUserId(@RequestParam("tendId") String tendId, @RequestParam("userId") String userId) {
+		//TODO need deleted
+		logger.info("查询入参===>{}",userId);
+		List<OrganizationDto> results = organizationService.queryOrganizationsByUserId(tendId, userId);
+		logger.info("查询结果===>{}",results);
+		return results;
+	}
+
+	/**
+	 * 按照租户id 查询用户的直属部门以及顶级公司<br>
+	 * 1\
+	 * 
+	 * @return
+	 */
+	@TargetIM
+	@PostMapping("queryAllOrganizationsByUserId")
+	public List<CompanyOrganizationListImDto> queryAllOrganizationsByUserId(@RequestBody Map<String, Object> paramMap) {
+		String userIdIM = getUserIdIM();
+		List<TendUserInfoDto> userInfos = platformRedis.getTendUserList();
+		// List<>
+		List<CompanyOrganizationListImDto> result = new ArrayList<>();
+		for (TendUserInfoDto userInfo : userInfos) {
+			String tendId = userInfo.getTendId();
+			// 1 查询该用户所在的部门
+			List<OrganizationDto> list = organizationService.queryOrganizationsByUserIdIM(tendId, userIdIM);
+			CompanyOrganizationListImDto comOrg = new CompanyOrganizationListImDto(tendId, list);
+			if (userInfo.getCreateDate() == null) {
+				comOrg.setJoinTime("0");// 0放到最后
+			} else {
+				comOrg.setJoinTime(userInfo.getCreateDate().getTime() + "");
+			}
+			// 该用户是该租户下的员工
+			if (userInfo.getOuterLinkman() == UserOrFriendConstant.outerLinkman) {
+				comOrg.setOuterLinkman("0");
+				comOrg.setDefaultFlag(getStr(userInfo.getDefaultFlag()));
+				OaSysUser user = userService.getOaSysUserByImId(tendId, userIdIM);
+				if (user != null) {
+					comOrg.setWorkStatus(user.getWorkStatus());
+				} else {
+					// 有可能此userIdIM是当前tendId租户的外部联系人
+					logger.info("查不到OA-USer, tendId-{}, userIdIM{}", tendId, userIdIM);
+				}
+			} // 当前用户是该组织的外部联系人
+			else {
+				OaSysExternalContact externalContact = userService.getOaSysExternalContactByImId(tendId, userIdIM);
+				if (externalContact != null) {
+					comOrg.setOuterLinkman("1");
+					comOrg.setDefaultFlag("0");
+					comOrg.setWorkStatus(externalContact.getStatus());
+				} else {
+					comOrg.setOuterLinkman("1");
+					comOrg.setDefaultFlag("0");
+					comOrg.setWorkStatus("0");
+				}
+				//
+				OaSysOrganization orgInfo = organizationService.queryCompanyOrganization(tendId);
+				comOrg.setCompanyId(orgInfo.getId());
+				comOrg.setCompanyName(orgInfo.getName());
+			}
+			// 设置员工|外部联系人创建者或者管理者
+			List<String> managerImUserId = roleService.queryManagerUserIdIM(tendId);
+			comOrg.setManagerImUserId(managerImUserId);
+			ApiFeignResponse<String> resp = platformFeignService.getTenantCompanyCreater(tendId);
+			if (isSuccess(resp)) {
+				comOrg.setCreatorImUserId(resp.getResult());
+			} else {
+				logger.error("查询公司创建人失败 -- tendId== {}", tendId);
+				// throw new HioMybatisQueryException("查询公司创建人失败");
+			}
+			result.add(comOrg);
+		}
+		// 3、排序--主组织优先、剩下的按照加入时间-倒序(后加入的靠前)
+		result.sort(new Comparator<CompanyOrganizationListImDto>() {
+			@Override
+			public int compare(CompanyOrganizationListImDto o1, CompanyOrganizationListImDto o2) {
+				// 1、按照字段 defaultFlag 从大到小排
+				int compare = o2.getDefaultFlag().compareTo(o1.getDefaultFlag());
+				if (compare == 0) {
+					// 按照joinTime从大到小排
+					return o2.getJoinTime().compareTo(o1.getJoinTime());
+				} else {
+					return compare;
+				}
+			}
+		});
+		return result;
+	}
+
+	/**
+	 * 按照租户id 查询用户的直属部门以及顶级公司--与queryAllOrganizationsByUserId返回的字段不同
+	 *
+	 * @return
+	 */
+	// @TargetIM
+	// @PostMapping("queryAllOrganizationInfosByUserId")
+	// @Deprecated // 暂时废弃
+	// public List<CompanyOrganizationInfoImDto> queryAllOrganizationInfosByUserId(@RequestBody Map<String, Object> paramMap) {
+	// String userIdIM = getUserIdIM();
+	// List<String> tendIds = getLoginUser().getTendIds();
+	// List<CompanyOrganizationInfoImDto> result = new ArrayList<>();
+	// for (String tendId : tendIds) {
+	// List<OrganizationDto> list = organizationService.queryOrganizationsByUserIdIM(tendId, userIdIM);
+	// List<CompanyOrganizationInfoImDto> treeNods = new ArrayList<>();
+	// for (OrganizationDto org : list) {
+	// CompanyOrganizationInfoImDto item = new CompanyOrganizationInfoImDto();
+	// item.setOrganizationId(org.getId());
+	// item.setOrganizationName(org.getName());
+	// item.setOrganizationType(org.getType());
+	// item.setParentId(org.getParentId());
+	// int userCount = organizationService.queryUserConut(item.getOrganizationId(), org.getPrefixId());
+	// item.setUserCount(userCount + "");
+	// treeNods.add(item);
+	// }
+	// if (isNotEmpty(treeNods)) {
+	// CompanyOrganizationInfoImDto root = handleTree(treeNods);
+	// result.add(root);
+	// }
+	// }
+	// return result;
+	// }
+
+	private CompanyOrganizationInfoImDto handleTree(List<CompanyOrganizationInfoImDto> treeNods) {
+		Map<String, CompanyOrganizationInfoImDto> map = new HashMap<>();
+		for (CompanyOrganizationInfoImDto node : treeNods) {
+			map.put(node.getOrganizationId(), node);
+		}
+		CompanyOrganizationInfoImDto root = new CompanyOrganizationInfoImDto();
+		for (Iterator<String> it = map.keySet().iterator(); it.hasNext();) {
+			String key = it.next();
+			CompanyOrganizationInfoImDto node = map.get(key);
+			if (isEmpty(node.getParentId())) {
+				root = node;
+			}
+			CompanyOrganizationInfoImDto parent = map.get(node.getParentId());
+			if (parent != null) {
+				parent.getChild().add(node);
+			}
+
+		}
+		return root;
+	}
+
+	/**
+	 * 通过组织Id查询组织名称
+	 *
+	 * @param tendId
+	 *            租户ID
+	 * @param id
+	 *            组织ID
+	 * @return
+	 */
+	@PostMapping("queryName")
+	public GeneralDto queryOrganizationNameById(@RequestParam("tendId") String tendId, @RequestParam("id") String id) {
+		return organizationService.queryOrganizationNameById(tendId, id);
+	}
+
+	/**
+	 * 通过用户ID查询部门列表包括职务
+	 *
+	 * @param tendId
+	 * @param id
+	 * @return
+	 */
+	@RequestMapping(value = "queryOrgAndPositionByUserId")
+	public List<GeneralDto> queryOrgAndPositionByUserId(@RequestParam("tendId") String tendId, @RequestParam("id") String id) {
+		return organizationService.queryOrgAndPositionByUserId(tendId, id);
+	}
+
+	/**
+	 * 拷贝部门【提供HR】
+	 *
+	 * @param apiParam
+	 * @return
+	 */
+	@PostMapping(value = "copy")
+	public Object copyOrganizations(@RequestBody @Validated OrgCopyParam apiParam) {
+		return organizationService.copyOrganizations(apiParam.getSourceId(), apiParam.getDesId());
+	}
+
+	/**
+	 * 通过组织id查询子部门
+	 *
+	 * @return
+	 */
+	@PostMapping(value = "queryOrgChildById")
+	public List<OrganizationDto> queryOrgChildById(@RequestParam("tendId") String tendId, @RequestParam("organizationId") String organizationId,
+			@RequestParam("isContainsSelf") boolean isContainsSelf) {
+
+		return organizationService.queryOrgChildById(tendId, organizationId, isContainsSelf);
+	}
+
+	/**
+	 * 查询个人所在组织部门的树
+	 *
+	 * @return
+	 */
+	@PostMapping("queryOrganizationTreeBySelf")
+	public Object queryOrganizationTreeBySelf(@RequestBody @Validated OrganizationUserParam apiParam){
+		return transformTrees(getTendId(),isEmpty(apiParam.getSid())?getUserIdOA():apiParam.getSid(),null,true);
+	}
+
+
+}

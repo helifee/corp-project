@@ -1,0 +1,852 @@
+package com.jzy.hio.oa.sys.controller;
+
+import java.io.InputStream;
+import java.io.PrintWriter;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.servlet.http.HttpSession;
+
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.ResponseBody;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.multipart.MultipartHttpServletRequest;
+import org.springframework.web.multipart.MultipartResolver;
+import org.springframework.web.multipart.commons.CommonsMultipartResolver;
+
+import com.jzy.hio.base.controller.BaseController;
+import com.jzy.hio.base.utils.DubboServiceResultInfo;
+import com.jzy.hio.base.utils.ErrorInfoCode;
+import com.jzy.hio.base.utils.IDGenerator;
+import com.jzy.hio.base.utils.MessageInfo;
+import com.jzy.hio.base.utils.MessageResult;
+import com.jzy.hio.base.utils.SecurityUserBeanInfo;
+import com.jzy.hio.encrypt.EndecryptUtil;
+import com.jzy.hio.oa.portal.dto.PortalPageDto;
+import com.jzy.hio.oa.portal.entity.PortalPage;
+import com.jzy.hio.oa.portal.service.PortalPageService;
+import com.jzy.hio.oa.sys.dto.SysNaviMenuDto;
+import com.jzy.hio.oa.sys.entity.SysNaviMenu;
+import com.jzy.hio.oa.sys.service.SysNaviMenuService;
+import com.jzy.hio.oa.util.BCVFactory;
+import com.jzy.tools.data.JacksonUtils;
+import com.jzy.tools.login.LoginUtils;
+
+/**
+ * 导航菜单表控制层
+ *
+ * @author admin
+ */
+@Controller
+@RequestMapping("/sys/sysNaviMenu")
+public class SysNaviMenuController extends BaseController<SysNaviMenuService> {
+
+	@Autowired
+	private SysNaviMenuService sysNaviMenuService;
+	@Autowired
+	private PortalPageService portalPageService;
+
+	@Value("${privateKey}")
+	private String privateKey;
+	@Value("${LLOA_privateKey}")
+	private String LLOAPrivateKey;
+
+	/**
+	 * 保存实体对象
+	 *
+	 * @return
+	 */
+	@RequestMapping(value = "/save", method = RequestMethod.POST)
+	public void save(MultipartHttpServletRequest request, HttpServletResponse response) {
+		PrintWriter pw = null;
+		Boolean isReturn = false;
+		try {
+			response.setContentType("text/html;charset=UTF-8");
+			pw = response.getWriter();
+			MultipartFile uploadfile = request.getFile("image");
+			MessageResult result = new MessageResult();
+			SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			if (null != uploadfile) {
+				long length = uploadfile.getSize();
+				if (length > 1 * 1024 * 1024) {
+					result.setSuccess(false);
+					result.setMsg("图片尺寸不能大于1M");
+					pw.print(JacksonUtils.toJson(result));
+					pw.flush();
+					isReturn = true;
+				}
+			}
+			if (!isReturn) {
+				String id = request.getParameter("id");
+				String name = request.getParameter("name");
+				String code = request.getParameter("code");
+				String parentId = request.getParameter("parentId");
+				String parentName = request.getParameter("parentName");
+				String sort = request.getParameter("sort");
+				String type = request.getParameter("type");
+				String state = request.getParameter("state");
+
+				String menuName = request.getParameter("menuName");
+				String resourceId = request.getParameter("resourceId");
+				String resourceName = request.getParameter("resourceName");
+				String url = request.getParameter("url");
+				String linkType = request.getParameter("linkType");
+				String portalId = request.getParameter("portalId");
+				String portalName = request.getParameter("portalName");
+				byte[] headpic = null;
+				if (null != uploadfile) {
+					InputStream is = uploadfile.getInputStream();
+					headpic = new byte[is.available()];
+					is.read(headpic);
+					is.close();
+				}
+				SysNaviMenuDto sysNaviMenuDto = new SysNaviMenuDto();
+				sysNaviMenuDto.setId(id);
+				sysNaviMenuDto.setType(type);
+				sysNaviMenuDto.setCode(code);
+				sysNaviMenuDto.setImage(headpic);
+				sysNaviMenuDto.setName(name);
+				sysNaviMenuDto.setMenuName(menuName);
+				sysNaviMenuDto.setParentId(parentId);
+				sysNaviMenuDto.setParentName(parentName);
+				sysNaviMenuDto.setState(Boolean.valueOf(state));
+				sysNaviMenuDto.setResourceId(resourceId);
+				sysNaviMenuDto.setResourceName(resourceName);
+				sysNaviMenuDto.setUrl(url);
+				sysNaviMenuDto.setLinkType(linkType);
+				sysNaviMenuDto.setDelflag(false);
+				sysNaviMenuDto.setPortalId(portalId);
+				sysNaviMenuDto.setPortalName(portalName);
+
+				String saveJson = JacksonUtils.toJson(sysNaviMenuDto);
+
+				try {
+					SysNaviMenu sysNaviMenu = JacksonUtils.fromJson(saveJson, SysNaviMenu.class);
+					if (sysNaviMenu.getId() == null) {
+						sysNaviMenu.setId(IDGenerator.getUUID());
+					}
+					int sid = sysNaviMenuService.getMaxSidByPid(sysNaviMenu.getParentId());
+					sysNaviMenu.setSort(sid + 1);
+					// 编号唯一性校验
+					final Integer num = sysNaviMenuService.checkSerialNo(sysNaviMenu);
+					if (num == 1) {
+						sysNaviMenuService.save(sysNaviMenu);
+						// 当所属门户选择不存在于父级菜单所属门户时更新父级菜单所属门户
+						updateParentNaviMenu(sysNaviMenu);
+						result.setResult(sysNaviMenu, "保存对象成功!");
+					} else {
+						result.setError("对象编码重复!");
+					}
+
+				} catch (Exception e) {
+					log.error("保存对象失败!" + e.getMessage());
+					e.printStackTrace();
+					result.setError("保存对象失败!");
+				}
+				pw.print(JacksonUtils.toJson(result));
+				pw.flush();
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+		} finally {
+			try {
+				pw.close();
+			} catch (Exception e) {
+			}
+		}
+	}
+
+	/**
+	 * //当所属门户选择不存在于父级菜单所属门户时更新父级菜单所属门户
+	 * 
+	 * @param sysNaviMenu
+	 * @throws Exception
+	 */
+	private void updateParentNaviMenu(SysNaviMenu sysNaviMenu) throws Exception {
+		String parentId = sysNaviMenu.getParentId();
+		String portalId = sysNaviMenu.getPortalId();
+		String portalName = sysNaviMenu.getPortalName();
+		if (StringUtils.isNotBlank(parentId) && StringUtils.isNotBlank(portalId)) {
+			SysNaviMenu parentNaviMenu = sysNaviMenuService.getObjectById(sysNaviMenu.getParentId());
+			String pPortalId = parentNaviMenu.getPortalId();
+			String pPortalName = parentNaviMenu.getPortalName();
+			String[] portalIdArr = portalId.split(",");
+			String[] portalNameArr = portalName.split(",");
+			boolean saveFlag = false;
+			for (int i = 0; i < portalIdArr.length; i++) {
+				if (!pPortalId.contains(portalIdArr[i])) {
+					pPortalId += "," + portalIdArr[i];
+					pPortalName += "," + portalNameArr[i];
+					saveFlag = true;
+				}
+				;
+			}
+			if (saveFlag) {
+				if (pPortalId.indexOf(",") == 0) {
+					pPortalId = pPortalId.substring(1);
+					pPortalName = pPortalName.substring(1);
+				}
+				parentNaviMenu.setPortalId(pPortalId);
+				parentNaviMenu.setPortalName(pPortalName);
+				sysNaviMenuService.update(parentNaviMenu);
+			}
+
+		}
+	}
+
+	// @RequestMapping(value = "/update/{id}")
+	// @Override
+	// public @ResponseBody MessageResult update(@PathVariable("id") String id, @RequestBody Map<String, Object> paramMap) {
+	// HttpServletRequest request = ((ServletRequestAttributes)RequestContextHolder.getRequestAttributes()).getRequest();
+	// HttpServletResponse response = ((ServletRequestAttributes) RequestContextHolder.getRequestAttributes()).getResponse();
+	// MultipartResolver resolver = new CommonsMultipartResolver(request.getSession().getServletContext());
+	// MultipartHttpServletRequest multipartRequest = resolver.resolveMultipart(request);
+	// this.update(multipartRequest, response);
+	// return null;
+	// }
+	/**
+	 * 修改修改实体对象
+	 *
+	 * @return
+	 */
+	@RequestMapping(value = "/update")
+	public void update(MultipartHttpServletRequest request, HttpServletResponse response) {
+		PrintWriter pw = null;
+		Boolean isReturn = false;
+		try {
+			response.setContentType("text/html;charset=UTF-8");
+			pw = response.getWriter();
+			MultipartFile uploadfile = request.getFile("image");
+			MessageResult result = new MessageResult();
+			SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userJson = JacksonUtils.toJson(userBeanInfo);
+			if (null != uploadfile) {
+				long length = uploadfile.getSize();
+				if (length > 1 * 1024 * 1024) {
+					result.setCode(ErrorInfoCode.DATASIZEOUT_ERROR.getValue());
+					result.setSuccess(false);
+					result.setMsg(ErrorInfoCode.DATASIZEOUT_ERROR.getName());
+					pw.print(JacksonUtils.toJson(result));
+					pw.flush();
+					isReturn = true;
+				}
+			}
+			if (!isReturn) {
+				SysNaviMenuDto sysNaviMenuDto = new SysNaviMenuDto();
+				String id = request.getParameter("id");
+				SysNaviMenu tmp = sysNaviMenuService.getObjectById(id);
+
+				String resultInfo = JacksonUtils.toJson(tmp);
+				sysNaviMenuDto = JacksonUtils.fromJson(resultInfo, SysNaviMenuDto.class);
+				String name = request.getParameter("name");
+				String code = request.getParameter("code");
+				String parentId = request.getParameter("parentId");
+				String parentName = request.getParameter("parentName");
+				String sort = request.getParameter("sort");
+				String type = request.getParameter("type");
+				String state = request.getParameter("state");
+
+				String menuName = request.getParameter("menuName");
+				String resourceId = request.getParameter("resourceId");
+				String resourceName = request.getParameter("resourceName");
+				String url = request.getParameter("url");
+				String linkType = request.getParameter("linkType");
+				String isDelPic = request.getParameter("isDelPic");
+				String portalId = request.getParameter("portalId");
+				String portalName = request.getParameter("portalName");
+				byte[] headpic = null;
+				if (null != uploadfile) {
+					if (uploadfile.getSize() > 0) {
+						InputStream is = uploadfile.getInputStream();
+						headpic = new byte[is.available()];
+						is.read(headpic);
+						is.close();
+						sysNaviMenuDto.setImage(headpic);
+					}
+				} else if ("0".equals(isDelPic)) {
+					sysNaviMenuDto.setImage(null);
+				}
+				sysNaviMenuDto.setId(id);
+				sysNaviMenuDto.setType(type);
+				sysNaviMenuDto.setCode(code);
+				sysNaviMenuDto.setName(name);
+				sysNaviMenuDto.setMenuName(menuName);
+				sysNaviMenuDto.setParentId(parentId);
+				sysNaviMenuDto.setParentName(parentName);
+				if (state != null && !state.equals("")) {
+					sysNaviMenuDto.setState(Boolean.valueOf(state));
+				}
+				sysNaviMenuDto.setResourceId(resourceId);
+				sysNaviMenuDto.setResourceName(resourceName);
+				sysNaviMenuDto.setUrl(url);
+				sysNaviMenuDto.setLinkType(linkType);
+				sysNaviMenuDto.setPortalId(portalId);
+				sysNaviMenuDto.setPortalName(portalName);
+
+				String updateJson = JacksonUtils.toJson(sysNaviMenuDto);
+
+				try {
+					SysNaviMenu sysNaviMenu = JacksonUtils.fromJson(updateJson, SysNaviMenu.class);
+					Map<String, Object> naviMenuMap = JacksonUtils.fromJson(updateJson, Map.class);
+					// 编号唯一性校验
+					final Integer num = sysNaviMenuService.checkSerialNo(sysNaviMenu);
+					if (num == 1) {
+						int updateResult = sysNaviMenuService.updateNaviMenu(sysNaviMenu);
+						if (sysNaviMenu.getState() && Objects.equals(naviMenuMap.get("isChildren"), true)) {
+							sysNaviMenuService.updateChildrenState(sysNaviMenu);
+						}
+						// 当所属门户选择不存在于父级菜单所属门户时更新父级菜单所属门户
+						updateParentNaviMenu(sysNaviMenu);
+						result.setResult(updateResult, "更新对象成功!");
+					} else {
+						result.setError("对象编码重复!");
+					}
+
+				} catch (Exception e) {
+					log.error("更新对象失败!" + e.getMessage());
+					result.setError("更新对象失败!");
+				}
+				pw.print(JacksonUtils.toJson(result));
+				pw.flush();
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+		} finally {
+			try {
+				pw.close();
+			} catch (Exception e) {
+			}
+		}
+	}
+
+	/**
+	 * 返回菜单树 state 0 无效，1 有效，2，全部
+	 *
+	 * @param map
+	 * @return
+	 */
+	@RequestMapping(value = "/getTree/{state}", method = { RequestMethod.POST }, consumes = "application/json")
+	public @ResponseBody MessageResult getTree(@PathVariable("state") String state, @RequestBody Map<String, Object> map) {
+		MessageResult result = new MessageResult();
+		try {
+			List<?> rootList = new ArrayList();
+			// state=1 portal页获取展示菜单树 ；state2 后台定义获取整体菜单树
+			rootList = "1".equals(state) ? sysNaviMenuService.queryZTreeMenu() : sysNaviMenuService.queryRootMenu(state);
+			if (rootList != null && !rootList.isEmpty()) {
+				result.setResult(rootList, "获取列表数据成功!");
+			} else {
+				result.setError("列表数据为空!");
+			}
+		} catch (Exception e) {
+			log.error("获取列表数据失败!" + e.getMessage());
+			result.setError("获取列表数据失败!");
+		}
+
+		return result;
+	}
+
+	/**
+	 * 移动实体对象
+	 *
+	 * @param t
+	 * @return
+	 */
+	@RequestMapping(value = "/{location}/move", method = RequestMethod.POST, consumes = "application/json")
+	public @ResponseBody MessageResult move(@PathVariable("location") String location, @RequestBody SysNaviMenuDto t) {
+		MessageResult result = new MessageResult();
+		SecurityUserBeanInfo userInfo = LoginUtils.getSecurityUserBeanInfo();
+		String saveJson = JacksonUtils.toJson(t);
+		if (LocationFlag.getLocation(location) == LocationFlag.LAST) {
+			try {
+				SysNaviMenu arg = JacksonUtils.fromJson(saveJson, SysNaviMenu.class);
+				int updateResult = sysNaviMenuService.updateToPre(arg);
+				if (updateResult != -1) {
+					result.setResult(updateResult, "上移成功！");
+				} else {
+					result.setResult(updateResult, "已经移到顶部！");
+				}
+			} catch (Exception e) {
+				log.error("上移失败！" + e.getMessage());
+				result.setError("上移失败!");
+			}
+		} else if (LocationFlag.getLocation(location) == LocationFlag.NEXT) {
+			try {
+				SysNaviMenu arg = JacksonUtils.fromJson(saveJson, SysNaviMenu.class);
+				int updateResult = sysNaviMenuService.updateToNext(arg);
+				if (updateResult != -1) {
+					result.setResult(updateResult, "下移成功！");
+				} else {
+					result.setResult(updateResult, "已经移到底部！");
+				}
+			} catch (Exception e) {
+				log.error("下移失败！" + e.getMessage());
+				result.setError("下移失败!");
+			}
+		}
+		return result;
+	}
+
+	/**
+	 * 模糊查询 名称或菜单名称
+	 *
+	 * @param map
+	 * @return
+	 */
+	@RequestMapping(value = "/fuzzySearch", method = RequestMethod.POST, consumes = "application/json")
+	public @ResponseBody MessageResult fuzzySearch(@RequestBody Map<String, Object> map) {
+		MessageResult result = new MessageResult();
+		try {
+			if (isNotEmpty(map)) {
+				List list = sysNaviMenuService.fuzzySearch(map);
+				if (list != null && !list.isEmpty()) {
+					result.setResult(list, "模糊查询对象成功!");
+				} else {
+					result.setError("列表数据为空!");
+				}
+			} else {
+				result.setError("请求参数为空!");
+			}
+		} catch (Exception e) {
+			log.error("模糊查询对象失败!" + e.getMessage());
+			result.setError("模糊查询对象失败!");
+		}
+		return result;
+	}
+
+	@RequestMapping(value = "/getUserInfo", method = RequestMethod.GET)
+	public @ResponseBody MessageResult getUserInfo() {
+		MessageResult result = new MessageResult();
+		try {
+			Map<String, Object> map = new HashMap<String, Object>();
+			HttpServletRequest request = ((ServletRequestAttributes) RequestContextHolder.getRequestAttributes()).getRequest();
+			HttpSession session = request.getSession();
+			String sessionId = session.getId();
+			SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			// String userInfo = JacksonUtils.toJson(securityUserBeanInfo);
+			String loginName = securityUserBeanInfo.getSecurityUserDto().getLoginName();
+			map.put("userLoginName", loginName);
+			map.put("sessionId", sessionId);
+
+			Map<String, Object> encryptParamMap = new HashMap<String, Object>();
+			encryptParamMap.put("username", loginName);
+			encryptParamMap.put("corpCode", "xyre");
+
+			Map<String, Object> encryptUserInfoMap = this.getEncryptUserInfo(encryptParamMap);
+			map.putAll(encryptUserInfoMap);
+
+			Map<String, String> keyMap = getKey();
+
+			// 按揭系统登陆名加密
+			String mortgageLoginName = new EndecryptUtil().get3DESEncrypt(loginName, keyMap.get("privateKey"));
+			map.put("mortgageLoginName", mortgageLoginName);
+			// LLOA系统登陆名加密
+			String LLOALoginName = new EndecryptUtil().get3DESEncrypt(loginName, keyMap.get("LLOAPrivateKey"));
+			map.put("LLOALoginName", LLOALoginName);
+			result.setResult(map);
+			result.setSuccess(MessageInfo.GETSUCCESS.isResult());
+			result.setMsg(MessageInfo.GETSUCCESS.getMsg());
+		} catch (Exception e) {
+			e.printStackTrace();
+			log.error("调用getUserInfo方法:  【" + e.getMessage() + "】");
+			result.setSuccess(MessageInfo.GETERROR.isResult());
+			result.setMsg(MessageInfo.GETERROR.getMsg() + "【" + e.getMessage() + "】");
+		}
+		return result;
+	}
+
+	private Map<String, Object> getUserInformation() {
+		Map<String, Object> map = new HashMap<String, Object>();
+		HttpServletRequest request = ((ServletRequestAttributes) RequestContextHolder.getRequestAttributes()).getRequest();
+		HttpSession session = request.getSession();
+		String sessionId = session.getId();
+		SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+		// String userInfo = JacksonUtils.toJson(securityUserBeanInfo);
+		String loginName = securityUserBeanInfo.getSecurityUserDto().getLoginName();
+		map.put("userLoginName", loginName);
+		map.put("sessionId", sessionId);
+
+		Map<String, Object> encryptParamMap = new HashMap<String, Object>();
+		encryptParamMap.put("username", loginName);
+		encryptParamMap.put("corpCode", "xyre");
+
+		Map<String, Object> encryptUserInfoMap = this.getEncryptUserInfo(encryptParamMap);
+		map.putAll(encryptUserInfoMap);
+		Map<String, String> keyMap = getKey();
+		String mortgageLoginName = new EndecryptUtil().get3DESEncrypt(loginName, keyMap.get("privateKey"));
+		map.put("mortgageLoginName", mortgageLoginName);
+		String LLOALoginName = new EndecryptUtil().get3DESEncrypt(loginName, keyMap.get("LLOAPrivateKey"));
+		map.put("LLOALoginName", LLOALoginName);
+
+		return map;
+	}
+
+	public Map<String, String> getKey() {
+		Map<String, String> keyMap = new HashMap<>();
+		keyMap.put("privateKey", privateKey);
+		keyMap.put("LLOAPrivateKey", LLOAPrivateKey);
+		return keyMap;
+	}
+
+	/**
+	 * 获取加密信息
+	 * 
+	 * @param map
+	 * @return
+	 */
+	private Map<String, Object> getEncryptUserInfo(Map<String, Object> map) {
+		Map<String, Object> mapNew = new HashMap<String, Object>();
+		try {
+			String enUserName = null;
+			String corpCode = null;
+
+			if (map.size() > 0 && map.get("username") != null && !"".equals(map.get("username"))) {
+				String username = map.get("username").toString();
+				enUserName = BCVFactory.encrypt(username);
+				enUserName = java.net.URLEncoder.encode(enUserName);
+			}
+			if (map.size() > 0 && map.get("corpCode") != null && !"".equals(map.get("corpCode"))) {
+				corpCode = map.get("corpCode").toString();
+				corpCode = BCVFactory.encrypt(corpCode);
+				corpCode = java.net.URLEncoder.encode(corpCode);
+			}
+
+			SimpleDateFormat df = new SimpleDateFormat("yyyyMMddHHmmss");
+			Calendar cal = Calendar.getInstance();
+			int hour = cal.get(Calendar.HOUR_OF_DAY); // 差8个小时
+			cal.set(Calendar.HOUR_OF_DAY, hour);
+			Date date = cal.getTime();
+			String dateString = df.format(date);
+			dateString = BCVFactory.encrypt(dateString);
+			dateString = java.net.URLEncoder.encode(dateString);
+
+			mapNew.put("enUserName", enUserName);
+			mapNew.put("corpCode", corpCode);
+			mapNew.put("dateString", dateString);
+
+		} catch (Exception e) {
+			e.printStackTrace();
+			log.error("调用getUserInfo方法:  【" + e.getMessage() + "】");
+		}
+
+		return mapNew;
+	}
+
+	@RequestMapping(value = "/getMenuInfo", method = RequestMethod.POST, consumes = "application/json")
+	public @ResponseBody MessageResult getMenuInfo(@RequestBody Map<String, Object> map) {
+		MessageResult result = new MessageResult();
+
+		try {
+			String enUserName = null;
+			String corpCode = null;
+			Map<String, Object> mapNew = new HashMap<String, Object>();
+			// if(map.size() >0 && map.get("username") != null && !"".equals(map.get("username"))){
+			// String username = map.get("username").toString();
+			// enUserName = BCVFactory.encrypt(username);
+			// enUserName=java.net.URLEncoder.encode(enUserName);
+			// }
+			// if(map.size() >0 && map.get("corpCode") != null && !"".equals(map.get("corpCode"))){
+			// corpCode = map.get("corpCode").toString();
+			// corpCode = BCVFactory.encrypt(corpCode);
+			// corpCode = java.net.URLEncoder.encode(corpCode);
+			// }
+
+			SimpleDateFormat df = new SimpleDateFormat("yyyyMMddHHmmss");
+			Calendar cal = Calendar.getInstance();
+			int hour = cal.get(Calendar.HOUR_OF_DAY); // 差8个小时
+			cal.set(Calendar.HOUR_OF_DAY, hour);
+			Date date = cal.getTime();
+			String dateString = df.format(date);
+			// dateString=BCVFactory.encrypt(dateString);
+			// dateString=java.net.URLEncoder.encode(dateString);
+
+			mapNew.put("enUserName", enUserName);
+			mapNew.put("corpCode", corpCode);
+			mapNew.put("dateString", dateString);
+
+			result.setResult(mapNew);
+			result.setSuccess(MessageInfo.GETSUCCESS.isResult());
+			result.setMsg(MessageInfo.GETSUCCESS.getMsg());
+		} catch (Exception e) {
+			e.printStackTrace();
+			log.error("调用getUserInfo方法:  【" + e.getMessage() + "】");
+			result.setSuccess(MessageInfo.GETERROR.isResult());
+			result.setMsg(MessageInfo.GETERROR.getMsg() + "【" + e.getMessage() + "】");
+		}
+		return result;
+	}
+
+	@RequestMapping(value = "/getNaviMenuPortal", method = RequestMethod.GET, produces = "text/html; charset=utf-8")
+	@ResponseBody
+	public String getNaviMenuPortal(HttpServletRequest request) {
+		long t1 = System.currentTimeMillis();
+		MessageResult result = new MessageResult();
+		String contentRowHtml = "";
+		try {
+			SecurityUserBeanInfo userInfo = LoginUtils.getSecurityUserBeanInfo();
+			// 获取用户参数
+			Map<String, Object> userInfoMap = getUserInformation();
+			// String dubboResultInfo = sysNaviMenuDtoServiceCustomer.getTree(JacksonUtils.toJson(userInfo), "ENABLED");
+			Map<String, Object> paramMap = new HashMap<String, Object>();
+			// paramMap.put("delflag",false);
+			// paramMap.put("state",true);
+			// paramMap.put("sidx","sort");
+			// paramMap.put("sord","asc");
+			String portalId = request.getParameter("portalId");
+			if (portalId != null) {
+				DubboServiceResultInfo info = new DubboServiceResultInfo();
+				try {
+					PortalPage partalPage = portalPageService.getObjectById(portalId);
+					info.setResult(JacksonUtils.toJson(partalPage));
+					info.setSucess(true);
+					info.setMsg("获取对象成功!");
+				} catch (Exception e) {
+					// TODO Auto-generated catch block
+					log.error("获取对象失败!" + e.getMessage());
+					info.setSucess(false);
+					info.setMsg("获取对象失败!");
+					info.setResult(ErrorInfoCode.SYSTEM_ERROR.getValue());
+				}
+				if (info.isSucess()) {
+					PortalPageDto portalPageDto = JacksonUtils.fromJson(info.getResult(), PortalPageDto.class);
+					String originPortalId = portalPageDto.getOriginPortalPageId();
+					if (originPortalId != null) {
+						portalId = originPortalId;
+					}
+				}
+				paramMap.put("portalId", portalId);
+			}
+
+			// String dubboResultInfo = sysNaviMenuDtoServiceCustomer.queryList(JacksonUtils.toJson(userInfo),JacksonUtils.toJson(paramMap));
+
+			DubboServiceResultInfo info = new DubboServiceResultInfo();
+			try {
+				List list = new ArrayList();
+				if (isNotEmpty(paramMap)) {
+					list = sysNaviMenuService.queryListByPortalId(paramMap);
+				} else {
+					list = sysNaviMenuService.queryListByPortalId(null);
+				}
+				if (list != null && !list.isEmpty()) {
+					info.setResult(JacksonUtils.toJson(list));
+					info.setSucess(true);
+					info.setMsg("获取列表对象成功!");
+				} else {
+					info.setCode(ErrorInfoCode.NULL_ERROR.getValue());
+					info.setSucess(false);
+					info.setMsg("列表对象为空!");
+				}
+			} catch (Exception e) {
+				// TODO Auto-generated catch block
+				log.error("获取列表对象失败!" + e.getMessage());
+				info.setSucess(false);
+				info.setMsg("获取列表对象失败!");
+				info.setExceptionMsg(e.getMessage());
+				info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+			}
+
+			System.out.println("==============getNaviMenuPortal耗时01======================" + (System.currentTimeMillis() - t1));
+			if (info.isSucess()) {
+				String resultInfo = info.getResult();
+				List<SysNaviMenuDto> list = JacksonUtils.fromJson(resultInfo, List.class, SysNaviMenuDto.class);
+				String userName = (String) userInfoMap.get("userLoginName");// 用户登录名
+				String sessionId = (String) userInfoMap.get("sessionId");// sessionID
+				String enUserName = (String) userInfoMap.get("enUserName");// 蓝凌加密用户名
+				String encorpCode = (String) userInfoMap.get("corpCode");// 蓝凌公司代码
+				String dateString = (String) userInfoMap.get("dateString");//
+				String mortgageLoginName = (String) userInfoMap.get("mortgageLoginName");// 按揭系统
+				String LLOALoginName = (String) userInfoMap.get("LLOALoginName");// lanliOA系统
+				int count = 0;
+
+				List<SysNaviMenuDto> parentList = new ArrayList<SysNaviMenuDto>();
+				Map<String, Object> childMaps = new HashMap<String, Object>();
+				for (SysNaviMenuDto sysNaviMenuDto : list) {
+					String pid = sysNaviMenuDto.getParentId();
+					if (pid == null || "0".equals(pid) || "".equals(pid)) {
+						parentList.add(sysNaviMenuDto);
+						List<SysNaviMenuDto> childList = (List<SysNaviMenuDto>) childMaps.get(sysNaviMenuDto.getId());
+						if (childList == null) {
+							childMaps.put(sysNaviMenuDto.getId(), new ArrayList<SysNaviMenuDto>());
+						}
+
+					} else {
+						List<SysNaviMenuDto> childList = (List<SysNaviMenuDto>) childMaps.get(sysNaviMenuDto.getParentId());
+						if (childList == null) {
+							childList = new ArrayList<SysNaviMenuDto>();
+							childList.add(sysNaviMenuDto);
+							childMaps.put(sysNaviMenuDto.getParentId(), childList);
+						} else {
+							childList.add(sysNaviMenuDto);
+						}
+					}
+					// divBuffer.append("<div class=\"wuye\"></div>");
+				}
+				System.out.println("==============getNaviMenuPortal耗时1======================" + (System.currentTimeMillis() - t1));
+				StringBuffer contentBuf = new StringBuffer();
+				for (SysNaviMenuDto sysNaviMenuDto : parentList) {
+					// String img = sysNaviMenuDto.getImage();
+					String name = sysNaviMenuDto.getName();
+					String id = sysNaviMenuDto.getId();
+					// String url = sysNaviMenuDto.getUrl();
+					// String pid = sysNaviMenuDto.getParentId();
+					// String linkType = sysNaviMenuDto.getLinkType();
+					StringBuffer divBuffer = new StringBuffer();
+					if (count == 0) {
+						divBuffer.append("<div class=\"scm-glyphicons  wuye\" style=\"border-top:none;margin-top:0px;\"> \n");
+					} else {
+						divBuffer.append("<div class=\"scm-glyphicons  wuye\" >");
+					}
+
+					divBuffer.append(
+							"<p class=\"p_l_title\" id=\"p_title_" + id + "\" data-toggle=\"collapse\" data-target=\"#ul_" + id + "\" aria-expanded=\"true\" aria-controls=\"ul_"
+									+ id + "\" style=\"cursor: pointer;text-align:center;\">" + name + "<span class=\"fa fa-angle-up\" id=\"collapseSearchSpan\"></span></p>\n");
+					divBuffer.append("<ul class=\"scm-glyphicons-list clearfix collapse in\" style=\"margin: auto;\" id=\"ul_" + id + "\">\n");
+					List<SysNaviMenuDto> childList = (List<SysNaviMenuDto>) childMaps.get(id);
+					for (SysNaviMenuDto child : childList) {
+						// String img1 = new String(child.getImage());
+						// String name1 = child.getName();
+						// String id1 = child.getId();
+						String url1 = child.getUrl();
+						// byte[] image1 = child.getImage ();
+						// String base64Img =image1!=null?"data:image/jpeg;base64,"+ Base64.getEncoder().encodeToString(image1):"";
+
+						if (url1.indexOf('?') != -1) {
+							String urlParamStr = url1.substring(url1.lastIndexOf('?') + 1);
+
+							// urlParamStr = urlParamStr.replaceAll("&", ",").replaceAll("amp;", "");
+							// String[] strs = urlParamStr.split(",");
+							// Map<String, Object> urlParamMap = new HashMap<>();
+							// for (String str : strs) {
+							// String[] params = str.split("=", 2);
+							// urlParamMap.put(params[0], params[1]);
+							// }
+							urlParamStr = urlParamStr.replaceAll("=", "\":\"").replaceAll("&", "\",\"").replaceAll("amp;", "");
+							urlParamStr = "{\"" + urlParamStr + "\"}";
+							Map<String, Object> urlParamMap = JacksonUtils.fromJson(urlParamStr, Map.class);
+
+							String home = urlParamMap == null ? null : (String) urlParamMap.get("home");
+							String lanLin = urlParamMap == null ? null : (String) urlParamMap.get("lanlin");
+							String mortgage = urlParamMap == null ? null : (String) urlParamMap.get("mortgage");
+							String lloa = urlParamMap == null ? null : (String) urlParamMap.get("LLOA");
+							if ("z".equals(home)) {
+								url1 = url1.replace("#[userName]", enUserName);
+								url1 = url1.replace("#[corpCode]", encorpCode);
+							} else if ("h".equals(home)) {
+								url1 = url1.replace("#[userName]", enUserName);
+							} else {
+								if (lanLin != null) {
+									url1 = url1.replace("#[userName]", enUserName);
+								} else if (mortgage != null) {
+									url1 = url1.replace("#[userName]", mortgageLoginName);
+								} else if (lloa != null) {
+									url1 = url1.replace("#[userName]", LLOALoginName);
+								} else {
+									url1 = url1.replace("#[userName]", userName);
+									url1 = url1.replace("#[sessionId]", sessionId);
+								}
+
+							}
+
+							if (lanLin != null && "true".equals(lanLin)) {
+								url1 = url1.replace("", "");
+							}
+						}
+
+						// String pid1 = child.getParentId();
+						String linkType1 = child.getLinkType();
+						// divBuffer.append("<li><a href=\"javascript:void(0)\" data-href=\""+url1+"\" data-linktype=\""+linkType1+"\"><span
+						// class=\"glyphicon-class\">"+name1+"</span></a></li>\n");
+						byte[] image = child.getImage();
+						byte[] image2 = image;// image!=null? CompressImgUtil.compressImg2(image,50,50):image;
+						if (image != null && image.length > 32 * 1024) {
+							// image2 = image != null ? CompressImgUtil.compressImg2(image, 50, 50) : image;
+						}
+
+						String base64Img = image2 != null ? "data:image/jpeg;base64," + Base64.getEncoder().encodeToString(image2) : "../../common/img/default2.png";
+						if ("INNER".equals(linkType1)) {
+							divBuffer.append("<li>\n<a href=\"javascript:void(0);\" data-linkType=\"" + linkType1 + "\" data-href=\"" + url1 + "\">\n" + "<img src=\"" + base64Img
+									+ "\"  title=\"" + (child.getName()) + "\">\n<span class=\"glyphicon-class\">" + child.getName() + "</span></a>\n</li>\n");
+						} else {
+							divBuffer.append("<li>\n<a  href=\"javascript:void(0);\" data-linkType=\"" + linkType1 + "\" data-href=\"" + url1 + "\">\n" + "<img src=\"" + base64Img
+									+ "\"  title=\"" + (child.getName()) + "\">\n<span class=\"glyphicon-class\">" + child.getName() + "</span></a>\n</li>\n");
+						}
+
+					}
+
+					divBuffer.append("</ul>\n");
+					divBuffer.append("</div>\n");
+
+					contentBuf.append(divBuffer);
+					count++;
+				}
+
+				StringBuffer jsBuf = new StringBuffer();
+				jsBuf.append("<script type=\"text/javascript\">\n");// fa fa-angle-up
+				jsBuf.append("$(function(){\n" + "       $('.wuye>ul>li>a').on('click',function(){\n" + "           //debugger;\n "
+						+ "           var href = $(this).attr('data-href');\n" + "           var linkType = $(this).attr('data-linkType');\n"
+						+ "           if(linkType=='OUTER'){\n" + "            if(href.indexOf('LLOA=true')>-1){\n" + "                     href = encodeURI(href); \n   "
+						+ "            }   " + "               window.open(href);\n" + "           }else{\n" + "               var aLink = href;\n"
+						+ "               aLink = aLink.substring(aLink.indexOf('?'));\n" + "               aLink = aLink.replace('?', '').replace(/&/g, '\",\"');\n"
+						+ "               aLink = aLink.replace(/=/g, '\":\"');\n" + "               var menuUrlObj ;\n" + "               if (aLink != \"\") {\n"
+						+ "                   menuUrlObj = JSON.parse('{\"' + aLink + '\"}');\n" + "               }\n"
+						+ "               if(menuUrlObj._proCode&&!menuUrlObj._menuCode){\n" + "                   window.parent.switchPro(menuUrlObj._proCode);\n"
+						+ "               }else if(menuUrlObj._proCode&&menuUrlObj._menuCode){\n"
+						+ "                   window.parent.switchPro(menuUrlObj._proCode,menuUrlObj._menuCode);\n" + "               }else{\n"
+						+ "                   window.location.href = href;\n" + "               }" + "           }" + "       });\n"
+						+ "$('.scm-glyphicons-list').on('show.bs.collapse', function () {\n " + "if($(this).prev().find(\"span\").hasClass(\"fa-angle-down\")){\n"
+						+ "$(this).prev().find(\"span\").removeClass(\"fa-angle-down\");\n" + "$(this).prev().find(\"span\").addClass(\"fa-angle-up\");}\n" + " });\n"
+						+ "$('.scm-glyphicons-list').on('hide.bs.collapse', function () {\n " + "if($(this).prev().find(\"span\").hasClass(\"fa-angle-up\")){\n"
+						+ "$(this).prev().find(\"span\").removeClass(\"fa-angle-up\");\n" + "$(this).prev().find(\"span\").addClass(\"fa-angle-down\");}\n" + " });\n" + "\n");
+
+				// "});\n");
+				/*
+				 * jsBuf.append("</script>\n"); jsBuf.append ("<script type=\"text/javascript\">\n");
+				 */
+				// jsBuf.append ("$(\".p_l_title\").on(\"click\",function (e) {\n");
+				// jsBuf.append ("if($(this).find(\"span\").hasClass(\"fa-angle-down\")){\n");
+				// jsBuf.append (" $(this).find(\"span\").removeClass(\"fa-angle-down\");\n");
+				// jsBuf.append ("$(this).find(\"span\").addClass(\"fa-angle-up\");\n");
+				// jsBuf.append ("}else{\n");
+				// jsBuf.append ("$(this).find(\"span\").removeClass(\"fa-angle-up\");\n");
+				// jsBuf.append ("$(this).find(\"span\").addClass(\"fa-angle-down\");\n");
+				// jsBuf.append (" }\n");
+				// jsBuf.append ("e.stopPropagation();\n");
+				// jsBuf.append ("});\n");
+				jsBuf.append("});\n");
+				jsBuf.append("</script>\n");
+				// coffee
+				// contentBuf.append(jsBuf);
+				contentRowHtml = contentBuf.toString();
+
+			} else {
+				contentRowHtml = "暂无数据！";
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+			log.error("调用getNaviMenuPortal方法:  【参数】======" + "【" + e.getMessage() + "】");
+			result.setSuccess(MessageInfo.GETERROR.isResult());
+			result.setMsg(MessageInfo.GETERROR.getMsg() + "【" + e.getMessage() + "】");
+		}
+		long t2 = System.currentTimeMillis();
+
+		System.out.println("==============getNaviMenuPortal耗时======================" + (t2 - t1));
+		return contentRowHtml;
+	}
+}

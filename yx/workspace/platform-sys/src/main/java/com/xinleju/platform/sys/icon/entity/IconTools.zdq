@@ -1,0 +1,90 @@
+package com.xinleju.platform.sys.icon.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+/**
+ * Created by ly on 2017/12/1.
+ */
+@Table(value="PT_SYS_ICON",desc="平台icon")
+public class IconTools extends BaseEntity {
+
+    @Column(value = "name", desc = "图标名称")
+    private String name;
+
+    @Column(value = "code", desc = "图标编码")
+    private String code;
+
+    @Column(value = "extend_name", desc = "图标扩展名")
+    private String extendName;
+
+    @Column(value = "full_name", desc = "附件全名")
+    private String fullName;
+
+    @Column(value = "url", desc = "上传全地址")
+    private String url;
+
+    @Column(value = "icon_size", desc = "图标大小")
+    private Long iconSize;
+
+    @Column(value = "icon_type", desc = "图标类型")
+    private Long iconType;
+
+    public String getName() {
+        return name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+
+    public String getCode() {
+        return code;
+    }
+
+    public void setCode(String code) {
+        this.code = code;
+    }
+
+    public String getExtendName() {
+        return extendName;
+    }
+
+    public void setExtendName(String extendName) {
+        this.extendName = extendName;
+    }
+
+    public String getFullName() {
+        return fullName;
+    }
+
+    public void setFullName(String fullName) {
+        this.fullName = fullName;
+    }
+
+    public String getUrl() {
+        return url;
+    }
+
+    public void setUrl(String url) {
+        this.url = url;
+    }
+
+    public Long getIconSize() {
+        return iconSize;
+    }
+
+    public void setIconSize(Long iconSize) {
+        this.iconSize = iconSize;
+    }
+
+    public Long getIconType() {
+        return iconType;
+    }
+
+    public void setIconType(Long iconType) {
+        this.iconType = iconType;
+    }
+}

@@ -1,0 +1,93 @@
+package com.jzy.hio.platform.message.service;
+
+import java.util.List;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.amqp.core.AmqpTemplate;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cloud.context.config.annotation.RefreshScope;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+
+import com.jzy.hio.config.QueueConfig;
+import com.jzy.hio.entity.ImNoticeMsgTemp;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.platform.message.comm.MessageConstant;
+import com.jzy.hio.redis.RedisService;
+
+/**
+ * 创建定时任务实现类
+ */
+@Component
+//@RefreshScope
+public class MessageScheduledTasks {
+    private static final Logger logger = LoggerFactory.getLogger(MessageScheduledTasks.class);
+
+    @Autowired
+    QueueConfig queueConfig;
+
+    @Autowired
+    private AmqpTemplate rabbitTemplate;
+
+    @Autowired
+    ImNoticeMsgTempService imNoticeMsgTempService;
+
+    @Autowired
+    RedisService redisService;
+
+    @Value("${redis_key.ImNoticeMsgTemp}")
+    private String redis_key;
+
+    @Autowired
+    SysFeignService sysFeignService;
+    /**
+     * 第一次延迟1分钟后执行，之后按fixedRate的规则每五分钟执行一次
+     */
+//    @Scheduled(initialDelay = 1000 * 1, fixedRate = 1000 * 60 * 3)
+    public void sendMsg() {
+        try {
+            logger.info("sendMsg， start！");
+            logger.info("sendMsg, redis_key {}",redis_key);
+            //在分布式环境下，防止重发查询发消息
+            if(redisService.addRedisSetnx(redis_key,redis_key)) {
+                logger.info("sendMsg，addRedisSetnx，redis_key {} ",redis_key);
+               //迭代失败消息，记住测试环境数据一定要少不能超过10条，因为用的环信服务器测试和生产是一个
+               ImNoticeMsgTemp temp = new ImNoticeMsgTemp();
+               temp.setStatus(MessageConstant.SEND_MSG_STATUS_FAIL);
+               //查询发送失败的消息
+               List<ImNoticeMsgTemp> list = imNoticeMsgTempService.queryList(temp);
+               if (list != null && list.size() > 0) {
+                   logger.info("sendMsg， count:{ " + list.size() + " }");
+                   for (int i = 0; i < list.size(); i++) {
+                       ImNoticeMsgTemp imNoticeMsgTemp = list.get(i);
+                        rabbitTemplate.convertAndSend(queueConfig.getImNoticeMsgTempQueue(), imNoticeMsgTemp);
+                   }
+               } else {
+                   logger.info("sendMsg， count:{ 0 }");
+               }
+            }else{
+               logger.info("sendMsg， 未执行重发消息操作！");
+           }
+        }catch (Exception e){
+            logger.error("sendMsg， 重发消息失败！"+e.getMessage());
+        }finally {
+            logger.info("sendMsg， releaseRedisSetnx，redis_key {} ",redis_key);
+            redisService.releaseRedisSetnx(redis_key);
+            logger.info("sendMsg， end！");
+        }
+    }
+
+//    /**
+//     * 第一次延迟1分钟后执行，之后按fixedRate的规则每五分钟执行一次
+//     */
+//    @Scheduled(initialDelay = 1000 * 1, fixedRate = 1000 * 10)
+//    public void sendMsgtest() {
+//        CoreHeaderInterceptor.initHystrixRequestContext(CoreHeaderInterceptor.HEADER_LABEL);
+//        OAUserParam oaUserParam = new  OAUserParam();
+//        sysFeignService.queryUserByOrgAndRoleAndUser(oaUserParam);
+//    }
+
+
+}

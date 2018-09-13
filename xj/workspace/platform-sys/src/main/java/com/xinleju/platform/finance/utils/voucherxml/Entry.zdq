@@ -1,0 +1,303 @@
+package com.xinleju.platform.finance.utils.voucherxml;
+
+import java.util.Date;
+import java.util.List;
+
+import javax.xml.bind.annotation.XmlAccessType;
+import javax.xml.bind.annotation.XmlAccessorType;
+import javax.xml.bind.annotation.XmlElement;
+import javax.xml.bind.annotation.XmlElementWrapper;
+import javax.xml.bind.annotation.XmlType;
+import javax.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
+
+@XmlAccessorType(XmlAccessType.FIELD)
+@XmlType(name = "entry", propOrder = {})
+public class Entry {
+	@XmlElement(name = "entry_id")
+	private String entryId;
+	@XmlElement(name = "account_code")
+	private String accountCode;
+	@XmlElement(name = "abstract")
+	private String abstracT;
+	@XmlElement
+	private String settlement;
+	@XmlElement(name = "document_id")
+	private String documentId;
+	@XmlJavaTypeAdapter(DateAdpter.class)
+	@XmlElement(name = "document_date")
+	private Date documentDate;
+	@XmlElement
+	private String currency;
+	@XmlElement(name = "unit_price")
+	private String unitPrice;
+	@XmlElement(name = "exchange_rate1")
+	private String exchangeRate1;
+	@XmlElement(name = "exchange_rate2")
+	private String exchangeRate2;
+	@XmlElement(name = "debit_quantity")
+	private String debitQuantity;
+	@XmlElement(name = "primary_debit_amount")
+	private String primaryDebitAmount;
+	@XmlElement(name = "secondary_debit_amount")
+	private String secondaryDebitAmount;
+	@XmlElement(name = "natural_debit_currency")
+	private String naturalDebitCurrency;
+	@XmlElement(name = "credit_quantity")
+	private String creditQuantity;
+	@XmlElement(name = "primary_credit_amount")
+	private String primaryCreditAmount;
+	@XmlElement(name = "secondary_credit_amount")
+	private String secondaryCreditAmount;
+	@XmlElement(name = "natural_credit_currency")
+	private String naturalCreditCurrency;
+	@XmlElement(name = "bill_type")
+	private String billType;
+	@XmlElement(name = "bill_id")
+	private String billId;
+	@XmlElement(name = "bill_date")
+	private String billDate;
+	@XmlElement
+	private String detail;
+	@XmlElementWrapper(name = "otheruserdata")
+	@XmlElement(name = "cashflowcase")
+	private List<Cashflowcase> otheruserdata;
+	@XmlElementWrapper(name = "subjfreevalue")
+	@XmlElement(name = "subjfreevalue")
+	private List<String> subjfreevalue;
+
+	@XmlElement
+	private String free1; //香港置地核销号
+	
+	/**
+	 * @return the free1
+	 */
+	public String getFree1() {
+		return free1;
+	}
+
+	/**
+	 * @param free1 the free1 to set
+	 */
+	public void setFree1(String free1) {
+		this.free1 = free1;
+	}
+
+	/**
+	 * 辅助核算列表
+	 */
+	@XmlElementWrapper(name = "auxiliary_accounting")
+	@XmlElement(name = "item")
+	private List<AuxiliaryItem> auxiliaryList;
+
+	public String getEntryId() {
+		return entryId;
+	}
+
+	public void setEntryId(String entryId) {
+		this.entryId = entryId;
+	}
+
+	public String getAccountCode() {
+		return accountCode;
+	}
+
+	public void setAccountCode(String accountCode) {
+		this.accountCode = accountCode;
+	}
+
+	public String getAbstracT() {
+		return abstracT;
+	}
+
+	public void setAbstracT(String abstracT) {
+		this.abstracT = abstracT;
+	}
+
+	public String getSettlement() {
+		return settlement;
+	}
+
+	public void setSettlement(String settlement) {
+		this.settlement = settlement;
+	}
+
+	public String getDocumentId() {
+		return documentId;
+	}
+
+	public void setDocumentId(String documentId) {
+		this.documentId = documentId;
+	}
+
+	public Date getDocumentDate() {
+		return documentDate;
+	}
+
+	public void setDocumentDate(Date documentDate) {
+		this.documentDate = documentDate;
+	}
+
+	public String getCurrency() {
+		return currency;
+	}
+
+	public void setCurrency(String currency) {
+		this.currency = currency;
+	}
+
+	public String getUnitPrice() {
+		return unitPrice;
+	}
+
+	public void setUnitPrice(String unitPrice) {
+		this.unitPrice = unitPrice;
+	}
+
+	public String getExchangeRate1() {
+		return exchangeRate1;
+	}
+
+	public void setExchangeRate1(String exchangeRate1) {
+		this.exchangeRate1 = exchangeRate1;
+	}
+
+	public String getExchangeRate2() {
+		return exchangeRate2;
+	}
+
+	public void setExchangeRate2(String exchangeRate2) {
+		this.exchangeRate2 = exchangeRate2;
+	}
+
+	public String getDebitQuantity() {
+		return debitQuantity;
+	}
+
+	public void setDebitQuantity(String debitQuantity) {
+		this.debitQuantity = debitQuantity;
+	}
+
+	public String getPrimaryDebitAmount() {
+		return primaryDebitAmount;
+	}
+
+	public void setPrimaryDebitAmount(String primaryDebitAmount) {
+		this.primaryDebitAmount = primaryDebitAmount;
+	}
+
+	public String getSecondaryDebitAmount() {
+		return secondaryDebitAmount;
+	}
+
+	public void setSecondaryDebitAmount(String secondaryDebitAmount) {
+		this.secondaryDebitAmount = secondaryDebitAmount;
+	}
+
+	public String getNaturalDebitCurrency() {
+		return naturalDebitCurrency;
+	}
+
+	public void setNaturalDebitCurrency(String naturalDebitCurrency) {
+		this.naturalDebitCurrency = naturalDebitCurrency;
+	}
+
+	public String getCreditQuantity() {
+		return creditQuantity;
+	}
+
+	public void setCreditQuantity(String creditQuantity) {
+		this.creditQuantity = creditQuantity;
+	}
+
+	public String getPrimaryCreditAmount() {
+		return primaryCreditAmount;
+	}
+
+	public void setPrimaryCreditAmount(String primaryCreditAmount) {
+		this.primaryCreditAmount = primaryCreditAmount;
+	}
+
+	public String getSecondaryCreditAmount() {
+		return secondaryCreditAmount;
+	}
+
+	public void setSecondaryCreditAmount(String secondaryCreditAmount) {
+		this.secondaryCreditAmount = secondaryCreditAmount;
+	}
+
+	public String getNaturalCreditCurrency() {
+		return naturalCreditCurrency;
+	}
+
+	public void setNaturalCreditCurrency(String naturalCreditCurrency) {
+		this.naturalCreditCurrency = naturalCreditCurrency;
+	}
+
+	public String getBillType() {
+		return billType;
+	}
+
+	public void setBillType(String billType) {
+		this.billType = billType;
+	}
+
+	public String getBillId() {
+		return billId;
+	}
+
+	public void setBillId(String billId) {
+		this.billId = billId;
+	}
+
+	public String getBillDate() {
+		return billDate;
+	}
+
+	public void setBillDate(String billDate) {
+		this.billDate = billDate;
+	}
+
+	public String getDetail() {
+		return detail;
+	}
+
+	public void setDetail(String detail) {
+		this.detail = detail;
+	}
+
+	public List getOtheruserdata() {
+		return otheruserdata;
+	}
+
+	public void setOtheruserdata(List otheruserdata) {
+		this.otheruserdata = otheruserdata;
+	}
+
+	public List getSubjfreevalue() {
+		return subjfreevalue;
+	}
+
+	public void setSubjfreevalue(List subjfreevalue) {
+		this.subjfreevalue = subjfreevalue;
+	}
+
+	public List<AuxiliaryItem> getAuxiliaryList() {
+		return auxiliaryList;
+	}
+
+	public void setAuxiliaryList(List<AuxiliaryItem> auxiliaryList) {
+		this.auxiliaryList = auxiliaryList;
+	}
+
+	@Override
+	public String toString() {
+		return "Entry [entryId=" + entryId + ", accountCode=" + accountCode + ", abstracT=" + abstracT + ", settlement=" + settlement + ", documentId="
+				+ documentId + ", documentDate=" + documentDate + ", currency=" + currency + ", unitPrice=" + unitPrice + ", exchangeRate1=" + exchangeRate1
+				+ ", exchangeRate2=" + exchangeRate2 + ", debitQuantity=" + debitQuantity + ", primaryDebitAmount=" + primaryDebitAmount
+				+ ", secondaryDebitAmount=" + secondaryDebitAmount + ", naturalDebitCurrency=" + naturalDebitCurrency + ", creditQuantity=" + creditQuantity
+				+ ", primaryCreditAmount=" + primaryCreditAmount + ", secondaryCreditAmount=" + secondaryCreditAmount + ", naturalCreditCurrency="
+				+ naturalCreditCurrency + ", billType=" + billType + ", billId=" + billId + ", billDate=" + billDate + ", detail=" + detail
+				+ ", otheruserdata=" + otheruserdata + ", subjfreevalue=" + subjfreevalue + "]";
+	}
+
+}

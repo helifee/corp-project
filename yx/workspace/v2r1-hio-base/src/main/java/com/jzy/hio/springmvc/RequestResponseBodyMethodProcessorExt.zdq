@@ -1,0 +1,126 @@
+package com.jzy.hio.springmvc;
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+
+import org.springframework.core.MethodParameter;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageConverter;
+import org.springframework.web.HttpMediaTypeNotAcceptableException;
+import org.springframework.web.accept.ContentNegotiationManager;
+import org.springframework.web.context.request.NativeWebRequest;
+import org.springframework.web.method.support.ModelAndViewContainer;
+import org.springframework.web.servlet.mvc.method.annotation.RequestResponseBodyMethodProcessor;
+
+import com.jzy.hio.annotation.ResponseBodyExt;
+import com.jzy.hio.annotation.ResponseMessage;
+import com.jzy.hio.config.YmlConfig;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.exception.HioException.Emun;
+
+/**
+ * 处理requestMapping--responseBody
+ * 
+ * @author coffee<br/>
+ *         2018年3月5日上午9:24:19
+ */
+public class RequestResponseBodyMethodProcessorExt extends RequestResponseBodyMethodProcessor {
+
+	private YmlConfig config;
+
+	public RequestResponseBodyMethodProcessorExt(List<HttpMessageConverter<?>> messageConverters) {
+		super(messageConverters);
+	}
+
+	public RequestResponseBodyMethodProcessorExt(List<HttpMessageConverter<?>> messageConverters, ContentNegotiationManager contentNegotiationManager) {
+		super(messageConverters, contentNegotiationManager);
+	}
+
+	@Override
+	public void handleReturnValue(Object returnValue, MethodParameter returnType, ModelAndViewContainer mavContainer, NativeWebRequest webRequest)
+			throws IOException, HttpMediaTypeNotAcceptableException {
+		// 如果是 spring框架的返回结果、不做处理
+		String className = returnType.getMethod().getDeclaringClass().getName();
+		if ("org.springframework.boot.autoconfigure.web.BasicErrorController".equals(className)) {
+			// 继续
+		} else if (className.startsWith("com.jzy.hio") == false) {
+			super.handleReturnValue(returnValue, returnType, mavContainer, webRequest);
+			return;
+		}
+		Object result = null;
+		// app端特殊处理
+		if (returnValue == null) {
+			// 如果返回结果为null 同时result又定义为List 则不返回null 返回一个空的数组
+			if (returnType.getMethod().getReturnType() == List.class) {
+				// 标记1
+				returnValue = new ArrayList<>();
+			} else {
+				// 其他情况先不做额外处理
+			}
+		} else {
+			// 继续
+		}
+		ResponseBodyExt responseBody = returnType.getMethodAnnotation(ResponseBodyExt.class);
+		ResponseMessage responseMessage = returnType.getMethodAnnotation(ResponseMessage.class);
+		// returnValue 为null的时候 returnValue instanceof ApiResponse == true
+		if (responseBody != null || returnValue instanceof ApiResponse) {
+			result = returnValue;
+		} else {
+			ApiResponse<Object> data = null;
+			if (returnValue instanceof HioException) {
+				HioException exception = (HioException) returnValue;
+				String message = config.getMessage(exception.getCode());
+				if (message != null) {
+					exception.setException(message);
+				} else {
+					// 不处理、采用默认值
+				}
+				data = new ApiResponse<>(exception);
+			} else if (returnValue instanceof HioException.Emun) {
+				HioException.Emun hioEnum = (Emun) returnValue;
+				data = new ApiResponse<>();
+				data.setStatus(hioEnum.getStatus());
+				String message = config.getMessage(hioEnum.getStatus());
+				if (message != null) {
+					data.setMessage(message);
+				} else {
+					data.setMessage(hioEnum.getMessage());
+				}
+			} else if (returnValue instanceof ResponseEntity<?>) {
+				data = new ApiResponse<>();
+				ResponseEntity<?> entity = (ResponseEntity<?>) returnValue;
+				if (entity.getStatusCodeValue() == 401 && entity.getHeaders().isEmpty()) {
+					data.setStatus(2902);
+					data.setMessage("token不能为空");
+				} else {
+					data.setStatus(entity.getStatusCodeValue());
+					// data.setResult(returnValue);
+				}
+			} else {
+				data = new ApiResponse<>();
+				data.setStatus(200);
+				data.setResult(returnValue);
+				if (responseMessage != null  ){
+					String message = responseMessage.message();
+					if (message != null){
+						data.setMessage(message);
+					}
+				}
+			}
+			result = data;
+		}
+		// String result = JacksonUtils.toJson(data);
+		// 如果返回result 会有问题、String会进行进一步的转义
+		// super.handleReturnValue(result, returnType, mavContainer, webRequest);
+		super.handleReturnValue(result, returnType, mavContainer, webRequest);
+
+//		HttpServletRequest request = (HttpServletRequest) webRequest.getNativeRequest();
+//		request.setAttribute("responseBody", JacksonUtils.toJson(result));
+	}
+
+	public void setConfig(YmlConfig config) {
+		this.config = config;
+	}
+
+}

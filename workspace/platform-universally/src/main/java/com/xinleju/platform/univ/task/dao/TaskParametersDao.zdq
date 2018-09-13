@@ -1,0 +1,15 @@
+package com.xinleju.platform.univ.task.dao;
+
+import com.xinleju.platform.base.dao.BaseDao;
+import com.xinleju.platform.univ.task.entity.TaskParameters;
+
+/**
+ * @author admin
+ *
+ */
+
+public interface TaskParametersDao extends BaseDao<String, TaskParameters> {
+	
+	
+
+}

@@ -1,0 +1,111 @@
+package com.xinleju.platform.sys.base.service.impl;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.sys.base.dao.SettlementTradesDao;
+import com.xinleju.platform.sys.base.entity.SettlementTrades;
+import com.xinleju.platform.sys.base.service.SettlementTradesService;
+import com.xinleju.platform.sys.base.utils.StatusType;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class SettlementTradesServiceImpl extends  BaseServiceImpl<String,SettlementTrades> implements SettlementTradesService{
+	
+
+	@Autowired
+	private SettlementTradesDao settlementTradesDao;
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.sys.base.service.SettlementTradesService#getSettlementTradesPage(java.util.Map)
+	 */
+	@Override
+	public Page getSettlementTradesPage(Map map) throws Exception {
+		 Page page = new Page();
+		 List<SettlementTrades> list=settlementTradesDao.getSettlementTradesPage(map);
+		 Integer count=settlementTradesDao.getSettlementTradesPageCount(map);
+		 page.setLimit((Integer) map.get("limit"));
+		 page.setStart((Integer) map.get("start"));
+		 page.setList(list);
+		 page.setTotal(count);
+		 return page;
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.sys.base.service.SettlementTradesService#updateStatus(com.xinleju.platform.sys.base.entity.SettlementTrades)
+	 */
+	@Override
+	public int updateStatus(SettlementTrades settlementTrades)throws Exception {
+		int i=0;
+		String status = settlementTrades.getStatus();
+		if(StatusType.StatusOpen.getCode().equals(status)){//启用状态改为禁用
+			settlementTrades.setStatus(StatusType.StatusClosed.getCode());
+			 i = settlementTradesDao.update(settlementTrades);
+		}else if(StatusType.StatusClosed.getCode().equals(status)){//禁用状态改为启用
+			settlementTrades.setStatus(StatusType.StatusOpen.getCode());
+			i=settlementTradesDao.update(settlementTrades);
+		}
+		return i;
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.sys.base.service.SettlementTradesService#saveSettlementTrades(com.xinleju.platform.sys.base.entity.SettlementTrades)
+	 */
+	@Override
+	public int saveSettlementTrades(SettlementTrades settlementTrades)
+			throws Exception {
+		int i=0;
+		Map<String,Object>map =new HashMap<String, Object>();
+		map.put("code",settlementTrades.getCode());
+		map.put("name",settlementTrades.getName());
+		Integer countName= settlementTradesDao.getRepeatCountName(map);	
+		Integer countCode = settlementTradesDao.getRepeatCountCode(map);	
+		 if(countCode>0){
+			 i=5;
+		 }else if(countName>0){
+			 i=4;
+		 }else{
+			 i = settlementTradesDao.save(settlementTrades);
+		 }
+		return i;
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.sys.base.service.SettlementTradesService#updateSettlementTrades(com.xinleju.platform.sys.base.entity.SettlementTrades)
+	 */
+	@Override
+	public int updateSettlementTrades(SettlementTrades settlementTrades) {
+		SettlementTrades oldSettlementTrades = settlementTradesDao.getObjectById(settlementTrades.getId());
+		String oldCode = oldSettlementTrades.getCode();
+		 String oldName = oldSettlementTrades.getName();
+		String code = settlementTrades.getCode();
+		String name = settlementTrades.getName();
+		int i=0;
+		Map<String,Object>map =new HashMap<String, Object>();
+		map.put("code",settlementTrades.getCode());
+		map.put("name",settlementTrades.getName());
+		Integer countCode =settlementTradesDao.getRepeatCountCode(map);	
+		Integer countName =settlementTradesDao.getRepeatCountName(map);	
+		if((oldCode.equals(code)&&countCode>1)||(!oldCode.equals(code)&&countCode>0)){
+			i=5;
+		}else if((oldName.equals(name)&&countName>1)||(!oldName.equals(name)&&countName>0)){
+			i=4;
+		}else{
+			i=settlementTradesDao.update(settlementTrades);
+		}
+		return i;
+	}
+	
+
+}

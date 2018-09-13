@@ -1,0 +1,332 @@
+package com.xinleju.platform.univ.mq.utils;
+
+import com.alibaba.fastjson.JSON;
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.base.utils.PageBeanInfo;
+import com.xinleju.platform.tools.data.JacksonUtils;
+import com.xinleju.platform.univ.mq.dto.TopicDto;
+import com.xinleju.platform.univ.mq.dto.service.TopicDtoServiceCustomer;
+
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.support.BeanDefinitionBuilder;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.xml.XmlBeanDefinitionReader;
+import org.springframework.context.ConfigurableApplicationContext;
+
+import java.util.*;
+
+/**
+ * 原生方法生成消费者bean
+ * Created by xubaoyong on 2017/3/30.
+ */
+public class ConsumerOriginalLoadBeans {
+
+    private static Logger log = Logger.getLogger(ConsumerOriginalLoadBeans.class);
+
+    private TopicDtoServiceCustomer mqTopicDtoServiceCustomer;
+    /**
+     * 已经创建的queue
+     */
+    private List<TopicDto> createdQueueList = new ArrayList<>();
+    
+    private List<TopicDto> createdQueueListenterList = new ArrayList<>();
+
+    private Map<String,String> queueExistMap = new HashMap<>();
+
+    public void doRegisterBean(Properties properties , ConfigurableApplicationContext applicationContext,List<TopicDto > createdQueueList) throws Exception {
+
+        DefaultListableBeanFactory beanFactory = (DefaultListableBeanFactory) applicationContext
+                .getBeanFactory();
+        /**
+         * 获得bean,主题mqTopicService
+         */
+        this.mqTopicDtoServiceCustomer = (TopicDtoServiceCustomer) applicationContext.getBean(TopicDtoServiceCustomer.class);
+
+//        StringBuffer stringBuffer = new StringBuffer();
+//        if(this.createdQueueList == null || this.createdQueueList.size() == 0){
+//            doRecursionTopic( beanFactory, 0, stringBuffer);
+//        }
+        //创建dubbo:reference
+        String xml = generateXml(beanFactory);
+        XmlBeanDefinitionReader reader = new XmlBeanDefinitionReader(beanFactory);
+        
+        
+        
+        reader.loadBeanDefinitions(new MemoryXmlResource(xml));
+        //原生的实现消费者
+        if(this.createdQueueList != null){
+            //List<Topic > createdQueueList
+            for(TopicDto tempTopic : createdQueueList){
+                doCreateConsumer( tempTopic, beanFactory);
+            }
+
+        }
+
+
+        if(log.isDebugEnabled()){
+            String[] beanNames = beanFactory.getBeanDefinitionNames();
+            if(beanNames.length > 0){
+                log.info("--------------------动态创建的bean有---------------------");
+                for(String beanName :beanNames){
+                    log.info(" {}"+beanName);
+                }
+                log.info(" 结束");
+
+            }
+        }
+
+    }
+    private String generateXml( DefaultListableBeanFactory beanFactory){
+        String  content = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+                "<beans xmlns=\"http://www.springframework.org/schema/beans\"\n" +
+                "\t  xmlns:dubbo=\"http://code.alibabatech.com/schema/dubbo\"\n"+
+                "\t   xmlns:util=\"http://www.springframework.org/schema/util\"\n" +
+                "\t   xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:rabbit=\"http://www.springframework.org/schema/rabbit\"\n" +
+                "\t   xsi:schemaLocation=\"http://www.springframework.org/schema/beans\n" +
+                "     http://www.springframework.org/schema/beans/spring-beans-3.0.xsd\n" +
+                "     http://www.springframework.org/schema/beans\n" +
+                "     http://www.springframework.org/schema/beans/spring-beans-3.0.xsd\n" +
+                "     http://www.springframework.org/schema/rabbit\n" +
+                "     http://www.springframework.org/schema/rabbit/spring-rabbit-1.0.xsd\n" +
+                "        http://www.springframework.org/schema/util\n" +
+                "        http://www.springframework.org/schema/util/spring-util-4.3.xsd\n" +
+                "   http://code.alibabatech.com/schema/dubbo          \n" +
+                "        http://code.alibabatech.com/schema/dubbo/dubbo.xsd\">\n";
+
+        StringBuffer stringBuffer = new StringBuffer(content);
+        
+        try {
+			doRecursionTopic( beanFactory, 0, stringBuffer);
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+        //创建Exchange
+        createExchangeString ( beanFactory, stringBuffer);
+        //创建mqTempleatea
+        this.createAmqpTemplate(beanFactory, stringBuffer);
+
+        
+        
+        createConsumerRefList( beanFactory,createdQueueListenterList,stringBuffer);
+        
+        //this.createQueueListener(beanFactory,stringBuffer);
+        
+        stringBuffer.append("\n\t</beans>");
+        
+        
+
+        return stringBuffer.toString();
+    }
+    //递归调用topic
+    private void  doRecursionTopic(DefaultListableBeanFactory beanFactory,int pageNo,StringBuffer stringBuffer) throws Exception {
+        int pageSize = 10000;
+        PageBeanInfo page =  getAllTopic(pageNo,pageSize);
+        List<LinkedHashMap> pageData = page.getList();
+        List<TopicDto> topicList = new ArrayList<>();
+        for(LinkedHashMap data :pageData){
+            String mqMessage= JacksonUtils.toJson(data);
+            TopicDto mqTopicDto = JacksonUtils.fromJson(mqMessage,TopicDto.class);
+            topicList.add(mqTopicDto);
+        }
+        /**
+         * 动态创建queue
+         *
+         */
+        this.createQueueBeanByTopicList(beanFactory,topicList,stringBuffer);
+
+        int total = page.getTotal();
+        int countPage = total <= 0 ? 0:(int) Math.ceil((double) total / pageSize);
+        if(pageNo < countPage){
+            pageNo ++;
+            doRecursionTopic( beanFactory, pageNo,stringBuffer);//执行下一页
+        }
+    }
+    
+    /**
+     * 创建topicBean
+     */
+    public void createQueueBeanByTopicList(DefaultListableBeanFactory beanFactory,List<TopicDto> topicList,StringBuffer stringBuffer){
+        if(topicList == null || topicList.size() == 0){
+            log.warn("not get mqtopic from db");
+            return;
+        }else {
+            String templetate = " \n\t<rabbit:queue id=\"#topicName#\" name=\"#topicName#\" durable=\"true\" auto-delete=\"false\" exclusive=\"false\" />";
+            for (TopicDto tempTopic : topicList) {
+                String beanName = String.format("Queue_%s_%s",tempTopic.getTendId()==null?"":tempTopic.getTendId(),tempTopic.getTopic());
+                if(beanFactory.containsBean(beanName) || queueExistMap.containsKey(beanName)){
+                	createdQueueListenterList.add(tempTopic);
+                    log.warn(String.format("%s have duplicate",beanName));
+                }else {
+                   String queueTempletate = templetate.replaceAll("#topicName#",beanName);
+
+                    createdQueueList.add(tempTopic);
+                    stringBuffer.append( queueTempletate);
+                    queueExistMap.put(beanName,beanName);
+                }
+
+            }
+        }
+    }
+
+    /**
+     * 创建消费者
+     * @param tempTopic
+     * @param beanFactory
+     */
+    public void doCreateConsumer(TopicDto tempTopic,DefaultListableBeanFactory beanFactory){
+        String queueName = String.format("Queue_%s_%s",tempTopic.getTendId()==null?"":tempTopic.getTendId(),tempTopic.getTopic());
+        //约定消费bean的开头为Consumer_
+        String Consumer_beanName = "Consumer_"+queueName;
+        if(beanFactory.containsBean(Consumer_beanName) ){
+            return;
+        }else {
+            BeanDefinitionBuilder beanDefinitionBuilder= BeanDefinitionBuilder.rootBeanDefinition(CommonConsumer.class);
+            beanDefinitionBuilder.addPropertyValue("queueName", queueName);
+            beanDefinitionBuilder.addPropertyValue("topicId", tempTopic.getId());
+//        beanDefinitionBuilder.addPropertyValue("database", database);
+//        beanDefinitionBuilder.setInitMethodName("initMethod");
+//        beanDefinitionBuilder.addPropertyReference("springfactory",ConfigConstant.RABBITIT_CONNECTIONFACTORY);
+//        beanDefinitionBuilder.setDestroyMethodName("destroy");
+            beanFactory.registerBeanDefinition(Consumer_beanName, beanDefinitionBuilder.getBeanDefinition());
+            beanFactory.getBean(Consumer_beanName);
+        }
+
+
+    }
+    /**
+     * 从数据库中加载所有可以使用的topic
+     * @return
+     */
+    public PageBeanInfo getAllTopic(int pageNum,int pageSize ) throws Exception {
+        String userInfo = null;
+        Map<String, Object> params = new HashMap();
+        params.put("delflag",false);
+        params.put("start",pageNum*pageSize);
+        params.put("limit",pageSize);
+        params.put("start",pageNum);
+
+        PageBeanInfo pageInfo= null;
+        String pageResultString  = mqTopicDtoServiceCustomer.getPage(userInfo, JSON.toJSONString(params));
+        DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(pageResultString, DubboServiceResultInfo.class);
+        if(dubboServiceResultInfo.isSucess()){
+            String resultInfo= dubboServiceResultInfo.getResult();
+            pageInfo=JacksonUtils.fromJson(resultInfo, PageBeanInfo.class);
+
+        }
+        return pageInfo;
+    }
+    /**
+     * 创建topicBean
+     * 创建consumer的引用bean
+     * //
+     */
+    public void createConsumerRefList(DefaultListableBeanFactory beanFactory,List<TopicDto> topicList,StringBuffer stringBuffer){
+        if(topicList == null || topicList.size() == 0){
+            log.warn("not get mqtopic from db");
+            return;
+        }else {
+            String templetate = "<dubbo:reference id=\"#consumerBean#\" interface=\"com.xinleju.platform.univ.mq.service.MessageConsumer\" />";
+            for (TopicDto tempTopic : topicList) {
+                String beanName = tempTopic.getConsumerBeanName();
+                if(beanFactory.containsBean(beanName) || queueExistMap.containsKey(beanName)){
+                    log.warn(String.format("%s have duplicate",beanName));
+                }else {
+                    String queueTempletate = templetate.replaceAll("#consumerBean#",beanName);
+                    stringBuffer.append( queueTempletate);
+                    queueExistMap.put(beanName,beanName);
+                }
+
+            }
+        }
+    }
+    
+    private void  createQueueListener(DefaultListableBeanFactory beanFactory,StringBuffer stringBuffer){
+        if(beanFactory.containsBean(ConfigConstant.RABBIT_LISTENER)){
+            return;
+        }
+        
+        String listenterId = "queueListenter";
+        //stringBuffer.append("\n\t<bean id=\""+listenterId+"\" class=\"com.xinleju.platform.univ.mq.listenter.QueueListenter \"/>");
+        
+//        <rabbit:template id="amqpTemplate"  connection-factory="rabitConnectionFactory"  exchange="exchangeTest"  encoding="UTF-8" message-converter="jsonMessageConverter" />
+        String templetate = "\n\t<rabbit:listener-container connection-factory=\""+ConfigConstant.RABBITIT_CONNECTIONFACTORY+"\"  acknowledge=\"auto\">";
+        stringBuffer.append(templetate);
+        if(createdQueueListenterList.size() > 0){
+        	for(TopicDto tempTopic :createdQueueListenterList){
+                String queueName = String.format("Queue_%s_%s",tempTopic.getTendId()==null?"":tempTopic.getTendId(),tempTopic.getTopic());
+                stringBuffer.append("\n\t<rabbit:listener queues=\""+queueName+"\" ref=\""+listenterId+"\"/>");
+            }
+        }
+        stringBuffer.append("\n\t</rabbit:listener-container>");
+        
+    }
+    
+  
+   
+
+
+    private void createExchangeString (DefaultListableBeanFactory beanFactory,StringBuffer stringBuffer){
+        if(beanFactory.containsBean(ConfigConstant.EXCHANGE_NAME)){
+            return;
+        }
+        if(createdQueueList == null || createdQueueList.size() ==0){
+            return;
+        }
+//<rabbit:direct-exchange name="exchangeTest" durable="true" auto-delete="false">
+//        <rabbit:bindings>
+//            <rabbit:binding queue="queueTest" key="queueTestKey"></rabbit:binding>
+//
+//            <rabbit:binding queue="queueOrder" key="queueOrderKey"></rabbit:binding>
+//        </rabbit:bindings>
+//    </rabbit:direct-exchange>
+        stringBuffer.append("\n\t<rabbit:direct-exchange  id= \"" + ConfigConstant.EXCHANGE_NAME + "\" name=\""+ConfigConstant.EXCHANGE_NAME+"\" durable=\"true\" auto-delete=\"false\">");
+        stringBuffer.append("\n\t\t<rabbit:bindings>");
+        //  List<Topic > createdQueueList = new ArrayList<>();
+        for(TopicDto tempTopic :createdQueueList){
+            String queueName = String.format("Queue_%s_%s",tempTopic.getTendId()==null?"":tempTopic.getTendId(),tempTopic.getTopic());
+            stringBuffer.append(" \n\t\t\t<rabbit:binding queue=\""+queueName+"\" key=\""+queueName+"_KEY\"></rabbit:binding>");
+        }
+        stringBuffer.append("\n\t\t</rabbit:bindings>");
+        stringBuffer.append("\n\t</rabbit:direct-exchange>");
+
+    }
+
+    private void  createAmqpTemplate(DefaultListableBeanFactory beanFactory,StringBuffer stringBuffer){
+        if(beanFactory.containsBean(ConfigConstant.RABBIT_TEMPLATEID)){
+            return;
+        }
+//        <rabbit:template id="amqpTemplate"  connection-factory="rabitConnectionFactory"  exchange="exchangeTest"  encoding="UTF-8" message-converter="jsonMessageConverter" />
+        String templetate = "\n\t<rabbit:template id=\""+ConfigConstant.RABBIT_TEMPLATEID+"\"  connection-factory=\""+ConfigConstant.RABBITIT_CONNECTIONFACTORY+"\"  exchange=\""+ConfigConstant.EXCHANGE_NAME+"\"  encoding=\"UTF-8\" message-converter=\""+ConfigConstant.JSONMESSAGECONVERTER+"\" />";
+        stringBuffer.append(templetate);
+    }
+
+    /**
+     * 创建consumer的引用bean
+     */
+//    public void createQueueBeanByTopicList(DefaultListableBeanFactory beanFactory,List<TopicDto> topicList,StringBuffer stringBuffer){
+//        if(topicList == null || topicList.size() == 0){
+//            log.warn("not get mqtopic from db");
+//            return;
+//        }else {
+//            String templetate = "<rabbit:queue id=\"#topicName#\" name=\"#topicName#\" durable=\"true\" auto-delete=\"false\" exclusive=\"false\" />";
+//            for (TopicDto tempTopic : topicList) {
+//                String beanName = String.format("Queue_%s_%s",tempTopic.getTendId()==null?"":tempTopic.getTendId(),tempTopic.getTopic());
+//                if(beanFactory.containsBean(beanName) || queueExistMap.containsKey(beanName)){
+//                    log.warn(String.format("%s have duplicate",beanName));
+//                }else {
+//                    String queueTempletate = templetate.replaceAll("#topicName#",beanName);
+//
+//                    createdQueueList.add(tempTopic);
+//                    stringBuffer.append( queueTempletate);
+//                    queueExistMap.put(beanName,beanName);
+//                }
+//
+//            }
+//        }
+//    }
+
+    public List<TopicDto> getCreatedQueueList() {
+        return createdQueueList;
+    }
+}

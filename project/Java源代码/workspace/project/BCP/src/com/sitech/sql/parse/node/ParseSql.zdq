@@ -1,0 +1,767 @@
+package com.sitech.sql.parse.node;
+
+import com.sitech.oa.pars.LexType;
+import com.sitech.oa.pars.Token;
+import com.sitech.sql.parse.Scaner;
+import com.sitech.sql.parse.SqlFun;
+
+public class ParseSql {
+	private Token expect;
+	private Scaner scanner;
+	
+	public ParseSql(Scaner scanner){
+		this.scanner=scanner;
+		expect=scanner.getNextToken();
+		SqlFun.getInstance().setScanner(scanner);
+	}
+	public Node newSql(){
+		Select select=null;
+		Update update=null;
+		Insert insert=null;
+		Delete delete=null;
+		if(match(expect,LexType.SELECT)){
+			select=(Select)newSelect();
+		}else if(match(expect,LexType.UPDATE)){
+			update=(Update)newUpdate();
+		}else if(match(expect,LexType.INSERT)){
+			insert=(Insert)newInsert();
+		}else if(match(expect,LexType.DELETE)){
+			delete=(Delete)newDelete();
+		}else{
+			return null;
+		}
+		return new Sql(select,insert,delete,update);
+	}
+	/*
+	 * select:=sinSelect {UNION sinSelect}
+	 */
+	public Node newSelect(){
+		SinSelect sinSelect=null;
+		NodeList list=new NodeList();
+		if(match(expect,LexType.SELECT)){
+			if((sinSelect=(SinSelect)newSinSelect())!=null){
+				list.addNode(sinSelect);
+				while(match(expect,LexType.UNION)){
+					expect=scanner.getNextToken();
+					if((sinSelect=(SinSelect)newSinSelect())!=null){
+						list.addNode(sinSelect);
+					}
+				}
+			}
+		}else{
+			return null;
+		}
+		return new Select(list);
+	}
+	/*
+	 * sinSelect:=SELECT distinctAll columns expTable whereExp
+	 */
+	public Node newSinSelect(){
+		NodeToken token=null;
+		DistinctAll distinctAll=null;
+		Columns columns=null;
+		ExpTable expTable=null;
+		WhereExp whereExp=null;
+		
+		if(match(expect,LexType.SELECT)){
+			token=createNodeToken();
+			if(match(expect,LexType.DISTINCT) || match(expect,LexType.ALL)){
+				distinctAll=(DistinctAll)newDistinctAll();
+			}
+			columns=(Columns)newColumns();
+			expTable=(ExpTable)newExpTable();
+			whereExp=(WhereExp)newWhereExp();
+			
+			return new SinSelect(distinctAll,columns,expTable,whereExp);
+		}
+		return null;
+	}
+	/*
+	 * insert:=INSERT INTO ID [ID] insertColumns values
+	 */
+	public Node newInsert(){
+		NodeToken tableNameToken=null;
+		InsertColumn insertColumn=null;
+		Values values=null;
+		if(match(expect,LexType.INSERT)){
+			expect=scanner.getNextToken();
+			if(match(expect,LexType.INTO)){
+				expect=scanner.getNextToken();
+				tableNameToken=createNodeToken();
+				if(match(expect,LexType.ID)){
+					expect=scanner.getNextToken();
+				}
+				if(match(expect,LexType.VALUES) || match(expect,LexType.SELECT)){
+					values=(Values)newValues();
+				}else{
+					insertColumn=(InsertColumn)newInsertColumn();
+					values=(Values)newValues();
+				}
+				return new Insert(tableNameToken,insertColumn,values);
+			}
+		}
+		return null;
+	}
+	/*
+	 * update:=UPDATE ID [ID] SET updatecolumn whereExp
+	 */
+	public Node newUpdate(){
+		NodeToken token=null;
+		UpdateColumn updateColumn=null;
+		WhereExp whereExp=null;
+		if(match(expect,LexType.UPDATE)){
+			expect=scanner.getNextToken();
+			token=createNodeToken();
+			if(match(expect,LexType.ID)){
+				expect=scanner.getNextToken();
+			}
+			if(match(expect,LexType.SET)){
+				expect=scanner.getNextToken();
+				if((updateColumn=(UpdateColumn)newUpdateColumn())!=null){
+					whereExp=(WhereExp)newWhereExp();
+					return new Update(token,updateColumn,whereExp);
+				}
+				
+			}
+			
+		}
+		return null;
+	}
+	/*
+	 * delete:=DELETE [FROM] ID whereExp
+	 */
+	public Node newDelete(){
+		NodeToken tableNameToken;
+		WhereExp whereExp;
+		if(match(expect,LexType.DELETE)){
+			expect=scanner.getNextToken();
+			if(match(expect,LexType.FROM)){
+				expect=scanner.getNextToken();
+			}
+			if(match(expect,LexType.ID)){
+				tableNameToken=createNodeToken();
+				whereExp=(WhereExp)newWhereExp();
+				return new Delete(tableNameToken,whereExp);
+			}
+		}
+		return null;
+	}
+	/*
+	 * distinctAll:=#| DISTINCT |ALL
+	 */
+	public Node newDistinctAll(){
+		if(match(expect,LexType.DISTINCT) || match(expect,LexType.ALL)){
+			NodeToken token=createNodeToken();
+			return new DistinctAll(token);
+		}
+		return null;
+	}
+	/*
+	 * columnRef:=ID.* |* |ID.ID | ID
+	 */
+	public Node newColumnRef(){
+		NodeToken token1=null;
+		NodeToken token2=null;
+		if(match(expect,LexType.ID)){
+			token1=new NodeToken(expect.getSem(),expect.getLex(),expect.getLineNum());
+			token2=createNodeToken();
+			if(match(expect,LexType.UNDERANGE)){
+				expect=scanner.getNextToken();
+				if(match(expect,LexType.ID) || match(expect,LexType.TIMES)){
+					token2=createNodeToken();
+				}
+			}else{
+				token1=null;
+			}
+			return new ColumnRef(token1,token2);
+		}else if(match(expect,LexType.TIMES)){
+			token2=createNodeToken();
+			return new ColumnRef(token1,token2);
+		}
+		return null;
+	}
+	/*
+	 * scalarExp:= '(' columnExp ')'|
+	 * ['-']NUMBER
+	 * columnRef|
+	 * functionCall|
+	 * select
+	 * CHARC
+	 * var
+	 * caseExp
+	 */
+	public Node newScalarExp(){
+		ColumnExp columnExp=null;
+
+		ColumnRef columnRef=null;
+		FunctionCall funCall=null;
+		Select select=null;
+		NodeToken number=null;
+		NodeToken string=null;
+		Var var=null;
+		CaseExp caseExp=null;
+		if(match(expect,LexType.MINUS)){
+			expect=scanner.getNextToken();
+		}
+		if(match(expect,LexType.LPAREN)){
+			expect=scanner.getNextToken();
+			columnExp=(ColumnExp)newColumnExp();
+			if(!match(expect,LexType.RPAREN)){
+				return null;
+			}
+			expect=scanner.getNextToken();
+		}else if(match(expect,LexType.FUN)){
+			funCall=(FunctionCall)newFunctionCall();
+		}else if(match(expect,LexType.SELECT)){
+			select=(Select)newSelect();
+		}else if(match(expect,LexType.ID) || match(expect,LexType.TIMES)){
+			columnRef=(ColumnRef)newColumnRef();
+		}else if(match(expect,LexType.CHARC)){
+			string=createNodeToken();
+		}else if(match(expect,LexType.INTC)){
+			number=createNodeToken();
+		}else if(match(expect,LexType.MAO)){
+			var=(Var)newVar();
+		}else if(match(expect,LexType.CASE)){
+			caseExp=(CaseExp)newCaseExp();
+		}else{
+			return null;
+		}
+		return new ScalarExp(columnExp,columnRef,funCall,select,string,var,number,caseExp);
+	}
+	
+	/*
+	 * opop:=PLUS |MINUS|TIMES|OVER | DOUBLELINE
+	 */
+	public Node newOpop(){
+		NodeToken token=null;
+		switch(expect.getLex()){
+		case LexType.PLUS:
+		case LexType.MINUS:
+		case LexType.TIMES:
+		case LexType.OVER:
+		case LexType.DOUBLELL:
+			token=createNodeToken();
+			return new Opop(token);
+		}
+		return null;
+	}
+	/*
+	 * functionCall:=FUN '('paramList ')'
+	 */
+	public Node newFunctionCall(){
+		NodeToken token=null;
+		ParamList paramList=null;
+		if(match(expect,LexType.FUN)){
+			token=createNodeToken();
+			if(match(expect,LexType.LPAREN)){
+				expect=scanner.getNextToken();
+				paramList=(ParamList)newParamList();
+				if(match(expect,LexType.RPAREN)){
+					expect=scanner.getNextToken();
+					return new FunctionCall(token,paramList);
+				}
+			}
+		}
+		return null;
+	}
+	/*
+	 * paramList:=param[,param]
+	 */
+	public Node newParamList(){
+		Param param=(Param)newParam();
+		NodeList list=new NodeList();
+		if(param!=null){
+			list.addNode(param);
+		}
+		while(match(expect,LexType.COMMA)){
+			expect=scanner.getNextToken();
+			if((param=(Param)newParam())!=null){
+				list.addNode(param);
+			}
+			
+		}
+		return new ParamList(list);
+	}
+	/*
+	 * param:=[DISTINCT] columnExp
+	 */
+	public Node newParam(){
+		
+		ColumnExp columnExp=null;
+		if(match(expect,LexType.DISTINCT)){
+			expect=scanner.getNextToken();
+		}
+		if((columnExp=(ColumnExp)newColumnExp())!=null){
+			return new Param(columnExp);
+		}
+		return null;
+	}
+	/*
+	 * columnExp:=scalarExp [opop scalarExp]
+	 */
+	public Node newColumnExp(){
+		NodeList list=new NodeList();
+		NodeList list2=new NodeList();
+		ScalarExp scalarExp=(ScalarExp)newScalarExp();
+		Opop opop=null;
+		if(scalarExp!=null){
+			list.addNode(scalarExp);
+			while((opop=(Opop)newOpop())!=null){
+				list2.addNode(opop);
+				if((scalarExp=(ScalarExp)newScalarExp())!=null){
+					list.addNode(scalarExp);
+				}else{
+					return null;
+				}
+				
+			}
+		}else{
+			return null;
+		}
+		return new ColumnExp(list,list2);
+	}
+	/*
+	 * column:=columnExp [AS ID] [INTO var]
+	 */
+	public Node newColumn(){
+		ColumnExp columnExp=(ColumnExp)newColumnExp();
+		Var var=null;
+		NodeToken token=null;
+		if(columnExp!=null){
+			if(match(expect,LexType.AS)){
+				expect=scanner.getNextToken();
+				token=createNodeToken();
+			}else if(match(expect,LexType.ID)){
+				token=createNodeToken();
+			}
+			if(match(expect,LexType.INTO)){
+				expect=scanner.getNextToken();
+				var=(Var)newVar();
+			}
+			return new Column(columnExp,token,var);
+		}
+		return null;
+	}
+	/*
+	 * columns:=column{,column}
+	 */
+	public Node newColumns(){
+		Column column=(Column)newColumn();
+		NodeList list=new NodeList();
+		if(column!=null){
+			list.addNode(column);
+			while(match(expect,LexType.COMMA)){
+				expect=scanner.getNextToken();
+				column=(Column)newColumn();
+				if(column!=null){
+					list.addNode(column);
+				}else{
+					return null;
+				}
+			}
+		}else{
+			return null;
+		}
+		return new Columns(list);
+	}
+	/*
+	 * tableID:=[ID.]ID[OUTLINK][ID]
+	 */
+	public Node newTableID(){
+		NodeToken tableName=null;
+		NodeToken outlink=null;
+		NodeToken supName=null;
+		/*if(match(expect,LexType.ID)){
+			tableName=createNodeToken();
+			if(match(expect,LexType.OUTLINK)){
+				outlink=createNodeToken();
+			}
+			return new TableID(tableName,outlink,supName);
+		}*/
+		if(match(expect,LexType.ID)){
+			supName=createNodeToken();
+			if(match(expect,LexType.UNDERANGE)){
+				expect=scanner.getNextToken();
+				if(match(expect,LexType.ID)){
+					tableName=createNodeToken();
+					if(match(expect,LexType.OUTLINK)){
+						outlink=createNodeToken();
+					}
+					return new TableID(tableName,outlink,supName);
+				}
+			}else{
+				tableName=supName;
+				supName=null;
+				if(match(expect,LexType.OUTLINK)){
+					outlink=createNodeToken();
+				}
+				return new TableID(tableName,outlink,supName);
+			}
+		}
+		return null;
+	}
+	/*
+	 * tableExp:= '(' tableExp ')'|
+	 * select |
+	 * tableID
+	 */
+	public Node newTableExp(){
+		TableExp tableExp=null;
+		Select select=null;
+		TableID tableid=null;
+		if(match(expect,LexType.LPAREN)){
+			expect=scanner.getNextToken();
+			tableExp=(TableExp)newTableExp();
+			if(!match(expect,LexType.RPAREN)){
+				return null;
+			}
+			expect=scanner.getNextToken();
+		}else if(match(expect,LexType.SELECT)){
+			select=(Select)newSelect();
+		}else if(match(expect,LexType.ID)){
+			tableid=(TableID)newTableID();
+		}else{
+			return null;
+		}
+		return new TableExp(tableExp,select,tableid);
+	}
+	/*
+	 * tableRef:=tableExp[ID]
+	 */
+	public Node newTableRef(){
+		TableExp tableExp=(TableExp)newTableExp();
+		NodeToken otherName=null;
+		if(tableExp!=null){
+			if(match(expect,LexType.ID)){
+				otherName=createNodeToken();
+			}
+			return new TableRef(tableExp,otherName);
+		}
+		return null;
+	}
+	/*
+	 * tableColumns:=tableRef[,tableRef]
+	 */
+	public Node newTableColumns(){
+		TableRef tableRef=(TableRef)newTableRef();
+		NodeList list=new NodeList();
+		if(tableRef!=null){
+			list.addNode(tableRef);
+			while(match(expect,LexType.COMMA)){
+				expect=scanner.getNextToken();
+				tableRef=(TableRef)newTableRef();
+				if(tableRef!=null){
+					list.addNode(tableRef);
+				}
+			}
+			return new TableColumns(list);
+		}
+		return null;
+	}
+	/*
+	 * expTable:=FROM tableColumns
+	 */
+	public Node newExpTable(){
+		NodeToken from=null;
+		TableColumns tableColumns=null;
+		if(match(expect,LexType.FROM)){
+			from=createNodeToken();
+			tableColumns=(TableColumns)newTableColumns();
+			return new ExpTable(from,tableColumns);
+		}
+		return null;
+	}
+	/*
+	 * relation:=AND|OR
+	 */
+	public Node newRalation(){
+		NodeToken token=null;
+		switch(expect.getLex()){
+		case LexType.AND:
+		case LexType.OR:
+			token=createNodeToken();
+			return new Relation(token);
+		}
+		return null;
+	}
+	/*
+	 * check:= '=' |'<'|'>'|'<='|'>='
+	 */
+	public Node newCheck(){
+		NodeToken token=null;
+		switch(expect.getLex()){
+		case LexType.EQ:
+		case LexType.LT:
+		case LexType.GT:
+		case LexType.LESSEQU:
+		case LexType.BIGEQU:
+		case LexType.LIKE:
+		case LexType.DEEQ:
+			token=createNodeToken();
+			return new Check(token);
+		}
+		return null;
+	}
+	
+
+	/*
+	 * booleanExp:=columnExp check columnExp|
+	 * '('whereColumns')'|
+	 * columnExp IN'(' select|paramList ')'|
+	 * columnExp NOT IN '(' select|paramList ')'
+	 * columnExp between
+	 */
+	public Node newBooleanExp(){
+		ColumnExp exp1=null;
+		ColumnExp exp2=null;
+		Check check=null;
+		NodeToken in=null;
+		NodeToken not=null;
+		Select select=null;
+		ParamList paramList=null;
+		Between between=null;
+		WhereColumns whereColumns=null;;
+		if(!match(expect,LexType.LPAREN)){
+			exp1=(ColumnExp)newColumnExp();
+		}
+		if(match(expect,LexType.BETWEEN)){
+			between=(Between)newBetween();
+		}else if(match(expect,LexType.LPAREN)){
+			expect=scanner.getNextToken();
+			whereColumns=(WhereColumns)newWhereColumns();
+			expect=scanner.getNextToken();
+		}else if(match(expect,LexType.NOT)){
+			expect=scanner.getNextToken();
+			if(match(expect,LexType.IN) || match(expect,LexType.EXISTS)){
+				in=createNodeToken();
+				in.tokenString="not in";
+				expect=scanner.getNextToken();//ȥ����(��
+				if(match(expect,LexType.SELECT)){
+					select=(Select)newSelect();
+				}else{
+					paramList=(ParamList)newParamList();
+				}
+				expect=scanner.getNextToken();
+			}
+		}else if(match(expect,LexType.IN) || match(expect,LexType.EXISTS)){
+			in=createNodeToken();
+			expect=scanner.getNextToken();//ȥ����(��
+			if(match(expect,LexType.SELECT)){
+				select=(Select)newSelect();
+			}else{
+				paramList=(ParamList)newParamList();
+			}
+			expect=scanner.getNextToken();
+		}else{
+			check=(Check)newCheck();
+			exp2=(ColumnExp)newColumnExp();
+		}
+			
+		
+		return new BooleanExp(exp1,exp2,check,in,select,paramList,between,whereColumns);
+	}
+	/*
+	 * var:= ':' ID '<' other '>'
+	 */
+	public Node newVar(){
+		NodeToken id=null;
+		if(match(expect,LexType.MAO)){
+			expect=scanner.getNextToken();
+			id=createNodeToken();
+			if(match(expect,LexType.LT)){
+				while(!match(expect,LexType.GT)){
+					expect=scanner.getNextToken();
+					if(match(expect,LexType.ENDFILE)){
+						return null;
+					}
+				}
+				expect=scanner.getNextToken();
+				return new Var(id);
+			}
+		}
+		return null;
+	}
+	/*
+	 * whereColumns:=BooleanExp[check BooleanExp]
+	 */
+	public Node newWhereColumns(){
+		BooleanExp booleanExp=null;
+		Relation relation=null;
+		NodeList list=new NodeList();
+		NodeList list2=new NodeList();
+		if((booleanExp=(BooleanExp)newBooleanExp())!=null){
+			list.addNode(booleanExp);
+			while((relation=(Relation)newRalation())!=null){
+				list2.addNode(relation);
+				if((booleanExp=(BooleanExp)newBooleanExp())!=null){
+					list.addNode(booleanExp);
+				}
+			}
+			return new WhereColumns(list,list2);
+		}
+		return null;
+	}
+
+	/*
+	 * whereExp:=#|WHERE whereColumns
+	 */
+	public Node newWhereExp(){
+		NodeToken token=null;
+		WhereColumns whereColumns=null;
+		if(match(expect,LexType.WHERE)){
+			token=createNodeToken();
+			if((whereColumns=(WhereColumns)newWhereColumns())!=null){
+				return new WhereExp(whereColumns);
+			}
+		}
+		return null;
+	}
+	/*
+	 * between:=BETWEEN columnExp AND columnExp
+	 */
+	public Node newBetween(){
+		ColumnExp exp1=null;
+		ColumnExp exp2=null;
+		if(match(expect,LexType.BETWEEN)){
+			expect=scanner.getNextToken();
+			if((exp1=(ColumnExp)newColumnExp())!=null){
+				expect=scanner.getNextToken();
+				if((exp2=(ColumnExp)newColumnExp())!=null){
+					return new Between(exp1,exp2);
+				}
+			}
+		}
+		return null;
+	}
+	/*
+	 * insertColumns:=# | '(' paramList ')'
+	 */
+	public Node newInsertColumn(){
+		ParamList paramList=null;
+		if(match(expect,LexType.LPAREN)){
+			expect=scanner.getNextToken();
+			if((paramList=(ParamList)newParamList())!=null){
+				expect=scanner.getNextToken();
+				return new InsertColumn(paramList);
+			}
+		}
+		return null;
+	}
+	/*
+	 * values:=VALUES '(' paramList ')'|select
+	 */
+	public Node newValues(){
+		ParamList paramList=null;
+		Select select=null;
+		if(match(expect,LexType.VALUES)){
+			expect=scanner.getNextToken();
+			if(match(expect,LexType.LPAREN)){
+				expect=scanner.getNextToken();
+				paramList=(ParamList)newParamList();
+				expect=scanner.getNextToken();
+			}
+		}else if(match(expect,LexType.SELECT)){
+			select=(Select)newSelect();
+		}else{
+			return null;
+		}
+		return new Values(paramList,select);
+	}
+	/*
+	 * updatecolumn:=booleanExp[,booleanExp]
+	 */
+	public Node newUpdateColumn(){
+		BooleanExp booleanExp;
+		NodeList list=new NodeList();
+		if((booleanExp=(BooleanExp)newBooleanExp())!=null){
+			list.addNode(booleanExp);
+			while(match(expect,LexType.COMMA)){
+				expect=scanner.getNextToken();
+				booleanExp=(BooleanExp)newBooleanExp();
+				if(booleanExp!=null){
+					list.addNode(booleanExp);
+					
+				}
+			}
+			return new UpdateColumn(list);
+		}
+		return null;
+	}
+	/*
+	 * caseExp:=CASE whenThenExp [elseExp] END
+	 */
+	public Node newCaseExp(){
+		NodeList list=new NodeList();
+		WhenThenExp whenThenExp=null;
+		ElseExp elseExp=null;
+		if(match(expect,LexType.CASE)){
+			expect=scanner.getNextToken();
+			while((whenThenExp=(WhenThenExp)newWhenThenExp())!=null){
+				list.addNode(whenThenExp);
+			}
+			if(list.size()>0){
+				elseExp=(ElseExp)newElseExp();
+				if(match(expect,LexType.END)){
+					expect=scanner.getNextToken();
+					return new CaseExp(list,elseExp);
+				}
+			}
+		}
+		return null;
+	}
+	/*
+	 * whenThenExp:=WHEN [(] whereColumns [)] THEN scalarExp
+	 */
+	public Node newWhenThenExp(){
+		WhereColumns whereColumns=null;
+		ColumnExp columnExp=null;
+		if(match(expect,LexType.WHEN)){
+			expect=scanner.getNextToken();
+			if(match(expect,LexType.LPAREN)){
+				expect=scanner.getNextToken();
+			}
+			if((whereColumns=(WhereColumns)newWhereColumns())!=null){
+				if(match(expect,LexType.RPAREN)){
+					expect=scanner.getNextToken();
+				}
+				if(match(expect,LexType.THEN)){
+					expect=scanner.getNextToken();
+					if((columnExp=(ColumnExp)newColumnExp())!=null){
+						return new WhenThenExp(whereColumns,columnExp);
+					}
+				}
+			}
+		}
+		return null;
+	}
+	/*
+	 * elseExp:=ELSE scalarExp
+	 */
+	public Node newElseExp(){
+		ScalarExp scalarExp;
+		if(match(expect,LexType.ELSE)){
+			expect=scanner.getNextToken();
+			if((scalarExp=(ScalarExp)newScalarExp())!=null){
+				return new ElseExp(scalarExp);
+			}
+		}
+		return null;
+	}
+	
+	private NodeToken createNodeToken(){
+		NodeToken result=new NodeToken(expect.getSem(),expect.getLex(),expect.getLineNum());
+		expect=scanner.getNextToken();
+		return result;
+	}
+	private boolean match(Token expected, int lexType) {
+		if (expected.getLex() == lexType)
+			return true;
+		else 
+			error();
+			return false;
+	}
+	private void error(){
+		
+	}
+}

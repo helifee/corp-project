@@ -1,0 +1,44 @@
+package com.xinleju.platform.ld.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author admin
+ *
+ *
+ */
+
+@Table(value="PT_LANDRAY_FLOW_USER_SCALE",desc="流程人员权限")
+public class LandrayFlowUserScale extends BaseEntity{
+
+
+	@Column(value="fl_instance_id",desc="流程实例id")
+	private String flInstanceId;
+
+
+	@Column(value="person_id",desc="人员id")
+	private String personId;
+
+
+
+	public String getFlInstanceId() {
+		return flInstanceId;
+	}
+	public void setFlInstanceId(String flInstanceId) {
+		this.flInstanceId = flInstanceId;
+	}
+
+
+	public String getPersonId() {
+		return personId;
+	}
+	public void setPersonId(String personId) {
+		this.personId = personId;
+	}
+
+
+
+}

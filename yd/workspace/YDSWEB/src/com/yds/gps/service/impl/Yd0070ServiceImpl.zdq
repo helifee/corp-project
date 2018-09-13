@@ -1,0 +1,233 @@
+/*
+ * @(#) Yd0070ServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 社内团购
+ */
+
+package com.yds.gps.service.impl;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.springframework.stereotype.Service;
+import com.yds.base.service.AbstractBaseService;
+import com.yds.gps.bean.GpsAccount;
+import com.yds.gps.bean.GpsGoodsInfo;
+import com.yds.gps.bean.GpsOrderDetail;
+import com.yds.gps.bean.GpsOrderGoods;
+import com.yds.gps.bean.TansferCondA;
+import com.yds.gps.common.bean.GpsOrderInfo;
+import com.yds.gps.common.dao.TansferDao;
+import com.yds.gps.common.service.OrderGoodsInfoService;
+import com.yds.gps.common.service.TansferService;
+import com.yds.gps.dao.Yd0070Dao;
+import com.yds.gps.service.GpsConstants;
+import com.yds.gps.service.Yd0070Service;
+
+/**
+ * @see com.yds.OrderGoodsInfoService.service.Yd0070Service
+ */
+@Service("yd0070Service")
+public class Yd0070ServiceImpl extends AbstractBaseService implements Yd0070Service {
+
+	private Yd0070Dao yd0070Dao;
+	private TansferDao tansferDao;
+	private OrderGoodsInfoService orderGoodsInfoService;
+	private TansferService tansferService;
+
+	public GpsOrderInfo getGpsOrderInfo(String orderId){
+		return yd0070Dao.getGpsOrderInfo(orderId);
+	}
+
+	public GpsAccount getGpsAccountSum(String accId){
+		return tansferDao.getGpsAccount(accId);
+	}
+
+	public List<GpsOrderDetail> getDetailNowList(String orderId, String customerId){
+		
+		GpsOrderDetail gpsOrderDetail = new GpsOrderDetail();
+		gpsOrderDetail.setOrderId(orderId);
+		gpsOrderDetail.setCustomerId(customerId);
+		return yd0070Dao.getDetailNowList(gpsOrderDetail);
+	}
+
+	public List<GpsOrderGoods> getDetailAllList(String orderId){
+		return yd0070Dao.getDetailAllList(orderId);
+	}
+
+	@Override
+	public GpsGoodsInfo getGoodsInfo(String goodsId) {
+
+		return yd0070Dao.getGoodsInfo(goodsId);
+	}
+	
+	/**
+	 * 删除已订购商品
+	 */
+	public void deleteNowInfo(String orderId, String customerId, String goodsId)  throws Exception {
+		
+		// 设置删除条件
+		GpsOrderDetail gpsOrderDetail = new GpsOrderDetail();
+		gpsOrderDetail.setOrderId(orderId);
+		gpsOrderDetail.setCustomerId(customerId);
+		gpsOrderDetail.setGoodsId(goodsId);
+		// 取得删除商品的订购份数
+		GpsOrderDetail orderDetail = yd0070Dao.getOrderDetail(gpsOrderDetail);
+		gpsOrderDetail.setOrderCnt(orderDetail.getOrderCnt());
+		// 删除订购详细表中的订购信息
+		yd0070Dao.deleteGpsOrderDetail(gpsOrderDetail);
+		
+		// 设置更新订购及商品信息条件
+		List<GpsOrderDetail> gpsOrderDetailList = new ArrayList<GpsOrderDetail>();
+		gpsOrderDetail.setOrderCnt(-1*orderDetail.getOrderCnt());
+		gpsOrderDetailList.add(gpsOrderDetail);
+		// 设置更新金额及添加履历条件
+		String  exRemarks = propMgr.getMessage("yds.gps.info.0010", yd0070Dao.getCateName(goodsId));
+		TansferCondA tansferCondA = setTansferCondA(customerId, GpsConstants.CUSTOMERS_ACCOUNT, GpsConstants.EX_CUSTOMERS, GpsConstants.INCOME, orderDetail.getTotalPrice(), orderId, exRemarks, exRemarks);
+		tansferCondA.setLessFlag(true);
+		// 调用共通更新
+		orderGoodsInfoService.updateOrderGoodsInfo(gpsOrderDetailList, tansferCondA);
+	}
+	
+	/**
+	 * 替换订购商品
+	 */
+	public void saveNowInfo(String orderId, String customerId, String goodsId, int buyCnt, double gpsPrice)  throws Exception{
+		
+		// 设置删除已订购商品条件
+		GpsOrderDetail gpsOrderDetail = new GpsOrderDetail();
+		gpsOrderDetail.setOrderId(orderId);
+		gpsOrderDetail.setCustomerId(customerId);
+		// 取得删除商品一览信息
+		List<GpsOrderDetail> orderDetailList = yd0070Dao.getDetailNowList(gpsOrderDetail);
+		// 删除订购详细表中的订购信息
+		yd0070Dao.deleteAllGpsOrderDetail(gpsOrderDetail);
+		// 退款
+		int length = orderDetailList.size();
+		for (int i = 0; i < length; i++) {
+			orderDetailList.get(i).setOrderCnt(-1*orderDetailList.get(i).getOrderCnt());
+			
+			if (orderGoodsInfoService.isAccountPay(orderId)) {
+				// 删除时的转账处理（共通）
+				// 设置更新金额及添加履历（逐条记录）条件
+				String  exRemarks = propMgr.getMessage("yds.gps.info.0010", yd0070Dao.getCateName(orderDetailList.get(i).getGoodsId()));
+				TansferCondA tansferCondA = setTansferCondA(customerId, GpsConstants.CUSTOMERS_ACCOUNT, GpsConstants.EX_CUSTOMERS, GpsConstants.INCOME, orderDetailList.get(i).getTotalPrice(), orderId, exRemarks, exRemarks);
+
+				tansferService.tansfer(tansferCondA, true);
+			}
+			
+		}
+		
+		// 设置替换商品
+		gpsOrderDetail.setGoodsId(goodsId);
+		gpsOrderDetail.setOrderCnt(buyCnt);
+		gpsOrderDetail.setCloseUnitPrice(gpsPrice);
+		gpsOrderDetail.setTotalPrice(buyCnt*gpsPrice);
+		// 登录替换的商品
+		yd0070Dao.insertGpsOrderDetail(gpsOrderDetail);
+		
+		// 设置更新订购及商品信息条件
+		orderDetailList.add(gpsOrderDetail);
+		// 替换时的转账处理（共通）
+		// 设置更新金额及添加履历条件
+		String  exRemarksI = propMgr.getMessage("yds.gps.info.0009", yd0070Dao.getCateName(goodsId));
+		String  exRemarksO = propMgr.getMessage("yds.gps.info.0008", yd0070Dao.getCateName(goodsId));
+		TansferCondA tansferCondA = setTansferCondA(GpsConstants.CUSTOMERS_ACCOUNT, customerId, GpsConstants.EX_CUSTOMERS, GpsConstants.INCOME, gpsOrderDetail.getTotalPrice(), orderId, exRemarksI, exRemarksO);
+		
+		// 调用共通更新
+		orderGoodsInfoService.updateOrderGoodsInfo(orderDetailList, tansferCondA);
+	}
+	
+	/**
+	 * 订购商品
+	 */
+	public void addNowInfo(String orderId, String customerId, String goodsId, int buyCnt, double gpsPrice)  throws Exception{
+		
+		// 设置追加商品条件
+		GpsOrderDetail gpsOrderDetail = new GpsOrderDetail();
+		gpsOrderDetail.setOrderId(orderId);
+		gpsOrderDetail.setCustomerId(customerId);
+		gpsOrderDetail.setGoodsId(goodsId);
+		gpsOrderDetail.setOrderCnt(buyCnt);
+		gpsOrderDetail.setCloseUnitPrice(gpsPrice);
+		gpsOrderDetail.setTotalPrice(buyCnt*gpsPrice);
+		// 判断该商品是否已订购
+		GpsOrderDetail orderDetail = yd0070Dao.getOrderDetail(gpsOrderDetail);
+		if (orderDetail == null) {
+			// 登录该商品信息
+			yd0070Dao.insertGpsOrderDetail(gpsOrderDetail);
+		} else {
+			// 更新该商品订购数量
+			yd0070Dao.updateGpsOrderDetail(gpsOrderDetail);
+		}
+		
+		// 设置更新订购及商品信息条件
+		List<GpsOrderDetail> gpsOrderDetailList = new ArrayList<GpsOrderDetail>();
+		gpsOrderDetailList.add(gpsOrderDetail);
+		// 设置更新金额及添加履历条件
+		String  exRemarksI = propMgr.getMessage("yds.gps.info.0009", yd0070Dao.getCateName(goodsId));
+		String  exRemarksO = propMgr.getMessage("yds.gps.info.0008", yd0070Dao.getCateName(goodsId));
+		TansferCondA tansferCondA = setTansferCondA(GpsConstants.CUSTOMERS_ACCOUNT, customerId, GpsConstants.EX_CUSTOMERS, GpsConstants.INCOME, gpsOrderDetail.getTotalPrice(), orderId, exRemarksI, exRemarksO);
+		
+		// 调用共通更新
+		orderGoodsInfoService.updateOrderGoodsInfo(gpsOrderDetailList, tansferCondA);
+	}
+	
+	/**
+	 * 设置转账条件
+	 * @return
+	 */
+	private TansferCondA setTansferCondA(String inId, String outId, String exType, String ioFlag, double exMoney, String orderId, String exRemarksI, String exRemarksO) {
+		
+		TansferCondA tansferCondA = new TansferCondA();
+		tansferCondA.setInId(inId);
+		tansferCondA.setOutId(outId);
+		tansferCondA.setExType(exType);
+		tansferCondA.setIoFlag(ioFlag);
+		tansferCondA.setExMoney(exMoney);
+		tansferCondA.setOrderId(orderId);
+		tansferCondA.setExRemarksI(exRemarksI);
+		tansferCondA.setExRemarksO(exRemarksO);
+		
+		return tansferCondA;
+	}
+
+	/**
+	 * @param yd0070Dao the yd0070Dao to set
+	 */
+	public void setYd0070Dao(Yd0070Dao yd0070Dao) {
+		this.yd0070Dao = yd0070Dao;
+	}
+	
+	/**
+	 * @param tansferDao the tansferDao to set
+	 */
+	public void setTansferDao(TansferDao tansferDao) {
+		this.tansferDao = tansferDao;
+	}
+
+	/**
+	 * @param orderGoodsInfoService the orderGoodsInfoService to set
+	 */
+	public void setOrderGoodsInfoService(OrderGoodsInfoService orderGoodsInfoService) {
+		this.orderGoodsInfoService = orderGoodsInfoService;
+	}
+
+	/**
+	 * @param tansferService the tansferService to set
+	 */
+	public void setTansferService(TansferService tansferService) {
+		this.tansferService = tansferService;
+	}
+
+	public OrderGoodsInfoService getOrderGoodsInfoService() {
+		return orderGoodsInfoService;
+	}
+
+	public TansferService getTansferService() {
+		return tansferService;
+	}
+
+}

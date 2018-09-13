@@ -1,0 +1,70 @@
+package com.xinleju.platform.out.app.org.service;
+
+public interface UserOutServiceCustomer {
+	
+	/**
+	 * 根据人员Ids获取userDto
+	 * @param userJson
+	 * @param paramJson:{userIds}
+	 * @return
+	 */
+	String getUserByUserIds(String userJson, String paramJson);
+	
+	/**
+	 * 根据人员loginname获取userDto
+	 * @param userJson
+	 * @param paramJson:{loginNames}
+	 * @return
+	 */
+	String getUserByUserLoginNames(String userJson, String paramJson);
+	
+	/**
+	 * 获取指定组织下的人员
+	 * @param userJson
+	 * @param paramJson:{orgIds:"指定组织Ids",isLeaf:true(如果true,返回指定组织包括下级，如果是false，返回指定组织下)}
+	 * @return
+	 */
+	String getUserListByOrgId(String userJson, String paramJson);
+	/**
+	 * 根据岗位Id获取userDto
+	 * @param userJson
+	 * @param paramJson:{postIds}
+	 * @return
+	 */
+	String getUserListByPostIds(String userJson, String paramJson);
+	/**
+	 * 根据标准岗位Id和组织机构id（项目、公司、集团）获取userDto
+	 * @param userJson
+	 * @param paramJson:{postIds}
+	 * @return
+	 */
+	String getUserListByStandardpostIdAndOrgIds(String userJson, String paramJson);
+	/**
+	 * 获取所有标准角色
+	 * @param userJson
+	 * @param paramJson:{}
+	 * @return
+	 */
+	String getAllStandRoleList(String userJson, String paramJson);
+	/**
+	 * 根据id获取标准角色
+	 * @param userJson
+	 * @param paramJson:{roleIds:"角色id"}
+	 * @return
+	 */
+	String getStandRoleListByIds(String userJson, String paramJson);
+	/**
+	 * 根据角色id获取用户
+	 * @param userJson
+	 * @param paramJson:{roleIds:"角色id"}
+	 * @return
+	 */
+	String getUserListByRoleIds(String userJson, String paramJson);
+	/**
+	 * 根据人员姓名获取userDto
+	 * @param userJson
+	 * @param paramJson:{userIds}
+	 * @return
+	 */
+	String getUserByUserName(String userJson, String paramJson);
+}

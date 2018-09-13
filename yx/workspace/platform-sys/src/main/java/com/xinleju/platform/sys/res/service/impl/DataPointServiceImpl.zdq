@@ -1,0 +1,195 @@
+package com.xinleju.platform.sys.res.service.impl;
+
+import java.util.*;
+import java.util.stream.Collectors;
+
+import com.xinleju.platform.sys.org.service.RoleUserService;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.support.ClassPathXmlApplicationContext;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.sys.res.dao.DataPointDao;
+import com.xinleju.platform.sys.res.entity.DataPoint;
+import com.xinleju.platform.sys.res.service.DataPointService;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class DataPointServiceImpl extends  BaseServiceImpl<String,DataPoint> implements DataPointService{
+
+	private static Logger log = Logger.getLogger(DataPointServiceImpl.class);
+	@Autowired
+	private DataPointDao dataPointDao;
+	@Autowired
+	private RoleUserService roleUserService;
+	/**
+	 * 校验itemId+code是否重复 add gyh
+	 * @param param
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public Integer checkItemIdAndPointCode(Map<String, Object> param) throws Exception {
+		return dataPointDao.checkItemIdAndPointCode(param);
+	}
+	/**
+	 * 
+	 * @param param
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public List<DataPoint> queryDataPointByPram(Map<String, Object> param) throws Exception {
+		return dataPointDao.queryDataPointByPram(param);
+	}
+	/**
+	 * 根据IDs逻辑删除控制点
+	 * @param ids
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public Integer deleteByIds(String[] ids) throws Exception {
+		return dataPointDao.deleteByIds(ids);
+	}
+	/**
+	 * 通过条件查询控制点及授权情况
+	 * @param param
+	 * @return
+	 */
+	@Override
+	public Map<String,Object> queryDataPointSelByPram(Map<String,Object> param)throws Exception {
+		return dataPointDao.queryDataPointSelByPram(param);
+	}
+	
+	/**
+	 * 引用类型数量
+	 * @param param
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public Integer checkYyTypeCount(Map<String, Object> param) throws Exception {
+		return dataPointDao.checkYyTypeCount(param);
+	}
+
+	@Override
+	public List<Map<String, Object>> queryDataPointListByDataItem(Map<String, Object> paramMap) throws Exception {
+		return dataPointDao.queryDataPointListByDataItem(paramMap);
+	}
+
+	@Override
+	public Map<String,Map<String,Object>> queryUserIdForDataPoint(Map<String,Object> param) throws Exception{
+		log.info("根据数据权限查找相关人员开始：："+System.currentTimeMillis());
+		long startTime = System.currentTimeMillis();
+		//查找数据权限授权列表
+		Map<String,Object> paramMap = new HashMap<String,Object>();
+		paramMap.put("itemCode",param.get("itemCode"));
+		List<Map<String,Object>> dataPointPermissionList = dataPointDao.queryDataPointListByDataItem(paramMap);
+		Map<String, List<Map<String,Object>>> groupByDataPointCodeMap =
+				dataPointPermissionList.parallelStream().collect(Collectors.groupingBy(m -> (String)m.get("dataPointCode")));
+
+		String companyId = (String) param.get("companyId");
+		String deptId = (String) param.get("deptId");
+
+		Set<String> userIdSet = new HashSet<String>();
+		Map<String,Map<String,Object>> userMap = new HashMap<String,Map<String,Object>>();
+		if(groupByDataPointCodeMap.size()>0){
+			//查找人员岗位树
+			Map<String,Object> map = new HashMap<String,Object>();
+			map.put("userStatus","1");
+			List<Map<String,Object>> postUserTree = roleUserService.selectUserPostTree(map);
+
+			Set<String> allOrgUserIdList= new HashSet<String> ();
+			Set<String> thisCompanyUserIdList= new HashSet<String> ();
+			Set<String> thisDeptUserIdList= new HashSet<String> ();
+
+			Map<String,Map<String,Object>> allOrgUserMap = new HashMap<String,Map<String,Object>>();
+			Map<String,Map<String,Object>> thisCompanyUserMap = new HashMap<String,Map<String,Object>>();
+			Map<String,Map<String,Object>> thisDeptUserMap = new HashMap<String,Map<String,Object>>();
+			postUserTree.parallelStream().forEach(postUser -> {
+				String id = (String) postUser.get("id");
+				String prefixId = (String) postUser.get("prefixId");
+				String type = (String) postUser.get("type");
+				//全公司
+				List<Map<String,Object>> allOrgList = groupByDataPointCodeMap.get("allOrg");
+				//根据用户授权对象查找
+				allOrgList.parallelStream().filter(e -> null == e.get("postId")).forEach(allOrg -> {
+					String roleId = (String) allOrg.get("roleId");
+					if(id.equals(roleId)){
+						allOrgUserIdList.add(id);
+
+						allOrgUserMap.put(id,postUser);
+					}
+				});
+				//根据标准岗位&岗位&角色授权对象查找
+				allOrgList.parallelStream().filter(e -> e.get("postId")!=null).forEach(allOrg -> {
+					String postId = (String) allOrg.get("postId");
+					if("user".equals(type)&&prefixId.contains(postId)){
+						allOrgUserIdList.add(id);
+						allOrgUserMap.put(id,postUser);
+					}
+				});
+
+				//******本公司************
+				List<Map<String,Object>> thisCompanyList = groupByDataPointCodeMap.get("thisCompany");
+				//根据用户授权对象查找
+				thisCompanyList.parallelStream().filter(e -> null == e.get("postId")).forEach(thisCompany -> {
+					String roleId = (String) thisCompany.get("roleId");
+					if(id.equals(roleId)&&prefixId.contains(companyId)){
+						thisCompanyUserIdList.add(id);
+						thisCompanyUserMap.put(id,postUser);
+					}
+				});
+				//根据标准岗位&岗位&角色授权对象查找
+				thisCompanyList.parallelStream().filter(e -> e.get("postId")!=null).forEach(thisCompany -> {
+					String postId = (String) thisCompany.get("postId");
+					if("user".equals(type)&&prefixId.contains(postId)&&prefixId.contains(companyId)){
+						thisCompanyUserIdList.add(id);
+						thisCompanyUserMap.put(id,postUser);
+					}
+				});
+
+				//**********本部门**********
+				List<Map<String,Object>> thisDeptList = groupByDataPointCodeMap.get("thisDept");
+				//根据用户授权对象查找
+				thisDeptList.parallelStream().filter(e -> null == e.get("postId")).forEach(thisDept -> {
+					String roleId = (String) thisDept.get("roleId");
+					if(id.equals(roleId)&&prefixId.contains(deptId)){
+						thisDeptUserIdList.add(id);
+						thisDeptUserMap.put(id,postUser);
+					}
+				});
+				//根据标准岗位&岗位&角色授权对象查找
+				thisDeptList.parallelStream().filter(e -> e.get("postId")!=null).forEach(thisDept -> {
+					String postId = (String) thisDept.get("postId");
+					if("user".equals(type)&&prefixId.contains(postId)&&prefixId.contains(deptId)){
+						thisDeptUserIdList.add(id);
+						thisDeptUserMap.put(id,postUser);
+					}
+				});
+
+			});
+
+			userIdSet.addAll(allOrgUserIdList);
+			userIdSet.addAll(thisCompanyUserIdList);
+			userIdSet.addAll(thisDeptUserIdList);
+
+			userMap.putAll(allOrgUserMap);
+			userMap.putAll(thisCompanyUserMap);
+			userMap.putAll(thisDeptUserMap);
+		}
+		log.info("根据数据权限查找相关人员结束：："+System.currentTimeMillis());
+		long endTime = System.currentTimeMillis();
+		log.info("根据数据权限查找相关人员耗时：："+(endTime-startTime));
+		return userMap;
+	}
+}

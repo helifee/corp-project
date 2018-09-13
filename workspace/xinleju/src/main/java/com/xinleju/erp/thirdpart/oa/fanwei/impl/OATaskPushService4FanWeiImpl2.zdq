@@ -1,0 +1,250 @@
+package com.xinleju.erp.thirdpart.oa.fanwei.impl;
+
+import java.text.SimpleDateFormat;
+import java.util.Date;
+
+import javax.sql.DataSource;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.jdbc.core.ArgumentPreparedStatementSetter;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.PreparedStatementSetter;
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.erp.flow.dao.impl.FiDAO;
+import com.xinleju.erp.flow.dao.impl.WiDAO;
+import com.xinleju.erp.flow.models.Fi;
+import com.xinleju.erp.flow.models.Wi;
+import com.xinleju.erp.flow.utils.FlowConstant;
+import com.xinleju.erp.flowengine.action.FlowInstanceManagerAction;
+import com.xinleju.erp.flowengine.dao.FlowInstanceStepWorkTaskDao;
+import com.xinleju.erp.flowengine.dao.FlowInstanceStepWorkTaskExtendDao;
+import com.xinleju.erp.flowengine.models.FlowInstance;
+import com.xinleju.erp.flowengine.models.FlowInstanceStepWorkTask;
+import com.xinleju.erp.flowengine.models.FlowInstanceStepWorkTaskExtend;
+import com.xinleju.erp.flowengine.service.FlowInstanceCalculateFiService;
+import com.xinleju.erp.flowengine.utils.FlowInstanceStatus;
+import com.xinleju.erp.frame.dao.AppDao;
+import com.xinleju.erp.frame.models.App;
+import com.xinleju.erp.frame.models.Msg;
+import com.xinleju.erp.thirdpart.oa.fanwei.OATaskPush4FanWeiService;
+
+/**
+ * @author 帆微OA集成主要基于数据库，需修改配置文件applicationContext-oth-ds.xml
+ *
+ */
+@Repository
+public class OATaskPushService4FanWeiImpl2 implements OATaskPush4FanWeiService{
+	private static final Logger logger = Logger.getLogger(OATaskPushService4FanWeiImpl2.class);
+	@Autowired
+	@Qualifier("ds1")
+	private DataSource dataSource;
+	
+	private JdbcTemplate jdbcTemplate;
+	
+	@Autowired
+	private WiDAO wiDao;
+	
+	@Autowired
+    private AppDao appDao;
+	@Autowired
+	private FiDAO fiDao;
+	@Autowired
+	private FlowInstanceStepWorkTaskDao flowInstanceStepWorkTaskDao;
+	@Autowired
+	private FlowInstanceStepWorkTaskExtendDao flowInstanceStepWorkTaskExtendDao;
+	@Autowired
+	private FlowInstanceCalculateFiService flowInstanceCalculateFiService;
+
+	
+	private static SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+	
+	private static SimpleDateFormat formatDate = new SimpleDateFormat("yyyy-MM-dd");
+	
+	private static SimpleDateFormat formatTime = new SimpleDateFormat("HH:mm:ss");
+	
+	
+	public DataSource getDataSource() {
+		return dataSource;
+	}
+
+	public void setDataSource(DataSource dataSource) {
+		this.dataSource = dataSource;
+		jdbcTemplate = new JdbcTemplate(dataSource);
+	}
+	
+	public JdbcTemplate getJdbcTemplate() {
+		if(jdbcTemplate == null) {
+			synchronized (this) {
+				if(jdbcTemplate == null) {
+					jdbcTemplate = new JdbcTemplate(dataSource);
+				}
+			}
+		}
+		return jdbcTemplate;
+	}
+	
+	public void sendTodo(Msg msg) throws Exception {
+		
+		String insertSql = "INSERT INTO workflow_outdata (SENDER, SENDERURL, SENDERTIME, FLOWTYPE, FLOWID, TITLE, NODENAME, PTPURL, USERID, USERLOGINID, CREATOR, CREATELOGINID, CREATEDATE, CREATETIME, OPERATEDATE, OPERATETIME, RECEIVEDATE, RECEIVETIME, FLOWMESS, VIEWTYPE, FLOWCODE, SYSFROM, ALLOWMOBILE) " +
+				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+		logger.info("sendTodo===="+msg.getMsgId()+"===="+msg.getTitle());
+		App app = appDao.getAppByCode(FlowConstant.APP_CODE_PT);
+		String depUrl = app.getDepUrl();
+		if(StringUtils.isNotBlank(msg.getMsgId()) && msg.getMsgId().toUpperCase().startsWith("WI_")){
+			//-----老流程推送
+			Wi currWi = wiDao.getWiById(Long.parseLong(msg.getMsgId().substring(msg.getMsgId().indexOf("_") + 1)));
+			if(currWi==null){
+				return ;
+			}
+			Wi startWi = wiDao.getStartWiByFiId(currWi.getFiId());
+			if(startWi.getCompleteUserLoginName()==null||startWi.getCompleteUserLoginName().isEmpty()) {
+				return;
+			}
+			Object[] args = {
+					"xinleju-erp:"+msg.getAppCode(), 
+					depUrl, 
+					format.format(new Date()), 
+					"ZC", 
+					msg.getMsgId(), 
+					msg.getTitle(), 
+					currWi.getWiName(), 
+					depUrl + "/casUrlLogin?url=" + depUrl + "/"+msg.getUrl()+"&username=" + msg.getLoginName(), 
+					msg.getLoginName(), 
+					msg.getLoginName(),
+					startWi.getCompleteUserLoginName(),
+					startWi.getCompleteUserLoginName(),
+					formatDate.format(startWi.getCreateTime()),
+					formatTime.format(startWi.getCreateTime()),
+					formatDate.format(currWi.getCreateTime()),
+					formatTime.format(currWi.getCreateTime()),
+					formatDate.format(currWi.getCreateTime()),
+					formatTime.format(currWi.getCreateTime()),
+					"1",
+					0,
+					currWi.getFiId()+msg.getLoginName()+"xinleju-erp",
+					100,
+					"1"
+			};
+			PreparedStatementSetter s = new ArgumentPreparedStatementSetter(args);
+			logger.info("sendTodo====insertSql================="+insertSql);
+			getJdbcTemplate().update(insertSql, s);
+		}else{
+			FlowInstanceStepWorkTask flowInstanceStepWorkTask =flowInstanceStepWorkTaskDao.getFlowInstanceStepWorkTaskById(msg.getMsgId().substring(msg.getMsgId().indexOf("_") + 1));
+			
+			if(flowInstanceStepWorkTask!=null){
+				FlowInstance flowInstance = flowInstanceCalculateFiService.getById(flowInstanceStepWorkTask.getFiId());
+				Object[] args = {
+						"xinleju-erp:"+msg.getAppCode(), 
+						depUrl, 
+						format.format(new Date()), 
+						"ZC", 
+						msg.getMsgId(), 
+						msg.getTitle(), 
+						null, 
+						depUrl + "/casUrlLogin?url=" + depUrl + "/"+msg.getUrl()+"&username=" + msg.getLoginName(), 
+						msg.getLoginName(), 
+						msg.getLoginName(),
+						flowInstance.getStartUserLoginName(),
+						flowInstance.getStartUserLoginName(),
+						formatDate.format(flowInstanceStepWorkTask.getCreateTime()),
+						formatTime.format(flowInstanceStepWorkTask.getCreateTime()),
+						formatDate.format(flowInstanceStepWorkTask.getCreateTime()),
+						formatTime.format(flowInstanceStepWorkTask.getCreateTime()),
+						formatDate.format(flowInstanceStepWorkTask.getCreateTime()),
+						formatTime.format(flowInstanceStepWorkTask.getCreateTime()),
+						"1",
+						0,
+						flowInstanceStepWorkTask.getFiId()+msg.getLoginName()+"xinleju-erp",
+						100,
+						"1"
+				};
+	            PreparedStatementSetter s = new ArgumentPreparedStatementSetter(args);
+				logger.info("sendTodo====insertSql================="+insertSql);
+				getJdbcTemplate().update(insertSql, s);
+			}else{
+				FlowInstanceStepWorkTaskExtend flowInstanceStepWorkTaskExtend =flowInstanceStepWorkTaskExtendDao.getFlowInstanceStepWorkTaskExtendById(msg.getMsgId().substring(msg.getMsgId().indexOf("_") + 1));
+				FlowInstance flowInstance = flowInstanceCalculateFiService.getById(flowInstanceStepWorkTaskExtend.getRelationFiId());
+				Object[] args = {
+						"xinleju-erp:"+msg.getAppCode(), 
+						depUrl, 
+						format.format(new Date()), 
+						"ZC", 
+						msg.getMsgId(), 
+						msg.getTitle(), 
+						null, 
+						depUrl + "/casUrlLogin?url=" + depUrl + "/"+msg.getUrl()+"&username=" + msg.getLoginName(), 
+						msg.getLoginName(), 
+						msg.getLoginName(),
+						flowInstance.getStartUserLoginName(),
+						flowInstance.getStartUserLoginName(),
+						formatDate.format(flowInstanceStepWorkTaskExtend.getCreateTime()),
+						formatTime.format(flowInstanceStepWorkTaskExtend.getCreateTime()),
+						formatDate.format(flowInstanceStepWorkTaskExtend.getCreateTime()),
+						formatTime.format(flowInstanceStepWorkTaskExtend.getCreateTime()),
+						formatDate.format(flowInstanceStepWorkTaskExtend.getCreateTime()),
+						formatTime.format(flowInstanceStepWorkTaskExtend.getCreateTime()),
+						"1",
+						0,
+						flowInstanceStepWorkTaskExtend.getRelationFiId()+msg.getLoginName()+"xinleju-erp",
+						100,
+						"1"
+				};
+				PreparedStatementSetter s = new ArgumentPreparedStatementSetter(args);
+				logger.info("sendTodo====insertSql================="+insertSql);
+				getJdbcTemplate().update(insertSql, s);
+			}
+		}
+	
+		
+	}
+
+	public void deleteTodo(Msg msg) throws Exception {
+		String sql = "delete from workflow_outdata where FLOWID = '" + msg.getMsgId() +"'";
+		getJdbcTemplate().update(sql);
+	}
+
+	public void setTodoDone(Msg msg) throws Exception {
+		logger.info("setTodoDone===="+msg.getMsgId()+"===="+msg.getTitle());
+		String flowmess = "2";
+		if(StringUtils.isNotBlank(msg.getMsgId()) && msg.getMsgId().toUpperCase().startsWith("WI_")){
+			Wi currWi = wiDao.getWiById(Long.parseLong(msg.getMsgId().substring(msg.getMsgId().indexOf("_") + 1)));
+			Fi fi = fiDao.getFi(currWi.getFiId());
+			if(fi.getStatus() == Fi.STATUS_COMPLETE) {
+				flowmess = "3";
+			}
+			String sql = "update workflow_outdata set flowmess = '"+flowmess+"', viewtype = -2 where FLOWID = '" + msg.getMsgId() +"'";
+			logger.info("setTodoDone====sql================="+sql);
+			getJdbcTemplate().update(sql);
+		}else{
+			FlowInstanceStepWorkTask flowInstanceStepWorkTask =flowInstanceStepWorkTaskDao.getFlowInstanceStepWorkTaskById(msg.getMsgId().substring(msg.getMsgId().indexOf("_") + 1));
+			if(flowInstanceStepWorkTask!=null){
+				FlowInstance flowInstance = flowInstanceCalculateFiService.getById(flowInstanceStepWorkTask.getFiId());
+				
+				if(flowInstance.getStatus() == FlowInstanceStatus.STATUS_COMPLETE) {
+					flowmess = "3";
+				}
+				String sql = "update workflow_outdata set flowmess = '"+flowmess+"', viewtype = -2 where FLOWID = '" + msg.getMsgId() +"'";
+				logger.info("setTodoDone====sql================="+sql);
+				getJdbcTemplate().update(sql);
+				
+			}else{
+				flowmess = "3";
+				String sql = "update workflow_outdata set flowmess = '"+flowmess+"', viewtype = -2 where FLOWID = '" + msg.getMsgId() +"'";
+				logger.info("setTodoDone====sql================="+sql);
+				getJdbcTemplate().update(sql);
+			}
+		}
+		
+	}
+
+	public void getTodo(Msg msg) throws Exception {
+	}
+
+	
+
+
+}

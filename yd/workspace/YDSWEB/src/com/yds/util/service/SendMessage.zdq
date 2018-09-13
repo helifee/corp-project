@@ -1,0 +1,218 @@
+/*
+ * @(#)SendMessage.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 共通系统
+ */
+package com.yds.util.service;
+
+import java.io.ObjectOutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+import com.yds.common.service.CommonConstants.MsgTypeEnum;
+import com.yds.common.service.CommonConstants.SparkMsgIDEnum;
+import com.yds.common.service.CommonConstants.SparkSysIDEnum;
+import com.yds.util.bean.SparkMessagerBean;
+
+/**
+ * 向spark发送Message
+ * 
+ * @author zhaodong
+ * @version 1.00 2010/09/02
+ */
+
+public class SendMessage implements Runnable {
+
+	/** 超时时间（毫秒） */
+	private static final int CONN_TIMEOUT = 30000;
+
+	/** System_ID为空异常消息 */
+	private static final String MSG_SYSTEMIDNULL = "System_ID为空，发送消息失败";
+
+	/** Message_ID为空异常消息 */
+	private static final String MSG_MSGIDNULL = "Message_ID为空，发送消息失败";
+
+	/** spark servlet 取得异常 */
+	private static final String SERVLETPATHMSG = "spark servlet位置获取异常";
+
+	/** HTTP服务异常 */
+	private static final String HTTPEXCEPTIONMSG = "spark servlet服务异常";
+	
+	/** SEERVLET路径 */
+	private static final String SEERVLETPATH = "yds.com.spark.msg.servlet";
+	
+	/** 消息内容bean，用于异步发送 */
+	private SparkMessagerBean msgBean;
+	
+	/** 日志 */
+	protected static final Log LOG = LogFactory.getLog(SendMessage.class);
+
+
+	/** 异步发送用于传送消息内容 */
+	private SendMessage(SparkMessagerBean msgBean) {
+		this.msgBean = msgBean;
+	}
+
+	/**
+	 * 向spark发送Message
+	 * @param msgBean 发送消息的内容及对象
+	 * @return boolean 发送是否成功
+	 */
+	public static boolean sendWithoutException(SparkMessagerBean msgBean) {
+		boolean result = false;
+		try {
+			send(msgBean);
+			result = true;
+			return result;
+		} catch (Exception e) {
+			LOG.error("", e);
+			return result;
+		}
+
+	}
+	
+	/**
+	 * 异步向spark发送Message
+	 * @param msgBean 发送消息的内容及对象
+	 */
+	public static void asyncSend(SparkMessagerBean msgBean){
+		Thread t = new Thread(new SendMessage(msgBean));
+		t.start();		
+	}
+
+	/**
+	 * 向spark发送Message
+	 * @param msgBean 发送消息的内容及对象
+	 * @throws Exception 发送失败的异常
+	 */
+	public static void send(SparkMessagerBean msgBean) throws Exception {
+
+		URL url = null;
+		HttpURLConnection httpurlconnection = null;
+
+		try {
+
+			// 获得propMgr
+			PropertyManager propMgr = (PropertyManager) ApplicationContextHolder.getBean("propMgr");
+			// 取得临时文件的路径
+			String sparkMsgServlet = propMgr.getParameter(SEERVLETPATH);
+			if (null == sparkMsgServlet || "".equals(sparkMsgServlet)) {
+				throw new SparkMessageSendException(SERVLETPATHMSG);
+			}
+
+			url = new URL(sparkMsgServlet);
+			httpurlconnection = (HttpURLConnection) url.openConnection();
+			httpurlconnection.setRequestProperty("Content-type", "application/x-java-serialized-object");
+			httpurlconnection.setConnectTimeout(CONN_TIMEOUT);
+			httpurlconnection.setReadTimeout(CONN_TIMEOUT);
+			httpurlconnection.setDoOutput(true);
+			httpurlconnection.setRequestMethod("POST");
+			StringBuffer sb = new StringBuffer("<Message_Head><Message_Status>");
+			if (msgBean.getStatus() != null) {
+				sb.append(msgBean.getStatus());
+			}
+			sb.append("</Message_Status><Message_Sign>");
+			if (null != msgBean.getSign()) {
+				sb.append(msgBean.getSign());
+			}
+			sb.append("</Message_Sign><Employee_ID>");
+			if (null != msgBean.getEmpid()) {
+				for (String empid : msgBean.getEmpid()) {
+					sb.append(StringUtil.leftTrimYd(empid)).append(",");
+				}
+				if (sb.lastIndexOf(",") == sb.length() - 1) {
+					sb.delete(sb.length() - 1, sb.length());
+				}
+			}
+			sb.append("</Employee_ID><Valid_Date>");
+			SimpleDateFormat dateFormat = new SimpleDateFormat("yyyyMMdd");
+			Date now = new Date();
+			sb.append(dateFormat.format(now));
+			sb.append("</Valid_Date><Awoke_Time>");
+			dateFormat = new SimpleDateFormat("yyyyMMddHHmm");
+			sb.append(dateFormat.format(now));
+			sb.append("</Awoke_Time></Message_Head><Message_Body><System_ID>");
+			if (null == msgBean.getSystem_id() || "".equals(msgBean.getSystem_id().toString())) {
+				throw new SparkMessageSendException(MSG_SYSTEMIDNULL);
+			} else {
+				sb.append(msgBean.getSystem_id());
+			}
+			sb.append("</System_ID><Message_ID>");
+			if (null == msgBean.getMsg_id() || "".equals(msgBean.getMsg_id().toString())) {
+				throw new SparkMessageSendException(MSG_MSGIDNULL);
+			} else {
+				sb.append(msgBean.getMsg_id());
+			}
+			sb.append("</Message_ID><Message_Content>");
+			sb.append(msgBean.getMsg_content());
+			sb.append("</Message_Content><Message_URL>");
+			sb.append(msgBean.getMsg_url());
+			sb.append("</Message_URL></Message_Body>");
+			ObjectOutputStream ois = new ObjectOutputStream(httpurlconnection.getOutputStream());
+			LOG.info("message send.." + sb.toString());
+			ois.writeObject(sb.toString());
+			ois.flush();
+			ois.close();
+			httpurlconnection.getOutputStream().flush();
+			httpurlconnection.getOutputStream().close();
+			if (httpurlconnection.getResponseCode() != HttpURLConnection.HTTP_OK) {
+				throw new SparkMessageSendException(HTTPEXCEPTIONMSG);
+			}
+
+		} finally {
+			if (httpurlconnection != null)
+				httpurlconnection.disconnect();
+		}
+
+	}
+	
+	/**
+	 * 向管理员发spark消息。
+	 * 
+	 * @param propMgr ： 属性文件管理器
+	 * @param msg ： 消息内容
+	 */
+	public static void sendToAdmin(String msg, String ... sign) {
+		
+		// 获得propMgr
+		PropertyManager propMgr = (PropertyManager) ApplicationContextHolder.getBean("propMgr");
+		
+		if (null != propMgr.getParameter("com.yds.com.adminuser")){
+			// Spark信息的发送
+			SparkMessagerBean sparkMessagerBean = new SparkMessagerBean();
+			// 消息的链接
+			sparkMessagerBean.setMsg_url("");
+			//消息内部ID
+			if(sign.length == 1) {
+				sparkMessagerBean.setSign(sign[0]);
+			}
+			// 发送消息的系统ID
+			sparkMessagerBean.setSystem_id(SparkSysIDEnum.CM);
+			// 发送消息的消息类型ID
+			sparkMessagerBean.setMsg_id(SparkMsgIDEnum.CM_AD);
+			// spark 消息类型
+			sparkMessagerBean.setStatus(MsgTypeEnum.UPDATE);
+			// 要发送的人员一览
+			sparkMessagerBean
+					.setEmpid(new String[] {propMgr.getParameter("com.yds.com.adminuser")} );
+			// 消息的内容
+			sparkMessagerBean.setMsg_content(msg);
+			SendMessage.asyncSend(sparkMessagerBean);
+		}
+	}
+
+	/** 
+	 * 发送消息，用于线程调用
+	 * 
+	 * */
+	public void run() {
+		SendMessage.sendWithoutException(this.msgBean);
+	}
+}

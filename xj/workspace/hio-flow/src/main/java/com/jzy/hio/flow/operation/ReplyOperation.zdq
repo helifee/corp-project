@@ -1,0 +1,108 @@
+package com.jzy.hio.flow.operation;
+
+import java.sql.Timestamp;
+
+import com.jzy.hio.base.utils.IDGenerator;
+import com.jzy.hio.flow.dto.tobedeleted.ApprovalSubmitDto;
+import com.jzy.hio.flow.dto.tobedeleted.UserDto;
+import com.jzy.hio.flow.entity.SysNoticeMsg;
+import com.jzy.hio.flow.enums.TaskStatus;
+import com.jzy.hio.flow.enums.TaskType;
+import com.jzy.hio.flow.rt.model.ApproverUnit;
+import com.jzy.hio.flow.rt.model.InstanceUnit;
+import com.jzy.hio.flow.rt.model.TaskUnit;
+import com.jzy.hio.base.utils.IDGenerator;
+
+
+/**
+ * 回复操作:
+ * 1、被协办的人可以回复
+ * 2、沟通发起人后，发起人可以回复
+ * 
+ * @author daoqi
+ *
+ */
+public class ReplyOperation extends DefaultOperation implements Operation{
+	
+	ReplyOperation() {
+		super(OperationType.REPLY);
+	}
+
+//	@Override
+//	public String action(InstanceUnit instanceUnit, ApprovalSubmitDto approvalDto)
+//			throws Exception {
+//		
+//		//1、设置当前位置
+//		setCurrentLocation(instanceUnit, approvalDto);
+//		
+//		//2、完成当前审批人,当前任务完成，回写意见
+//		complate(currentApprover, approvalDto);
+//		
+//		//3、保存数据
+//		save(instanceUnit);
+//		
+//		//5、发送待办消息
+//		handleMessages(instanceUnit, approvalDto);
+//		
+//		//删除待办消息
+////		completeMessage(approvalDto.getMsgId());
+//		
+//		return "success";
+//	}
+
+//	private void complate(ApproverUnit currentApprover, ApprovalSubmitDto approvalDto) {
+//		TaskUnit task = currentApprover.getTask();
+//		task.setTaskStatus(TaskStatus.FINISHED.getValue());
+//		task.setEndTime(new Timestamp(System.currentTimeMillis()));
+//		task.setTaskResult(approvalDto.getOperationType());
+//		task.setTaskResultName(approvalDto.getOperationName());
+//		String userNote = "【回复：" + currentApprover.getTask().getFromName() + "】 意见：" + approvalDto.getUserNote();
+//		task.setTaskComments(userNote);
+//		
+//		super.sortIn(currentPost);
+//	}
+
+	@Override
+	public void operate(InstanceUnit instanceUnit, 
+			ApprovalSubmitDto approvalDto) throws Exception {
+		//完成当前审批人,当前任务完成，回写意见
+		TaskUnit task = currentApprover.getTask();
+		
+		task.setTaskStatus(TaskStatus.FINISHED.getValue());
+		task.setEndTime(new Timestamp(System.currentTimeMillis()));
+		task.setTaskResult(approvalDto.getOperationType());
+		task.setTaskResultName(approvalDto.getOperationName());
+		String userNote = "【回复：" + currentApprover.getTask().getFromName() + "】 意见：" + approvalDto.getUserNote();
+		task.setTaskComments(userNote);
+		
+		//区分协办人与其他（审批人或发起人）
+		//发起人回复, 作为审批人处理下面点亮一条沟通发出者行
+		if(TaskType.STARTER.getValue().equals(task.getTaskType())) {
+			ApproverUnit newApprover = new ApproverUnit();
+			newApprover.setId(IDGenerator.getUUID());
+			newApprover.setAcPostId(currentApprover.getAcPostId());
+			newApprover.setApproverId(currentApprover.getTask().getFromId());
+			newApprover.setApproverName(currentApprover.getTask().getFromName());
+			newApprover.setOwner(currentApprover.getOwner());
+			newApprover.setDbAction(1);
+			
+			TaskUnit newTask = new TaskUnit();
+			newTask.setTaskId(IDGenerator.getUUID());
+			newTask.setStartTime(new Timestamp(System.currentTimeMillis()));
+			newTask.setTaskStatus(TaskStatus.RUNNING.getValue());
+			newTask.setTaskType(TaskType.APPROVER.getValue());
+			newTask.setDbAction(1);
+			newApprover.setTask(newTask);
+			currentApprover.getOwner().getApprovers().add(newApprover);
+		}
+		
+		super.sortIn(currentPost);
+		
+		//被协办人回复后，给协办发起者发送一条待阅提醒
+		if(TaskType.ASSIST.getValue().equals(task.getTaskType())){
+			UserDto user = new UserDto(task.getFromId(), task.getFromName());
+			SysNoticeMsg toReadMsg = createToReadMsg(instanceUnit, instanceUnit.getCustomFormURL(), user);
+			service.getMsgService().saveAndNotifyOthers(toReadMsg);
+		}
+	}
+}

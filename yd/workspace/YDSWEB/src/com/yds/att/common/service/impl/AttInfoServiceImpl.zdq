@@ -1,0 +1,588 @@
+/*
+ * @(#)AttInfoServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 考勤管理
+ */
+
+package com.yds.att.common.service.impl;
+
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Service;
+
+import com.yds.att.bean.AttExrestInfo;
+import com.yds.att.bean.AttInfo;
+import com.yds.att.bean.AttInfoCondA;
+import com.yds.att.bean.AttInfoCondB;
+import com.yds.att.bean.AttInfoCondC;
+import com.yds.att.bean.AttType;
+import com.yds.att.common.dao.AttInfoDao;
+import com.yds.att.common.service.AttComService;
+import com.yds.att.common.service.AttInfoService;
+import com.yds.att.common.service.DateRelationService;
+import com.yds.att.service.AttConstants;
+import com.yds.att.service.AttConstants.*;
+import com.yds.util.service.*;
+
+@Service("attInfoService")
+public class AttInfoServiceImpl implements AttInfoService {
+
+	/** 注入AttComService. */
+	private AttComService attComService;
+	/** 注入Dao. */
+	private AttInfoDao attInfoDao;
+	/** 注入DateRelationService. */
+	private DateRelationService dateRelationService;
+
+	@Override
+	public void updateAttInfo(String empId, Date attYmd) throws Exception {
+
+		// 判断对象天的日期类型
+		DateTypeEnum workEnum = null;
+		workEnum = dateRelationService.getDateType(attYmd);
+		//初始化班型信息
+		AttType attTypeInfo = null;
+		// 时间进行格式化
+		DateFormat format = new SimpleDateFormat("yyyy-MM-dd ");
+		String attYmdString = format.format(attYmd);
+		String year=attYmdString.substring(0, 4);
+		String month=attYmdString.substring(5, 7);
+		String day=attYmdString.substring(8, 10);
+		// 判断考勤信息是否存在并取得其临时班型标识
+		AttInfo attInfo = attInfoDao.getAttInfo(empId,year,month,day);
+		if (workEnum.equals(DateTypeEnum.WORK)) {
+			// 班型信息检索
+			attTypeInfo = attInfoDao.getAttType(empId, attYmd);
+		} else {
+			if (null != attInfo
+					&& !(TypeFlg.TEM_TYPEFALG).toString().equals(
+							attInfo.getTypeFlg())
+					&& null != attInfo.getAttStatusOt()) {
+				// 班型信息检索
+				attTypeInfo = attInfoDao
+						.getAttLeaveType(AttConstants.ATT_WEEKEND);
+			}
+		}
+		// 更新登录信息设定
+		AttInfo insertUpdateAttInfo = setAttInfo(workEnum, empId, attYmd,
+				attTypeInfo);
+		insertUpdateAttInfo.setUpdateUser(AttConstants.ATT_BATCH_UPUSER);
+		// 考勤信息不存在的场合,插入数据
+		if (attInfo == null) {
+			attInfoDao.insertBatchAttInfo(insertUpdateAttInfo);
+		} else {
+			// 考勤信息存在并且不是临时班型的情况更新此条考勤信息
+			if (!(TypeFlg.TEM_TYPEFALG).toString().equals(attInfo.getTypeFlg())) {
+				attInfoDao.updateBatchAttInfo(insertUpdateAttInfo);
+			}
+		}
+	}
+
+	@Override
+	public void updateAttInfo(AttInfoCondA attInfoCondA) throws Exception {
+
+		DateFormat format = new SimpleDateFormat("yyyy-MM-dd ");
+		// 时间Date转String
+		String leaveDateFromStr = format
+				.format(attInfoCondA.getLeaveDateFrom());
+		String leaveDateToStr = format.format(attInfoCondA.getLeaveDateTo());
+		//计算两个日期之间的天数
+		int dayInt = DateUtil.dateBetween(leaveDateFromStr, leaveDateToStr);
+		//初始化for循环值
+		String someDayStr = leaveDateFromStr;
+		Date someDayDate;
+		DateTypeEnum workEnum = null;
+		for (int i = 0; i <= dayInt; i++) {
+			// 时间String转Date
+			someDayDate = DateUtil.parse(someDayStr);
+			// 判断对象天的日期类型
+		    workEnum = dateRelationService.getDateType(someDayDate);
+		
+		    //判断日期类型是否是上班
+			if (workEnum.equals(DateTypeEnum.WORK)) {
+				// 判断考勤信息是否存在并取得其临时班型标识
+				String empId = attInfoCondA.getEmpId();
+				// 时间进行格式化
+				String attYmdString = format.format(someDayDate);
+				String year=attYmdString.substring(0, 4);
+				String month=attYmdString.substring(5, 7);
+				String day=attYmdString.substring(8, 10);
+				 //取得考勤信息
+				AttInfo leaveAttInfo = attInfoDao.getAttInfo(empId, year,
+						month, day);
+				// 班型信息检索
+				AttType attTypeInfo = getAttType(workEnum, empId, someDayDate);
+				//设置更新bean信息
+				AttInfo insertAttInfo = setAttInfo(workEnum, attInfoCondA
+						.getEmpId(), someDayDate, attTypeInfo);
+				//设置更新者
+				insertAttInfo.setUpdateUser(empId);
+				//考勤数据存在更新数据
+				if (null != leaveAttInfo) {
+					//设置临时班型标志
+					insertAttInfo.setTypeFlg(leaveAttInfo.getTypeFlg());
+					//审批状态为待批，审批中和已批状态
+					if (AppStatus.APP_ING.value().equals(
+							leaveAttInfo.getAppStatus())
+							|| AppStatus.PENDING.value().equals(
+									leaveAttInfo.getAppStatus())
+							|| AppStatus.APPROVED.value().equals(
+									leaveAttInfo.getAppStatus())) {
+						insertAttInfo.setAppIdAddi(attInfoCondA.getAppId());
+						insertAttInfo.setAppStatusAddi(attInfoCondA
+								.getAppStatus());
+						insertAttInfo.setRestTypeAddi(attInfoCondA
+								.getRestType());
+						attInfoDao.updateLeaveAttInfoAddi(insertAttInfo);
+					} else {
+						insertAttInfo.setAppStatus(attInfoCondA.getAppStatus());
+						insertAttInfo.setAppId(attInfoCondA.getAppId());
+						insertAttInfo.setRestType(attInfoCondA.getRestType());
+						attInfoDao.updateLeaveAttInfo(insertAttInfo);
+					}
+				} else {
+					//考勤数据不存在插入数据
+					insertAttInfo.setAppStatus(attInfoCondA.getAppStatus());
+					insertAttInfo.setAppId(attInfoCondA.getAppId());
+					insertAttInfo.setRestType(attInfoCondA.getRestType());
+					attInfoDao.insertLeaveAttInfo(insertAttInfo);
+				}
+			}
+			someDayStr = DateUtil.dateAdd(someDayStr, 1, 2);
+		}
+	}
+
+	@Override
+	public void updateAttInfo(AttInfoCondB attInfoCondB) throws Exception {
+		// 时间进行格式化
+		DateFormat format = new SimpleDateFormat("yyyy-MM-dd ");
+		String attYmdString = format.format(attInfoCondB.getOverTimeDate());
+		String year=attYmdString.substring(0, 4);
+		String month=attYmdString.substring(5, 7);
+		String day=attYmdString.substring(8, 10);
+		String empId = attInfoCondB.getEmpId();
+		 //取得考勤信息
+		AttInfo otAttInfo = attInfoDao.getAttInfo(empId, year, month, day);
+		DateTypeEnum workEnum = null;
+		// 取得对象天的日期类型
+		workEnum = dateRelationService.getDateType(attInfoCondB.getOverTimeDate());
+		
+		// 班型信息检索
+		AttType attTypeInfo = getAttType(workEnum, attInfoCondB.getEmpId(),
+				attInfoCondB.getOverTimeDate());
+		//设置更新bean信息
+		AttInfo insertOtAttInfo = setAttInfo(workEnum, attInfoCondB.getEmpId(),
+				attInfoCondB.getOverTimeDate(), attTypeInfo);
+		insertOtAttInfo.setAttStatusOt(attInfoCondB.getAppStatusOt());
+		insertOtAttInfo.setOtStTime(attInfoCondB.getOtStTime());
+		insertOtAttInfo.setOtEdTime(attInfoCondB.getOtEdTime());
+		insertOtAttInfo.setOtBenefit(attInfoCondB.getOtBenefit());
+		insertOtAttInfo.setUpdateUser(empId);
+		//考勤数据存在更新数据
+		if (null != otAttInfo) {
+			insertOtAttInfo.setTypeFlg(otAttInfo.getTypeFlg());
+			attInfoDao.updateOtAttInfo(insertOtAttInfo);
+		} else {
+			//考勤数据不存在插入数据
+			attInfoDao.insertOtAttInfo(insertOtAttInfo);
+		}
+	}
+
+	@Override
+	public void updateAttInfo(AttInfoCondC attInfoCondC) throws Exception {
+		DateFormat format = new SimpleDateFormat("yyyy-MM-dd ");
+		// 打卡时间
+		Date ioTime = attInfoCondC.getIoTime();
+		// 考勤日期
+		String attYmdString = format.format(attInfoCondC.getAttYmd());
+		String year=attYmdString.substring(0, 4);
+		String month=attYmdString.substring(5, 7);
+		String day=attYmdString.substring(8, 10);
+		String empId = attInfoCondC.getEmpId();
+		SimpleDateFormat time = new SimpleDateFormat("yyyy-MM-dd HH:mm:00");
+		// 实际考勤时间
+		Date realTime = time.parse(time.format(ioTime));
+        //取得考勤信息
+		AttInfo cardAttInfo = attInfoDao.getAttInfo(empId, year, month, day);
+		
+		// 取得对象天的日期类型
+		DateTypeEnum workEnum = null;
+	    workEnum = dateRelationService.getDateType(attInfoCondC.getAttYmd());
+	    //取得班型信息
+		AttType attTypeInfo = getAttType(workEnum, attInfoCondC.getEmpId(),
+				attInfoCondC.getAttYmd());
+		//设置更新bean信息
+		AttInfo attInfo = setAttInfo(workEnum, attInfoCondC.getEmpId(),
+				attInfoCondC.getAttYmd(), attTypeInfo);
+		attInfo.setUpdateUser(AttConstants.ATT_BATCH_UPUSER);
+		//考勤数据存在更新数据
+		if (null != cardAttInfo) {
+			// 考勤信息表中首次打卡时间为空，则认为是首次打卡
+			if(cardAttInfo.getFirstTime() == null) {
+				attInfo.setFirstTime(ioTime);
+				attInfo.setRstartTime(realTime);
+			} else {
+				attInfo.setLastTime(ioTime);
+				attInfo.setRendTime(realTime);
+			}
+			// 取得考勤更正审批状态
+			String asc = cardAttInfo.getAttStatusCor();
+			if (null == asc || "".equals(asc) || AppStatus.REJECTED.value().equals(asc) || AppStatus.REVOKEED.value().equals(asc)) {
+				attInfo.setTypeFlg(cardAttInfo.getTypeFlg());
+				attInfoDao.updateCdAttInfo(attInfo);
+			}
+		} else {
+			attInfo.setFirstTime(ioTime);
+			attInfo.setRstartTime(realTime);
+			//考勤数据不存在插入数据
+			attInfoDao.insertCdAttInfo(attInfo);
+		}
+	}
+
+	/**
+	 * 取出班型相关数据
+	 * 
+	 * @param workEnum
+	 *            日期类型
+	 * @param empId
+	 *            员工ID
+	 * @param attYmd
+	 *            考勤年月日
+	 * @return AttType
+	 */
+	public AttType getAttType(DateTypeEnum workEnum, String empId, Date attYmd) {
+
+		AttType attTypeInfo = null;
+		// 非休日时，检索【员工班型表】取出員工班型信息
+		if (workEnum.equals(DateTypeEnum.WORK)) {
+			attTypeInfo = attInfoDao.getAttType(empId, attYmd);
+
+			// 休日时，检索【考勤班型表】取出员工班型
+		} else {
+			attTypeInfo = attInfoDao.getAttLeaveType(AttConstants.ATT_WEEKEND);
+		}
+		return attTypeInfo;
+	}
+
+	/**
+	 * 考勤信息表内容设定 （班型和出退勤信息）
+	 * 
+	 * @param workEnum
+	 *            日期类型
+	 * @param empId
+	 *            员工ID
+	 * @param attYmd
+	 *            考勤年月日
+	 * @param attTypeInfo
+	 *            班型信息
+	 * @return AttInfo
+	 */
+	public AttInfo setAttInfo(DateTypeEnum workEnum, String empId, Date attYmd,
+			AttType attTypeInfo) {
+		// 时间进行格式化
+		DateFormat format = new SimpleDateFormat("yyyy-MM-dd ");
+		String attYmdString = format.format(attYmd);
+		// 考勤信息表内容设定
+		AttInfo insertUpdateAttInfo = new AttInfo();
+		insertUpdateAttInfo.setEmpId(empId);
+		insertUpdateAttInfo.setYear(attYmdString.substring(0, 4));
+		insertUpdateAttInfo.setMonth(attYmdString.substring(5, 7));
+		insertUpdateAttInfo.setDay(attYmdString.substring(8, 10));
+		// 日期类型
+		insertUpdateAttInfo.setDayFlg(workEnum.toString());
+		// 临时班型标志
+		insertUpdateAttInfo.setTypeFlg((TypeFlg.PER_TYPEFALG).toString());
+		if (null != attTypeInfo) {
+			String clockIn=attTypeInfo.getClockIn();
+			String attendTime = attTypeInfo.getAttendTime();
+			String absentTime = attTypeInfo.getAbsentTime();
+			String lunchTimeSt = attTypeInfo.getLunchTimeSt();
+			String lunchTimeEnd = attTypeInfo.getLunchTimeEnd();
+			String dinnerTimeEnd = attTypeInfo.getDinnerTimeEnd();
+			// 打卡有效开始时间
+			insertUpdateAttInfo.setClockIn(DateUtil.parse(attYmdString
+					+ clockIn.substring(0, 2) + ":"
+					+ clockIn.substring(2, 4) + ":"
+					+ clockIn.substring(4, 6)));
+			// 出勤时间
+			insertUpdateAttInfo.setPstartTime(DateUtil.parse(attYmdString
+					+ attendTime.substring(0, 2) + ":"
+					+ attendTime.substring(2, 4) + ":"
+					+ attendTime.substring(4, 6)));
+
+			// 翌日标识为当日的场合
+			if ((NextDayFlg.TODAY).toString().equals(
+					attTypeInfo.getNextDayFlg())) {
+				// 退勤时间
+				insertUpdateAttInfo.setPendTime(DateUtil.parse(attYmdString
+						+ absentTime.substring(0, 2) + ":"
+						+ absentTime.substring(2, 4) + ":"
+						+ absentTime.substring(4, 6)));
+				// 午休开始时间
+				insertUpdateAttInfo.setLunchTimeSt(DateUtil.parse(attYmdString
+						+ lunchTimeSt.substring(0, 2) + ":"
+						+ lunchTimeSt.substring(2, 4) + ":"
+						+ lunchTimeSt.substring(4, 6)));
+				// 午休结束时间
+				insertUpdateAttInfo.setLunchTimeEnd(DateUtil.parse(attYmdString
+						+ lunchTimeEnd.substring(0, 2) + ":"
+						+ lunchTimeEnd.substring(2, 4) + ":"
+						+ lunchTimeEnd.substring(4, 6)));
+				// 晚休结束时间
+				insertUpdateAttInfo.setDinnerTimeEnd(DateUtil
+						.parse(attYmdString + dinnerTimeEnd.substring(0, 2)
+								+ ":" + dinnerTimeEnd.substring(2, 4) + ":"
+								+ dinnerTimeEnd.substring(4, 6)));
+
+				// 翌日标识为翌日的场合
+			} else {
+				// 退勤时间
+				insertUpdateAttInfo.setPendTime(DateUtil.parse(DateUtil
+						.dateAdd(attYmdString, 1, 2)
+						+ " "
+						+ absentTime.substring(0, 2)
+						+ ":"
+						+ absentTime.substring(2, 4)
+						+ ":"
+						+ absentTime.substring(4, 6)));
+
+				// 【午休开始时间】大于【出勤时间】
+				if (attTypeInfo.getLunchTimeSt().compareTo(
+						attTypeInfo.getAttendTime()) > 0) {
+					insertUpdateAttInfo.setLunchTimeSt(DateUtil
+							.parse(attYmdString + lunchTimeSt.substring(0, 2)
+									+ ":" + lunchTimeSt.substring(2, 4) + ":"
+									+ lunchTimeSt.substring(4, 6)));
+				} else {
+					insertUpdateAttInfo.setLunchTimeSt(DateUtil.parse(DateUtil
+							.dateAdd(attYmdString, 1, 2)
+							+ " "
+							+ lunchTimeSt.substring(0, 2)
+							+ ":"
+							+ lunchTimeSt.substring(2, 4)
+							+ ":"
+							+ lunchTimeSt.substring(4, 6)));
+				}
+
+				// 【午休结束时间】大于【出勤时间】
+				if (attTypeInfo.getLunchTimeEnd().compareTo(
+						attTypeInfo.getAttendTime()) > 0) {
+					insertUpdateAttInfo.setLunchTimeEnd(DateUtil
+							.parse(attYmdString + lunchTimeEnd.substring(0, 2)
+									+ ":" + lunchTimeEnd.substring(2, 4) + ":"
+									+ lunchTimeEnd.substring(4, 6)));
+				} else {
+					insertUpdateAttInfo.setLunchTimeEnd(DateUtil.parse(DateUtil
+							.dateAdd(attYmdString, 1, 2)
+							+ " "
+							+ lunchTimeEnd.substring(0, 2)
+							+ ":"
+							+ lunchTimeEnd.substring(2, 4)
+							+ ":"
+							+ lunchTimeEnd.substring(4, 6)));
+				}
+
+				// 晚休结束时间
+				insertUpdateAttInfo.setDinnerTimeEnd(DateUtil.parse(DateUtil
+						.dateAdd(attYmdString, 1, 2)
+						+ " "
+						+ dinnerTimeEnd.substring(0, 2)
+						+ ":"
+						+ dinnerTimeEnd.substring(2, 4)
+						+ ":"
+						+ dinnerTimeEnd.substring(4, 6)));
+			}
+
+		}
+		else{
+			// 判断考勤信息是否存在并取得其临时班型标识
+			AttInfo attInfo = attInfoDao.getAttInfo(empId,
+					String.valueOf(DateUtil.getYear(attYmd)), String.valueOf(DateUtil.getMonth(attYmd)), String.valueOf(DateUtil
+							.getDay(attYmd)));
+			if (null != attInfo
+					&& !(TypeFlg.TEM_TYPEFALG).toString().equals(
+							attInfo.getTypeFlg())
+					&& null == attInfo.getAttStatusOt()) {
+				insertUpdateAttInfo.setClockIn(null);
+				insertUpdateAttInfo.setPstartTime(null);
+				insertUpdateAttInfo.setPendTime(null);
+				insertUpdateAttInfo.setLunchTimeSt(null);
+				insertUpdateAttInfo.setLunchTimeEnd(null);
+				insertUpdateAttInfo.setDinnerTimeEnd(null);
+			}
+		}
+		return insertUpdateAttInfo;
+	}
+
+	/**
+	 * 换休请假比准时插入换休明细
+	 * @param empId 员工ID
+	 * @param leaveDateFrom 请假开始日期 Data
+	 * @param leaveDateTo   请假结束日期 Data
+	 * @param restType      请假类型区分
+	 * @param appId         请假申请编号
+	 * @return true/false
+	 * @throws Exception 
+	 */
+	@Override
+	public void insertExrestInfo(String empId, Date leaveDateFrom, Date leaveDateTo, String restType, String appId) throws Exception{
+		
+		DateFormat format=new SimpleDateFormat("yyyy-MM-dd");
+		String leaveDateFromStr=format.format(leaveDateFrom);
+		String leaveDateToStr=format.format(leaveDateTo);		
+		String someDayStr=leaveDateFromStr;
+	    
+		// 请假天日期
+		Date someDayDate;
+		
+		// 间隔天数计算
+		int day=DateUtil.dateBetween(leaveDateFromStr, leaveDateToStr);
+		
+		// 从请假开始日到请假结束日循环做下记处理
+		for(int i=0;i<=day;i++){
+            // 请假天日期
+			someDayDate = format.parse(someDayStr);
+			
+			// 计算请假时间
+			Map<String, Object> mapResult = dateRelationService.getLeaveTime(someDayDate, someDayDate, restType, empId);
+			int leaveTime = (Integer) mapResult.get("leaveTime");
+			
+			// 插入该天使用换休明细
+			if(leaveTime > 0 ){
+				insertExrestInfoByKey(empId, leaveDateFrom, leaveTime, someDayDate, appId);
+			}
+			// 日期递增
+			someDayStr = DateUtil.dateAdd(someDayStr, 1, 2);
+		}		
+	}
+
+	/**
+	 * 夜间批处理半天换休再计算插入换休明细
+	 * @param attInfo    
+	 * @return true/false
+	 */
+	@Override
+	public void insertExrestInfo(AttInfo attInfo) throws Exception{
+		
+		// 计算请假时间
+		Map<String, Object> mapResult = dateRelationService.getExactLeaveTime(attInfo);
+		int leaveTime = (Integer) mapResult.get("leaveTime");
+		int leaveTimeAddi = (Integer) mapResult.get("leaveTimeAddi");
+
+		// 请假天日期
+		Date someDayDate = DateUtil.parse(attInfo.getYear()+attInfo.getMonth()+attInfo.getDay());
+        
+		// 再计算这一天第一次换休请假，，并插入数据
+		if(leaveTime>0){
+			// 删除换休明细表中的该次换休请假插入的数据
+			attInfoDao.deleteAttExrestInfoByAppId(attInfo.getAppId());
+			
+			// 插入该天使用换休明细
+			insertExrestInfoByKey(attInfo.getEmpId(), someDayDate, leaveTime, someDayDate, attInfo.getAppId());
+		}
+
+		// 再计算这一天第二次换休请假，，并插入数据
+		if(leaveTimeAddi>0){
+			// 删除换休明细表中的该次换休请假插入的数据
+			attInfoDao.deleteAttExrestInfoByAppId(attInfo.getAppIdAddi());
+			
+			// 插入该天使用换休明细
+			insertExrestInfoByKey(attInfo.getEmpId(), someDayDate, leaveTimeAddi, someDayDate, attInfo.getAppIdAddi());
+		}				
+	}
+	
+	/**
+	 * 换休明细插入处理
+	 * @param empId 员工ID    
+	 * @param validDayDateStr 有效年月日    
+	 * @param leaveTime 请假时间    
+	 * @param someDayDate 使用日期    
+	 * @param appId 请假申请编号    
+	 * @return true/false
+	 */
+	public void insertExrestInfoByKey(String empId, Date validDayDateStr, int leaveTime, Date someDayDate, String appId){
+
+		// 每个有效月可用换休时间检索
+		List<AttExrestInfo> attExrestInfoList = attInfoDao.getExrestInfoByMonth(empId, validDayDateStr);
+		
+		// 请假剩余时间
+		int leftLeaveTime = leaveTime; 
+		for(int j=0; j<attExrestInfoList.size();j++){
+			if(attExrestInfoList.get(j).getHappenTime()>0){
+				// 插入换休明细情报设定
+				AttExrestInfo attExrestInfo	= new AttExrestInfo();
+				attExrestInfo.setEmpId(empId);
+				attExrestInfo.setCalYear(attExrestInfoList.get(j).getCalYear());
+				attExrestInfo.setCalMonth(attExrestInfoList.get(j).getCalMonth());
+				attExrestInfo.setHappenDate(someDayDate);
+				attExrestInfo.setHappenReason((HappenReason.USE_REASON).toString());
+				attExrestInfo.setAppId(appId);
+				if(attExrestInfoList.get(j).getHappenTime() >= leftLeaveTime){
+					// 请假时间设定
+					attExrestInfo.setHappenTime(leftLeaveTime);
+					// 数据插入
+					attInfoDao.insertAttExrestInfo(attExrestInfo);
+					break;							
+				}else{
+					// 请假时间设定
+					attExrestInfo.setHappenTime(attExrestInfoList.get(j).getHappenTime());
+					// 数据插入
+					attInfoDao.insertAttExrestInfo(attExrestInfo);
+					// 请假剩余时间再设定
+					leftLeaveTime = leftLeaveTime - attExrestInfoList.get(j).getHappenTime();
+				}						
+			}					
+		}						
+	}	
+	
+	/**
+	 * @param attComService
+	 *            the attComService to set
+	 */
+	public void setAttComService(AttComService attComService) {
+		this.attComService = attComService;
+	}
+
+	/**
+	 * @return the AttComService
+	 */
+	public AttComService getAttComService() {
+		return attComService;
+	}
+
+	/**
+	 * @param dateRelationService
+	 *            the dateRelationService to set
+	 */
+	public void setDateRelationService(DateRelationService dateRelationService) {
+		this.dateRelationService = dateRelationService;
+	}
+
+	/**
+	 * @return the dateRelationService
+	 */
+	public DateRelationService getDateRelationService() {
+		return dateRelationService;
+	}
+
+	/**
+	 * @param attInfoDao
+	 *            the attInfoDao to set
+	 */
+	public void setAttInfoDao(AttInfoDao attInfoDao) {
+		this.attInfoDao = attInfoDao;
+	}
+
+	/**
+	 * @return the attInfoDao
+	 */
+	public AttInfoDao getAttInfoDao() {
+		return attInfoDao;
+	}
+}

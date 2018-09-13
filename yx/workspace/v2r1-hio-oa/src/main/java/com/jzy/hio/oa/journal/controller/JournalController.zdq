@@ -1,0 +1,347 @@
+/**
+ * 
+ * @Title JournalController.java
+ * @Package com.jzy.hio.oa.journal.controller
+ * @author shangb
+ * @date 2018年4月4日 下午2:51:06
+ * @version V1.0
+ */
+
+package com.jzy.hio.oa.journal.controller;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
+import org.apache.commons.lang.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.controller.BaseOaController;
+import com.jzy.hio.entity.Journal;
+import com.jzy.hio.entity.JournalAllowedScope;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.exception.HioMybatisGetException;
+import com.jzy.hio.exception.HioMybatisInsertException;
+import com.jzy.hio.exception.HioMybatisQueryException;
+import com.jzy.hio.exception.HioMybatisUpdateException;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.oa.OaConstant;
+import com.jzy.hio.oa.journal.dto.JournalDto;
+import com.jzy.hio.oa.journal.dto.JournalListParam;
+import com.jzy.hio.oa.journal.dto.ShareDto;
+import com.jzy.hio.oa.journal.service.JournalAllowedScopeService;
+import com.jzy.hio.oa.journal.service.JournalService;
+import com.jzy.hio.sys.organization.dto.OrganizationDto;
+import com.jzy.hio.sys.user.dto.OrganizationUsersDto;
+import com.jzy.hio.sys.user.param.UserAndExternalParam;
+import com.jzy.hio.utils.LoginUser;
+import com.jzy.hio.utils.OaUserUtil;
+import com.jzy.hio.utils.Page;
+
+/** 
+ * 日志
+ * @author machangxi
+ * @date 2018年5月4日
+ */
+@RestController
+@RequestMapping("/journal")
+public class JournalController extends BaseOaController {
+	
+	private static Logger logger = LoggerFactory.getLogger(JournalController.class);
+	
+	@Autowired
+	private JournalService journalService;
+	
+	@Autowired
+	private SysFeignService sysFeignService;
+	
+	@Autowired
+	private JournalAllowedScopeService journalAllowedScopeService;
+	
+	@Autowired
+	private OaUserUtil oaUserUtil;
+	
+	/**
+	 * 根据Id获取日志，不包括日志共享范围
+	 * @param id 业务对象主键
+	 * @return 业务对象
+	 */
+	@RequestMapping(value = "/get/{id}", method = RequestMethod.GET)
+	public Object get(@PathVariable("id") String id) throws HioMybatisGetException {
+		if(StringUtils.isEmpty(id)) {
+			return HioException.paramNotExist;
+		}
+		Journal journal = journalService.findJournalById(id);
+		// 验证日志发布范围
+		LoginUser loginUser = super.getLoginUser();
+		JournalAllowedScope journalAllowedScope = new JournalAllowedScope();
+		journalAllowedScope.setJournalId(id);
+		journalAllowedScope.setDelflag(0);
+		List<JournalAllowedScope> journalAllowedScopeList = journalAllowedScopeService.queryList(journalAllowedScope);
+		List<ShareDto> userShareList = new ArrayList<ShareDto>();// 用户共享
+		List<ShareDto> roleShareList = new ArrayList<ShareDto>();// 角色用户共享
+		List<ShareDto> orgShareList = new ArrayList<ShareDto>(); // 组织用户共享
+		if (journalAllowedScopeList != null && journalAllowedScopeList.size() > 0) {
+			for (JournalAllowedScope journalScope : journalAllowedScopeList) {
+				String allowedId = journalScope.getAllowedId();
+				String allowedType = journalScope.getAllowedType();// 共享范围ID:0部门ID，1人员ID，2角色ID
+				if (OaConstant.ALLOWED_TYPE_ORG.equals(allowedType)) {
+					ShareDto orgShareDto = new ShareDto();
+					orgShareDto.setId(allowedId);
+					String name = oaUserUtil.queryOrgNameById(allowedId, loginUser.getTendId());
+					if(StringUtils.isBlank(name)) {
+						continue;
+					}
+					orgShareDto.setName(name);
+					orgShareList.add(orgShareDto);
+				} else if (OaConstant.ALLOWED_TYPE_USER.equals(allowedType)) {
+					ShareDto userShareDto = new ShareDto();
+					userShareDto.setId(allowedId);
+					//String name = oaUserUtil.selectUserName(allowedId);
+					//包含离职、删除人员
+					String name = oaUserUtil.selectUserNameByTendIdAndStatus(allowedId,loginUser.getTendId(),OaConstant.OA_USER_QUERY_STATUS_3);
+					if(StringUtils.isBlank(name)) {
+						continue;
+					}
+					userShareDto.setName(name);
+					userShareList.add(userShareDto);
+				} else {
+					ShareDto roleShareDto = new ShareDto();
+					roleShareDto.setId(allowedId);
+					String name = oaUserUtil.queryRoleNameById(allowedId, loginUser.getTendId());
+					if(StringUtils.isBlank(name)) {
+						continue;
+					}
+					roleShareDto.setName(name);
+					roleShareList.add(roleShareDto);
+				}
+			}
+		}
+		
+		ApiFeignResponse<List<OrganizationDto>> apiResponse = sysFeignService.queryOrganizationsByUserId(loginUser.getTendId(), loginUser.getUserId());
+		if(apiResponse.getStatus() == 200) {
+			List<OrganizationDto> orgList = apiResponse.getResult();
+			String[] orgIdArray = null;
+			Set<String> orgIdSet = new HashSet<String>();
+			if(orgList != null && orgList.size() > 0) {
+				for(OrganizationDto org : orgList) {
+					String ids = org.getPrefixId();
+					orgIdArray = ids.split("/");
+					for(String orgId : orgIdArray) {
+						orgIdSet.add(orgId);
+					}
+				}
+			}
+			/*List<String> orgIds = new ArrayList<String>();
+			if(orgIdArray != null) {
+				orgIds = Arrays.asList(orgIdArray);
+			}*/
+			List<String> roleIds = loginUser.getRoleIds();
+			// 判断共享部门中是否包含当前人的部门
+			if(orgShareList != null && orgShareList.size() > 0) {
+				for(ShareDto sd : orgShareList) {
+					if(orgIdSet.contains(sd.getId())) {
+						return journal;
+					}
+				}
+			}
+			// 判断共享角色中是否包含当前人的角色
+			if(roleShareList != null && roleShareList.size() > 0) {
+				for(ShareDto sd : roleShareList) {
+					if(roleIds.contains(sd.getId())) {
+						return journal;
+					}
+				}
+			}
+			// 判断共享人员中是否包含当前人
+			if(userShareList != null && userShareList.size() > 0) {
+				for(ShareDto sd : userShareList) {
+					if(sd.getId().equals(loginUser.getUserId())) {
+						return journal;
+					}
+				}
+			}
+			//自己创建的自己评论
+			if(Base.isNotEmpty(journal) 
+					&& Base.isEquals(journal.getCreatePersonId(),loginUser.getUserId())){
+				return journal;
+			}
+			
+			return HioException.journalIsNull;
+		} else {
+			return HioException.systemIsBusy;
+		}
+	}
+	
+	/**
+	 * 【我的日志】页面获取某一条日志的详情
+	 * @param JournalDto
+	 * @return
+	 * @throws HioMybatisInsertException
+	 */
+	@RequestMapping(value = "/detail", method = RequestMethod.POST, consumes = "application/json")
+	public JournalDto getJournalDetail(@RequestBody Journal journal) throws HioMybatisInsertException {
+		LoginUser loginUser = super.getLoginUser();
+		journal.setCreatePersonId(loginUser.getUserId());
+		return journalService.findJournalDetail(loginUser.getTendId(), journal);
+	}
+	
+	/**
+	 * 发布日志，包括日志共享范围
+	 * @param journalDto
+	 * @return
+	 * @throws HioMybatisInsertException
+	 */
+	@RequestMapping(value = "/publish", method = RequestMethod.POST, consumes = "application/json")
+	public Object save(@RequestBody JournalDto journalDto) throws HioException {
+		if (StringUtils.isEmpty(journalDto.getId())) {
+			// 新建发布
+			journalService.saveJournalDto(journalDto);
+		} else {
+			// 编辑发布
+			journalService.updateJournalDto(journalDto);
+		}
+		return null;
+	}
+	
+	/**
+	 * 分页条件查询他人共享给我的日志
+	 * @param planParam
+	 * @return
+	 */
+	@RequestMapping(value = "/share/list", method = { RequestMethod.POST }, consumes = "application/json")
+	public Page<Journal> findSharePlanList(@RequestBody JournalListParam JournalParam) throws HioMybatisQueryException {
+		// 获取当前登录用户
+		LoginUser loginUser = super.getLoginUser();
+		// 当前登录用户的userID
+		String loginUserId = loginUser.getUserId();
+		// 角色id
+		List<String> loginRoleIdList = loginUser.getRoleIds();
+		// 所有部门id
+		List<String> loginOrgIdList = oaUserUtil.findAllOrgIds(loginUser.getTendId(), loginUserId);
+		return journalService.findShareJournalList(JournalParam.getPageNum(), JournalParam.getPageCount(), JournalParam.getJournalDate(), JournalParam.getUserIdList(),
+				loginOrgIdList, loginRoleIdList, loginUserId);
+	}
+	
+	/**
+	 * 分页条件查询我评论过的日志列表
+	 * @param JournalParam
+	 * @return
+	 * @throws HioMybatisQueryException
+	 */
+	@RequestMapping(value = "/comment/list", method = { RequestMethod.POST }, consumes = "application/json")
+	public Page<Journal> findCommentJournalList(@RequestBody JournalListParam JournalParam) throws HioMybatisQueryException {
+		// 获取当前登录用户
+		LoginUser loginUser = super.getLoginUser();
+		// 当前登录用户的userID
+		String loginUserId = loginUser.getUserId();
+		// 角色id
+		List<String> loginRoleIdList = loginUser.getRoleIds();
+		// 所有部门id
+		List<String> loginOrgIdList = oaUserUtil.findAllOrgIds(loginUser.getTendId(), loginUserId);
+		return journalService.findCommentJournalList(JournalParam.getPageNum(), JournalParam.getPageCount(), JournalParam.getJournalDate(), JournalParam.getUserIdList(),
+				loginOrgIdList, loginRoleIdList, loginUserId);
+	}
+	
+	/**
+	 * 共享给我的页面中获取筛选人员数据
+	 * @return
+	 * @throws HioMybatisQueryException
+	 */
+	@RequestMapping(value = "/share/filter/{journalDate}", method = { RequestMethod.GET })
+	public Object getShareJournalForMe(@PathVariable("journalDate") String journalDate) throws HioMybatisQueryException {
+		// 获取当前登录用户
+		LoginUser loginUser = super.getLoginUser();
+		// 当前登录用户的userID
+		String loginUserId = loginUser.getUserId();
+		// 角色id
+		List<String> loginRoleIdList = loginUser.getRoleIds();
+		// 所有部门id
+		List<String> loginOrgIdList = oaUserUtil.findAllOrgIds(loginUser.getTendId(), loginUserId);
+		// 获取所有共享给我日志的人
+		List<String> shareUserIdList = journalService.findShareJournalUserIdList(journalDate, loginOrgIdList, loginRoleIdList, loginUserId);
+		//OrganizationDto organizationDto = new OrganizationDto();
+		OrganizationUsersDto orgDto = new OrganizationUsersDto();
+		if(shareUserIdList != null && shareUserIdList.size() > 0) {
+			/*StringBuffer sb = new StringBuffer();
+			for(String userId : shareUserIdList) {
+				sb.append(userId).append(",");
+			}*/
+			UserAndExternalParam apiParam = new UserAndExternalParam();
+			apiParam.setTendId(loginUser.getTendId());
+			apiParam.setUserIds(shareUserIdList);
+			apiParam.setWorkStatus(3);
+			orgDto = sysFeignService.queryOrganizationUsersDto(apiParam).getResult();
+			//organizationDto = sysFeignService.queryOrganizationTreeByUserIds(loginUser.getTendId(), sb.substring(0, sb.length() - 1), null).getResult();
+		}
+		return orgDto;
+	}
+	
+	/**
+	 * 我评论的页面-筛选查看
+	 * 
+	 * @param map
+	 * @return
+	 */
+	@RequestMapping(value = "/comment/filter/{journalDate}", method = { RequestMethod.GET })
+	public Object selectCommentCondition(@PathVariable("journalDate") String journalDate) throws HioMybatisQueryException {
+		// 获取当前登录用户
+		LoginUser loginUser = super.getLoginUser();
+		// 当前登录用户的userID
+		String loginUserId = loginUser.getUserId();
+		// 角色id
+		List<String> loginRoleIdList = loginUser.getRoleIds();
+		// 所有部门id
+		List<String> loginOrgIdList = oaUserUtil.findAllOrgIds(loginUser.getTendId(), loginUserId);
+		// 获取所有共享给我的日志id
+		List<String> journalShareIdList = journalService.findShareJournalIdList(journalDate, null, loginOrgIdList, loginRoleIdList, loginUserId);
+		// 获取所有共享给我日志的人
+		//List<String> shareUserIdList = journalService.findShareJournalUserIdList(journalDate, loginOrgIdList, loginRoleIdList, loginUserId);
+		//OrganizationDto organizationDto = new OrganizationDto();
+		OrganizationUsersDto orgDto = new OrganizationUsersDto();
+		//还应包含自己创建的日志-自己评论的
+		/*	if(journalShareIdList == null || journalShareIdList.size() == 0) {
+			return orgDto;
+		}*/
+		// 查询我评论过的日志的创建人id集合
+		List<String> commentUserIdList = journalService.findCommentJournalUserIdList(loginUserId, journalDate, journalShareIdList);
+		if(commentUserIdList != null && commentUserIdList.size() > 0) {
+			/*StringBuffer sb = new StringBuffer();
+			for(String userId : commentUserIdList) {
+				sb.append(userId).append(",");
+			}*/
+			UserAndExternalParam apiParam = new UserAndExternalParam();
+			apiParam.setTendId(loginUser.getTendId());
+			apiParam.setUserIds(commentUserIdList);
+			apiParam.setWorkStatus(3);
+			orgDto = sysFeignService.queryOrganizationUsersDto(apiParam).getResult();
+			//organizationDto = sysFeignService.queryOrganizationTreeByUserIds(loginUser.getTendId(), sb.substring(0, sb.length() - 1), null).getResult();
+		}
+		return orgDto;
+	}
+	
+	/**
+	 * 根据时间段查询日志
+	 * @param startDate
+	 * @param endDate
+	 * @return
+	 * @throws HioMybatisQueryException
+	 */
+	@RequestMapping(value = "/date", method = { RequestMethod.GET })
+	public List<Journal> queryList(@RequestParam String startDate, @RequestParam String endDate) throws HioMybatisQueryException {
+		LoginUser loginUser = super.getLoginUser();// 获取当前登录用户
+		return journalService.findJournalListByDate(loginUser.getUserId(), startDate, endDate);
+	}
+	
+}

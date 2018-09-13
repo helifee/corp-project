@@ -1,0 +1,283 @@
+/*
+ * @(#)K050011Service.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 教育考试培训系统.考试子系统
+ */
+package com.yds.tt.testing.service.impl;
+
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Service;
+
+import com.yds.base.service.AbstractBaseService;
+import com.yds.tt.manager.bean.AuthorityInfo;
+import com.yds.tt.manager.dao.TtCommonDao;
+import com.yds.tt.manager.service.TtCommonService;
+import com.yds.tt.manager.service.TtCommonUtil;
+import com.yds.tt.manager.service.TtConstants;
+import com.yds.tt.manager.service.TtExclusiveException;
+import com.yds.tt.testing.bean.TestPaperInfo;
+import com.yds.tt.testing.dao.K050011Dao;
+import com.yds.tt.testing.dao.TestingCommonDao;
+import com.yds.tt.testing.service.K050011Service;
+import com.yds.util.service.StringUtil;
+
+/**
+ * @see com.yds.tt.testing.service.K050011Service
+ */
+@Service("k050011Service")
+public class K050011ServiceImpl extends AbstractBaseService implements
+		K050011Service {
+
+	private TtCommonDao ttCommonDao;
+	private TestingCommonDao testingCommonDao;
+	private K050011Dao k050011Dao;
+	private TtCommonService ttCommonService;
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public TestPaperInfo getTestPaperInfo(TestPaperInfo testPaperInfo) {
+
+		return k050011Dao.getTestPaperInfo(testPaperInfo);
+	}
+
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void insertTestPaperInfo(TestPaperInfo testPaperInfo,
+									AuthorityInfo approverInfo, 
+									List<AuthorityInfo> editorInfoList) {
+
+		// 采番获得试卷ID
+		String strPaperId = ttCommonService.getSequence(TtConstants.SEQID.Paper);
+
+		// 取得登录者ID
+		String userId = TtCommonUtil.getLoginUserId();
+
+		// 试卷基本信息登录（<新建试卷>模式下进行）.
+		testPaperInfo.setPaperId(strPaperId);
+		testPaperInfo.setCreateUserId(userId);
+		testPaperInfo.setUpdateUserId(userId);
+		testPaperInfo.setPaperType(TtConstants.R02.R02_1.value());
+		testPaperInfo.setPaperVersionNo(1);
+		testPaperInfo.setPaperStatus(TtConstants.R10.R10_1.value());
+		k050011Dao.insertTestPaperInfo(testPaperInfo);
+	
+		// 编辑者信息登录
+		AuthorityInfo editorInfo;
+		if (null != editorInfoList) {
+			for (int i = 0; i < editorInfoList.size(); i++) {
+
+				// 将画面编辑者列表赋值给权限信息Bean
+				editorInfo = editorInfoList.get(i);
+				editorInfo.setRelatedobjectId(strPaperId);
+				editorInfo.setAuthorityId(TtConstants.C24.C24_9.value());
+				editorInfo.setCreateUserId(userId);
+				editorInfo.setUpdateUserId(userId);
+
+				// 添加编辑者数据处理
+				ttCommonDao.insertAuthority(editorInfo);
+			}
+		}
+		
+		// 审批者信息登录
+		approverInfo.setRelatedobjectId(strPaperId);
+		approverInfo.setAuthorityId(TtConstants.C24.C24_13.value());
+		approverInfo.setCreateUserId(userId);
+		approverInfo.setUpdateUserId(userId);
+		approverInfo.setUserId(StringUtil.leftPadYd(approverInfo.getUserId()));
+		ttCommonDao.insertAuthority(approverInfo);
+		
+		// 考试/试卷关联信息登录
+		if (testPaperInfo.getBelongId() != null && testPaperInfo.getBelongId().length() > 0) {
+			// 考试试卷关联关系设定
+			Map<String, String> examinePaperRelation = new HashMap<String, String>();
+			examinePaperRelation.put("examineId", testPaperInfo.getBelongId());
+			examinePaperRelation.put("paperId", testPaperInfo.getPaperId());
+			testingCommonDao.insertExaminePaperRelation(examinePaperRelation);
+		}
+		// wanqiuhong 10/12追加：更新全局Sesssion中的权限版本时间戳
+		ttCommonService.authrityTimestampUpdate();
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void insertCopyTestPaperInfo(TestPaperInfo testPaperInfo,
+									AuthorityInfo approverInfo, 
+									List<AuthorityInfo> editorInfoList) {
+
+		// 排他检查（<管理>模式下进行）			
+		Date updateTime = k050011Dao.getUpdateTime(testPaperInfo);
+		if(ttCommonService.checkTimeStamp(TtConstants.PageId.K050011,  
+								TtConstants.Mode.Copy_Insert_Mode, 
+								updateTime) == false){
+
+			throw new TtExclusiveException();
+		}
+		
+		// 采番获得试卷ID
+		String strPaperId = ttCommonService.getSequence(TtConstants.SEQID.Paper);
+
+		// 取得登录者ID
+		String userId = TtCommonUtil.getLoginUserId();
+		
+		// 复写用参数设置
+		Map<String, Object> paraMapForCopy = new HashMap<String, Object>();
+		paraMapForCopy.put("oldPaperId", testPaperInfo.getPaperId());
+		paraMapForCopy.put("oldPaperVersionNo", testPaperInfo.getPaperVersionNo());
+		paraMapForCopy.put("paperId", strPaperId);
+		paraMapForCopy.put("paperVersionNo", 1);
+		paraMapForCopy.put("paperTitle", testPaperInfo.getPaperTitle());
+		paraMapForCopy.put("category1Id", testPaperInfo.getCategory1Id());
+		paraMapForCopy.put("category2Id", testPaperInfo.getCategory2Id());
+		paraMapForCopy.put("category3Id", testPaperInfo.getCategory3Id());
+		paraMapForCopy.put("createUserId", userId);
+		paraMapForCopy.put("updateUserId",userId);
+		
+		// 复写试卷基本信息
+		k050011Dao.insertCopyTestPaperInfo(paraMapForCopy);
+		
+		// 编辑者信息登录
+		AuthorityInfo editorInfo;
+		if (null != editorInfoList) {
+			for (int i = 0; i < editorInfoList.size(); i++) {
+
+				// 将画面编辑者列表赋值给权限信息Bean
+				editorInfo = editorInfoList.get(i);
+				editorInfo.setRelatedobjectId(strPaperId);
+				editorInfo.setAuthorityId(TtConstants.C24.C24_9.value());
+				editorInfo.setCreateUserId(userId);
+				editorInfo.setUpdateUserId(userId);
+
+				// 添加编辑者数据处理
+				ttCommonDao.insertAuthority(editorInfo);
+			}
+		}
+		
+		// 审批者信息登录
+		approverInfo.setAuthorityId(TtConstants.C24.C24_13.value());
+		approverInfo.setRelatedobjectId(strPaperId);
+		approverInfo.setCreateUserId(userId);
+		approverInfo.setUpdateUserId(userId);
+		approverInfo.setUserId(StringUtil.leftPadYd(approverInfo.getUserId()));
+		ttCommonDao.insertAuthority(approverInfo);
+		
+		// 复写试卷大题信息.
+		k050011Dao.insertCopyPaperBigQuestionInfo(paraMapForCopy);
+
+		// 复写试卷固定大题信息.
+		k050011Dao.insertCopyPaperStableQuestionInfo(paraMapForCopy);
+
+		// 复写试卷随机大题信息.
+		k050011Dao.insertCopyPaperRandQuestionInfo(paraMapForCopy);
+
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public boolean updateTestPaperInfo(TestPaperInfo testPaperInfo,
+									AuthorityInfo approverInfo, 
+									List<AuthorityInfo> editorInfoList) {
+		
+		// 排他检查（<管理>模式下进行）			
+		Date updateTime = k050011Dao.getUpdateTime(testPaperInfo);
+		if(ttCommonService.checkTimeStamp(TtConstants.PageId.K050011,  
+								TtConstants.Mode.Update_Mode, 
+								updateTime) == false){
+
+			throw new TtExclusiveException();
+		}
+		
+		// 取得登录者ID
+		String userId = TtCommonUtil.getLoginUserId();
+		
+		// 更新试卷表数据处理（<管理>模式下进行）.
+		testPaperInfo.setUpdateUserId(userId);
+		testPaperInfo.setNewFlg(1);
+		k050011Dao.updateTestPaperInfo(testPaperInfo);
+		
+		// 删除编辑者
+		Map<String, String> paraMap = new HashMap<String, String>();
+		paraMap.put("relatedobjectId", testPaperInfo.getPaperId());
+		paraMap.put("authorityId", TtConstants.C24.C24_9.toString());
+		ttCommonDao.deleteAuthority(paraMap);
+		
+		// 插入编辑者
+		AuthorityInfo editorInfo;
+		if (null != editorInfoList) {
+			for (int i = 0; i < editorInfoList.size(); i++) {
+
+				// 将画面编辑者列表赋值给权限信息Bean
+				editorInfo = editorInfoList.get(i);
+				editorInfo.setRelatedobjectId(testPaperInfo.getPaperId());
+				editorInfo.setAuthorityId(TtConstants.C24.C24_9.value());
+				editorInfo.setCreateUserId(userId);
+				editorInfo.setUpdateUserId(userId);
+
+				// 添加编辑者数据处理
+				ttCommonDao.insertAuthority(editorInfo);
+			}
+		}
+
+		// 删除审批者
+		Map<String, String> paraMap2 = new HashMap<String, String>();
+		paraMap2.put("relatedobjectId", testPaperInfo.getPaperId());
+		paraMap2.put("authorityId", TtConstants.C24.C24_13.toString());
+		ttCommonDao.deleteAuthority(paraMap);
+		
+		// 更新审批者
+		approverInfo.setUserId(StringUtil.leftPadYd(approverInfo.getUserId()));
+		approverInfo.setAuthorityId(TtConstants.C24.C24_13.value());
+		approverInfo.setRelatedobjectId(testPaperInfo.getPaperId());
+		approverInfo.setCreateUserId(userId);
+		approverInfo.setUpdateUserId(userId);
+		ttCommonDao.insertAuthority(approverInfo);
+		
+		// wanqiuhong 10/12追加：更新全局Sesssion中的权限版本时间戳
+		ttCommonService.authrityTimestampUpdate();
+		return true;
+	}
+
+	/**
+	 * @param dao
+	 *            the k050011Dao to set
+	 */
+	public void setK050011Dao(K050011Dao dao) {
+		k050011Dao = dao;
+	}
+
+	/**
+	 * @param ttCommonService
+	 *            the ttCommonService to set
+	 */
+	public void setTtCommonService(TtCommonService ttCommonService) {
+		this.ttCommonService = ttCommonService;
+	}
+
+	/**
+	 * @param ttCommonDao the ttCommonDao to set
+	 */
+	public void setTtCommonDao(TtCommonDao ttCommonDao) {
+		this.ttCommonDao = ttCommonDao;
+	}
+	
+	/**
+	 * @param testingCommonDao the testingCommonDao to set
+	 */
+	public void setTestingCommonDao(TestingCommonDao testingCommonDao) {
+		this.testingCommonDao = testingCommonDao;
+	}
+}

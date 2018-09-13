@@ -1,0 +1,227 @@
+/**
+ * 
+ */
+package com.jzy.hio.platform.running.task;
+
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.cloud.core.CoreHeaderInterceptor;
+import com.jzy.hio.entity.Running;
+import com.jzy.hio.entity.RunningDayStatistics;
+import com.jzy.hio.entity.TenantCompanyInfo;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.platform.message.param.IMToUserParam;
+import com.jzy.hio.platform.message.param.ImNoticeMsgsParam;
+import com.jzy.hio.platform.message.param.MessageEnum;
+import com.jzy.hio.platform.message.service.MessageService;
+import com.jzy.hio.platform.running.dto.RunningDto;
+import com.jzy.hio.platform.running.mapper.RunningMapper;
+import com.jzy.hio.platform.running.service.RunningStatisticsService;
+import com.jzy.hio.platform.tenantcompanyinfo.service.TenantCompanyInfoService;
+import com.jzy.hio.redis.RedisService;
+import com.jzy.hio.sys.organization.dto.SkyDriveDto;
+import com.jzy.hio.sys.organization.param.SkyDriveParam;
+
+/**
+ * 运动按天自动统计及推送运动排行消息任务
+ * @author 马长习
+ * @date 2017年11月1日
+ */
+@Component("runningStatisticsByDayTask")
+public class RunningStatisticsByDayTask {
+	
+	private Logger logger = LoggerFactory.getLogger(RunningStatisticsByDayTask.class);
+	
+	@Autowired
+	private RunningMapper runningMapper;
+	
+	@Autowired
+	private RunningStatisticsService runningStatisticsService;
+	
+	@Autowired
+	private TenantCompanyInfoService tenantCompanyInfoService;
+	
+	@Autowired
+	private MessageService messageService;
+	
+	@Autowired
+    private RedisService redisService;
+	
+	@Autowired
+	private SysFeignService sysFeignService;
+	
+	private static final String redis_key = "runningTask";
+	
+	// 运动达标步数
+    @Value("${running.standardSteps}")
+    private int standardSteps;
+	
+	// 每天晚上22:00点执行
+	@Scheduled(cron = "0 0 22 * * ?")
+	public void statisticsRunningByDay()throws Exception{
+		//在分布式环境下，防止重发查询发消息
+		if(redisService.addRedisSetnx(redis_key,redis_key)) {
+			logger.info("运动按天统计定时任务开始===============");
+			SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+			Date date = new Date();
+			String runDate = sdf.format(date);
+			// 获取到所有企业
+			List<TenantCompanyInfo> enterpriseList = tenantCompanyInfoService.findAllTenantCompany();
+			Running run = null;
+			if(enterpriseList != null && enterpriseList.size() > 0){
+				// 遍历企业，把所有企业下人员的运动数据存储到运动日表中
+				for(TenantCompanyInfo enterprise : enterpriseList){
+					if(enterprise.getDelflag() == 1) {
+						continue;
+					}
+					List<Running> runningList = runningMapper.getRunningRanking(enterprise.getTendId(), runDate);
+					if(runningList != null && runningList.size() > 0){
+						for(int i=0; i<runningList.size(); i++){
+							run = runningList.get(i);
+							RunningDayStatistics rs = new RunningDayStatistics();
+							rs.setUid(run.getUid());
+							rs.setEnterpriseId(run.getEnterpriseId());
+							rs.setRunDate(runDate);
+							rs.setPraiseCount(run.getPraiseCount());
+							rs.setRunKilometre(run.getRunKilometre());
+							rs.setRunRanking(i+1);
+							rs.setOpenRunning(run.getOpenRunning());
+							rs.setCreatePersonId("running");
+							rs.setCreatePersonName("running");
+							rs.setUpdatePersonId("running");
+							rs.setUpdatePersonName("running");
+							if(run.getRunSteps() >= standardSteps){
+								rs.setReachStandard(1);
+							}else{
+								rs.setReachStandard(0);
+							}
+							rs.setRunSteps(run.getRunSteps());
+							rs.setOrgName(run.getOrgName());
+							try {
+								runningStatisticsService.saveRunStatisticsByDay(rs);
+							} catch (Exception e) {
+								e.printStackTrace();
+							}
+						}
+						// 推送今日运动排行消息
+						RunningDayStatistics runningChampion = runningStatisticsService.findRunningChampion(enterprise.getTendId(), runDate);
+						/*String userJson = JedisUtil.fetchRow(UserOrFriendConstant.IM_USER_INFO, runningChampion.getUid());
+						ImUserInfoDto userDto = null;
+						if(StringUtils.isBlank(userJson)) {
+							userDto = userInfoService.getUserInfoById(runningChampion.getUid());
+						}else {
+							userDto = JacksonUtils.fromJson(userJson, ImUserInfoDto.class);
+						}
+						if(userDto == null){
+							continue;
+						}*/
+						String userName = selectUserNameByTendIdAndQuit(runningChampion.getUid(), runningChampion.getEnterpriseId());
+						
+						for(Running running : runningList){
+							RunningDto runningDto = runningStatisticsService.findRunningByRunDate(running.getEnterpriseId(), running.getUid(), runDate);
+							if(runningDto == null){
+								continue;
+							}
+							// 运动消息接收人集合
+							List<IMToUserParam> receiverList = new ArrayList<IMToUserParam>();
+							// 消息接受人
+							IMToUserParam imToUserParam  = new IMToUserParam();
+							imToUserParam.setToUserId(running.getUid());
+							receiverList.add(imToUserParam);
+							ImNoticeMsgsParam noticeMsg = new ImNoticeMsgsParam();
+							noticeMsg.setToUsers(receiverList);
+							noticeMsg.setFromUserId(BaseConstants.HIO_RUNNING);// 发送用户id
+							noticeMsg.setFromUserName(MessageEnum.RUNNING.getDes());// 发送用户名称
+							noticeMsg.setTendId(enterprise.getTendId());// 租户id
+							noticeMsg.setTendName(enterprise.getName());// 租户名称
+							noticeMsg.setMsg(userName+"获得了动动冠军");
+							noticeMsg.setModuleType(MessageEnum.RUNNING.getValue()+"_1");
+							noticeMsg.setModuleName(MessageEnum.RUNNING.getDes());
+							noticeMsg.setSendMsgType("text");
+							noticeMsg.setMsgType("msg");
+							noticeMsg.setOpenStatus(2);
+							Map<String, Object> map = new HashMap<String, Object>();
+							map.put("sendTime", runDate);
+							map.put("runningType", "1");
+							map.put("standardSteps", "每日目标"+standardSteps+"步");
+							map.put("runSteps", runningDto.getRunSteps());
+							map.put("tendId", enterprise.getTendId());
+							int reachStandard = runningDto.getReachStandard();
+							int ranking = runningDto.getRunRanking();
+							map.put("runRanking", ranking);
+							if(reachStandard == 0){
+								map.put("subject", "未达标");
+								map.put("runningResultType", 1);
+							}else{
+								if(ranking == 1){
+									map.put("subject", "冠军");
+									map.put("runningResultType", 4);
+								}else if(10 >= ranking){
+									map.put("subject", "很棒");
+									map.put("runningResultType", 3);
+								}else{
+									map.put("subject", "达标");
+									map.put("runningResultType", 2);
+								}
+							}
+							
+							noticeMsg.setExt(map);
+							// 发送消息
+							CoreHeaderInterceptor.initHystrixRequestContext(CoreHeaderInterceptor.HEADER_LABEL);
+							messageService.sendMessage(noticeMsg);
+						}
+					}
+				}
+			}
+			logger.info("运动按天统计定时任务结束===============");
+		}
+		// 释放分布式锁
+		redisService.releaseRedisSetnx(redis_key);
+	}
+	
+	private String selectUserNameByTendIdAndQuit(String imUserId, String tendId) {
+		String userName = null;
+		if (!StringUtils.isEmpty(imUserId)) {
+			
+			CoreHeaderInterceptor.initHystrixRequestContext(CoreHeaderInterceptor.HEADER_LABEL);// 不设置框架会报错
+			ApiFeignResponse<String> response = sysFeignService.queryOaUserIdByImUserId(imUserId, tendId);
+			String oaUserId = response.getResult();
+			List<String> userIdList = new ArrayList<String>();
+			userIdList.add(oaUserId);
+			SkyDriveParam skyDriveParam = new SkyDriveParam();
+			skyDriveParam.setUserIds(userIdList);
+			skyDriveParam.setTendId(tendId);
+			skyDriveParam.setStatus(1);
+			CoreHeaderInterceptor.initHystrixRequestContext(CoreHeaderInterceptor.HEADER_LABEL);// 不设置框架会报错
+			ApiFeignResponse<List<SkyDriveDto>> apiFeignResponse = sysFeignService.queryNameByOrgAndRoleAndUser(skyDriveParam);
+			if (apiFeignResponse != null) {
+				if (200 == apiFeignResponse.getStatus()) {
+					List<SkyDriveDto> skyDriveDtoList = apiFeignResponse.getResult();
+					if (skyDriveDtoList != null && skyDriveDtoList.size() > 0) {
+						userName = skyDriveDtoList.get(0).getName();
+					}
+				} else {
+					throw new HioException("调用queryNameByOrgAndRoleAndUser feign接口失败" + apiFeignResponse.getMessage());
+				}
+
+			}
+		}
+		return userName;
+	}
+}

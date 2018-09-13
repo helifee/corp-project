@@ -1,0 +1,372 @@
+package com.jzy.hio.base.datasource;
+
+import java.io.File;
+import java.io.IOException;
+import java.lang.reflect.Field;
+import java.net.URL;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.ibatis.mapping.Environment;
+import org.apache.ibatis.session.defaults.DefaultSqlSessionFactory;
+import org.mybatis.spring.SqlSessionFactoryBean;
+import org.mybatis.spring.mapper.MapperScannerConfigurer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.aop.Advisor;
+import org.springframework.aop.aspectj.AspectJExpressionPointcut;
+import org.springframework.aop.support.DefaultPointcutAdvisor;
+import org.springframework.beans.BeansException;
+import org.springframework.beans.MutablePropertyValues;
+import org.springframework.beans.factory.support.BeanDefinitionRegistry;
+import org.springframework.beans.factory.support.GenericBeanDefinition;
+import org.springframework.boot.bind.RelaxedPropertyResolver;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.ApplicationContextAware;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.ImportBeanDefinitionRegistrar;
+import org.springframework.core.annotation.Order;
+import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
+import org.springframework.core.type.AnnotationMetadata;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.interceptor.NameMatchTransactionAttributeSource;
+import org.springframework.transaction.interceptor.RollbackRuleAttribute;
+import org.springframework.transaction.interceptor.RuleBasedTransactionAttribute;
+import org.springframework.transaction.interceptor.TransactionAttribute;
+import org.springframework.transaction.interceptor.TransactionInterceptor;
+
+import com.alibaba.druid.pool.DruidDataSource;
+import com.jzy.hio.base.vo.TendDataSourceVo;
+
+/**
+ * 数据源注册<br/>
+ * 会注册两个数据源 一个
+ * 
+ * @author coffee<br/>
+ *         2018年2月24日下午3:09:41
+ */
+@Order(-1) // DynamicDataSourceAop 、TxAdviceInterceptor 之前
+@Configuration
+public class DataSourceRegister implements ImportBeanDefinitionRegistrar, ApplicationContextAware {
+
+	private final Logger logger = LoggerFactory.getLogger(DataSourceRegister.class);
+
+	private static ApplicationContext context;
+	private static BeanDefinitionRegistry registry;
+
+	@Override
+	public void setApplicationContext(ApplicationContext applicationContext) throws BeansException {
+		DataSourceRegister.context = applicationContext;
+	}
+
+	@Override
+	public void registerBeanDefinitions(AnnotationMetadata importingClassMetadata, BeanDefinitionRegistry registry) {
+		DataSourceRegister.registry = registry;
+	}
+
+	/**
+	 * 传统的xml配置
+	 * 
+	 * <pre>
+	   <bean id="dataSource" class="com.xxx.datasource.DynamicallyDataSource">
+			<property name="targetDataSources">
+				<map key-type="java.lang.String">
+					<entry key="emove" value-ref="emove" />
+				</map>
+			</property>
+			<property name="defaultTargetDataSource" ref="emove" />
+		</bean>
+	  	<bean id="sqlSessionFactory" class="com.xxx.SqlSessionFactoryBeanExt">
+			<property name="dataSource" ref="dataSource" />
+			<property name="mapperLocations" value="classpath*:/mybatis/mapper/*.xml" />
+			<property name="configLocation" value="classpath:/mybatis/mybatis-config.xml" />
+		</bean>
+	 * </pre>
+	 * 
+	 * 
+	 * 1、先创建一个默认的session工厂、供查询数据源的时候使用
+	 */
+	@Bean("sessionFactory")
+	@Order(1)
+	public SqlSessionFactoryBean createSesstionFactory() {
+		Map<String, Object> rpr = new RelaxedPropertyResolver(context.getEnvironment(), "spring.datasource.druid").getSubProperties(".");
+		DruidDataSource datasource = new DruidDataSource();
+		datasource.setUrl(rpr.get("url").toString());
+		datasource.setDriverClassName(rpr.get("driverClassName").toString());
+		datasource.setUsername(rpr.get("username").toString());
+		datasource.setPassword(rpr.get("password").toString());
+		SqlSessionFactoryBean sessionFactory = new SqlSessionFactoryBean();
+		PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
+		try {
+			// sessionFactory.setMapperLocations(resolver.getResources(context.getEnvironment().getProperty("mybatis.mapper-locations")));
+			sessionFactory.setMapperLocations(resolver.getResources("classpath:mybatis/mapper/**/*.xml"));
+			sessionFactory.setConfigLocation(resolver.getResource("classpath:/mybatis/mybatis-config.xml"));
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		sessionFactory.setDataSource(datasource);
+		return sessionFactory;
+	}
+
+	/**
+	 * 创建完SessionFactory以后、创建数据源、同时改造之前的SessionFactory
+	 */
+	@Bean("dynamicDataSource")
+	@Order(-1)
+	@org.springframework.context.annotation.Primary
+	public DynamicDataSource createDataSource() {
+		Map<Object, Object> targetDataSources = this.initDataSources();
+		DynamicDataSource datasource = new DynamicDataSource();
+		datasource.setTargetDataSources(targetDataSources);
+		datasource.setDefaultTargetDataSource(targetDataSources.get("default"));
+		// 得到上一步创建的SqlSessionFactoryBean、对其设置数据源
+		// SqlSessionFactoryBean sessionFactory = (SqlSessionFactoryBean) context.getBean("sessionFactory");
+		DefaultSqlSessionFactory sessionFactory = (DefaultSqlSessionFactory) context.getBean("sessionFactory");
+		try {
+			Environment environment = sessionFactory.getConfiguration().getEnvironment();
+			Field dataSourceFeild = environment.getClass().getDeclaredField("dataSource");
+			dataSourceFeild.setAccessible(true);
+			dataSourceFeild.set(environment, datasource);
+			// sessionFactory.setDataSource(datasource);// 指定自定义的动态数据源
+			// sessionFactory.afterPropertiesSet();
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		return datasource;
+	}
+
+	/**
+	 * 定义需要扫描的所有Mapper接口类
+	 * 
+	 * <pre>
+		 <bean class="org.mybatis.spring.mapper.MapperScannerConfigurer">
+			<property name="basePackage"
+				value="com.xx..service.mapper,
+				com.xxx.mapper,
+				com.xxx.stamp.mapper" />
+			<property name="sqlSessionFactoryBeanName" value="sqlSessionFactory" />
+	 * </pre>
+	 * 
+	 * </bean>
+	 */
+	@Bean("mapperScannerConfigurer")
+	@Order(2)
+	public MapperScannerConfigurer createMapperScannerConfigurer() {
+		MapperScannerConfigurer mapperScanner = new MapperScannerConfigurer();
+
+		URL url = Thread.currentThread().getContextClassLoader().getResource("com/jzy/hio");
+		System.out.println(url);
+		Set<String> set = getBasePackage(new File(url.getPath()));
+
+		StringBuilder basePackage = new StringBuilder();
+		basePackage.append("com.jzy.hio.base.datasource");
+		// for (Package p : Package.getPackages()) {
+		// if (basePackage.length() > 0) {
+		// basePackage.append(",");
+		// }
+		// if (p.getName().contains("com.jzy.hio.demo")) {
+		// System.out.println(p.getName());
+		// }
+		// // System.out.println(p.getName());
+		// if (p.getName().contains("com.jzy.hio") && p.getName().contains("mapper")) {
+		// basePackage.append(p.getName());
+		// }
+		// }
+		for (String packageName : set) {
+			if (basePackage.length() > 0) {
+				basePackage.append(",");
+			}
+			basePackage.append(packageName);
+		}
+
+		mapperScanner.setBasePackage(basePackage.toString());
+		mapperScanner.setSqlSessionFactoryBeanName("sessionFactory");
+		return mapperScanner;
+	}
+
+	private Set<String> getBasePackage(File base) {
+		Set<String> set = new HashSet<>();
+		File[] files = base.listFiles();
+		for (File file : files) {
+			if (file.isDirectory()) {
+				String path = file.getPath();
+				path = path.substring(path.indexOf("classes" + File.separator) + 8);
+				path = path.replace(File.separator, ".");
+				if (path.contains("mapper")) {
+					set.add(path);
+				} else {
+					Set<String> subSet = getBasePackage(file);
+					set.addAll(subSet);
+				}
+			} else {
+				continue;
+			}
+		}
+		return set;
+	}
+
+	/**
+	 * <pre>
+	 * <bean id="txManager"
+			class="org.springframework.jdbc.datasource.DataSourceTransactionManager">
+			<property name="dataSource" ref="dataSource" />
+		</bean>
+		<!-- 开启事务管理(基于注解的), 否则会导致@Transactional无效 -->
+		<tx:annotation-driven transaction-manager="txManager" />
+	 * </pre>
+	 * 
+	 * @return
+	 */
+	@Bean("txManager")
+	@Order(3)
+	public DataSourceTransactionManager createTxManager() {
+		DataSourceTransactionManager txManager = new DataSourceTransactionManager();
+		DynamicDataSource datasource = (DynamicDataSource) context.getBean("dynamicDataSource");
+		txManager.setDataSource(datasource);// 指定自定义的动态数据源
+		return txManager;
+	}
+
+	private static final int TX_METHOD_TIMEOUT = 5;// 事务超时时间20秒
+	private static final String AOP_POINTCUT_EXPRESSION = "execution(* com.jzy.hio..service.impl.*.*(..) )";
+
+	@Bean
+	@Order(4)
+	public TransactionInterceptor txAdvice() {
+		NameMatchTransactionAttributeSource source = new NameMatchTransactionAttributeSource();
+		/* 只读事务，不做更新操作 */
+		RuleBasedTransactionAttribute readOnlyTx = new RuleBasedTransactionAttribute();
+		readOnlyTx.setReadOnly(true);
+		readOnlyTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_NOT_SUPPORTED);
+		/* 当前存在事务就使用当前事务，当前不存在事务就创建一个新的事务 */
+		RuleBasedTransactionAttribute requiredTx = new RuleBasedTransactionAttribute();
+		requiredTx.setRollbackRules(Collections.singletonList(new RollbackRuleAttribute(Exception.class)));
+		requiredTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRED);
+		requiredTx.setTimeout(TX_METHOD_TIMEOUT);
+		Map<String, TransactionAttribute> txMap = new HashMap<>();
+		txMap.put("add*", requiredTx);
+		txMap.put("save*", requiredTx);
+		txMap.put("insert*", requiredTx);
+		txMap.put("update*", requiredTx);
+		txMap.put("delete*", requiredTx);
+		txMap.put("get*", readOnlyTx);
+		txMap.put("query*", readOnlyTx);
+		source.setNameMap(txMap);
+		//
+		DataSourceTransactionManager txManager = (DataSourceTransactionManager) context.getBean("txManager");
+		TransactionInterceptor txAdvice = new TransactionInterceptor(txManager, source);
+		return txAdvice;
+	}
+
+	@Bean
+	@Order(5)
+	public Advisor txAdviceAdvisor() {
+		AspectJExpressionPointcut pointcut = new AspectJExpressionPointcut();
+		pointcut.setExpression(AOP_POINTCUT_EXPRESSION);
+		return new DefaultPointcutAdvisor(pointcut, txAdvice());
+	}
+
+	private void init() {
+		// BeanDefinitionBuilder mapperScannerConfigurer = BeanDefinitionBuilder.rootBeanDefinition(MapperScannerConfigurer.class);
+		// mapperScannerConfigurer.getBeanDefinition().setAttribute("id", "mapperScannerConfigurer");
+		// mapperScannerConfigurer.addPropertyValue("sqlSessionFactoryBeanName", "sqlSessionFactory");
+		// mapperScannerConfigurer.addPropertyValue("basePackage", context.getEnvironment().getProperty("base.mapper.mappers"));
+		// registry.registerBeanDefinition("mapperScannerConfigurer", mapperScannerConfigurer.getBeanDefinition());
+		// logger.info("Dynamic mapperScannerConfigurer Registry");
+
+		// 创建动态数据源
+
+		// GenericBeanDefinition dynamicBeanDef = new GenericBeanDefinition();
+		// dynamicBeanDef.setBeanClass(DynamicDataSource.class);
+		// dynamicBeanDef.setSynthetic(true);
+		// dynamicBeanDef.setPrimary(true);
+		// MutablePropertyValues mpv = dynamicBeanDef.getPropertyValues();
+		// Map<Object, Object> targetDataSources = initDataSources();
+		// DruidDataSource defaultDataSource = (DruidDataSource) targetDataSources.get("mainDataSource");
+		// mpv.addPropertyValue("defaultTargetDataSource", defaultDataSource);// 默认数据源--mainDataSource
+		// mpv.addPropertyValue("targetDataSources", targetDataSources);
+		// // 覆盖initDataSources方法中创建的数据源--id保持一致
+		// registry.registerBeanDefinition("dataSource", dynamicBeanDef);
+		// logger.info("Dynamic dataSource Registry");
+
+		// BeanDefinitionBuilder transactionManager = BeanDefinitionBuilder.rootBeanDefinition(DataSourceTransactionManager.class);
+		// transactionManager.getBeanDefinition().setAttribute("id", "transactionManager");
+		// transactionManager.addPropertyReference("dataSource", "dataSource");
+		// registry.registerBeanDefinition("transactionManager", transactionManager.getBeanDefinition());
+		// logger.info("Dynamic transactionManager Registry");
+		// BeanDefinitionBuilder sqlSessionFactory = BeanDefinitionBuilder.rootBeanDefinition(SqlSessionFactoryBean.class);
+		// sqlSessionFactory.getBeanDefinition().setAttribute("id", "sqlSessionFactory");
+		// sqlSessionFactory.addPropertyReference("dataSource", "dataSource");
+		// sqlSessionFactory.addPropertyValue("mapperLocations", context.getEnvironment().getProperty("mybatis.mapper-locations"));
+		// registry.registerBeanDefinition("sqlSessionFactory", sqlSessionFactory.getBeanDefinition());
+		// logger.info("Dynamic sqlSessionFactory Registry");
+	}
+
+	private Map<Object, Object> initDataSources() {
+		Map<Object, Object> targetDataSources = new HashMap<>();
+
+		// 先创建一个名为dataSource的数据源
+		GenericBeanDefinition beanDefinition = new GenericBeanDefinition();
+		beanDefinition.setBeanClass(DruidDataSource.class);
+		beanDefinition.setSynthetic(true);
+		beanDefinition.setDestroyMethodName("close");
+		beanDefinition.setInitMethodName("init");
+		// beanDefinition.setPrimary(true);
+		Map<String, Object> rpr = new RelaxedPropertyResolver(context.getEnvironment(), "spring.datasource.druid").getSubProperties(".");
+		beanDefinition.setPropertyValues(new MutablePropertyValues(rpr));
+		registry.registerBeanDefinition("mainDataSource", beanDefinition);
+		targetDataSources.put("default", context.getBean("mainDataSource"));
+		// 创建DataSourceBeanMapper
+		DataSourceBeanMapper dataService = (DataSourceBeanMapper) context.getBean(DataSourceBeanMapper.class);
+		try {
+			List<TendDataSourceVo> databaseList = dataService.getTendDataSourceVoList();
+			// 手动添加一个test_test014
+			TendDataSourceVo main = new TendDataSourceVo();
+			main.setTendCode("test_test014");
+			main.setUrl("jdbc:mysql://192.168.3.81:3306/test_test014?zeroDateTimeBehavior=convertToNull&amp;useUnicode=true&amp;characterEncoding=utf-8&allowMultiQueries=true");
+			main.setDriverName("com.mysql.jdbc.Driver");
+			main.setUserName("putest");
+			main.setPassword("putest123");
+			databaseList.add(main);
+
+			Map<String, Object> values = new HashMap<>(rpr);
+			// 创建所有的数据源、包括主数据源
+			for (TendDataSourceVo database : databaseList) {
+				if (database.getTendCode().equals("erp_platform_server") == false//
+						&& database.getTendCode().equals("test_test013") == false//
+						&& database.getTendCode().equals("test_test014") == false) {
+					continue;
+				}
+				values.put("driverClassName", database.getDriverName());
+				values.put("url", database.getUrl());// .replace("192.168.3.81", "localhost")
+				values.put("username", database.getUserName());//
+				values.put("password", database.getPassword());//
+				// 创建bean
+				GenericBeanDefinition druidDatasource = new GenericBeanDefinition();
+				druidDatasource.setBeanClass(DruidDataSource.class);
+				druidDatasource.setSynthetic(true);
+				druidDatasource.setInitMethodName("init");
+				druidDatasource.setDestroyMethodName("close");
+				druidDatasource.setAttribute("id", database.getTendCode());
+				druidDatasource.setPropertyValues(new MutablePropertyValues(values));
+				// 把数据源注册到spring context
+				registry.registerBeanDefinition(database.getTendCode(), druidDatasource);
+				targetDataSources.put(database.getTendCode(), context.getBean(database.getTendCode()));
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		return targetDataSources;
+	}
+
+	// @Bean(name="slaveDataSource", destroyMethod = "close", initMethod="init")
+	// @ConfigurationProperties(prefix = "spring.datasource.slave")
+	// public DataSource slaveDataSource() {
+	// return DataSourceBuilder.create().type(dataSourceType).build();
+	// }
+}

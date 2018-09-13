@@ -1,0 +1,9 @@
+package com.xinleju.platform.sys.icon.dto.service;
+
+import com.xinleju.platform.base.dto.service.BaseDtoServiceCustomer;
+
+/**
+ * Created by ly on 2017/12/1.
+ */
+public interface IconToolsDtoServiceCustomer extends BaseDtoServiceCustomer {
+}

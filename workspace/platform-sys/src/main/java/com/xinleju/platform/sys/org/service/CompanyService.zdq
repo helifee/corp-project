@@ -1,0 +1,13 @@
+package com.xinleju.platform.sys.org.service;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.sys.org.entity.Company;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface CompanyService extends  BaseService <String,Company>{
+}

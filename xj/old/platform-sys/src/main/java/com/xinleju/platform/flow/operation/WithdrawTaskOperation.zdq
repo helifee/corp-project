@@ -1,0 +1,404 @@
+package com.xinleju.platform.flow.operation;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang.StringUtils;
+import org.apache.log4j.Logger;
+
+import com.xinleju.platform.base.utils.LoginUtils;
+import com.xinleju.platform.flow.dto.ApprovalSubmitDto;
+import com.xinleju.platform.flow.dto.AssistDto;
+import com.xinleju.platform.flow.dto.InstanceTaskDto;
+import com.xinleju.platform.flow.entity.InstanceTask;
+import com.xinleju.platform.flow.entity.SysNoticeMsg;
+import com.xinleju.platform.flow.enumeration.ACStatus;
+import com.xinleju.platform.flow.enumeration.FlAcType;
+import com.xinleju.platform.flow.enumeration.InstanceOperateType;
+import com.xinleju.platform.flow.enumeration.PostStatus;
+import com.xinleju.platform.flow.enumeration.TaskStatus;
+import com.xinleju.platform.flow.exception.FlowException;
+import com.xinleju.platform.flow.model.ACUnit;
+import com.xinleju.platform.flow.model.ApproverUnit;
+import com.xinleju.platform.flow.model.InstanceUnit;
+import com.xinleju.platform.flow.model.PostUnit;
+import com.xinleju.platform.flow.model.TaskUnit;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+/**
+ * 审批人撤回任务操作
+ * 
+ * @author daoqi
+ *
+ */
+public class WithdrawTaskOperation extends DefaultOperation implements Operation{
+	
+	private static Logger log = Logger.getLogger("flowLogger");
+
+	public WithdrawTaskOperation() {
+		super(OperationType.WITHDRAW_TASK);
+	}
+
+	/**
+	 * 已检查过能否撤回
+	 */
+	@Override
+	public String action(InstanceUnit instanceUnit, ApprovalSubmitDto approvalDto) throws Exception {
+		List<InstanceTaskDto> toWithdrawTasks = null;
+		//查找当前撤回人的操作结果
+		super.setCurrentLocation(instanceUnit, approvalDto);
+		if(StringUtils.isEmpty(approvalDto.getTaskId())) {
+			toWithdrawTasks = setCurrentLocationForWithdrawTask(instanceUnit, approvalDto);
+			log.info("查询待撤回任务：" + toWithdrawTasks);
+			
+		} else {
+			//检查是否可撤回,返回可撤回时应该撤回的任务列表
+			log.info("检查是否可撤回,返回可撤回时应该撤回的任务列表");
+			if(super.getCurrentApprover()!=null && super.getCurrentApprover().getApproverId()!=null){
+				toWithdrawTasks = service.getInstanceTaskService().checkWithdrawTask(instanceUnit.getId(),
+						approvalDto.getTaskId(),super.getCurrentApprover().getApproverId());
+			}
+			if(toWithdrawTasks == null) {
+				log.info("当前流程已被下一审批人打开或审批过！");
+				throw new FlowException("当前流程已被下一审批人打开或审批过！");
+			}
+		}
+		
+		//回复撤回任务时要将协办提示消息撤回
+		InstanceTask instanceTask=service.getInstanceTaskService().getObjectById(approvalDto.getTaskId());
+		if(instanceTask!=null && "HF".equals(instanceTask.getOperationCode())){
+			this.dealOperationTip(instanceTask);
+		}
+		
+		//记录流转日志
+		super.saveTransition(currentApprover, approvalDto.getOperationName());
+		
+		if(OperationType.RETURN.getCode().equals(currentApprover.getTask().getTaskResult())) {
+			delateACFromReturn(instanceUnit.getAcList());
+		} else {
+			
+			//1、查询的运行中的任务回退，并撤回对应消息
+			log.info("1、查询的运行中的任务回退，并撤回对应消息");
+			withdrawTaskAndMsg(instanceUnit, toWithdrawTasks);
+		}
+		
+		//2、撤回操作本人任务变成运行中，并重发待办消息
+		turnOn(currentApprover,instanceTask);
+		
+		//3、恢复跳过的审批人的任务
+		//竞争时跳过的审批人，在撤回任务时不给审批的资格，还由撤回任务人（原审批人审批）!!!
+		
+		//4、重新计算流程当前审批人
+		super.setCurrentApprovers(instanceUnit);
+		
+		super.save(instanceUnit);
+		
+		
+		sendMessages(instanceUnit.getMessages());
+//		completeMessage(instanceUnit, approvalDto.getMsgId());	//不再需要完成本人
+		withDrawMessage(instanceUnit);
+		
+		//已办变待办   撤回任务时需要把已办变为待办
+		service.getMsgService().completeMessage(currentApprover.getTask().getMsgId(), "DB");
+		
+		
+		//6、记录撤回任务操作日志
+		try {
+			service.getInstanceLogService().saveLogData(instanceUnit.getId(), currentAc.getAcId(), 
+					currentApprover.getId(), currentApprover.getTask().getTaskId(), 
+					InstanceOperateType.DRAW_BACK_TASK.getValue(), currentApprover.getApproverId(), null, null);
+		} catch (Exception e) {
+			throw new FlowException("记录流程日志异常：", e);
+		}
+		
+		return "success";
+	}
+	
+	/**
+	 * 根据任务ID，设置当前审批人、当前岗位、当前节点
+	 * 
+	 * @param instanceUnit
+	 * @param approvalDto
+	 */
+	public List<InstanceTaskDto> setCurrentLocationForWithdrawTask(InstanceUnit instanceUnit, ApprovalSubmitDto approvalDto){
+		List<ApproverUnit> returners = new ArrayList<ApproverUnit>();
+		//自动通过用
+		this.setInstanceUnit(instanceUnit);
+		this.setApprovalDto(approvalDto);
+		
+		String currentUserId = LoginUtils.getSecurityUserBeanInfo().getSecurityUserDto().getId();
+		
+		for(ACUnit acUnit : instanceUnit.getAcList()) {
+			List<PostUnit> posts = acUnit.getPosts();
+			if(CollectionUtils.isEmpty(posts)) {
+				continue;
+			}
+			for(PostUnit postUnit : posts) {
+				List<ApproverUnit> approvers = postUnit.getApprovers();
+				if(CollectionUtils.isEmpty(approvers)) {
+					continue;
+				}
+				for(ApproverUnit approver : approvers) {
+					TaskUnit task = approver.getTask();
+					if(task == null) {
+						continue;
+					}
+					
+					//以点亮行审批人ID确认当前审批人（默认一个人同时只有一个点亮行）
+					if(TaskStatus.FINISHED.getValue().equals(task.getTaskStatus())) {
+						if(approver.getApproverId().equals(currentUserId)) {
+							returners.add(approver);
+						}
+					}
+				}
+			}
+		}
+		Iterator<ApproverUnit> iter = returners.iterator();
+		List<InstanceTaskDto> toWithdrawTasks = null;
+		while(iter.hasNext()) {
+			//检查是否可撤回,返回可撤回时应该撤回的任务列表
+			ApproverUnit approver = iter.next();
+			String taskId = approver.getTask().getTaskId();
+			List<InstanceTaskDto> tasks = service.getInstanceTaskService()
+					.checkWithdrawTask2(instanceUnit.getId(), taskId);
+			if(tasks == null) {
+				iter.remove();
+			} else {
+				toWithdrawTasks = tasks;
+			}
+			
+		}
+		if(returners.size() == 0) {
+			log.info("当前流程已被下一审批人打开或审批过！");
+			throw new FlowException("当前流程已被下一审批人打开或审批过！");
+			
+		} else if(returners.size() > 1) {
+			log.info("撤回任务时找到两个撤回人：" + instanceUnit.getId());
+			throw new FlowException("撤回任务时找到两个撤回人：" + instanceUnit.getId());
+			
+		} else {
+			ApproverUnit withdrawer = returners.get(0);
+			currentApprover = withdrawer;
+			currentPost = withdrawer.getOwner();
+			currentAc = withdrawer.getOwner().getOwner();
+			
+			//当从非待办打开的flow.html时,taskId, msgId为空，此时审批无法消除待办
+			if(StringUtils.isEmpty(approvalDto.getTaskId())) {
+				approvalDto.setTaskId(currentApprover.getTask().getTaskId());
+			}
+			if(StringUtils.isEmpty(approvalDto.getMsgId())) {
+				approvalDto.setMsgId(currentApprover.getTask().getMsgId());
+			}
+		}
+		return toWithdrawTasks;
+	}
+
+	private void delateACFromReturn(List<ACUnit> acList) {
+		for(ACUnit acUnit :acList) {
+			if("1".equals(acUnit.getFromReturn())) {
+				acUnit.setDbAction(2);
+				super.jumpOver(acUnit);
+				log.info("删除打回产生的节：acId=" + acUnit.getAcId());
+			}
+		}
+	}
+
+	/**
+	 * 1、匹配待还原的任务并撤回消息
+	 * 2、同时还原岗位及环节的状态
+	 * 
+	 * @param instanceUnit
+	 * @param toWithdrawTasks
+	 */
+	private void withdrawTaskAndMsg(InstanceUnit instanceUnit, List<InstanceTaskDto> toWithdrawTasks) {
+		List<String> toWithdrawTaskIds = new ArrayList<String>();
+		for(InstanceTaskDto task : toWithdrawTasks) {
+			toWithdrawTaskIds.add(task.getId());
+		}
+		
+		for(ACUnit acUnit : instanceUnit.getAcList()) {
+			List<PostUnit> posts = acUnit.getPosts();
+			if(CollectionUtils.isEmpty(posts)) {
+				continue;
+			}
+			
+			int notRunPostCount = 0;
+			for(PostUnit post : posts) {
+				int delApproverCount = 0;
+				List<ApproverUnit> approvers = post.getApprovers();
+				if(CollectionUtils.isEmpty(approvers)) {
+					if(PostStatus.FINISHED.getValue().equals(post.getPostStatus())
+							&& acUnit.getAcPx() > currentAc.getAcPx()) {
+						post.setPostStatus(PostStatus.NOT_RUNNING.getValue());
+						if(ACStatus.FINISHED.getValue().equals(acUnit.getAcStatus())) {
+							acUnit.setLeftPost(acUnit.getLeftPost() + 1);
+						}
+						notRunPostCount++;
+					}
+					continue;
+				}
+				for(ApproverUnit approver : approvers) {
+					TaskUnit task = approver.getTask();
+					if(task == null) {
+						continue;
+					}
+
+					if(toWithdrawTaskIds.contains(task.getTaskId())) {
+						
+						//处理转办、协办、沟通发起人产生的后续人员撤回（作删除处理）
+						if(StringUtils.isNotEmpty(task.getFromId())) {
+							task.setDbAction(2);
+							approver.setDbAction(2);
+							//处理正常的审批人撤回(置为未运行)
+						} else {
+							task.setDbAction(2);	//删除任务内部会同时删除消息
+							if(PostStatus.FINISHED.getValue().equals(post.getPostStatus())) {
+								post.setLeftPerson(post.getLeftPerson() + 1);
+							}
+							delApproverCount++;
+						}
+					}
+					
+					//处理自动跳过的人
+					if(ACStatus.RUNNING.getValue().equals(acUnit.getAcStatus()) 
+							|| ACStatus.FINISHED.getValue().equals(acUnit.getAcStatus())) {
+						boolean realAutoPass = false;
+						String currentApproverTypeId = approver.getOwner().getOwner().getApprovalTypeId();
+						if(("SP".equals(currentApproverTypeId) 
+								|| "SH".equals(currentApproverTypeId))	
+								&& approver.getAutoPass() == 1
+								&& !approver.getOwner().getOwner().isAddLabel()) {
+							realAutoPass = true;
+						}
+						if(realAutoPass && acUnit.getAcPx() > currentAc.getAcPx()) {
+							task.setDbAction(2);	//删除任务内部会同时删除消息
+							if(PostStatus.FINISHED.getValue().equals(post.getPostStatus())) {
+								post.setLeftPerson(post.getLeftPerson() + 1);
+							}
+							if(ACStatus.RUNNING.getValue().equals(acUnit.getAcStatus())) {
+								acUnit.setLeftPost(acUnit.getLeftPost() + 1);
+							}
+							delApproverCount++;
+						}
+					}
+				}
+				if(delApproverCount == approvers.size()) {
+					post.setPostStatus(PostStatus.NOT_RUNNING.getValue());
+					if(ACStatus.FINISHED.getValue().equals(acUnit.getAcStatus())) {
+						acUnit.setLeftPost(acUnit.getLeftPost() + 1);
+					}
+					notRunPostCount++;
+				}
+			}
+			
+			if(notRunPostCount == posts.size()) {
+				acUnit.setAcStatus(ACStatus.NOT_RUNNING.getValue());
+				
+//				joinLeftPostCal(acUnit);
+			}
+		}
+	}
+	
+	/**
+	  * @Description:撤回任务时协办提示消息撤回
+	  * @author:zhangfangzhi
+	  * @date 2018年1月20日 上午11:47:59
+	  * @version V1.0
+	 * @param task 
+	 */
+	private void dealOperationTip(InstanceTask task) {
+		Map<String,Object> paramMap=new HashMap<String,Object>();
+		paramMap.put("approvalId", task.getRelationParticipantId());
+		paramMap.put("instanceId", instanceUnit.getId());
+		SysNoticeMsg sysNoticeMsg=service.getMsgService().getLanuchAssist(paramMap);
+		if(sysNoticeMsg!=null && sysNoticeMsg.getOperationTip()!=null && !"".equals(sysNoticeMsg.getOperationTip())){
+			AssistDto assistDto=JacksonUtils.fromJson(sysNoticeMsg.getOperationTip(), AssistDto.class);
+			String[] replayNames=assistDto.getReplyNames().split(",");
+			List<String> list = new ArrayList<>(Arrays.asList(replayNames));  
+			if(list.contains(currentApprover.getApproverName())){
+				list.remove(currentApprover.getApproverName());
+				assistDto.setRemainder(assistDto.getRemainder()+1);
+				
+				String remainderNames="";
+				if(assistDto.getRemainderNames()!=null && !"".equals(assistDto.getRemainderNames())){
+					remainderNames+=",";
+					remainderNames+=currentApprover.getApproverName();
+				}else{
+					remainderNames=currentApprover.getApproverName();
+				}
+				assistDto.setRemainderNames(remainderNames);
+				assistDto.setReplyNames(this.toListToStr(list));
+				paramMap.clear();
+				paramMap.put("operationTip", JacksonUtils.toJson(assistDto));
+				paramMap.put("msgId", sysNoticeMsg.getId());
+				service.getMsgService().assistMessageUpdate(paramMap);
+			}
+		}
+	}
+
+	private String toListToStr(List<String> list) {
+		String returnStr="";
+		if(list!=null && list.size()>0){
+			for(int i=0;i<list.size();i++){
+				if(!"".equals(returnStr)){
+					returnStr+=",";
+				}
+				returnStr+=list.get(i);
+			}
+		}
+		return returnStr;
+	}
+	
+	protected void joinLeftPostCal(ACUnit acUnit) {
+		List<ACUnit> nextList = acUnit.getNextAcs();
+		if(CollectionUtils.isNotEmpty(nextList)) {
+			for(ACUnit ac : nextList) {
+				if(FlAcType.JOIN.getAcType().equals(ac.getAcType())) {
+					ac.setLeftPost(ac.getLeftPost() + 1);
+					joinLeftPostCal(ac);
+				}
+			}
+		}
+	}
+
+	protected void turnOn(ApproverUnit approver, InstanceTask instanceTask) throws Exception {
+		TaskUnit task = approver.getTask();
+		task.setTaskStatus(TaskStatus.RUNNING.getValue());
+		task.setEndTime(null);
+		task.setTaskResult(null);
+		task.setTaskResultName(null);
+		task.setTaskComments(null);
+		
+		if(instanceTask!=null && !"HF".equals(instanceTask.getOperationCode())){
+			currentPost.setLeftPerson(currentPost.getLeftPerson() + 1);
+		}
+		if(PostStatus.FINISHED.getValue().equals(currentPost.getPostStatus())) {
+			currentPost.setPostStatus(PostStatus.RUNNING.getValue());
+			currentAc.setLeftPost(currentAc.getLeftPost() + 1);
+		} else {
+			
+		}
+		
+		if(ACStatus.FINISHED.getValue().equals(currentAc.getAcStatus())) {
+			currentAc.setAcStatus(ACStatus.RUNNING.getValue());
+			
+			//下一环节是聚合环节，其到达数+1
+			List<ACUnit> nextList = currentAc.getNextAcs();
+			if(CollectionUtils.isNotEmpty(nextList) && nextList.size() == 1) {
+				ACUnit next = nextList.get(0);
+				if(FlAcType.JOIN.getAcType().equals(next.getAcType())) {
+					
+					next.setLeftPost(next.getLeftPost() + 1);
+				}
+			}
+		}
+		
+		//已办变待办
+//		service.getMsgService().completeMessage(task.getMsgId(), "DB");
+	}
+}

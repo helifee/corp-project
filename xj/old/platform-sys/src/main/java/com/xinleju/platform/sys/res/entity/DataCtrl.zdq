@@ -1,0 +1,78 @@
+package com.xinleju.platform.sys.res.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Table(value="PT_SYS_RES_DATA_CTRL",desc="数据控制对象")
+public class DataCtrl extends BaseEntity{
+	
+		
+	@Column(value="code",desc="编号")
+	private String code;
+    
+  		
+	@Column(value="name",desc="名称")
+	private String name;
+  		
+	@Column(value="app_id",desc="应用id")
+	private String appId;
+    
+  		
+	@Column(value="icon",desc="图标")
+	private String icon;
+    
+  		
+	@Column(value="sort",desc="排序")
+	private Long sort;
+    
+  		
+		
+	public String getCode() {
+		return code;
+	}
+	public void setCode(String code) {
+		this.code = code;
+	}
+    
+  		
+	public String getName() {
+		return name;
+	}
+	public void setName(String name) {
+		this.name = name;
+	}
+  		
+	public String getAppId() {
+		return appId;
+	}
+	public void setAppId(String appId) {
+		this.appId = appId;
+	}
+    
+  		
+	public String getIcon() {
+		return icon;
+	}
+	public void setIcon(String icon) {
+		this.icon = icon;
+	}
+    
+  		
+	public Long getSort() {
+		return sort;
+	}
+	public void setSort(Long sort) {
+		this.sort = sort;
+	}
+    
+  		
+	
+}

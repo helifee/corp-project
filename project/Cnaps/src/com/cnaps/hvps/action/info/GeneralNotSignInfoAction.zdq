@@ -1,0 +1,167 @@
+package com.cnaps.hvps.action.info;
+
+import java.io.BufferedInputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.util.List;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+import org.apache.struts.action.ActionForm;
+import org.apache.struts.action.ActionForward;
+import org.apache.struts.action.ActionMapping;
+
+import com.bancstone.action.BaseAction;
+import com.bancstone.common.exception.PicpMessageException;
+import com.bancstone.service.systemManage.impl.CommonServices;
+import com.cnaps.coreservices.CommonXMLEntity;
+import com.cnaps.coreservices.TransCodeEntity;
+import com.cnaps.coreservices.TransServices;
+import com.cnaps.hvps.form.clearingAccount.OverdraftInterestChrgNoticeForm;
+import com.cnaps.hvps.form.info.GeneralNotSignInfoForm;
+import com.cnaps.hvps.form.info.GeneralSignInfoForm;
+import com.cnaps.hvps.form.info.SendFreeMessageForm;
+import com.cnaps.hvps.persistence.clearingAccount.OverdraftInterestChargeNotice;
+import com.cnaps.hvps.persistence.info.GeneralNotSignInfo;
+import com.cnaps.hvps.persistence.info.GeneralSignInfo;
+import com.cnaps.hvps.persistence.info.Sendfreemessage;
+
+public class GeneralNotSignInfoAction extends BaseAction{
+	
+	/**
+	 * 通用非签名信息录入
+	 *
+	 */
+	@SuppressWarnings( { "unchecked", "static-access" })
+	public ActionForward sendMsg(ActionMapping mapping, ActionForm form,
+			HttpServletRequest request, HttpServletResponse response) {
+		try{
+			String business = request.getParameter("business");  // 标识 HVPS、BEPS、IBPS ……
+			
+			TransServices transServices = (TransServices)this.getBean("transServices");
+			
+			GeneralNotSignInfoForm voform = (GeneralNotSignInfoForm) form;
+			
+			//报文设置
+			String transactionid = TransCodeEntity.GENERAL_SIGNATURE_NOT_INFORMATION_RECORDED;//功能代码
+			commSetToXML(voform,request,transactionid);
+			
+			String attachmentcontent = new sun.misc.BASE64Encoder().encode(voform
+					.getPo().getAttachment().getFileData());
+			String attachmentname = voform.getPo().getAttachment().getFileName();
+			Long attachmentlength = new Long(attachmentcontent.length());
+			voform.getPo().setAttachmentname(attachmentname);
+			voform.getPo().setAttachmentcontent(attachmentcontent);
+			voform.getPo().setAttachmentlength(attachmentlength);
+			CommonXMLEntity  commonXMLEntity = transServices.transProcess(voform, voform.getTransactionId(),"systemcontrols","");
+			if(!commonXMLEntity.getProcessCode().equals("000000"))
+			{
+				throw new PicpMessageException("错误码：["+commonXMLEntity.getProcessCode()+"] 错误信息：["+commonXMLEntity.getProcessDes()+"]");
+			}
+			return toSuccessPage(mapping,request,"发送成功！");
+
+		} catch (Exception e) {
+			e.printStackTrace(); 
+			return toFailedPage(mapping, request,e.getMessage());
+		}
+	}
+	
+	// 从菜单直接调整页面
+	public ActionForward gotoPage(ActionMapping mapping, ActionForm form,
+			HttpServletRequest request, HttpServletResponse response) {
+		try{
+			String business = request.getParameter("business");  // 标识 HVPS、BEPS、IBPS ……
+			request.setAttribute("business",business);
+			
+			return mapping.findForward("input");
+
+		} catch (Exception e) {
+			e.printStackTrace(); 
+			return toFailedPage(mapping, request,e.getMessage());
+		}
+		
+	}
+	
+	// 通用非签名信息查询
+	public ActionForward querysendMsg(ActionMapping mapping, ActionForm form,
+			HttpServletRequest request, HttpServletResponse response) {
+		try{
+			GeneralNotSignInfoForm voform = (GeneralNotSignInfoForm) form;
+			//报文头设置
+			String transactionid = TransCodeEntity.QUERYCD;//功能代码
+			commSetToXML(voform,request,transactionid);
+			//查询代码
+			voform.setQueryCd(TransCodeEntity.GENERAL_SIGNATURE_NOT_INFORMATION_QUERY);
+			//分页设置
+			this.setFenYe(voform);
+			//查询条件设置
+			if(voform.getMsgId() != null&&(!"".equals(voform.getMsgId()))){
+				voform.getConditions().add("msgid:"+voform.getMsgId());
+			}
+			
+			//报文体组装发送
+			TransServices transServices = (TransServices)this.getBean("transServices");
+			CommonXMLEntity  commonXMLEntity = transServices.transProcess(voform, voform.getTransactionId(),"systemcontrols",voform.getQueryCd());
+			if(!commonXMLEntity.getProcessCode().equals("000000")){
+				throw new PicpMessageException("错误码：["+commonXMLEntity.getProcessCode()+"] 错误信息：["+commonXMLEntity.getProcessDes()+"]");
+			}
+			//设置分页信息。记录总条数
+			if(commonXMLEntity.getRecordcount() == null){
+				voform.setTotalSize(0);
+			}else{
+				voform.setTotalSize(Integer.parseInt(commonXMLEntity.getRecordcount()));
+			}
+		    setQueryPageValue(voform,true);
+			List<GeneralSignInfo>  list = commonXMLEntity.getResults();
+			this.setPageInfo(request,voform);
+			this.setObjectToRequest(request, "queryList",list);
+			return mapping.findForward("queryList");
+
+		} catch (Exception e) {
+			e.printStackTrace(); 
+			return toFailedPage(mapping, request,e.getMessage());
+		}
+	}
+	
+	/**
+	 * 发送明细报文
+	 * @param mapping
+	 * @param form
+	 * @param request
+	 * @param response
+	 * @return
+	 */
+	public ActionForward sendDetailMessage(ActionMapping mapping, ActionForm form,
+			HttpServletRequest request, HttpServletResponse response) {
+		
+		try{
+			CommonServices commonService = (CommonServices)this.getBean("CommonServices");
+			String workdate=request.getSession().getAttribute("workDate").toString();//工作日期
+			String msgId = commonService.getSEQMsgId(workdate);
+			//界面查询条件
+			GeneralNotSignInfoForm voform = (GeneralNotSignInfoForm)form;
+			commSetToXML(voform, TransCodeEntity.QUERYCD,"CMCS");
+			voform.setMsgId(msgId);//报文标识号
+			voform.setQueryCd(TransCodeEntity.GENERAL_SIGNATURE_NOT_INFORMATION_QUERY);			
+			this.setFenYe(voform);
+			TransServices transServices = (TransServices)this.getBean("transServices");
+			String id = request.getParameter("id");
+			voform.getConditions().add("id:"+id);
+			CommonXMLEntity  commonXMLEntity = transServices.transProcess(voform, voform.getTransactionId(), "systemcontrols", voform.getQueryCd());
+			if(!commonXMLEntity.getProcessCode().equals("000000")){
+				throw new PicpMessageException("错误码：["+commonXMLEntity.getProcessCode()+"] 错误信息：["+commonXMLEntity.getProcessDes()+"]");
+			}
+			List<GeneralNotSignInfo>  list = commonXMLEntity.getResults();
+			GeneralNotSignInfo po= list.get(0);
+			request.setAttribute("po", po);
+			return mapping.findForward("detail");
+			
+		} catch (Exception e) {
+			 e.printStackTrace();
+			return toFailedPage(mapping, request,e.getMessage());
+		}
+	}
+
+}

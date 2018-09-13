@@ -1,0 +1,105 @@
+package com.xinleju.erp.frame.service;
+
+import java.util.List;
+
+import org.apache.commons.lang3.StringUtils;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.Order;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.frame.dao.DeptDao;
+import com.xinleju.erp.frame.dao.PartyStructDao;
+import com.xinleju.erp.frame.models.Dept;
+import com.xinleju.erp.frame.models.PartyEntity;
+import com.xinleju.erp.frame.models.PartyType;
+
+@Service
+@Transactional
+public class DeptService extends BaseService {
+	@Autowired
+	private DeptDao deptDao;
+	@Autowired
+	private PartyEntityService partyEntityService;
+	@Autowired
+	private PartyStructService partyStructService;
+	@Autowired
+	private PartyStructDao partyStructDao;
+
+
+	public Dept getById(Long id){
+		if (null != id){
+			return getDao().getById(Dept.class, id);
+		}
+		return null;
+	}
+
+	/**
+	 * 更新部门主管
+	 * @author jdq
+	 * @param deptId
+	 * @param managerId
+	 */
+	public void updateDeptManager(Long deptId,Long managerId){
+		Dept dept = getById(deptId);
+		dept.setManagerId(managerId);
+		getDao().saveOrUpdate(dept);
+	}
+
+	public void save(Dept dept){
+		getDao().saveOrUpdate(dept);
+		partyEntityService.changeEntityName(dept.getId(), PartyType.TYPE_DEPARTMENT, dept.getName(),dept.getShortName());
+	}
+
+	/**
+	 * 获取部门下面的所有人员   
+	 * 部门-- 人员   /  部门 -- 角色  --  人员
+	 * @author jdq
+	 * @return
+	 */
+	public List<Long> findDeptUserIdList(Long deptId){
+		//  获取组织架构节点
+		PartyEntity partyEntity = partyEntityService.findEntityByRefId(Long.valueOf(deptId),PartyType.TYPE_DEPARTMENT);
+		//  获取直接挂在部门下面的人员
+		List<Long> userIdList = partyStructService.findChildIdsByParentEntityId(partyEntity.getId(),PartyType.TYPE_USER);
+		//  获取部门下面的所有角色
+		List<Long> roleEntityIdList = partyStructService.findChildEntityIdsByParentEntityId(partyEntity.getId(),PartyType.TYPE_ROLE);
+		for( Long entityId : roleEntityIdList ){
+			List<Long> tmpList = partyStructService.findChildIdsByParentEntityId(entityId,PartyType.TYPE_USER);
+			userIdList.addAll(tmpList);
+		}
+		return userIdList;
+	}
+
+	public List<Dept> findUserDept(Long userId){
+		// 人直接挂在部门下
+		List<Long> deptIds = partyStructDao.findParentRefIdsByChildRefId(userId,PartyType.TYPE_DEPARTMENT);
+		// 人对应岗位  岗位所在部门
+		List<Long> roleIds = partyStructDao.findParentRefIdsByChildRefId(userId,PartyType.TYPE_ROLE);
+		for(Long roleId:roleIds){
+			deptIds.addAll(partyStructDao.findParentRefIdsByChildRefId(roleId,PartyType.TYPE_DEPARTMENT));
+		}
+
+		return getDeptListByIds(deptIds,null);
+
+	}
+
+	public List<Dept> getDeptListByIds(List<Long> deptIdList,String name){
+
+		DetachedCriteria c = DetachedCriteria.forClass(Dept.class);
+		if(StringUtils.isNotBlank(name)){
+			c.add( Restrictions.like("name", "%"+name+"%") );
+		}
+		c.add(Restrictions.in("id", deptIdList));
+		c.addOrder(Order.asc("id"));
+		return getDao().findByCriteria(c);
+	}
+	
+	public void deleteDept(Long deptId) {
+		deptDao.logicDelete(deptId);
+	}
+
+}

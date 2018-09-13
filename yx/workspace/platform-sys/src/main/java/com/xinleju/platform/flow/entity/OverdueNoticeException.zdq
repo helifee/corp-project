@@ -1,0 +1,68 @@
+package com.xinleju.platform.flow.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Table(value="PT_FLOW_OVERDUE_NOTICE_EXCEPTION",desc="逾期通知例外对象")
+public class OverdueNoticeException extends BaseEntity{
+	
+		
+	@Column(value="exception_id",desc="例外对象id")
+	private String exceptionId;
+    
+  		
+	@Column(value="exception_type",desc="例外对象类型")
+	private String exceptionType;
+    
+  		
+	@Column(value="type",desc="业务对象")
+	private String type;
+    
+  		
+	@Column(value="overdue_id",desc="逾期id")
+	private String overdueId;
+    
+  		
+		
+	public String getExceptionId() {
+		return exceptionId;
+	}
+	public void setExceptionId(String exceptionId) {
+		this.exceptionId = exceptionId;
+	}
+    
+  		
+	public String getExceptionType() {
+		return exceptionType;
+	}
+	public void setExceptionType(String exceptionType) {
+		this.exceptionType = exceptionType;
+	}
+    
+  		
+	public String getType() {
+		return type;
+	}
+	public void setType(String type) {
+		this.type = type;
+	}
+    
+  		
+	public String getOverdueId() {
+		return overdueId;
+	}
+	public void setOverdueId(String overdueId) {
+		this.overdueId = overdueId;
+	}
+    
+  		
+	
+}

@@ -1,0 +1,116 @@
+package com.jzy.hio.platform.dictionary.controller;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.jzy.hio.base.controller.BaseController;
+import com.jzy.hio.entity.SysDictionary;
+import com.jzy.hio.entity.TenantCompanyInfo;
+import com.jzy.hio.platform.dictionary.dto.DictionaryDto;
+import com.jzy.hio.platform.dictionary.service.DictionaryService;
+import com.jzy.hio.platform.param.DictionaryParam;
+import com.jzy.hio.platform.tenantcompanyinfo.service.TenantCompanyInfoService;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.redis.RedisService;
+
+/**
+ * 字典
+ * 
+ * @author chc<br/>
+ *         2018年3月31日
+ */
+@RestController
+@RequestMapping("/dictionary")
+public class DictionaryController extends BaseController {
+
+	@Autowired
+	private DictionaryService dictionaryService;
+	@Autowired
+	private RedisService redisService;
+	@Autowired
+	private TenantCompanyInfoService tenantCompanyInfoService;
+
+	@PostMapping("queryNode")
+	public Object queryTree(@RequestBody DictionaryParam param) {
+		String parentId = param.getParentId();
+		Map<String, String> result = redisService.getRowAll("platform:dictionary_" + param.getType());
+		List<DictionaryDto> list = new ArrayList<>();
+		for (String regionJson : result.values()) {
+			DictionaryDto region = json2obj(regionJson, DictionaryDto.class);
+			/*if(isEmpty(parentId) || parentId.equals("0")) {
+				if(region.getParentId().equals("0"))
+					list.add(region);
+			}else {
+				if(region.getParentId().equals(parentId))
+					list.add(region);
+			}*/
+			list.add(region);
+		}
+		List<DictionaryDto> tree = (List<DictionaryDto>) list2Tree(list);
+		return tree;
+	}
+
+
+	/**
+	 * 组装成树存储
+	 * 
+	 * @return
+	 */
+	@GetMapping("sync2tree")
+	public String sync2redisTree() {
+		Map<String, Object> paramMap = new HashMap<>();
+		List<SysDictionary> sourceList = dictionaryService.queryListByExample(paramMap);
+		List<DictionaryDto> targetList = copyProperties(sourceList, DictionaryDto.class);
+		List<DictionaryDto> resultList = (List<DictionaryDto>) list2Tree(targetList);
+		for (DictionaryDto region : resultList) {
+			Map<String, String> map = new LinkedHashMap<>();
+			map.put(region.getId(), obj2json(region));
+			redisService.addRow("platform:dictionary_" + region.getType(), map);
+		}
+		return "success";
+	}
+
+	/**
+	 * 一条条的存储
+	 * 
+	 * @return
+	 */
+	@PostMapping("sync2list")
+	public String sync2redis() {
+		Map<String, Object> paramMap = new HashMap<>();
+		List<SysDictionary> sourceList = dictionaryService.queryListByExample(paramMap);
+		List<DictionaryDto> targetList = copyProperties(sourceList, DictionaryDto.class);
+		for (DictionaryDto region : targetList) {
+			Map<String, String> map = new LinkedHashMap<>();
+			map.put(region.getId(), obj2json(region));
+			redisService.addRow("platform:dictionary_" + region.getType(), map);
+			redisService.addRow("platform:dictionary", map);
+		}
+		return "success";
+	}
+	
+	/**
+	 * 一条条的存储
+	 * 
+	 * @return
+	 */
+	@PostMapping("tenantreids")
+	public String tenantreids() {
+		Map<String, Object> paramMap = new HashMap<>();
+		List<TenantCompanyInfo> sourceList = tenantCompanyInfoService.queryListByExample(paramMap);
+		for (TenantCompanyInfo region : sourceList) {
+			JedisUtil.addRow(region);
+		}
+		return "success";
+	}
+}

@@ -1,0 +1,29 @@
+package com.xinleju.platform.sys.notice.service;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.sys.notice.entity.MailMsg;
+import com.xinleju.platform.sys.org.dto.UserDto;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface MailMsgService extends  BaseService <String,MailMsg>{
+
+	/**
+	 * 发送邮件并修改消息状态
+	 * @return
+	 */
+	public Map<String,Object> sendMailAndUpdateStatus(MailMsg mailMsg,String serverId)  throws Exception;
+	/**
+	 * 模糊查询-分页
+	 * @return
+	 */
+	public Page vaguePage(Map<String, Object> map)throws Exception;
+}

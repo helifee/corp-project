@@ -1,0 +1,77 @@
+package com.xinleju.platform.base.filter;
+
+import java.io.Serializable;
+import java.net.HttpCookie;
+import java.util.Arrays;
+
+public class CASLoginResult implements Serializable{
+	/**
+	 * 
+	 */
+	private static final long serialVersionUID = 1L;
+	
+	private String rediretUrl;
+	
+	private HttpCookie[] cookies;
+	
+	public CASLoginResult(String rediretUrl, HttpCookie[] cookies) {
+		super();
+		this.rediretUrl = rediretUrl;
+		this.cookies = cookies;
+	}
+	
+	public CASLoginResult() {
+	}
+
+	public String getRediretUrl() {
+		return rediretUrl;
+	}
+
+	public void setRediretUrl(String rediretUrl) {
+		this.rediretUrl = rediretUrl;
+	}
+
+	public HttpCookie[] getCookies() {
+		return cookies;
+	}
+
+	public void setCookies(HttpCookie[] cookies) {
+		this.cookies = cookies;
+	}
+
+	@Override
+	public String toString() {
+		return "CASLoginResult [rediretUrl=" + rediretUrl + ", cookies="
+				+ Arrays.toString(cookies) + "]";
+	}
+	
+	@Override
+	public int hashCode() {
+		final int prime = 31;
+		int result = 1;
+		result = prime * result + Arrays.hashCode(cookies);
+		result = prime * result
+				+ ((rediretUrl == null) ? 0 : rediretUrl.hashCode());
+		return result;
+	}
+
+	@Override
+	public boolean equals(Object obj) {
+		if (this == obj)
+			return true;
+		if (obj == null)
+			return false;
+		if (getClass() != obj.getClass())
+			return false;
+		CASLoginResult other = (CASLoginResult) obj;
+		if (!Arrays.equals(cookies, other.cookies))
+			return false;
+		if (rediretUrl == null) {
+			if (other.rediretUrl != null)
+				return false;
+		} else if (!rediretUrl.equals(other.rediretUrl))
+			return false;
+		return true;
+	}
+
+}

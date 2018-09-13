@@ -1,0 +1,26 @@
+package com.xinleju.platform.sys.num.service;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.sys.num.entity.Ruler;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface RulerService extends  BaseService <String,Ruler>{
+
+	public List<Map<String, Object>> getMapListByBillId(String paramater) throws Exception;
+	
+	public List<Ruler> getRuleListByBillId(String paramater) throws Exception;
+
+	public List<Map<String, Object>> getRulerSortNum(Map<String,Object> paramater) throws Exception;
+
+	public int updateSort(Ruler object, Map<String, Object> map)throws Exception ;
+
+	
+}

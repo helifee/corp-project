@@ -1,0 +1,666 @@
+/*
+ * @(#) K060051Action.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 教育考试培训系统
+ *    SubSystem: 教育子系统
+ */
+
+package com.yds.tt.testing.action;
+
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.config.BeanDefinition;
+import org.springframework.context.annotation.Scope;
+import org.springframework.stereotype.Controller;
+
+import com.opensymphony.xwork2.interceptor.annotations.InputConfig;
+import com.yds.base.action.BasePagerAction;
+import com.yds.common.bean.PagerInfo;
+import com.yds.common.bean.SysCodeInfo;
+import com.yds.common.service.CommonConstants;
+import com.yds.common.service.SessionConstants;
+import com.yds.common.service.SessionService;
+import com.yds.tt.manager.bean.CategoryInfo;
+import com.yds.tt.manager.bean.TtCheckResult;
+import com.yds.tt.manager.service.TtCommonService;
+import com.yds.tt.manager.service.TtCommonUtil;
+import com.yds.tt.manager.service.TtConstants;
+import com.yds.tt.manager.service.TtExclusiveException;
+import com.yds.tt.testing.bean.ExamineInfo;
+import com.yds.tt.testing.bean.K060051SearchInfo;
+import com.yds.tt.testing.service.K060051Service;
+
+/**
+ * 考试检索处理
+ * 
+ * @author wangqingzhu
+ * @version 1.00 2010/03/29
+ */
+@Scope(BeanDefinition.SCOPE_PROTOTYPE)
+@Controller("k060051Action")
+public class K060051Action extends BasePagerAction {
+
+	private static final long serialVersionUID = -6174745883575157529L;
+	// 定数定义
+	private static final String NOENDFLG = "2"; // 未结束Flg
+	private static final String NOEND = "noend"; // 提示Flg
+	private static final String END = "end"; // 试考试Flg
+
+	private K060051Service k060051Service;
+	private TtCommonService ttCommonService;
+	private List<ExamineInfo> k060051EditInfolist; // 编辑考试一览信息
+	private List<ExamineInfo> k060051ImplementInfolist; // 实施考试一览信息
+	private K060051SearchInfo k060051EditInfo; // 
+	private K060051SearchInfo k060051ImplementInfo;
+	private ExamineInfo examineInfo;
+	private Integer category1Id;// 参数一级分类ID
+	private Integer category2Id;// 参数二级分类ID
+	private Integer category3Id;// 参数三级分类ID
+	private List<SysCodeInfo> statusList; // 考试状态
+	private int pageNumber1;// 当前页
+	private PagerInfo pager1;// 页面显示用到的参数
+	private String examineId;// 考试Id
+	private String updateTimepa;// 更新时间（排他检查）
+	private int examineStatuspa;// 考试状态
+	private String errorMessage; // 错误信息
+	private String warningMessage; // 警告信息
+	private String promptMessage;// 提示信息
+	private boolean edShowFlg;// 编辑考试显示Flg
+	private boolean imShowFlg;// 实施考试显示Flg
+	private boolean crShowFlg;// 新建按钮显示Flg
+
+	/**
+	 * 画面的初期显示
+	 * 
+	 * @return SUCCESS
+	 */
+	@Override
+	@InputConfig(resultName = ERROR)
+	public String execute() throws Exception {
+
+		// 用户具有考试管理员或考试编辑者权限
+		if (edShowFlg) {
+			// 编辑考试一览检索
+			super.setPagerParamter(k060051Service.getEditTC(k060051EditInfo),
+					"k060051SearchEditInfo.action", 10);
+
+			if (category1Id != null) {
+				// 设置三级分类
+				CategoryInfo categoryInfo = new CategoryInfo();
+				categoryInfo.setCategory1Id(category1Id);
+				categoryInfo.setCategory2Id(category2Id);
+				categoryInfo.setCategory3Id(category3Id);
+				k060051EditInfo.setCategoryInfo(categoryInfo);
+			}
+
+			// 编辑考试一览信息取得
+			k060051EditInfolist = k060051Service.getK060051EditInfo(
+					k060051EditInfo, pager.getOffset().intValue(), pager
+							.getPerDisplayCount().intValue());
+		}
+
+		// 试实施者或考试评分权限
+		if (imShowFlg) {
+			this.setPager1Paramter(k060051Service
+					.getImplementTC(k060051ImplementInfo),
+					"k060051SearchImplementInfo.action", 10);
+
+			// 考试状态的取得
+			statusList = k060051Service.getExamstus();
+
+			// 实施考试一览信息取得
+			k060051ImplementInfolist = k060051Service.getK060051ImplementInfo(
+					k060051ImplementInfo, pager1.getOffset().intValue(), pager1
+							.getPerDisplayCount().intValue());
+		}
+
+		return SUCCESS;
+	}
+
+	/**
+	 * 画面启动限制检查和用户权限的检查
+	 */
+	@Override
+	public void validate() {
+
+		// 画面启动限制检查
+		String pageId = TtConstants.PageId.K060051.value();
+		String eventId = "K060051";
+
+		TtCheckResult checkResult = ttCommonService.checkStartupAuthority(
+				pageId, eventId, 0, 0, 0, null, null);
+
+		boolean makeingFlg = false;
+
+		// 取得评分者ID
+		List<Map<String, String>> markingEmpIdList = k060051Service
+				.getMarkingEmpId();
+
+		// 判断用户是否具有考试评分权限
+		for (Map<String, String> empId : markingEmpIdList) {
+			if (empId.get("markingEmpId").equals(TtCommonUtil.getLoginUserId())) {
+				makeingFlg = true;
+			}
+		}
+
+		// 无法启动并且用户不具有考试评分权限
+		if (!checkResult.getRetFlag() && !makeingFlg) {
+			errorMessage = checkResult.getRetMessage();
+			this.addActionError(ERROR);
+		}
+
+		// 取得用户权限
+		List<Integer> authorityList = checkResult.getAuthorityList("");
+
+		if (null != authorityList) {
+			for (Integer perm : authorityList) {
+				// 用户具有考试管理员或考试编辑者权限
+				if (TtConstants.C24.C24_2.value() == perm
+						|| TtConstants.C24.C24_8.value() == perm) {
+					edShowFlg = true;
+
+					if (TtConstants.C24.C24_2.value() == perm) {
+						crShowFlg = true;
+					}
+				}
+
+				// 用户具有考试实施者
+				if (TtConstants.C24.C24_12.value() == perm) {
+					imShowFlg = true;
+				}
+			}
+		}
+
+		// 考试评分权限
+		if (makeingFlg) {
+			imShowFlg = true;
+		}
+	}
+
+	/**
+	 * 编辑考试一览查询和翻页
+	 */
+	@InputConfig(resultName = ERROR)
+	public String searchEditInfo() {
+		if (category1Id != null) {
+			CategoryInfo categoryInfo = new CategoryInfo();
+			categoryInfo.setCategory1Id(category1Id);
+			categoryInfo.setCategory2Id(category2Id);
+			categoryInfo.setCategory3Id(category3Id);
+			k060051EditInfo.setCategoryInfo(categoryInfo);
+		}
+
+		super.setPagerParamter(k060051Service.getEditTC(k060051EditInfo),
+				"k060051SearchEditInfo.action", 10);
+
+		// 编辑考试一览信息取得
+		k060051EditInfolist = k060051Service.getK060051EditInfo(
+				k060051EditInfo, pager.getOffset().intValue(), pager
+						.getPerDisplayCount().intValue());
+		return SUCCESS;
+
+	}
+
+	/**
+	 * 实施考试一览查询和翻页
+	 */
+	@InputConfig(resultName = ERROR)
+	public String searchImplementInfo() {
+		this.setPager1Paramter(k060051Service
+				.getImplementTC(k060051ImplementInfo),
+				"k060051SearchImplementInfo.action", 10);
+
+		// 实施考试一览信息取得
+		k060051ImplementInfolist = k060051Service.getK060051ImplementInfo(
+				k060051ImplementInfo, pager1.getOffset().intValue(), pager1
+						.getPerDisplayCount().intValue());
+		return SUCCESS;
+
+	}
+
+	/**
+	 * 重新评分
+	 */
+	@InputConfig(resultName = ERROR)
+	public String renewGrade() {
+
+		try {
+			k060051Service.updateExmRelatedInfo(examineId, updateTimepa,
+					examineStatuspa);
+		} catch (TtExclusiveException e) {
+			seterrorInfo();
+		}
+
+		return SUCCESS;
+	}
+
+	/**
+	 * 分数汇总
+	 */
+	@InputConfig(resultName = ERROR)
+	public String gradeCollect() {
+
+		try {
+			String checkFlg = k060051Service.updateExamineAnswer(examineId,
+					updateTimepa);
+
+			if (NOENDFLG.equals(checkFlg)) {
+				// 评分未全部结束
+				warningMessage = NOEND;
+				return NOEND;
+			} else if (checkFlg.length() > 1) {
+
+				// 评分全部结束并且考试是试考试
+				promptMessage = checkFlg;
+				return END;
+			}
+		} catch (TtExclusiveException e) {
+			seterrorInfo();
+		}
+
+		warningMessage = "";
+		return SUCCESS;
+	}
+
+	/**
+	 * 成绩发布
+	 */
+	@InputConfig(resultName = ERROR)
+	public String recordPublish() {
+
+		try {
+			k060051Service.updateExamineEmployee(examineId, updateTimepa);
+		} catch (TtExclusiveException e) {
+			seterrorInfo();
+		}
+
+		warningMessage = "";
+		return SUCCESS;
+	}
+
+	/**
+	 * 设置时间戳错误信息
+	 */
+	private String seterrorInfo() {
+
+		// 考试信息被修改时的错误消息
+		errorMessage = propMgr.getMessage("yds.tt.error.KSE56");
+		return ERROR;
+	}
+
+	/**
+	 * 分页参数设置.
+	 *
+	 * @param totalCount
+	 *            总记录数
+	 * @param pagerActionName
+	 *            请求action名称
+	 * @param perDisplayCount
+	 *            每页显示的记录数
+	 */
+	private void setPager1Paramter(Long totalCount, String pagerActionName, Integer perDisplayCount) {
+
+		// 判断页面是否首次进入。首次进入时pager对象为空，此时初始化pager对象。
+		if (pager1 == null) {
+			pager1 = new PagerInfo();
+		} 
+	
+		pager1.setTotalCount(totalCount); // 总记录数。
+
+		// 如果用户没指定每页显示的记录数，则采取默认值。
+		if (perDisplayCount == null) {
+			pager1.setPerDisplayCount(CommonConstants.PER_COUNT);
+			pager1.setTotalPagesCount(totalCount, CommonConstants.PER_COUNT);
+		} else {
+			pager1.setPerDisplayCount(perDisplayCount);
+			pager1.setTotalPagesCount(totalCount, perDisplayCount);
+		}
+		pager1.setPagerIndexCount(CommonConstants.PAGER_INDEX_COUNT); // 分页导航条最多显示的页码数。
+		pager1.setPagerActionName(pagerActionName); // 请求action名称。
+				
+		if(pageNumber1 == 0){
+			pageNumber1 = 1; // 当前页码。
+		} 
+		
+		// 从第offset条记录开始查询。
+		if (pageNumber1 > 1) {
+			pager1.setOffset(pager1.getPerDisplayCount() * (pageNumber1 - 1));
+			
+		} else {
+			pager1.setOffset(0); 
+		}
+		SessionService.set(SessionConstants.PAGER_OFFSET, pager1.getOffset());
+	}
+
+	/**
+	 * @return the k060051Service
+	 */
+	public K060051Service getK060051Service() {
+		return k060051Service;
+	}
+
+	/**
+	 * @param service
+	 *            the k060051Service to set
+	 */
+	public void setK060051Service(K060051Service service) {
+		k060051Service = service;
+	}
+
+	/**
+	 * @return the statusList
+	 */
+	public List<SysCodeInfo> getStatusList() {
+		return statusList;
+	}
+
+	/**
+	 * @param statusList
+	 *            the statusList to set
+	 */
+	public void setStatusList(List<SysCodeInfo> statusList) {
+		this.statusList = statusList;
+	}
+
+	/**
+	 * @return the k060051EditInfolist
+	 */
+	public List<ExamineInfo> getK060051EditInfolist() {
+		return k060051EditInfolist;
+	}
+
+	/**
+	 * @param editInfolist
+	 *            the k060051EditInfolist to set
+	 */
+	public void setK060051EditInfolist(List<ExamineInfo> editInfolist) {
+		k060051EditInfolist = editInfolist;
+	}
+
+	/**
+	 * @return the k060051ImplementInfolist
+	 */
+	public List<ExamineInfo> getK060051ImplementInfolist() {
+		return k060051ImplementInfolist;
+	}
+
+	/**
+	 * @param implementInfolist
+	 *            the k060051ImplementInfolist to set
+	 */
+	public void setK060051ImplementInfolist(List<ExamineInfo> implementInfolist) {
+		k060051ImplementInfolist = implementInfolist;
+	}
+
+	/**
+	 * @return the k060051EditInfo
+	 */
+	public K060051SearchInfo getK060051EditInfo() {
+		return k060051EditInfo;
+	}
+
+	/**
+	 * @param editInfo
+	 *            the k060051EditInfo to set
+	 */
+	public void setK060051EditInfo(K060051SearchInfo editInfo) {
+		k060051EditInfo = editInfo;
+	}
+
+	/**
+	 * @return the k060051ImplementInfo
+	 */
+	public K060051SearchInfo getK060051ImplementInfo() {
+		return k060051ImplementInfo;
+	}
+
+	/**
+	 * @param implementInfo
+	 *            the k060051ImplementInfo to set
+	 */
+	public void setK060051ImplementInfo(K060051SearchInfo implementInfo) {
+		k060051ImplementInfo = implementInfo;
+	}
+
+	/**
+	 * @return the category1Id
+	 */
+	public Integer getCategory1Id() {
+		return category1Id;
+	}
+
+	/**
+	 * @param category1Id
+	 *            the category1Id to set
+	 */
+	public void setCategory1Id(Integer category1Id) {
+		this.category1Id = category1Id;
+	}
+
+	/**
+	 * @return the category2Id
+	 */
+	public Integer getCategory2Id() {
+		return category2Id;
+	}
+
+	/**
+	 * @param category2Id
+	 *            the category2Id to set
+	 */
+	public void setCategory2Id(Integer category2Id) {
+		this.category2Id = category2Id;
+	}
+
+	/**
+	 * @return the category3Id
+	 */
+	public Integer getCategory3Id() {
+		return category3Id;
+	}
+
+	/**
+	 * @param category3Id
+	 *            the category3Id to set
+	 */
+	public void setCategory3Id(Integer category3Id) {
+		this.category3Id = category3Id;
+	}
+
+	/**
+	 * @return the pager1
+	 */
+	public PagerInfo getPager1() {
+		return pager1;
+	}
+
+	/**
+	 * @param pager1
+	 *            the pager1 to set
+	 */
+	public void setPager1(PagerInfo pager1) {
+		this.pager1 = pager1;
+	}
+
+	/**
+	 * @return the pageNumber1
+	 */
+	public int getPageNumber1() {
+		return pageNumber1;
+	}
+
+	/**
+	 * @param pageNumber1 the pageNumber1 to set
+	 */
+	public void setPageNumber1(int pageNumber1) {
+		this.pageNumber1 = pageNumber1;
+	}
+
+	/**
+	 * @return the examineId
+	 */
+	public String getExamineId() {
+		return examineId;
+	}
+
+	/**
+	 * @param examineId
+	 *            the examineId to set
+	 */
+	public void setExamineId(String examineId) {
+		this.examineId = examineId;
+	}
+
+	/**
+	 * @return the updateTimepa
+	 */
+	public String getUpdateTimepa() {
+		return updateTimepa;
+	}
+
+	/**
+	 * @param updateTimepa
+	 *            the updateTimepa to set
+	 */
+	public void setUpdateTimepa(String updateTimepa) {
+		this.updateTimepa = updateTimepa;
+	}
+
+	/**
+	 * @return the examineStatuspa
+	 */
+	public int getExamineStatuspa() {
+		return examineStatuspa;
+	}
+
+	/**
+	 * @param examineStatuspa
+	 *            the examineStatuspa to set
+	 */
+	public void setExamineStatuspa(int examineStatuspa) {
+		this.examineStatuspa = examineStatuspa;
+	}
+
+	/**
+	 * @return the errorMessage
+	 */
+	public String getErrorMessage() {
+		return errorMessage;
+	}
+
+	/**
+	 * @param errorMessage
+	 *            the errorMessage to set
+	 */
+	public void setErrorMessage(String errorMessage) {
+		this.errorMessage = errorMessage;
+	}
+
+	/**
+	 * @return the examineInfo
+	 */
+	public ExamineInfo getExamineInfo() {
+		return examineInfo;
+	}
+
+	/**
+	 * @param examineInfo
+	 *            the examineInfo to set
+	 */
+	public void setExamineInfo(ExamineInfo examineInfo) {
+		this.examineInfo = examineInfo;
+	}
+
+	/**
+	 * @return the warningMessage
+	 */
+	public String getWarningMessage() {
+		return warningMessage;
+	}
+
+	/**
+	 * @param warningMessage
+	 *            the warningMessage to set
+	 */
+	public void setWarningMessage(String warningMessage) {
+		this.warningMessage = warningMessage;
+	}
+
+	/**
+	 * @return the promptMessage
+	 */
+	public String getPromptMessage() {
+		return promptMessage;
+	}
+
+	/**
+	 * @param promptMessage
+	 *            the promptMessage to set
+	 */
+	public void setPromptMessage(String promptMessage) {
+		this.promptMessage = promptMessage;
+	}
+
+	/**
+	 * @return the ttCommonService
+	 */
+	public TtCommonService getTtCommonService() {
+		return ttCommonService;
+	}
+
+	/**
+	 * @param ttCommonService
+	 *            the ttCommonService to set
+	 */
+	public void setTtCommonService(TtCommonService ttCommonService) {
+		this.ttCommonService = ttCommonService;
+	}
+
+	/**
+	 * @return the edShowFlg
+	 */
+	public boolean isEdShowFlg() {
+		return edShowFlg;
+	}
+
+	/**
+	 * @param edShowFlg
+	 *            the edShowFlg to set
+	 */
+	public void setEdShowFlg(boolean edShowFlg) {
+		this.edShowFlg = edShowFlg;
+	}
+
+	/**
+	 * @return the imShowFlg
+	 */
+	public boolean isImShowFlg() {
+		return imShowFlg;
+	}
+
+	/**
+	 * @param imShowFlg
+	 *            the imShowFlg to set
+	 */
+	public void setImShowFlg(boolean imShowFlg) {
+		this.imShowFlg = imShowFlg;
+	}
+
+	/**
+	 * @return the crShowFlg
+	 */
+	public boolean isCrShowFlg() {
+		return crShowFlg;
+	}
+
+	/**
+	 * @param crShowFlg
+	 *            the crShowFlg to set
+	 */
+	public void setCrShowFlg(boolean crShowFlg) {
+		this.crShowFlg = crShowFlg;
+	}
+
+}

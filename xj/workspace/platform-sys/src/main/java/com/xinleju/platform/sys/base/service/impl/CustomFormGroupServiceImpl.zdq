@@ -1,0 +1,474 @@
+package com.xinleju.platform.sys.base.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.log4j.Logger;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataAccessException;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.flow.dto.BusinessObjectDto;
+import com.xinleju.platform.flow.service.BusinessObjectService;
+import com.xinleju.platform.sys.base.dao.CustomFormGroupDao;
+import com.xinleju.platform.sys.base.dto.CustomFormDto;
+import com.xinleju.platform.sys.base.dto.CustomFormGroupDto;
+import com.xinleju.platform.sys.base.dto.CustomFormNodeDto;
+import com.xinleju.platform.sys.base.entity.CustomFormGroup;
+import com.xinleju.platform.sys.base.service.CustomFormGroupService;
+import com.xinleju.platform.sys.res.dto.service.OperationDtoServiceCustomer;
+import com.xinleju.platform.sys.res.dto.service.ResourceDtoServiceCustomer;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class CustomFormGroupServiceImpl extends  BaseServiceImpl<String,CustomFormGroup> implements CustomFormGroupService{
+	
+
+	@Autowired
+	private CustomFormGroupDao customFormGroupDao;
+	
+
+//	@Autowired
+//	private EntryDtoServiceCustomer entryDtoServiceCustomer;
+
+	//菜单注册服务
+    @Autowired
+    private ResourceDtoServiceCustomer resourceDtoServiceCustomer;
+	@Autowired
+	private BusinessObjectService businessObjectService;
+    //功能点注册
+    @Autowired
+    private OperationDtoServiceCustomer operationDtoServiceCustomer;
+    
+    private static Logger log = Logger.getLogger(CustomFormServiceImpl.class);
+    
+	@Override
+	public List<CustomFormDto> getTree(Map<String, Object> map) {
+		return customFormGroupDao.getTree(map);
+	}
+
+	@Override
+	public Integer queryMaxSort() {
+		return customFormGroupDao.queryMaxSort();
+	}
+
+	@Override
+	public List<CustomFormNodeDto> queryCustomGroupSort(Map map) {
+		return customFormGroupDao.queryCustomGroupSort(map);
+	}
+
+	@Override
+	public List<CustomFormNodeDto> queryCustomSort() {
+		return customFormGroupDao.queryCustomSort();
+	}
+
+	@Override
+	public Integer getCustomFormCountByGroupId(String id) {
+		return customFormGroupDao.getCustomFormCountByGroupId(id);
+	}
+
+	@Override
+	public String validateBeforeSave(final String userInfo, String saveJson) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		CustomFormGroupDto customFormGroupDtoVal=this.validateIsExist(saveJson);
+		try {
+			if(customFormGroupDtoVal.isCodeExist() || customFormGroupDtoVal.isNameExist()){
+				info.setResult(JacksonUtils.toJson(customFormGroupDtoVal));
+				info.setSucess(true);
+				info.setMsg("编码或名称重复！");
+			}else{
+				CustomFormGroup customFormGroup=JacksonUtils.fromJson(saveJson, CustomFormGroup.class);
+				Integer maxSort=customFormGroupDao.queryMaxSort();
+				customFormGroup.setSort(maxSort==null?1L:Long.valueOf(maxSort+1l));
+				customFormGroup.setDelflag(false);
+				customFormGroup.setResourceId(IDGenerator.getUUID());
+				customFormGroupDao.save(customFormGroup);
+				
+				CustomFormGroup customFormGroupNew=customFormGroupDao.getObjectById(customFormGroup.getId());
+				
+				//自定义表单分类推送菜单
+				this.registerMenu(userInfo, customFormGroup);
+//				final String entryJson;
+//				try {
+//					EntryDto entryDto=new EntryDto();
+//					entryDto.setId(customFormGroupNew.getId());
+//					entryDto.setCode(customFormGroupNew.getCode());
+//					entryDto.setName(customFormGroupNew.getName());
+//					entryDto.setStatus(1);
+//					entryDto.setDelflag(false);
+//					entryDto.setIsInner(1);
+//					entryDto.setParentId("0");
+//					entryJson= JacksonUtils.toJson(entryDto);
+//					new Thread(new Runnable(){
+//						@Override
+//						public void run() {
+//							entryDtoServiceCustomer.save(userInfo, entryJson);
+//						}
+//					}).start();
+//				} catch (Exception e) {
+//					//e.printStackTrace();
+//				}
+				
+				BeanUtils.copyProperties(customFormGroupNew, customFormGroupDtoVal);
+				info.setResult(JacksonUtils.toJson(customFormGroupDtoVal));
+				info.setSucess(true);
+				info.setMsg("保存成功！");
+			}
+		} catch (DataAccessException e) {
+			//e.printStackTrace();
+			info.setSucess(false);
+			info.setMsg("保存失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	
+
+	/**
+	  * @Description:推送菜单
+	  * @author:zhangfangzhi
+	  * @date 2017年7月12日 下午3:05:51
+	  * @version V1.0
+	 */
+	private String registerMenu(String userInfo, CustomFormGroup customForm) {
+    	String menuResult = resourceDtoServiceCustomer.getObjectById(userInfo, "{\"id\":\"" + customForm.getResourceId() + "\"}");
+        Map<String, Object> menuResultMap = JacksonUtils.fromJson(menuResult, HashMap.class);
+        String menuStr = (String) menuResultMap.get("result");
+        Map<String, Object> oldMenuMap = JacksonUtils.fromJson(menuStr, HashMap.class);
+        String registerMenuResult = null;
+        Map<String, Object> resourceMap = new HashMap<String, Object>();
+    	resourceMap.put("id", customForm.getResourceId());//编码
+    	resourceMap.put("code", customForm.getCode()+"_MENU");//菜单编码
+    	resourceMap.put("name", customForm.getName());//菜单名称
+    	resourceMap.put("url", null);//菜单url
+    	resourceMap.put("appId", "9d6cba61c4b24a5699c339a49471a0e7");//应用Id
+    	if(customForm.getParentId()!=null && "0".equals(customForm.getParentId())){
+    		resourceMap.put("parentId", "23087b7b97324c93afd817a5c400b8ea");//一级分类
+    	}else{
+    		CustomFormGroup customFormGroupParent=customFormGroupDao.getObjectById(customForm.getParentId());
+    		resourceMap.put("parentId", customFormGroupParent.getResourceId());//二级分类
+    	}
+    	resourceMap.put("status", 1);//状态
+    	resourceMap.put("sort", customForm.getSort());//排序
+    	resourceMap.put("openmode", 0);//打开方式
+    	resourceMap.put("remark", "");//说明
+    	resourceMap.put("isoutmenu", 0);//是否外部链接
+        if (oldMenuMap != null) {
+            oldMenuMap.putAll(resourceMap);
+            registerMenuResult = resourceDtoServiceCustomer.update(userInfo, JacksonUtils.toJson(oldMenuMap));
+        } else {
+            registerMenuResult = resourceDtoServiceCustomer.save(userInfo, JacksonUtils.toJson(resourceMap));
+        }
+        
+        //为新注册的菜单注册一个查询按钮
+        Map<String, Object> operationMap = new HashMap<String, Object>();
+        operationMap.put("name", "查询");
+        operationMap.put("code", customForm.getCode() + "_QUERY");
+        operationMap.put("appId", "9d6cba61c4b24a5699c339a49471a0e7");
+        operationMap.put("resourceId", customForm.getResourceId());
+        operationMap.put("type", "1");
+        registOperation(userInfo, operationMap);
+
+        DubboServiceResultInfo dubboServiceResultInfo = JacksonUtils.fromJson(registerMenuResult, DubboServiceResultInfo.class);
+        if (!dubboServiceResultInfo.isSucess()) {
+            throw new RuntimeException("菜单注册失败！");
+        }
+
+        return registerMenuResult;
+    }
+	
+	/**
+     * 向系统中动态注册操作按钮
+     * @param userInfo
+     * @param operationMap
+     * @return
+     * @throws Exception
+     */
+    private String registOperation(String userInfo, Map<String, Object> operationMap) {
+
+        String operationResult = operationDtoServiceCustomer.queryList(userInfo, JacksonUtils.toJson(operationMap));
+        Map<String, Object> operationResultMap = JacksonUtils.fromJson(operationResult, HashMap.class);
+
+        String oldoperationStr = (String) operationResultMap.get("result");
+        List<Map<String, Object>> list = JacksonUtils.fromJson(oldoperationStr, ArrayList.class, HashMap.class);
+        Map<String, Object> oldoperationResultMap = null;//
+        if (list != null && list.size() > 0) {
+            oldoperationResultMap = list.get(0);
+        }
+
+        String registerOperationResult = null;
+        if (oldoperationResultMap != null) {
+            oldoperationResultMap.putAll(operationMap);
+            registerOperationResult = operationDtoServiceCustomer.update(userInfo, JacksonUtils.toJson(oldoperationResultMap));
+        } else {
+            operationMap.put("id", IDGenerator.getUUID());
+            registerOperationResult = operationDtoServiceCustomer.save(userInfo, JacksonUtils.toJson(operationMap));
+        }
+
+        DubboServiceResultInfo dubboServiceResultInfo = JacksonUtils.fromJson(registerOperationResult, DubboServiceResultInfo.class);
+        if (!dubboServiceResultInfo.isSucess()) {
+            throw new RuntimeException("按钮注册失败！");
+        }
+        return registerOperationResult;
+    }
+	
+	private CustomFormGroupDto validateIsExist(String saveJson) {
+		CustomFormGroup customFormGroup=JacksonUtils.fromJson(saveJson, CustomFormGroup.class);
+		Integer isExistCode=customFormGroupDao.validateIsExist(customFormGroup,"code");
+		Integer isExistName=customFormGroupDao.validateIsExist(customFormGroup,"name");
+		CustomFormGroupDto customFormGroupDto = new CustomFormGroupDto();
+		if(isExistCode !=null && isExistCode>0){
+			customFormGroupDto.setCodeExist(true);
+		}
+		if(isExistName !=null && isExistName>0){
+			customFormGroupDto.setNameExist(true);
+		}
+		return customFormGroupDto;
+	}
+
+	@Override
+	public String validateBeforeUpdate(String userInfo, String updateJson) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		CustomFormGroupDto customFormGroupDtoVal=this.validateIsExist(updateJson);
+		try {
+			if(customFormGroupDtoVal.isCodeExist() || customFormGroupDtoVal.isNameExist()){
+				info.setResult(JacksonUtils.toJson(customFormGroupDtoVal));
+				info.setSucess(true);
+				info.setMsg("编码或名称重复！");
+			}else{
+				CustomFormGroup customFormGroup=JacksonUtils.fromJson(updateJson, CustomFormGroup.class);
+				int result= customFormGroupDao.update(customFormGroup);
+				
+				CustomFormGroup customFormGroupNew=customFormGroupDao.getObjectById(customFormGroup.getId());
+				
+				//自定义表单分类推送菜单
+				this.registerMenu(userInfo, customFormGroup);
+//				Map<String,Object> map=new HashMap<String,Object>();
+//				map.put("name", customFormGroup.getName());
+//				map.put("code", customFormGroup.getCode());
+//				String dubboResultInfo=entryDtoServiceCustomer.getObjectById(userInfo, "{\"id\":\""+customFormGroup.getId()+"\"}");
+//				DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+//				if(dubboServiceResultInfo.isSucess()){
+//					String resultInfo= dubboServiceResultInfo.getResult();
+//					Map<String,Object> oldMap=JacksonUtils.fromJson(resultInfo, HashMap.class);
+//					oldMap.putAll(map);
+//					String updateJsonEntry= JacksonUtils.toJson(oldMap);
+//					entryDtoServiceCustomer.update(userInfo, updateJsonEntry);
+//				}
+				
+				BeanUtils.copyProperties(customFormGroupNew, customFormGroupDtoVal);
+				info.setResult(JacksonUtils.toJson(customFormGroupDtoVal));
+				info.setSucess(true);
+				info.setMsg("更新对象成功!");
+			}
+		} catch (DataAccessException e) {
+			//e.printStackTrace();
+			info.setSucess(false);
+			info.setMsg("保存失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public int deleteCustomGroupById(String userInfo,String id) {
+		int result=0;
+		try {
+//			result = customFormGroupDao.deletePseudoObjectById(id);
+//			entryDtoServiceCustomer.deletePseudoObjectById(userInfo, "{\"id\":\""+id+"\"}");
+			result=this.deleteButtonAndResourceById(userInfo, id);
+		} catch (Exception e) {
+			log.error("删除对象失败!"+e.getMessage());
+		}
+		return result;
+	}
+
+	/**
+	  * @Description:删除按钮、菜单、表单分类
+	  * @author:zhangfangzhi
+	  * @date 2017年7月12日 下午5:09:38
+	  * @version V1.0
+	 */
+	private int deleteButtonAndResourceById(String userInfo, String id) throws Exception {
+		CustomFormGroup customForm = customFormGroupDao.getObjectById(id);
+		//先删除注册的按钮，如果按钮删除不成功则此数据无法删除
+        Map<String, Object> pMap = new HashMap<String, Object>();
+        pMap.put("resourceId", customForm.getResourceId());
+		String operationResult = operationDtoServiceCustomer.queryList(userInfo, JacksonUtils.toJson(pMap));
+        Map<String, Object> operationResultMap = JacksonUtils.fromJson(operationResult, HashMap.class);
+
+        String oldoperationStr = (String) operationResultMap.get("result");
+        List<Map<String, Object>> list = JacksonUtils.fromJson(oldoperationStr, ArrayList.class, HashMap.class);
+        Map<String, Object> oldoperationResultMap = null;//
+        if (list != null && list.size() > 0) {
+            oldoperationResultMap = list.get(0);
+        }
+
+        String delOperationResult = null;
+        if (oldoperationResultMap != null) {
+            delOperationResult = operationDtoServiceCustomer.deletePseudoObjectById(userInfo, "{\"id\":\"" + oldoperationResultMap.get("id") + "\"}");
+        }
+        if (delOperationResult != null) {
+            DubboServiceResultInfo delOperationResultInfo = JacksonUtils.fromJson(delOperationResult, DubboServiceResultInfo.class);
+            if (!delOperationResultInfo.isSucess()) {
+                throw new Exception("按钮删除失败！");
+            }
+        }
+
+        //再删除注册的菜单，如果菜单删除不成功则此数据无法删除
+        String menuResult = resourceDtoServiceCustomer.getObjectById(userInfo, "{\"id\":\"" + customForm.getResourceId() + "\"}");
+        DubboServiceResultInfo menuResultInfo = JacksonUtils.fromJson(menuResult, DubboServiceResultInfo.class);
+        if (!menuResultInfo.isSucess()) {
+            throw new Exception("数据删除失败！");
+        }
+
+        String menuObj = menuResultInfo.getResult();
+        Map<String, Object> menuMap = JacksonUtils.fromJson(menuObj, HashMap.class);
+        String delMenuResult = null;
+        if (menuMap != null) {
+            delMenuResult = resourceDtoServiceCustomer.deletePseudoObjectById(userInfo, "{\"id\":\"" + customForm.getResourceId() + "\"}");
+        }
+        if (delMenuResult != null) {
+            DubboServiceResultInfo delMenuResultInfo = JacksonUtils.fromJson(delMenuResult, DubboServiceResultInfo.class);
+            if (!delMenuResultInfo.isSucess()) {
+                throw new Exception("菜单删除失败！");
+            }
+        }
+		//删除业务对象的分类
+		BusinessObjectDto businessObjectDto = businessObjectService.getObjectByCode (customForm.getCode ());
+		if(businessObjectDto!=null){
+			businessObjectService.deletePseudoObjectById (businessObjectDto.getId ());
+		}
+    	return customFormGroupDao.deletePseudoObjectById(id);
+    }
+
+	@Override
+	public String saveGenerateData(String userInfo, String saveJson) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> idMaps=this.getLevelOneMaps();
+			CustomFormGroup customFormGroup=JacksonUtils.fromJson(saveJson, CustomFormGroup.class);
+			if(customFormGroup.getName()!=null && !"".equals(customFormGroup.getName())){
+				String[] rowStrs=customFormGroup.getName().split(";");
+				for(int i=0;i<rowStrs.length;i++){
+					String[] groupStrs=rowStrs[i].split(",");
+					CustomFormGroup customFormGroupNew = new CustomFormGroup();
+					customFormGroupNew.setId(IDGenerator.getUUID());
+					customFormGroupNew.setCode(groupStrs[3]);
+					customFormGroupNew.setName(groupStrs[2]);
+					customFormGroupNew.setDelflag(false);
+					customFormGroupNew.setSort(1000L+i);
+					customFormGroupNew.setCreateCompanyName("TestCustomFormGenerateData");//生成数据标识字段
+					customFormGroupNew.setResourceId(IDGenerator.getUUID());
+					if("1".equals(customFormGroup.getCode())){
+						customFormGroupNew.setParentId("0");
+					}else{
+						if(idMaps==null || idMaps.get(groupStrs[1])==null){
+							continue;
+						}
+						CustomFormGroup customFormGroupLevelOne=(CustomFormGroup) idMaps.get(groupStrs[1]);
+						
+						customFormGroupNew.setParentId(customFormGroupLevelOne.getId());
+					}
+					customFormGroupDao.save(customFormGroupNew);
+					
+					//自定义表单分类推送菜单
+					this.registerMenu(userInfo, customFormGroupNew);
+					
+//					EntryDto entryDto=new EntryDto();
+//					entryDto.setId(customFormGroupNew.getId());
+//					entryDto.setCode(customFormGroupNew.getCode());
+//					entryDto.setName(customFormGroupNew.getName());
+//					entryDto.setStatus(1);
+//					entryDto.setDelflag(false);
+//					entryDto.setCreateCompanyName("TestCustomFormGenerateData");
+//					entryDto.setIsInner(1);
+//					entryDto.setParentId("0");
+//					String entryJson= JacksonUtils.toJson(entryDto);
+//					entryDtoServiceCustomer.save(userInfo, entryJson);
+				}
+				info.setSucess(true);
+				info.setMsg("保存成功！");
+			}
+		} catch (DataAccessException e) {
+			//e.printStackTrace();
+			info.setSucess(false);
+			info.setMsg("保存失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	private Map<String, Object> getLevelOneMaps() {
+		Map<String, Object> resultMap=new HashMap<String, Object>();
+		Map<String, Object> paramMap=new HashMap<String, Object>();
+		paramMap.put("parentId", "0");
+		paramMap.put("delflag", "0");
+		List<CustomFormGroup> list=customFormGroupDao.queryList(paramMap);
+		if(list!=null && list.size()>0){
+			for(int i=0;i<list.size();i++){
+				CustomFormGroup customFormGroup=list.get(i);
+				resultMap.put(customFormGroup.getCode(), customFormGroup);
+			}
+		}
+		return resultMap;
+	}
+
+	@Override
+	public Integer getCustomFormGroupCountByPID(String id) {
+		return customFormGroupDao.getCustomFormGroupCountByPID(id);
+	}
+
+	@Override
+	public List queryListForQuickEntry(Map map) {
+		return customFormGroupDao.queryListForQuickEntry(map);
+	}
+
+	@Override
+	public int updateSort(CustomFormGroup object, Map<String, Object> map) {
+		String  sortType= String.valueOf(map.get("sortType"));
+		Long sort1 = object.getSort();
+		String parentId = object.getParentId();
+		map.clear();
+		map.put("parentId", parentId);
+		List<CustomFormGroup> rulerList = customFormGroupDao.queryListForQuickEntry(map);
+		if("1".equals(sortType)){
+			for (int i = 0; i < rulerList.size(); i++) {
+				Long sort2 = rulerList.get(i).getSort();
+				if(sort2.longValue()==sort1.longValue()&&i!=0){
+					Long sort3 = rulerList.get(i-1).getSort();
+					rulerList.get(i-1).setSort(sort2);
+					rulerList.get(i).setSort(sort3);
+					customFormGroupDao.updateSort(rulerList.get(i-1));
+					customFormGroupDao.updateSort(rulerList.get(i));
+					break;
+				}
+			}
+		}else if("2".equals(sortType)){
+			for (int i = 0; i < rulerList.size(); i++) {
+				Long sort2 = rulerList.get(i).getSort();
+				if(sort2.longValue()==sort1.longValue()&&i!=rulerList.size()-1){
+					Long sort3 = rulerList.get(i+1).getSort();
+					rulerList.get(i+1).setSort(sort2);
+					rulerList.get(i).setSort(sort3);
+					customFormGroupDao.updateSort(rulerList.get(i+1));
+					customFormGroupDao.updateSort(rulerList.get(i));	
+					break;
+				}
+			}
+		}
+		return 1;
+	}
+}

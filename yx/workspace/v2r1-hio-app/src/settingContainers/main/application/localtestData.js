@@ -1,0 +1,110 @@
+let data={
+    app:[{
+        "category": "协同办公",
+        "items": [{
+            "name": "项目",
+            "category": "协同办公",
+            "remark": "夸企业协同工具，承载协同工作主要工具。",
+            "status": true,
+            "icon": "项#e06741",
+            "sid": "1001"
+        }, {
+            "name": "任务",
+            "category": "协同办公",
+            "remark": "管理团队成员的工作，可随时随地反馈和有效跟踪，多应用关联。",
+            "status": true,
+            "icon": "任#0099ff",
+            "sid": "1002"
+        }, {
+            "name": "日程",
+            "category": "协同办公",
+            "remark": "基于时间的协作工具，相互知晓同事的时间占用，避免工作冲突。",
+            "status": false,
+            "icon": "日#00cccc",
+            "sid": "1003"
+        }, {
+            "name": "审批",
+            "category": "协同办公",
+            "remark": "简化签批流程，提高工作效率，强化企业管理流程。",
+            "status": false,
+            "icon": "审#ff9900",
+            "sid": "1004"
+        }]
+    }, {
+    "category": "营销管理（CRM）",
+        "items": [{
+        "name": "客户/联系人",
+        "category": "营销管理（CRM）",
+        "remark": "客户/联系人是销售管理的核心，有效的管理企业资源才是保证企业长期发展的重要数据。\r\n\r\n",
+        "status": false,
+        "icon": "客#cc6600",
+        "sid": "1005"
+    }, {
+        "name": "商机\r\n\r\n",
+        "category": "营销管理（CRM）",
+        "remark": "需要多人培训跟进的项目。",
+        "status": false,
+        "icon": "商#00cccc",
+        "sid": "1006"
+    }, {
+        "name": "订单",
+        "category": "营销管理（CRM）",
+        "remark": "营销的核心目标，先定一个小目标......",
+        "status": false,
+        "icon": "订#ff9900",
+        "sid": "1007"
+    }]
+}, {
+    "category": "文档管理",
+        "items": [{
+        "name": "网盘",
+        "category": "文档管理",
+        "remark": "企业网盘，全文检索，可授权的网络存储。",
+        "status": false,
+        "icon": "盘#cc6600",
+        "sid": "1008"
+    }, {
+        "name": "新闻",
+        "category": "文档管理",
+        "remark": "信息发布，意见收集。",
+        "status": false,
+        "icon": "新#00cccc",
+        "sid": "1009"
+    }]
+}, {
+    "category": "汇报日志",
+        "items": [{
+        "name": "日志",
+        "category": "汇报日志",
+        "remark": "每日计划，工作记录，工作小结，评阅指导\r\n\r\n每日计划，工作记录，工作小结，评阅指导.",
+        "status": false,
+        "icon": "志#cc6600",
+        "sid": "1010"
+    }, {
+        "name": "计划",
+        "category": "汇报日志",
+        "remark": "记录每周、每月、每年达成了哪些工作成效，总结成长的心得\r\n\r\n",
+        "status": false,
+        "icon": "计#0099ff",
+        "sid": "1011"
+    }]
+}, {
+    "category": "行政办公",
+        "items": [{
+        "name": "办公用品\r\n\r\n",
+        "category": "行政办公",
+        "remark": "办公用品库存管理。",
+        "status":false,
+        "icon": "品#999933",
+        "sid": "1012"
+    }, {
+        "name": "会议/会议室",
+        "category": "行政办公",
+        "remark": "会议及会议室的管理，发布等",
+        "status": false,
+        "icon": "会#0099ff",
+        "sid": "1013"
+    }]
+}]
+}
+export default data

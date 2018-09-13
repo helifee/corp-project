@@ -1,0 +1,153 @@
+package com.jzy.hio.base.service.impl;
+
+import java.io.Serializable;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.collections.MapUtils;
+
+import com.github.pagehelper.PageHelper;
+import com.github.pagehelper.PageInfo;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.service.BasePortalService;
+import com.jzy.hio.base.utils.Page;
+import com.jzy.hio.base.utils.PageColumnParse;
+import com.jzy.hio.util.ClassUtils;
+
+import tk.mybatis.mapper.entity.Example;
+import tk.mybatis.mapper.entity.Example.Criteria;
+
+/**
+ * 
+ * @author coffee<br/>
+ *
+ * @param <K>
+ * @param <T>2018年1月30日下午2:50:22
+ */
+public class BasePortalServiceImpl<K extends Serializable, T> extends BaseServiceImpl<K, T> implements BasePortalService<K, T> {
+
+	/**
+	 * 去掉dubbo相关的代码以后, 兼容老的接口 , 此接口重写<br/>
+	 * 
+	 * <pre>
+		{contentTypeId=093a04cc974e4035b2b2041bac3d347e, 
+			groupByFields=["relationId","status"], sortFields={"stick":"desc","newsCustomStatus":"ASC","publishDate":"desc"},
+			contentType=NEWS, status=PUBLISHED, loadinit=true, _search=false, nd=1517552679245, 
+			rows=20, page=1, sidx=sort, sord=desc, start=0, limit=20
+		}
+	 * 
+	 * </pre>
+	 * 
+	 * @param paramMap
+	 *            <br/>
+	 * @return 2018年1月30日下午2:46:30
+	 */
+	@Override
+	public Page getPage(Map<String, Object> paramMap) {
+		// --{delflag=false, serveyType=1, _search=false, nd=1517295708143, rows=20, page=1, sidx=, sord=asc, start=0, limit=20, createPersonId=aa00d0ae42134f0b99c96f37931eee78}
+		// {delflag=false, serveyType=1, _search=false, nd=1517298629347, rows=20, page=1, sidx=, sord=asc, start=0, limit=20, name=111, fuzzyQueryFields=["name"],
+		// createPersonId=aa00d0ae42134f0b99c96f37931eee78}
+		// --{contentTypeId=093a04cc974e4035b2b2041bac3d347e, groupByFields=["relationId","status"], sortFields={"stick":"desc","newsCustomStatus":"ASC","publishDate":"desc"},
+		// contentType=NEWS, status=PUBLISHED, loadinit=true, _search=false, nd=1517552679245, rows=20, page=1, sidx=sort, sord=desc, start=0, limit=20}
+		int startPage = 1;
+		int limit = 0;
+		Integer page = MapUtils.getInteger(paramMap, "start");
+		if (page != null) {
+			startPage = page;
+		}
+		Page currentpage = new Page();
+		Integer pageLimit = MapUtils.getInteger(paramMap, "limit");
+		if (pageLimit != null) {
+			limit = pageLimit;
+		} else {
+			limit = currentpage.getLimit();
+		}
+		
+		// 删除跟查询条件无关的列
+		paramMap.remove("page");// 分页相关
+		paramMap.remove("start");
+		paramMap.remove("limit");
+		paramMap.remove("rows");
+		paramMap.remove("sidx");// 排序相关
+		paramMap.remove("sord");
+		paramMap.remove("_search");
+
+		PageHelper.startPage(startPage == 0 ? 0 : ((startPage - 1) * limit), limit, true);
+
+		Class<?> tClass = ClassUtils.getGenericClass(this.getClass(), 1);
+		// 组装查询
+		Map<String, String> map = PageColumnParse.getClassColumnMap(tClass);
+		// sortFields={"stick":"desc","newsCustomStatus":"ASC","publishDate":"desc"},
+		String sortFields = MapUtils.getString(paramMap, "sortFields");// 用于排序的字段
+		StringBuilder orderBy = new StringBuilder();
+		if (isNotEmpty(sortFields)) {
+			sortFields = sortFields.replace("{", "").replace("}", "").replace("\"", "").replace(":", " ");
+			String[] items = sortFields.split(",");
+			// item "publishDate desc" -- publishDate是java字段、不是表中的列
+			for (String item : items) {
+				String[] columnSort = item.trim().split(" ");
+				if (isField(tClass, columnSort[0]) == false) {
+					continue;
+				} else {
+					if (orderBy.length() > 0) {
+						orderBy.append(",");
+					}
+					String column = map.get(columnSort[0]);
+					orderBy.append(column).append(" ").append(columnSort[1]);
+				}
+			}
+		}
+		// 处理分组
+		// groupByFields=["relationId","status"]
+		String groupByFields = MapUtils.getString(paramMap, "groupByFields");
+		StringBuilder groupBy = new StringBuilder();
+		if(isNotEmpty(groupByFields)){
+			groupByFields = groupByFields.replace("\"", "");
+			groupBy.append(groupByFields);
+		}
+	
+		// 模糊查询的字段
+		String fuzzyColumns = MapUtils.getString(paramMap, "fuzzyQueryFields");
+
+		Example example = new Example(tClass);
+		Criteria criteria = example.createCriteria();
+
+		for (String key : paramMap.keySet()) {
+			// 不是数据库字段
+			if (map.containsKey(key) == false) {
+				continue;
+			}
+			Object value = paramMap.get(key);
+			String column = map.get(key);
+			// 该字段是模糊查询
+			if (fuzzyColumns != null && fuzzyColumns.contains(key)) {
+				criteria.andLike(column, "%" + String.valueOf(value) + "%");
+			} else {
+				criteria.andEqualTo(column, value);
+			}
+		}
+		if (orderBy.length() > 0) {
+			example.setOrderByClause(orderBy.toString());
+		}
+		if(groupBy.length() > 0){
+//			example.c
+		}
+		List<T> selectByExample = baseMapper.selectByExample(example);
+
+		PageInfo<T> pageInfo = new PageInfo<T>(selectByExample);
+		Page resultPage = getResultPage(pageInfo);
+		return resultPage;
+	}
+
+	/**
+	 * 判断对象是否为空、适用于集合、自定义Object、String <br/>
+	 * 
+	 * @param obj
+	 *            <br/>
+	 * @return 2018年1月31日上午11:14:34
+	 */
+	protected boolean isNotEmpty(Object obj) {
+		return Base.isNotEmpty(obj);
+	}
+
+}

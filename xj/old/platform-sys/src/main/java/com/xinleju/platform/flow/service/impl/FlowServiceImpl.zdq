@@ -1,0 +1,249 @@
+package com.xinleju.platform.flow.service.impl;
+
+import java.util.List;
+import java.util.Map;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpSession;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+
+import com.alibaba.druid.util.StringUtils;
+import com.xinleju.platform.base.datasource.DataSourceContextHolder;
+import com.xinleju.platform.base.utils.LoginUtils;
+import com.xinleju.platform.base.utils.SecurityUserBeanInfo;
+import com.xinleju.platform.base.utils.SecurityUserDto;
+import com.xinleju.platform.flow.dto.AcDto;
+import com.xinleju.platform.flow.dto.FlowApproveViewBean;
+import com.xinleju.platform.flow.dto.FlowQueryBean;
+import com.xinleju.platform.flow.dto.InstanceAcDto;
+import com.xinleju.platform.flow.dto.InstanceDto;
+import com.xinleju.platform.flow.dto.MobileFormDto;
+import com.xinleju.platform.flow.dto.UserDto;
+import com.xinleju.platform.flow.dto.service.FlowService;
+import com.xinleju.platform.flow.dto.utils.FlowResult;
+import com.xinleju.platform.flow.enumeration.FlAcType;
+import com.xinleju.platform.flow.exception.FlowException;
+import com.xinleju.platform.flow.service.FlService;
+import com.xinleju.platform.flow.service.InstanceService;
+import com.xinleju.platform.flow.service.MobileFormService;
+import com.xinleju.platform.sys.org.dto.FlowPostParticipantDto;
+
+@Service
+public class FlowServiceImpl implements FlowService {
+
+	private static Logger log = Logger.getLogger("flowLogger");
+	
+	@Autowired
+	private InstanceService instanceService;
+	
+	@Autowired
+	private FlService flService;
+	
+	@Autowired
+	private MobileFormService mobileFormService;
+
+	/**
+	 * 移动端提交流程
+	 * 1、移动端提交流程时无审批记录，只有业务表单
+	 * 2、根据岗位反查发起公司、部门等
+	 * 3、检查模板
+	 * 4、发起流程
+	 */
+	@Override
+	public FlowResult<String> startFlow(String userInfo, String startUserId, 
+			String userNote, String flCode, String bizId) {
+		
+		log.info("移动端提交流程:startUserId=" + startUserId
+				+ "userNote=" + userNote + ", flCode=" + flCode + ", bizId=" + bizId);
+		
+		FlowResult<String> flowResult = new FlowResult<String>();
+		
+//		setDataSource(tendCode);				//当前dubbo服务起作用
+//		setCurrentUser(startUserId, tendCode);	//内嵌dubbo服务起作用
+
+		InstanceDto instanceDto = flService.startForMobile(null, flCode, bizId);
+		instanceDto.setStartUserId(startUserId);
+		
+		//校验岗位为空
+		String validateMsg = validate(instanceDto);
+		if(!"success".equals(validateMsg)) {
+			flowResult.setSuccess(false);
+			flowResult.setMsg(validateMsg);
+			log.info("移动端流程发起时检查异常：instanceId=" + instanceDto.getId() + ", msg=" + validateMsg);
+			return flowResult;
+		}
+		
+		log.info("第三方系统调用流程发起接口：instanceId=" + instanceDto.getId());
+
+		String instanceId = null;
+		try {
+			instanceId = instanceService.saveAllInstanceDataForMobile(instanceDto);
+		} catch (Exception e) {
+			flowResult.faliure();
+			throw new FlowException("流程发起失败：" + e.getMessage(), e);
+		}
+		
+		flowResult.setResult(instanceId);
+		flowResult.setSuccess(true);
+		flowResult.setMsg("流程发起成功！");
+		
+		return flowResult;
+	}
+
+	private String validate(InstanceDto instanceDto) {
+		for(int i=0; i<instanceDto.getAcDtoList().size() - 1; i++) {
+			AcDto acDto = instanceDto.getAcDtoList().get(i);
+			
+			boolean setInTemplateOrStart = (acDto.getIsAddLabel() == null) ? false : acDto.getIsAddLabel();
+			boolean isStart = (acDto.getIsStart() == null) ? false : acDto.getIsStart();
+			
+			if(FlAcType.FORK.getAcType().equals(acDto.getAcType()) 
+					|| FlAcType.JOIN.getAcType().equals(acDto.getAcType())
+					|| FlAcType.END.getAcType().equals(acDto.getAcType())) {
+				continue;
+			}
+			
+			if(StringUtils.isEmpty(acDto.getPosts())) {
+				if("1".equals(acDto.getPostIsNull()) 
+						|| StringUtils.isEmpty(acDto.getPostIsNull())) {
+					return "岗位为空！";
+				}
+			} else {
+				if(CollectionUtils.isEmpty(acDto.getFlowPostParticipantDtos())) {
+					if("1".equals(acDto.getApprovalPersonIsNull()) 
+							|| StringUtils.isEmpty(acDto.getApprovalPersonIsNull())) {
+						return "审批人为空！";
+					}
+				} else {
+					for(FlowPostParticipantDto post : acDto.getFlowPostParticipantDtos()) {
+						//发起人指定审批人
+						if(setInTemplateOrStart) {
+							if(isStart && StringUtils.isEmpty(post.getUserId())) {
+								return "审批人为空, 请选择！";
+							}
+							
+							//在模板指定审批人
+						} else {
+							//岗位为空检查:postNull=1表示不能发起postNull=''表示未配置
+							if(StringUtils.isEmpty(post.getPostId())) {
+								if("1".equals(acDto.getPostIsNull()) 
+										|| StringUtils.isEmpty(acDto.getPostIsNull())) {
+									return "岗位为空！";
+								}
+								
+							} else {
+								//审批人为空检查
+								if(StringUtils.isEmpty(post.getUserId())) {
+									if("1".equals(acDto.getApprovalPersonIsNull()) 
+											|| StringUtils.isEmpty(acDto.getApprovalPersonIsNull())) {
+										return "审批人为空！";
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		
+		//校验有无结束节点
+		List<AcDto> acDtoList = instanceDto.getAcDtoList();
+		AcDto end = acDtoList.get(acDtoList.size() - 1);
+		if(!FlAcType.END.getAcType().equals(end.getAcType())) {
+			return "流程没有结束节点，请检查！";
+		}
+		
+		return "success";
+	}
+
+	@Override
+	public FlowResult<FlowApproveViewBean> queryFlowData(FlowQueryBean params) {
+		log.info("移动端接口查询流程数据：参数=" + params);
+		FlowResult<FlowApproveViewBean> flowResult = new FlowResult<FlowApproveViewBean>();
+		
+		setDataSource(params.getTendCode());
+		
+		FlowApproveViewBean viewBean = null;
+		try {
+			viewBean = instanceService.flowView(params);
+			List<MobileFormDto> mobileForms = mobileFormService.queryMobileFormBy(params.getFlCode(), params.getBusinessId());
+			viewBean.setMobileForms(mobileForms);
+			
+		} catch (Exception e) {
+			flowResult.setSuccess(false);
+			flowResult.setMsg(e.getMessage());
+			return flowResult;
+		}
+		
+		flowResult.setSuccess(true);
+		flowResult.setResult(viewBean);
+		
+		log.info("移动端接口查询流程数据返回：" + flowResult.getResult());
+		return flowResult;
+	}
+	
+	private String setDataSource(String tendCode) {
+		String dataSourceTypeOld = DataSourceContextHolder.getDataSourceType();
+		DataSourceContextHolder.clearDataSourceType();
+		DataSourceContextHolder.setDataSourceType(tendCode);
+		return dataSourceTypeOld;
+	}
+	
+	private void setCurrentUser(String startUserId, String tendCode) {
+		SecurityUserBeanInfo securityUserBeanInfo = new SecurityUserBeanInfo();
+		securityUserBeanInfo.setTendCode(tendCode);
+		SecurityUserDto securityUserDto = new SecurityUserDto();
+		securityUserDto.setId(startUserId);
+		securityUserDto.setRealName(startUserId);
+		securityUserBeanInfo.setSecurityUserDto(securityUserDto);
+		LoginUtils.setSecurityUserBeanInfo(securityUserBeanInfo);
+		
+//		setSecurityUserBeanInfo(securityUserBeanInfo);
+	}
+	
+	public void setSecurityUserBeanInfo(SecurityUserBeanInfo user) {
+		HttpServletRequest request = ((ServletRequestAttributes) RequestContextHolder.getRequestAttributes())
+				.getRequest();
+		HttpSession session = request.getSession();
+		session.setAttribute(SecurityUserBeanInfo.TOKEN_TEND_USER, user);
+	}
+
+	@Override
+	public FlowResult<List<Map<String, String>>> queryFlowTemplateBy(String userInfo, String businessCode) {
+		FlowResult<List<Map<String, String>>> flowResult = new FlowResult<List<Map<String, String>>>();
+		List<Map<String, String>>flowList = flService.queryFlowTemplateBy(businessCode);
+		flowResult.setResult(flowList);
+		return flowResult;
+	}
+
+	@Override
+	public FlowResult<Map<String, List<UserDto>>> queryCurrentApproversOf(String userInfo,
+			List<FlowQueryBean> flowInfos) {
+		FlowResult<Map<String, List<UserDto>>> result = new FlowResult<Map<String, List<UserDto>>>();
+		if(StringUtils.isEmpty(userInfo) || CollectionUtils.isEmpty(flowInfos)) {
+			result.setSuccess(false);
+			result.setMsg("params error");
+			return result;
+		}
+		
+		Map<String, List<UserDto>> usersMap = instanceService.queryCurrentApproversOf(flowInfos);
+		result.setResult(usersMap);
+		result.setSuccess(true);
+		return result;
+	}
+
+	@Override
+	public FlowResult<List<InstanceAcDto>> queryCurrentNodeOf(String userInfo, FlowQueryBean flowInfo) {
+		FlowResult<List<InstanceAcDto>> result = new FlowResult<List<InstanceAcDto>>();
+		List<InstanceAcDto> acList = instanceService.queryCurrentNodeOf(flowInfo);
+		result.setResult(acList);
+		result.setSuccess(true);
+		return result;
+	}
+}

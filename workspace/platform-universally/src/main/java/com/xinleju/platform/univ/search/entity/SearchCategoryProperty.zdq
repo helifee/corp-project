@@ -1,0 +1,130 @@
+package com.xinleju.platform.univ.search.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author haoqp
+ * 
+ * 
+ */
+
+@Table(value="PT_UNIV_SEARCH_CATEGORY_PROPERTY",desc="分类属性表")
+public class SearchCategoryProperty extends BaseEntity{
+	
+		
+	@Column(value="code",desc="属性编码")
+	private String code;
+    
+  		
+	@Column(value="name",desc="属性名称")
+	private String name;
+    
+  		
+	@Column(value="category",desc="属性类别：0=系统;1=自定义")
+	private Integer category;
+    
+  		
+	@Column(value="type",desc="属性数据类型")
+	private String type;
+    
+  		
+	@Column(value="default_value",desc="默认值")
+	private String defaultValue;
+    
+  		
+	@Column(value="is_display",desc="是否显示")
+	private Boolean isDisplay;
+    
+  		
+	@Column(value="is_search_item",desc="是否参数检索")
+	private Boolean isSearchItem;
+
+	
+	@Column(value="category_id",desc="检索分类主键ID")
+	private String categoryId;
+	
+	@Column(value="is_order_item",desc="是否排序")
+	private Boolean isOrderItem;
+	
+	@Column(value="status",desc="状态：0-启用;1-禁用")
+	private Boolean status;
+		
+	public String getCode() {
+		return code;
+	}
+	public void setCode(String code) {
+		this.code = code;
+	}
+    
+  		
+	public String getName() {
+		return name;
+	}
+	public void setName(String name) {
+		this.name = name;
+	}
+    
+  		
+	public Integer getCategory() {
+		return category;
+	}
+	public void setCategory(Integer category) {
+		this.category = category;
+	}
+    
+  		
+	public String getType() {
+		return type;
+	}
+	public void setType(String type) {
+		this.type = type;
+	}
+    
+  		
+	public String getDefaultValue() {
+		return defaultValue;
+	}
+	public void setDefaultValue(String defaultValue) {
+		this.defaultValue = defaultValue;
+	}
+    
+  		
+	public Boolean getIsDisplay() {
+		return isDisplay;
+	}
+	public void setIsDisplay(Boolean isDisplay) {
+		this.isDisplay = isDisplay;
+	}
+    
+  		
+	public Boolean getIsSearchItem() {
+		return isSearchItem;
+	}
+	public void setIsSearchItem(Boolean isSearchItem) {
+		this.isSearchItem = isSearchItem;
+	}
+	public String getCategoryId() {
+		return categoryId;
+	}
+	public void setCategoryId(String categoryId) {
+		this.categoryId = categoryId;
+	}
+	public Boolean getIsOrderItem() {
+		return isOrderItem;
+	}
+	public void setIsOrderItem(Boolean isOrderItem) {
+		this.isOrderItem = isOrderItem;
+	}
+	public Boolean getStatus() {
+		return status;
+	}
+	public void setStatus(Boolean status) {
+		this.status = status;
+	}
+    
+  		
+	
+}

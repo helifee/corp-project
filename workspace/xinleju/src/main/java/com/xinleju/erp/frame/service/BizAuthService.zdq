@@ -1,0 +1,415 @@
+package com.xinleju.erp.frame.service;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+
+import javax.servlet.http.Cookie;
+import javax.servlet.http.HttpServletRequest;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.http.HttpEntity;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.util.EntityUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.erp.base.app.bean.Page;
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.frame.dao.BizDataCtrlDao;
+import com.xinleju.erp.frame.dao.BizDataFieldDao;
+import com.xinleju.erp.frame.dao.BizDataRoleDao;
+import com.xinleju.erp.frame.dao.BizDataScopeDao;
+import com.xinleju.erp.frame.dto.BizAuthListDTO;
+import com.xinleju.erp.frame.dto.BizAuthScopeListDTO;
+import com.xinleju.erp.frame.dto.BizAuthScopeOtherOptionDTO;
+import com.xinleju.erp.frame.models.BizDataCtrl;
+import com.xinleju.erp.frame.models.BizDataField;
+import com.xinleju.erp.frame.models.BizDataRole;
+import com.xinleju.erp.frame.models.BizDataScope;
+@Service
+@Transactional
+public class BizAuthService extends BaseService {
+	@Autowired
+    private BizDataCtrlDao bizDataCtrlDao;
+	@Autowired
+	private BizDataScopeDao bizDataScopeDao;
+	@Autowired
+	private BizDataFieldDao bizDataFieldDao;
+	@Autowired
+	private BizDataRoleDao bizDataRoleDao;
+	
+	/**
+	 * 通过功能模块获取数据权限列表
+	 * @param systemCode
+	 * @return
+	 */
+	public List<BizAuthListDTO> getBizModuleList(String systemCode, Long roleId){
+		List<BizDataCtrl> bizDataCtrls = bizDataCtrlDao.getByModuleCode(systemCode);
+		List<BizDataField> bizDataFields = bizDataFieldDao.getByModuleCode(systemCode);
+		List<BizDataScope> bizDataScopes = bizDataScopeDao.getByModuleCode(systemCode);
+		List<BizDataRole> bizDataRoles_db = bizDataRoleDao.getByModuleCode(roleId, systemCode);
+		List<BizAuthListDTO> bizAuthListDTOs = new ArrayList<BizAuthListDTO>(bizDataFields.size());
+		BizAuthListDTO bizAuthListDTO;
+		BizAuthScopeListDTO bizAuthScopeListDTO;
+		for(BizDataField bizDataField : bizDataFields){
+			for(BizDataCtrl bizDataCtrl : bizDataCtrls){
+				if(bizDataField.getCtrlId().longValue() == bizDataCtrl.getId().longValue()){
+					bizAuthListDTO = new BizAuthListDTO();
+					bizAuthListDTO.setDataCtrlName(bizDataCtrl.getName());
+					bizAuthListDTO.setDataFieldName(bizDataField.getName());
+					bizAuthListDTO.setDataFieldId(bizDataField.getId());
+					for(BizDataScope bizDataScope : bizDataScopes){
+						if(bizDataScope.getFieldId().longValue() == bizDataField.getId().longValue()){
+							bizAuthScopeListDTO = new BizAuthScopeListDTO();
+							bizAuthScopeListDTO.setDataScopeName(bizDataScope.getName());
+							bizAuthScopeListDTO.setDataScopeUrl(bizDataScope.getUrl());
+							bizAuthScopeListDTO.setDataScopeId(bizDataScope.getId());
+							for(BizDataRole bizDataRole_temp : bizDataRoles_db){
+								if(bizDataRole_temp.getScopeId().longValue() == bizDataScope.getId().longValue()){
+									bizAuthScopeListDTO.setIsSelected((byte)1);
+									bizAuthScopeListDTO.setOtherOptions(bizDataRole_temp.getOtherOptions());
+								}
+							}
+							bizAuthListDTO.getDataScopeList().add(bizAuthScopeListDTO);
+						}
+					}
+					bizAuthListDTOs.add(bizAuthListDTO);
+					break;
+				}
+			}
+		}
+		return bizAuthListDTOs;
+	}
+	
+	/**
+	 * 获取选取的业务控制点维度
+	 * @param request
+	 * @param systemCode
+	 * @param roleId
+	 * @return
+	 */
+	public List<BizDataRole> getSelectedScopeOption(HttpServletRequest request, String systemCode, Long roleId){
+		List<BizDataField> bizDataFieldList = bizDataFieldDao.getByModuleCode(systemCode);
+		List<BizDataRole> bizDataRoles = new ArrayList<BizDataRole>();
+		BizDataRole bizDataRole;
+		//获取所选权限
+		for(BizDataField bizDataField : bizDataFieldList){
+			String scopeIdStr = request.getParameter("scopeIds_"+bizDataField.getId().longValue());
+			if(StringUtils.isNotBlank(scopeIdStr)){
+				long scopeId = -1;
+				String otherOptions = null;
+				if(scopeIdStr.contains("-")){
+					//多选
+					String[] scopeInfos = StringUtils.split(scopeIdStr, "-");
+					scopeId = Long.parseLong(scopeInfos[0].trim());
+					otherOptions = scopeInfos[1].trim();
+				}else{
+					scopeId = Long.parseLong(scopeIdStr.trim());
+				}
+				bizDataRole = new BizDataRole();
+				bizDataRole.setCreateDate(new Date());
+				bizDataRole.setRoleId(roleId);
+				bizDataRole.setScopeId(scopeId);
+				bizDataRole.setFieldId(bizDataField.getId());
+				bizDataRole.setOtherOptions(otherOptions);
+				bizDataRoles.add(bizDataRole);
+			}
+		}
+		return bizDataRoles;
+	}
+	
+	/**
+	 * 多角色
+	 * @param request
+	 * @param systemCode
+	 * @param roleIds
+	 * @return
+	 */
+	public List<BizDataRole> getSelectedScopeOption(HttpServletRequest request, String systemCode, String roleIds) {
+		List<BizDataField> bizDataFieldList = bizDataFieldDao.getByModuleCode(systemCode);
+		List<BizDataRole> bizDataRoles = new ArrayList<BizDataRole>();
+		BizDataRole bizDataRole;
+		// 获取所选权限
+		for (BizDataField bizDataField : bizDataFieldList) {
+			String scopeIdStr = request.getParameter("scopeIds_" + bizDataField.getId().longValue());
+			if (StringUtils.isNotBlank(scopeIdStr)) {
+				long scopeId = -1;
+				String otherOptions = null;
+				if (scopeIdStr.contains("-")) {
+					// 多选
+					String[] scopeInfos = StringUtils.split(scopeIdStr, "-");
+					scopeId = Long.parseLong(scopeInfos[0].trim());
+					otherOptions = scopeInfos[1].trim();
+				} else {
+					scopeId = Long.parseLong(scopeIdStr.trim());
+				}
+				String[] ids = roleIds.split(",");
+				
+				for (String rid : ids) {
+					if (rid != null) {
+						bizDataRole = new BizDataRole();
+						bizDataRole.setCreateDate(new Date());
+						bizDataRole.setRoleId(Long.valueOf(rid));
+						bizDataRole.setScopeId(scopeId);
+						bizDataRole.setFieldId(bizDataField.getId());
+						bizDataRole.setOtherOptions(otherOptions);
+						bizDataRoles.add(bizDataRole);
+					}
+				}
+			}
+		}
+		return bizDataRoles;
+	}
+	
+	/**
+	 * 保存业务控制点维度
+	 * @param systemCode
+	 * @param roleId
+	 * @param bizDataRoles
+	 */
+	public void save1(String systemCode, Long roleId, List<BizDataRole> bizDataRoles){
+		//分离删除、插入
+		List<BizDataRole> bizDataRoles_db = bizDataRoleDao.getByModuleCode(roleId, systemCode);
+		BizDataRole bizDataRole_db;
+		BizDataRole bizDataRole;
+		for(int i = bizDataRoles_db.size() - 1; i >= 0; i--){
+			bizDataRole_db = bizDataRoles_db.get(i);
+			for(int s = bizDataRoles.size() - 1; s >= 0; s--){
+				bizDataRole = bizDataRoles.get(s);
+				if(bizDataRole_db.getFieldId().longValue() == bizDataRole.getFieldId().longValue()){
+					if(bizDataRole_db.getScopeId().longValue() == bizDataRole.getScopeId().longValue()){
+						if((bizDataRole_db.getOtherOptions() == null && bizDataRole.getOtherOptions() == null) ||
+							(bizDataRole_db.getOtherOptions() != null && bizDataRole_db.getOtherOptions().equals(bizDataRole.getOtherOptions()))){
+							//完全相同，不用做任何操作
+							bizDataRoles_db.remove(i);
+							bizDataRoles.remove(s);
+							break;
+						}
+					}
+				}
+			}
+		}
+		//执行删除操作
+		for(BizDataRole bizDataRole_temp : bizDataRoles_db){
+			getDao().delete(bizDataRole_temp);
+		}
+		//执行插入操作
+		for(BizDataRole bizDataRole_temp : bizDataRoles){
+			getDao().save(bizDataRole_temp);
+		}
+	}
+	
+	/**
+	 * 多角色保存业务控制点维度
+	 * @param systemCode
+	 * @param roleId
+	 * @param bizDataRoles
+	 */
+	public void saves1(String systemCode, String roleIds, List<BizDataRole> bizDataRoles){
+		//分离删除、插入
+		List<BizDataRole> bizDataRoles_db=new ArrayList<BizDataRole>();
+		String[] ids = roleIds.split(",");
+		for (String rid : ids) {
+			if (rid != null) {
+				bizDataRoles_db.addAll(bizDataRoleDao.getByModuleCode(Long.valueOf(rid), systemCode));
+			}
+		}
+		BizDataRole bizDataRole_db;
+		BizDataRole bizDataRole;
+		for(int i = bizDataRoles_db.size() - 1; i >= 0; i--){
+			bizDataRole_db = bizDataRoles_db.get(i);
+			for(int s = bizDataRoles.size() - 1; s >= 0; s--){
+				bizDataRole = bizDataRoles.get(s);
+				if(bizDataRole_db.getFieldId().longValue() == bizDataRole.getFieldId().longValue()){
+					if(bizDataRole_db.getScopeId().longValue() == bizDataRole.getScopeId().longValue()){
+						if((bizDataRole_db.getOtherOptions() == null && bizDataRole.getOtherOptions() == null) ||
+							(bizDataRole_db.getOtherOptions() != null && bizDataRole_db.getOtherOptions().equals(bizDataRole.getOtherOptions()))){
+							//完全相同，不用做任何操作
+							bizDataRoles_db.remove(i);
+							bizDataRoles.remove(s);
+							break;
+						} 
+					}
+				}
+			}
+		}
+		//执行删除操作
+		for(BizDataRole bizDataRole_temp : bizDataRoles_db){
+			getDao().delete(bizDataRole_temp);
+		}
+		//执行插入操作
+		for(BizDataRole bizDataRole_temp : bizDataRoles){
+			getDao().save(bizDataRole_temp);
+		}
+	}
+	/**
+     * 删除数据授权
+     * @author jdq
+     * @param roleId
+     */
+    public void deleteRoleData(Long roleId){
+    	//分离删除、插入
+		List<BizDataRole> bizDataRoles_db = bizDataRoleDao.getByModuleCodeByRoleId(roleId);
+		//执行删除操作
+		for(BizDataRole bizDataRole_temp : bizDataRoles_db){
+			getDao().delete(bizDataRole_temp);
+		}
+    }
+	/**
+	 * 获取角色数据权限
+	 * @param roleId
+	 * @param systemCode
+	 * @return
+	 */
+	public List<BizDataRole> getBizDataRoleList(Long roleId, String systemCode){
+		return bizDataRoleDao.getByModuleCode(roleId, systemCode);
+	}
+	
+	/**
+	 * 获取数据权限范围的url中的详细信息
+	 * @param scopeId
+	 * @return
+	 */
+	public String getBizDataScopeUrlData(Long scopeId, String parentId) throws Exception{
+		BizDataScope bizDataScope = getDao().getById(BizDataScope.class, scopeId);
+		if(bizDataScope == null || StringUtils.isBlank(bizDataScope.getUrl())){
+			return null;
+		}
+		String url;
+		if(StringUtils.isBlank(parentId) || "0".equals(parentId)){
+			url = bizDataScope.getUrl();
+		}else{
+			url = bizDataScope.getUrl() + "?parentId=" + parentId;
+		}
+		//TODO:发送http请求
+		//int parentIdInt = Integer.parseInt(parentId);
+		//String treeData = "[{id:"+(++parentIdInt)+",text:'工程类"+parentIdInt+"',leaf:true,code:'1.1'},{id:"+(++parentIdInt)+",text:'市场类"+parentIdInt+"',leaf:false,code:'2.1'}]";
+		CloseableHttpClient httpclient = HttpClients.createDefault();  
+		HttpPost httppost = new HttpPost(url);  
+		CloseableHttpResponse response = httpclient.execute(httppost);  
+		HttpEntity entity = response.getEntity();  
+		if (entity != null) {  
+           return EntityUtils.toString(entity, "UTF-8");
+        }  
+		return "";
+	}
+	
+	public String getBizDataScopeUrlDataNew(Long scopeId, String parentId,Cookie[] cookies) throws Exception{
+		BizDataScope bizDataScope = getDao().getById(BizDataScope.class, scopeId);
+		if(bizDataScope == null || StringUtils.isBlank(bizDataScope.getUrl())){
+				return null;
+		}
+		String url;
+		if(StringUtils.isBlank(parentId) || "0".equals(parentId)){
+			url = bizDataScope.getUrl();
+		}else{
+			url = bizDataScope.getUrl() + "?parentId=" + parentId;
+		}
+		//TODO:发送http请求
+		//int parentIdInt = Integer.parseInt(parentId);
+		//String treeData = "[{id:"+(++parentIdInt)+",text:'工程类"+parentIdInt+"',leaf:true,code:'1.1'},{id:"+(++parentIdInt)+",text:'市场类"+parentIdInt+"',leaf:false,code:'2.1'}]";
+		CloseableHttpClient httpclient = HttpClients.createDefault();  
+		//HttpPost httppost = new HttpPost(url);
+		HttpGet httppost = new HttpGet(url);//改成get方式不然单点会拦截
+		for(Cookie c : cookies){
+			httppost.addHeader("Cookie", c.getName()+"="+c.getValue());
+		}
+		
+		CloseableHttpResponse response = httpclient.execute(httppost);  
+		HttpEntity entity = response.getEntity();  
+		if (entity != null) {  
+           return EntityUtils.toString(entity, "UTF-8");
+        }  
+		return "";
+	}
+	
+	/**
+	 * 获取其他分类数据
+	 * @param roleId
+	 * @param scopeId
+	 * @return
+	 */
+	public List<BizAuthScopeOtherOptionDTO> getOtherOptions(Long roleId, Long scopeId, String systemCode){
+		List<BizDataRole> bizDataRoles_db = bizDataRoleDao.getByModuleCodeAndScopeId(roleId, scopeId, systemCode);
+		if(bizDataRoles_db.size() == 0){
+			return null;
+		}
+		String optionStr = bizDataRoles_db.get(0).getOtherOptions();
+		if(StringUtils.isBlank(optionStr)){
+			return null;
+		}
+		List<BizAuthScopeOtherOptionDTO> authScopeOtherOptionDTOs = new ArrayList<BizAuthScopeOtherOptionDTO>();
+		BizAuthScopeOtherOptionDTO authScopeOtherOptionDTO;
+		String[] oneOptions = StringUtils.split(optionStr, ",");
+		for(String oneOption : oneOptions){
+			if(StringUtils.isBlank(oneOption)){
+				continue;
+			}
+			String[] optionDetail = StringUtils.split(oneOption, "/");
+			if(optionDetail.length != 2){
+				continue;
+			}
+			authScopeOtherOptionDTO = new BizAuthScopeOtherOptionDTO();
+			authScopeOtherOptionDTO.setCode(optionDetail[0].trim());
+			authScopeOtherOptionDTO.setName(optionDetail[1].trim());
+			authScopeOtherOptionDTOs.add(authScopeOtherOptionDTO);
+		}
+		return authScopeOtherOptionDTOs;
+	}
+	
+	public List<BizAuthScopeOtherOptionDTO> handlerOptionStr(String optionStr){
+		if(!optionStr.contains("-")){
+			return null;
+		}
+		optionStr = StringUtils.split(optionStr, "-")[1];
+		if(StringUtils.isBlank(optionStr)){
+			return null;
+		}
+		List<BizAuthScopeOtherOptionDTO> authScopeOtherOptionDTOs = new ArrayList<BizAuthScopeOtherOptionDTO>();
+		BizAuthScopeOtherOptionDTO authScopeOtherOptionDTO;
+		String[] oneOptions = StringUtils.split(optionStr, ",");
+		for(String oneOption : oneOptions){
+			if(StringUtils.isBlank(oneOption)){
+				continue;
+			}
+			String[] optionDetail = StringUtils.split(oneOption, "/");
+			if(optionDetail.length != 2){
+				continue;
+			}
+			authScopeOtherOptionDTO = new BizAuthScopeOtherOptionDTO();
+			authScopeOtherOptionDTO.setCode(optionDetail[0].trim());
+			authScopeOtherOptionDTO.setName(optionDetail[1].trim());
+			authScopeOtherOptionDTOs.add(authScopeOtherOptionDTO);
+		}
+		return authScopeOtherOptionDTOs;
+	}
+	
+	/**
+	 * 处理显示格式
+	 * @return
+	 */
+	public void handlerAuthList(Page page){
+		List items = page.getItems();
+		for(Object itemDetail : items){
+			Object[] detailList = (Object[])itemDetail;
+			String otherOption = (String) detailList[3];
+			if(!StringUtils.isBlank(otherOption)){
+				String[] otherOptions = StringUtils.split(otherOption, ",");
+				otherOption = "";
+				for(String oneOption : otherOptions){
+					if(otherOption.length() > 0){
+						otherOption += "、";
+					}
+					otherOption += StringUtils.split(oneOption, "/")[1];
+				}
+				detailList[3] = otherOption;
+			}
+		}
+	}
+}

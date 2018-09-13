@@ -1,0 +1,637 @@
+/*
+ * @(#) K060021Action.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 教育考试培训系统
+ *    SubSystem: 考试子系统
+ */
+
+
+package com.yds.tt.testing.action;
+
+import java.util.Date;
+import java.util.List;
+
+import org.springframework.beans.factory.config.BeanDefinition;
+import org.springframework.context.annotation.Scope;
+import org.springframework.stereotype.Controller;
+
+import com.opensymphony.xwork2.Preparable;
+import com.yds.base.action.AbstractBaseAction;
+import com.yds.common.bean.SysCodeInfo;
+import com.yds.common.service.SysCodeInfoService;
+import com.yds.tt.manager.service.TtCommonService;
+import com.yds.tt.manager.service.TtCommonUtil;
+import com.yds.tt.manager.service.TtConstants;
+import com.yds.tt.manager.service.TtExclusiveException;
+import com.yds.tt.testing.bean.ExamineInfo;
+import com.yds.tt.testing.bean.ExamEmployeeInfo;
+import com.yds.tt.testing.service.K060021Service;
+import com.yds.tt.training.bean.CourseInfo;
+
+/**
+ * 考试详细（用户）.
+ * 
+ * @author 远东)tengchanglong
+ * @version 1.00 2010/04/28
+ */
+@Scope(BeanDefinition.SCOPE_PROTOTYPE)
+@Controller("k060021Action")
+public class K060021Action extends AbstractBaseAction implements Preparable{
+
+
+	private static final long serialVersionUID = -6117939620080499087L;
+	
+	private SysCodeInfoService sysCodeInfoService;
+	private TtCommonService ttCommonService;
+	private K060021Service k060021Service;
+
+	private ExamineInfo examineInfo;			//考试信息
+	private ExamEmployeeInfo examEmployeeInfo;	//员工考试信息
+	private List<SysCodeInfo> attentionList;	//关注度选项一览
+	private List<CourseInfo> courseInfoList;	//需要学习课程一览
+	private List<ExamineInfo> examineInfoList;	//需要通过考试一览
+	private List<ExamineInfo> otherExamineInfoList;	//其他可参加考试一览
+
+	private String mode;
+	private String examineId;
+	private String errorMessage;
+	private String btnStatusFlg;
+	private String btnReExamFlg;
+
+	@Override
+	public void prepare() throws Exception {
+		
+		// 关注度选项取得
+		this.attentionList = sysCodeInfoService.getSysCodeInfo("C32", "");
+	}
+	
+	/**
+	 * 画面初始化.
+	 * 
+	 */
+	public String init() throws Exception{
+		//参数校验
+		if(!parameterCheck()){
+			return ERROR;
+		}
+		
+		//查看权限校验
+		if (k060021Service.authorityCheck(examineId) == 0) {
+			errorMessage = propMgr.getMessage("yds.tt.error.JYE02");
+			return ERROR;
+		}
+		
+		// 考试基本信息取得
+		this.examineInfo = k060021Service.getTestInfo(examineId);
+		if (examineInfo == null) {
+			errorMessage = propMgr.getMessage("yds.tt.error.JYE12", "考试");
+			return ERROR;		
+		}
+		
+		// 保存时间戳检查用的更新时间
+		ttCommonService.setTimestamp(TtConstants.PageId.K060021, this.examineInfo.getUpdateTime());
+		
+		// 员工考试状态取得
+		this.examEmployeeInfo = k060021Service.getEmpExamineStatus(examineId);
+		
+		// 需要学习的课程一览取得
+		this.courseInfoList = k060021Service.getCourseInfoList(examineId);
+		
+		// 需要通过的考试一览取得
+		this.examineInfoList = k060021Service.getExamineInfoList(examineId);
+
+		// 模式判定处理
+		if (examEmployeeInfo == null || examEmployeeInfo.getEmpExamStatus() == null ||
+				TtCommonUtil.isEquals(examEmployeeInfo.getEmpExamStatus(),TtConstants.R13.R13_1.value())) {
+		
+			// 申请报名模式
+			this.setMode("1");
+		} else if (TtCommonUtil.isEquals(examEmployeeInfo.getEmpExamStatus(),TtConstants.R13.R13_2.value())
+				|| TtCommonUtil.isEquals(examEmployeeInfo.getEmpExamStatus(),TtConstants.R13.R13_4.value())) {
+			
+			// 考试模式
+			this.setMode("2");	
+		} else {
+			
+			// 成绩查看模式
+			this.setMode("3");				
+		}
+		
+		if (examineInfo.getParentExamineId() == null) {
+			// 父考试查看模式
+			this.setMode("4");
+			
+			//考试再举行日期一览检索
+			this.otherExamineInfoList = k060021Service.getOtherExamList(examineId);
+		}
+		
+		if ("1".equals(mode)) {
+			Date now = new Date();
+			if(now.after(examineInfo.getApplyClosingTime())) {
+				// 申请截止模式
+				this.setBtnStatusFlg("1");
+			}
+			//考试状态
+			if (examEmployeeInfo == null ){
+				if(now.after(examineInfo.getApplyClosingTime())) {
+					this.examineInfo.setExamineStatusName("报名已经截止");
+				}
+				this.examEmployeeInfo = new ExamEmployeeInfo(); 
+				this.examEmployeeInfo.setEmpExamStatusName("未申请报名");
+			}
+		} 
+		
+		if ("2".equals(mode)) {
+			Date now = new Date();
+			if(now.after(examineInfo.getExamineEndTime())) {
+				// 考试已经结束
+				this.setBtnStatusFlg("2");
+			}
+		}
+	
+		if ("3".equals(mode)) {
+			// 【考试员工信息表.员工考试状态】=<成绩已发布><放弃考试><未参加考试>
+			if (TtCommonUtil.isEquals(examEmployeeInfo.getEmpExamStatus(), TtConstants.R13.R13_5.value())
+				|| TtCommonUtil.isEquals(examEmployeeInfo.getEmpExamStatus(), TtConstants.R13.R13_6.value())
+				|| TtCommonUtil.isEquals(examEmployeeInfo.getEmpExamStatus(), TtConstants.R13.R13_8.value())) {
+				// 随时考试
+				if (TtCommonUtil.isEquals(examineInfo.getExamineFlg(), TtConstants.C08.C08_2.value())) {
+					// 
+					if (TtCommonUtil.isEquals(examEmployeeInfo.getPassexamineFlg(), TtConstants.C21.C21_2.value())) {
+						// 随时考试未通过，重新考试可用。
+						this.setBtnReExamFlg("1");
+					} else if (TtCommonUtil.isEquals(examineInfo.getAgainExamineFlg(), TtConstants.C10.C10_2.value())) {
+						// 随时考试已通过并且允许考试通过后再考试，重新考试可用。
+						this.setBtnReExamFlg("1");
+					}
+				}
+			}
+		}
+		
+		return SUCCESS;
+	}
+	
+	/**
+	 * 报名申请按钮提交.
+	 */
+	public String applySubmit()throws Exception{
+		
+		try {
+			// 报名申请更新处理
+			ExamEmployeeInfo examEmployeeInfo = new ExamEmployeeInfo();
+			examEmployeeInfo.setExamineId(examineId);
+			examEmployeeInfo.setEmployeesId(TtCommonUtil.getLoginUserId());
+			examEmployeeInfo.setExamineJoinTimes(1);
+			
+			if( TtConstants.C13.C13_1.toString().equals(examineInfo.getApplyConfirmFlg().toString().trim())){
+				// 报名不需要批准时，状态设置【报名批准】
+				examEmployeeInfo.setEmpExamStatus(TtConstants.R13.R13_2.value());
+				
+			} else {
+				// 报名需要批准时，状态设置【报名等待批准】
+				examEmployeeInfo.setEmpExamStatus(TtConstants.R13.R13_1.value());
+			}
+			
+			// 更新处理
+			k060021Service.updateApplyBusiness(examEmployeeInfo);
+		
+		} catch (TtExclusiveException e){
+			errorMessage = propMgr.getMessage("yds.tt.error.KSE56");
+			return ERROR;			
+		}
+
+		// 显示操作成功消息
+		putOpTip(propMgr.getMessage("yds.tt.info.GTT02"));
+		
+		return SUCCESS;
+	}
+	
+	/**
+	 * 报名申请取消按钮提交.
+	 */
+	public String applyCancelSubmit()throws Exception{
+		
+		try {
+			// 报名取消处理
+			ExamEmployeeInfo examEmployeeInfo = new ExamEmployeeInfo();
+			examEmployeeInfo.setExamineId(examineId);
+			examEmployeeInfo.setEmployeesId(TtCommonUtil.getLoginUserId());
+			k060021Service.deleteApplyBusiness(examEmployeeInfo);
+		
+		} catch (TtExclusiveException e){
+			errorMessage = propMgr.getMessage("yds.tt.error.KSE56");
+			return ERROR;			
+		}
+
+		// 显示操作成功消息
+		putOpTip(propMgr.getMessage("yds.tt.info.GTT02"));
+		
+		return SUCCESS;
+	}
+	
+	/**
+	 * 考试关注度更新.
+	 */
+	public String updateAttention()throws Exception{
+		try{
+			// 考试关注度更新
+			k060021Service.updateAttention(examineId, examineInfo.getAttentionFlag());
+			
+		} catch (TtExclusiveException e){
+			errorMessage = propMgr.getMessage("yds.tt.error.KSE56");
+			return ERROR;			
+		}
+		
+		// 显示操作成功消息
+		putOpTip(propMgr.getMessage("yds.tt.info.GTT02"));
+
+		return SUCCESS;
+	}
+	
+	/**
+	 * 开始考试按钮提交.
+	 */
+	public String examStartSubmit()throws Exception{
+		
+		try {
+			examineInfo = k060021Service.getTestInfo(examineId);
+			
+			// 更新员工考试信息，如果是随时考试，还要生成试卷
+			k060021Service.updateExamStartBusiness(examineInfo);
+
+		} catch (TtExclusiveException e){
+			errorMessage = propMgr.getMessage("yds.tt.error.KSE56");
+			return ERROR;			
+		}
+
+		// 显示操作成功消息
+		putOpTip(propMgr.getMessage("yds.tt.info.GTT02"));
+		
+		return SUCCESS;
+	}
+	
+	/**
+	 * 继续考试按钮提交.
+	 */
+	public String examContinueSubmit()throws Exception{
+
+		return SUCCESS;
+	}
+	
+	/**
+	 * 重新考试提交.
+	 */
+	public String examAgainSubmit()throws Exception{
+		
+		//考试提交检查处理
+		try{
+			examineInfo = k060021Service.getTestInfo(examineId);
+			
+			k060021Service.insertExamAgainBusiness(examineInfo);
+			
+		}catch(TtExclusiveException e){
+			return ERROR;
+		}	
+		//迁移到考生答卷&试卷预览（整卷）画面（K060031）	*/
+		return SUCCESS;
+	}
+	
+	/**
+	 * 接口参数校验.
+	 */
+	private Boolean parameterCheck() {
+		// 考试ID未传递
+		if (null == examineId) {
+			// 接口参数不完整
+			errorMessage = propMgr.getMessage("yds.tt.error.JYE07");
+			return false;
+		}	
+		return true;
+	}
+	
+	/**
+	 * 查看答卷检查处理
+	 */
+	public void validateResultCheckSubmit() {
+/*		this.testInfo = k060021Service.getTestInfo(testId);
+		
+		if(!testInfo.getStatusId().equals(STATUS_8)){
+			this.addFieldError("",
+					propMgr.getMessage("yds.tt.error.KSE34"));
+			
+		}
+		
+		if(testInfo.getCheckAnswerFlg().equals(CHECK_NO)){
+			this.addFieldError("",
+					propMgr.getMessage("yds.tt.error.KSE39"));
+			
+		}*/
+	}
+	
+	/**
+	 * 重新考试检查处理
+	 */
+	public void validateExamAgainSubmit() {
+/*		this.testInfo = k060021Service.getTestInfo(testId);
+		
+		Date now = new Date();
+		if(now.after(testInfo.getExamineEndDateTime())){
+			this.addFieldError("",
+					propMgr.getMessage("yds.tt.error.KSE35"));
+		}
+		if(!(testInfo.getStatusId().equals(STATUS_8)||
+				testInfo.getStatusId().equals(STATUS_6))){
+			this.addFieldError("",
+					propMgr.getMessage("yds.tt.error.KSE34"));
+			
+		}
+		if(!testInfo.getExamineFlg().equals(EXAM_FLG_2)){
+			this.addFieldError("",
+					propMgr.getMessage("yds.tt.error.KSE38"));
+			
+		}*/
+	}
+	
+	
+	/**
+	 * 继续考试提交检查处理
+	 */
+	public void validateExamContinueSubmit() {
+/*		this.testInfo = k060021Service.getTestInfo(testId);
+		Date now = new Date();
+		if(now.after(testInfo.getExamineEndDateTime())){
+			this.addFieldError("",
+					propMgr.getMessage("yds.tt.error.KSE35"));
+		}
+		if(!testInfo.getStatusId().equals(STATUS_4)){
+			this.addFieldError("",
+					propMgr.getMessage("yds.tt.error.KSE34"));
+		}*/
+	}
+	
+	/**
+	 * 开始考试提交检查处理
+	 */
+	public void validateExamStartSubmit() {
+/*		this.testInfo = k060021Service.getTestInfo(testId);
+		Date now = new Date();
+		if(now.after(testInfo.getExamineEndDateTime())){
+			this.addFieldError("",
+					propMgr.getMessage("yds.tt.error.KSE35"));
+		}
+		if(!testInfo.getStatusId().equals(STATUS_2)){
+			this.addFieldError("",
+					propMgr.getMessage("yds.tt.error.KSE34"));
+		}*/
+	}
+	
+	/**
+	 * 报名取消提交检查处理
+	 */
+	public void validateApplyCancelSubmit() {
+/*		this.testInfo = k060021Service.getTestInfo(testId);
+		Date now = new Date();
+		if(now.after(testInfo.getApplyClosingTime())){
+			this.addFieldError("",
+					propMgr.getMessage("yds.tt.error.KSE33"));
+		}
+		if(!testInfo.getStatusId().equals(STATUS_2)){
+			this.addFieldError("",
+					propMgr.getMessage("yds.tt.error.KSE34"));
+		}*/
+	}
+	
+	/**
+	 * 报名申请提交检查处理
+	 */
+	public void validateApplySubmit() {
+/*		this.testInfo = k060021Service.getTestInfo(testId);
+		this.examineInfoList = k060021Service.getExamineInfoList(testId);
+	Date now = new Date();
+		if(now.after(testInfo.getExamineEndDateTime())){
+			this.addFieldError("",
+					propMgr.getMessage("yds.tt.error.KSE35"));
+		}
+		if(!testInfo.getExamineStatus().equals(EXAM_FLG_3)){
+			this.addFieldError("",
+					propMgr.getMessage("yds.tt.error.KSE34"));
+		}
+		if(now.after(testInfo.getApplyClosingTime())){
+			this.addFieldError("",
+					propMgr.getMessage("yds.tt.error.KSE33"));
+		}
+		if(!testInfo.getStatusId().equals(STATUS_0)){
+			this.addFieldError("",
+					propMgr.getMessage("yds.tt.error.KSE34"));
+		}*/
+		
+/*		String allPass = PASS;
+		for(int i =0;i<examineInfoList.size();i++){
+			if(examineInfoList.get(i).getPassFlg().equals(EXAM_NOT_PASS)){
+				allPass = NOT_PASS;
+			}
+		}
+		if(allPass.equals(NOT_PASS)){
+			this.addFieldError("",
+					propMgr.getMessage("yds.tt.error.KSE36"));
+		}
+		if(null!=k060021Service.getExamingChild(testInfo)){
+			this.addFieldError("",
+					propMgr.getMessage("yds.tt.error.KSE37"));
+		}*/
+		
+		
+	}
+
+	/**
+	 * @return the k060021Service
+	 */
+	public K060021Service getK060021Service() {
+		return k060021Service;
+	}
+
+	/**
+	 * @param service the k060021Service to set
+	 */
+	public void setK060021Service(K060021Service service) {
+		k060021Service = service;
+	}
+
+	/**
+	 * @return the errorMessage
+	 */
+	public String getErrorMessage() {
+		return errorMessage;
+	}
+
+
+	/**
+	 * @param errorMessage the errorMessage to set
+	 */
+	public void setErrorMessage(String errorMessage) {
+		this.errorMessage = errorMessage;
+	}
+	
+	public void setExamineInfoList(List<ExamineInfo> examineInfoList) {
+		this.examineInfoList = examineInfoList;
+	}
+
+	public List<ExamineInfo> getExamineInfoList() {
+		return examineInfoList;
+	}
+
+	/**
+	 * @return the ttCommonService
+	 */
+	public TtCommonService getTtCommonService() {
+		return ttCommonService;
+	}
+
+	/**
+	 * @param ttCommonService the ttCommonService to set
+	 */
+	public void setTtCommonService(TtCommonService ttCommonService) {
+		this.ttCommonService = ttCommonService;
+	}
+
+	/**
+	 * @return the sysCodeInfoService
+	 */
+	public SysCodeInfoService getSysCodeInfoService() {
+		return sysCodeInfoService;
+	}
+
+	/**
+	 * @param sysCodeInfoService the sysCodeInfoService to set
+	 */
+	public void setSysCodeInfoService(SysCodeInfoService sysCodeInfoService) {
+		this.sysCodeInfoService = sysCodeInfoService;
+	}
+
+	/**
+	 * @return the attentionList
+	 */
+	public List<SysCodeInfo> getAttentionList() {
+		return attentionList;
+	}
+
+	/**
+	 * @param attentionList the attentionList to set
+	 */
+	public void setAttentionList(List<SysCodeInfo> attentionList) {
+		this.attentionList = attentionList;
+	}
+
+	/**
+	 * @param courseInfoList the courseInfoList to set
+	 */
+	public void setCourseInfoList(List<CourseInfo> courseInfoList) {
+		this.courseInfoList = courseInfoList;
+	}
+
+	/**
+	 * @return the courseInfoList
+	 */
+	public List<CourseInfo> getCourseInfoList() {
+		return courseInfoList;
+	}
+
+	/**
+	 * @param mode the mode to set
+	 */
+	public void setMode(String mode) {
+		this.mode = mode;
+	}
+
+	/**
+	 * @return the mode
+	 */
+	public String getMode() {
+		return mode;
+	}
+
+	/**
+	 * @param examineInfo the examineInfo to set
+	 */
+	public void setExamineInfo(ExamineInfo examineInfo) {
+		this.examineInfo = examineInfo;
+	}
+
+	/**
+	 * @return the examineInfo
+	 */
+	public ExamineInfo getExamineInfo() {
+		return examineInfo;
+	}
+
+	/**
+	 * @param examineId the examineId to set
+	 */
+	public void setExamineId(String examineId) {
+		this.examineId = examineId;
+	}
+
+	/**
+	 * @return the examineId
+	 */
+	public String getExamineId() {
+		return examineId;
+	}
+
+	/**
+	 * @param examEmployeeInfo the examEmployeeInfo to set
+	 */
+	public void setExamEmployeeInfo(ExamEmployeeInfo examEmployeeInfo) {
+		this.examEmployeeInfo = examEmployeeInfo;
+	}
+
+	/**
+	 * @return the examEmployeeInfo
+	 */
+	public ExamEmployeeInfo getExamEmployeeInfo() {
+		return examEmployeeInfo;
+	}
+
+	/**
+	 * @param otherExamineInfoList the otherExamineInfoList to set
+	 */
+	public void setOtherExamineInfoList(List<ExamineInfo> otherExamineInfoList) {
+		this.otherExamineInfoList = otherExamineInfoList;
+	}
+
+	/**
+	 * @return the otherExamineInfoList
+	 */
+	public List<ExamineInfo> getOtherExamineInfoList() {
+		return otherExamineInfoList;
+	}
+
+	/**
+	 * @param btnStatusFlg the btnStatusFlg to set
+	 */
+	public void setBtnStatusFlg(String btnStatusFlg) {
+		this.btnStatusFlg = btnStatusFlg;
+	}
+
+	/**
+	 * @return the btnStatusFlg
+	 */
+	public String getBtnStatusFlg() {
+		return btnStatusFlg;
+	}
+
+	/**
+	 * @param btnReExamFlg the btnReExamFlg to set
+	 */
+	public void setBtnReExamFlg(String btnReExamFlg) {
+		this.btnReExamFlg = btnReExamFlg;
+	}
+
+	/**
+	 * @return the btnReExamFlg
+	 */
+	public String getBtnReExamFlg() {
+		return btnReExamFlg;
+	}
+}

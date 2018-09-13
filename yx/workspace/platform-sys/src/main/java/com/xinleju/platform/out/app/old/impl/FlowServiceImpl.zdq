@@ -1,0 +1,463 @@
+package com.xinleju.platform.out.app.old.impl;
+
+import java.sql.Timestamp;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang.StringUtils;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.BeanPropertyRowMapper;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.erp.flow.flowutils.bean.CategoryDTO;
+import com.xinleju.erp.flow.flowutils.bean.DebugInfo;
+import com.xinleju.erp.flow.flowutils.bean.FlowDTO;
+import com.xinleju.erp.flow.flowutils.bean.FlowResult;
+import com.xinleju.erp.flow.flowutils.bean.NameValuePair;
+import com.xinleju.erp.flow.flowutils.bean.PageBean;
+import com.xinleju.erp.flow.flowutils.bean.SimpleResult;
+import com.xinleju.erp.flow.flowutils.bean.ToDoBean;
+import com.xinleju.erp.flow.flowutils.bean.ToDoButtonBean;
+import com.xinleju.erp.flow.flowutils.bean.ToDoFiBean;
+import com.xinleju.erp.flow.flowutils.bean.ToDoWorkBean;
+import com.xinleju.erp.flow.service.api.extend.FlowService;
+import com.xinleju.platform.base.datasource.DataSourceContextHolder;
+import com.xinleju.platform.base.utils.LoginUtils;
+import com.xinleju.platform.base.utils.SecurityUserBeanInfo;
+import com.xinleju.platform.base.utils.SecurityUserDto;
+import com.xinleju.platform.flow.dto.ApprovalList;
+import com.xinleju.platform.flow.dto.ApprovalListDto;
+import com.xinleju.platform.flow.dto.InstanceDto;
+import com.xinleju.platform.flow.dto.MobileFormDto;
+import com.xinleju.platform.flow.entity.Fl;
+import com.xinleju.platform.flow.entity.Instance;
+import com.xinleju.platform.flow.enumeration.TaskStatus;
+import com.xinleju.platform.flow.exception.FlowException;
+import com.xinleju.platform.flow.service.ApproveOperationService;
+import com.xinleju.platform.flow.service.BusinessObjectService;
+import com.xinleju.platform.flow.service.FlService;
+import com.xinleju.platform.flow.service.InstanceService;
+import com.xinleju.platform.flow.service.MobileFormService;
+import com.xinleju.platform.flow.utils.DateUtils;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+@Service
+public class FlowServiceImpl implements FlowService {
+
+	private static Logger log = Logger.getLogger(FlowOuterServiceImpl.class);
+	
+	@Autowired
+	private JdbcTemplate jt;
+	
+	@Autowired
+	private InstanceService instanceService;
+	
+	@Autowired
+	private FlService flService;
+	
+	@Autowired
+	private BusinessObjectService businessObjectService;	
+	
+	@Autowired
+	private MobileFormService mobileFormService;
+	
+	@Autowired
+	private ApproveOperationService approveOperationService;
+	
+	@Override
+	public FlowResult<Boolean> updateFlowData(String bizId, String soCode, Map<String, Object> data) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public FlowResult<List<CategoryDTO>> getRootCategories() {
+
+		log.info("getRootCategories start");
+
+		FlowResult<List<CategoryDTO>> result = new FlowResult<List<CategoryDTO>>();
+		String sql = "select id,name from pt_sys_res_app where delflag=0 AND status=1";
+		RowMapper<CategoryDTO> rowMapper = new BeanPropertyRowMapper<CategoryDTO>(CategoryDTO.class);
+
+		try {
+			List<CategoryDTO> queryList = jt.query(sql, rowMapper);
+			if (CollectionUtils.isEmpty(queryList)) {
+				result.setResult(null);
+			} else {
+				result.setResult(queryList);
+			}
+		} catch (Exception e) {
+			result.faliure();
+			log.error("getRootCategories error", e);
+		}
+
+		log.info("getRootCategories end");
+
+		return result;
+	}
+
+	@Override
+	public FlowResult<List<CategoryDTO>> getSubCategories(String parentId) {
+		
+		log.info("getSubCategories start");
+
+		FlowResult<List<CategoryDTO>> result = new FlowResult<List<CategoryDTO>>();
+		String sql = "select id,name from pt_flow_business_object "
+				+ "where (data_type='1' or data_type='2' )"
+				+ " and delflag=0 and (parent_id=? or app_id = ?) order by sort";
+		//zhengjiajie 增加了 or app_id = ? order by sort
+		RowMapper<CategoryDTO> rowMapper = new BeanPropertyRowMapper<CategoryDTO>(CategoryDTO.class);
+
+		try {
+			List<CategoryDTO> queryList = jt.query(sql, rowMapper, parentId, parentId);
+			if (CollectionUtils.isEmpty(queryList)) {
+				result.setResult(null);
+			} else {
+				result.setResult(queryList);
+			}
+		} catch (Exception e) {
+			result.faliure();
+			log.error("getSubCategories error", e);
+		}
+
+		log.info("getSubCategories end");
+		
+		return result;
+	}
+
+	@Override
+	public FlowResult<PageBean<FlowDTO>> getFlows(String categoryId, Integer start, Integer limit,
+			Map<String, Object> extParm) {
+
+		log.info("getFlows start");
+
+		FlowResult<PageBean<FlowDTO>> result = new FlowResult<PageBean<FlowDTO>>();
+
+		LinkedList<String> lstErrorInfoList = new LinkedList<String>();
+		/*if (StringUtils.isBlank(categoryId)) {
+			lstErrorInfoList.add("分类ID为空");
+		}*/
+		
+		//zhengjiajie暂时去掉这个判断条件
+		/*if (extParm == null || extParm.isEmpty()) {
+			lstErrorInfoList.add("参数为空为空");
+		}*/ 
+		if (lstErrorInfoList.size() > 0) {
+			DebugInfo debugInfo = new DebugInfo();
+			debugInfo.setErrDesc(lstErrorInfoList);
+			result.faliure();
+			result.setDebugInfo(debugInfo);
+			return result;
+		}
+		log.info("getFlowDTOPage()... categoryId="+categoryId+"; start="+start+"; limit="+limit
+				+"; extParm="+JacksonUtils.toJson(extParm));
+		try {
+			PageBean<FlowDTO> flowDTOPage = getFlowDTOPage(categoryId, start, limit, extParm);
+			if (flowDTOPage == null) {
+				result.setResult(null);
+			} else {
+				result.setResult(flowDTOPage);
+			}
+		} catch (Exception e) {
+			result.faliure();
+			log.error("getFlows error", e);
+		}
+
+		log.info("getFlows end");
+
+		return result;
+	}
+
+	@Override
+	public FlowResult<Boolean> undo(String bizId, String flowCode, String userId) {
+		log.info("undo start");
+
+		FlowResult<Boolean> result = new FlowResult<Boolean>();
+
+		LinkedList<String> lstErrorInfoList = new LinkedList<String>();
+		if (StringUtils.isBlank(bizId)) {
+			lstErrorInfoList.add("业务ID为空");
+		}
+		if (StringUtils.isBlank(flowCode)) {
+			lstErrorInfoList.add("流程编码为空");
+		}
+		if (StringUtils.isBlank(userId)) {
+			lstErrorInfoList.add("用户ID为空");
+		}
+		if (lstErrorInfoList.size() > 0) {
+			DebugInfo debugInfo = new DebugInfo();
+			debugInfo.setErrDesc(lstErrorInfoList);
+			result.faliure();
+			result.setDebugInfo(debugInfo);
+			return result;
+		}
+		
+		String sql = "select i.id from  pt_flow_instance i,pt_flow_fl fl where i.fl_id=fl.id and i.status='1' and i.business_id = ? and fl.code = ?";
+		try {
+			String  instanceId = jt.queryForObject(sql, String.class, bizId, flowCode);
+			if (StringUtils.isEmpty(instanceId)) {
+				result.setResult(false);
+			} else {
+				result.setResult(instanceService.doCancelInstance(instanceId));
+			}
+		} catch (Exception e) {
+			result.faliure();
+			log.error("undo error", e);
+		}
+		
+		log.info("undo end");
+		
+		return result;
+	}
+
+	@Override
+	public FlowResult<Boolean> finishFi(String bizId, String flowCode, Long userId) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public FlowResult<Boolean> giveBackFi(String bizId, String flowCode, Long userId) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public FlowResult<Boolean> finishFiBranch(String bizId, String flowCode, String endTag, Long userId) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	
+	private PageBean<FlowDTO> getFlowDTOPage(String categoryId, Integer start, Integer limit, Map<String, Object> extParm) throws Exception{
+		PageBean<FlowDTO> flowDTOPage = new PageBean<FlowDTO>();
+    	if (null == start){
+    		start = 0;
+    	}
+    	if (null == limit){
+    		limit = 15;
+    	}
+    	
+		
+		StringBuffer sql = new StringBuffer("SELECT A.CODE AS flowCode,A.NAME AS flowName FROM PT_FLOW_FL A WHERE A.delflag = 0 AND A.status = 1 AND A.use_status = 1");
+		StringBuffer sqlCount = new StringBuffer("SELECT COUNT(A.CODE) FROM PT_FLOW_FL A WHERE A.delflag = 0 AND A.status = 1 AND A.use_status = 1");
+		StringBuffer conndition = new StringBuffer();
+		
+		if (categoryId!=null && StringUtils.isNotBlank(categoryId)) {
+			conndition.append(" AND A.business_object_id IN ( ");
+			conndition.append("select id from pt_flow_business_object where delflag=0 and ( parent_id='").append(categoryId)
+			                   .append("' or app_id='").append(categoryId).append("' or id='").append(categoryId).append("' )");
+			conndition.append(" )");
+		}
+		
+		if (null != extParm) {
+			if (extParm.containsKey("serviceObjectDefineId")) {
+				String businessObjectId = String.valueOf(null != extParm.get("serviceObjectDefineId") ? extParm.get("serviceObjectDefineId") : "").trim();
+				conndition.append(" AND (A.business_object_id = '");
+				conndition.append(businessObjectId);
+				conndition.append("' OR A.app_id = '");
+				conndition.append(businessObjectId);
+				conndition.append("')");
+			}			
+			if (extParm.containsKey("flName")) {
+				String name = String.valueOf(null != extParm.get("flName") ? extParm.get("flName") : "").trim();
+				conndition.append(" AND A.name LIKE '%");
+				conndition.append(name);
+				conndition.append("%'");
+			}
+			if (extParm.containsKey("flCode")) {
+				String code = String.valueOf(null != extParm.get("flCode") ? extParm.get("flCode") : "").trim();
+				conndition.append(" AND A.code LIKE '%");
+				conndition.append(code);
+				conndition.append("%'");
+			}
+		}
+		
+		sql.append(conndition).append(" ORDER BY A.version DESC").append(" LIMIT " + start + "," + limit);
+		sqlCount.append(conndition);
+		log.info(" 查询总数  jt.queryForObject()--->> sqlCount ="+sqlCount.toString());
+		log.info(" 查询结果集  jt.queryForObject()--->> sql ="+sql.toString());
+		//查询总数
+		int total = jt.queryForObject(sqlCount.toString(), Integer.class);
+		//查询结果集
+		RowMapper<FlowDTO> rowMapper = new BeanPropertyRowMapper<FlowDTO>(FlowDTO.class);
+		List<FlowDTO> list = jt.query(sql.toString(), rowMapper);
+		flowDTOPage = new PageBean<FlowDTO>(start, limit, total, list);
+		
+		return flowDTOPage;
+	}
+	
+	public static void main(String args[]){
+		FlowServiceImpl test = new FlowServiceImpl();
+		Map<String, Object>paramMap = new HashMap<String,Object>();
+		paramMap.put("flCode", "8449169");
+		paramMap.put("flName", "全景计划调整");
+		//serviceObjectDefineId   flName  flCode
+		test.getFlows("c5cfa87d631c44e38c213f23677df053", 0, 10, null);
+	}
+
+	/**
+	 * 移动端提交流程
+	 * 1、移动端提交流程时无审批记录，只有业务表单
+	 * 2、根据岗位反查发起公司、部门等
+	 * 3、检查模板
+	 * 4、发起流程
+	 */
+	@Override
+	public FlowResult<SimpleResult> startFlowTask(String spGwId, String startUserId, 
+			String userNote, String flCode, String bizId) {
+		
+		log.info("移动端提交流程:spGwId=" + spGwId + ", startUserId=" + startUserId
+				+ "userNote=" + userNote + ", flCode=" + flCode + ", bizId=" + bizId);
+		
+		FlowResult<SimpleResult> flowResult = new FlowResult<SimpleResult>();
+		
+		setDataSource("erp_xinyuan");	//当前dubbo服务起作用
+		setCurrentUser(startUserId);	//内嵌dubbo服务起作用
+
+		InstanceDto instanceDto = flService.startForMobile(null, flCode, bizId);
+		instanceDto.setStartUserId(startUserId);
+
+		try {
+			instanceService.saveAllInstanceDataForMobile(instanceDto);
+		} catch (Exception e) {
+			flowResult.faliure();
+			throw new FlowException("流程发起失败：" + e.getMessage());
+		}
+		
+		SimpleResult result = new SimpleResult();
+		result.setMsg("流程发起成功！");
+		result.setResult(true);
+		flowResult.setResult(result);
+		flowResult.setSuccess(true);
+		
+		return flowResult;
+	}
+
+	@Override
+	public FlowResult<ToDoBean> getToDoBeanByflowCodeAndbizId(String flCode, String businessId) {
+		FlowResult<ToDoBean> flowResult = new FlowResult<ToDoBean>();
+		log.info("移动端旧接口查询流程数据：flCode=" + flCode + ", businessId=" + businessId);
+		setDataSource("erp_xinyuan");
+		
+		ApprovalListDto approvalListDto = instanceService.queryApprovalListExternal(flCode, businessId, null, null);
+		List<ApprovalList> list = approvalListDto.getList();
+		if(CollectionUtils.isEmpty(list)) {
+			return null;
+		}
+		String instanceId = list.get(0).getInstanceId();
+		
+		flowResult.setSuccess(true);
+		ToDoBean toDoBean = new ToDoBean();
+		
+		//2、流程实例信息
+		ToDoFiBean fiBean = new ToDoFiBean();
+		fiBean.setFlowInsName(list.get(0).getInstanceName());
+		Fl fl = null;
+		Instance instance = null;
+		try {
+			fl = flService.getObjectById(list.get(0).getFlId());
+			instance = instanceService.getObjectById(instanceId);
+		} catch (Exception e1) {
+			
+		}
+		fiBean.setFlowName(fl.getName());
+		fiBean.setStartUserName(list.get(0).getApproverName());
+		fiBean.setStartTime(DateUtils.formatDateTime(new Date(instance.getStartDate().getTime())));
+		Timestamp endDate = instance.getEndDate();
+		if(endDate != null) {
+			fiBean.setEndTime(DateUtils.formatDateTime(new Date(endDate.getTime())));
+		}
+		
+		List<MobileFormDto> mobileForms = mobileFormService.queryMobileFormBy(flCode, businessId);
+		log.info("移动表单数据查询：" + mobileForms);
+		List<NameValuePair> dataList = new ArrayList<NameValuePair>();
+		for(MobileFormDto mobileFormDto : mobileForms) {
+			NameValuePair pair = new NameValuePair(mobileFormDto.getName(), mobileFormDto.getValue());
+			dataList.add(pair);
+		}
+		fiBean.setDataList(dataList);
+		toDoBean.setFiBean(fiBean);
+
+		//1、当前任务
+		ToDoWorkBean wiBean = null;
+		toDoBean.setWiBean(wiBean);
+		
+		//3、任务列表
+		List<ToDoWorkBean> wiList = new ArrayList<ToDoWorkBean>();
+		for(ApprovalList approval : list) {
+			ToDoWorkBean bean = new ToDoWorkBean();
+			bean.setParticipantUserName(approval.getApproverName());
+			bean.setCompleteUserName(approval.getApproverName());
+			if(approval.getTaskEndTime() != null) {
+				bean.setCompleteTime(DateUtils.formatDateTime(new Date(approval.getTaskEndTime().getTime())));
+			}
+			bean.setUserNote(approval.getTaskComments());
+			bean.setOpCode(approval.getTaskResult());
+			String taskStatus = approval.getTaskStatus();
+			if(StringUtils.isNotEmpty(taskStatus)) {
+				bean.setStatus(Integer.parseInt(taskStatus));
+			}
+			bean.setWiName(approval.getAcName());
+			bean.setOpName(approval.getTaskResultName());
+			bean.setFlowInstanceId(approval.getInstanceId());
+			bean.setFlowInstancetaskId(approval.getTaskId());
+			bean.setFlowInstanceWorkId(approval.getGroupKey());
+			bean.setSpType(approval.getApprovalType());
+			if(taskStatus != null) {
+				bean.setStatus(Integer.parseInt(taskStatus));
+			}
+			if(approval.getTaskStartTime() != null) {
+				bean.setStartTime(DateUtils.formatDateTime(new Date(approval.getTaskStartTime().getTime())));
+			}
+			bean.setUserNote(approval.getTaskComments());
+			wiList.add(bean);
+			
+			if(TaskStatus.RUNNING.getValue().equals(taskStatus)) {
+				wiBean = bean;
+			}
+		}
+		toDoBean.setWiList(wiList);
+		
+		//4、操作按钮
+		List<ToDoButtonBean> bbList = null;
+//		String typeCode = null;
+//		String approveRole = null;
+//		List<ApproveOperationDto> operationList = approveOperationService.queryListByApproveRoleCode(typeCode, approveRole);
+		toDoBean.setBbList(bbList);
+		
+//		toDoBean.setOpType(opType);
+		
+		flowResult.setResult(toDoBean);
+		
+		log.info("移动端旧接口查询流程数据返回：" + flowResult.getResult());
+		return flowResult;
+	}
+	
+	private String setDataSource(String tendCode) {
+		String dataSourceTypeOld = DataSourceContextHolder.getDataSourceType();
+		DataSourceContextHolder.clearDataSourceType();
+		DataSourceContextHolder.setDataSourceType(tendCode);
+		return dataSourceTypeOld;
+	}
+	
+	private void setCurrentUser(String startUserId) {
+		SecurityUserBeanInfo securityUserBeanInfo = new SecurityUserBeanInfo();
+		securityUserBeanInfo.setTendCode("erp_xinyuan");
+		SecurityUserDto securityUserDto = new SecurityUserDto();
+		securityUserDto.setId(startUserId);
+		securityUserDto.setRealName("old mobile flow starter");
+		securityUserBeanInfo.setSecurityUserDto(securityUserDto);
+		LoginUtils.setSecurityUserBeanInfo(securityUserBeanInfo);
+	}
+}

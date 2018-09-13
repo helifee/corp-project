@@ -1,0 +1,342 @@
+package com.jzy.hio.sys.role.controller;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.anno.TargetFeign;
+import com.jzy.hio.base.controller.BaseSysController;
+import com.jzy.hio.entity.OaSysRole;
+import com.jzy.hio.entity.OaSysRoleUser;
+import com.jzy.hio.entity.OaSysUser;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.exception.HioMybatisPseudoDeleteException;
+import com.jzy.hio.exception.HioMybatisQueryException;
+import com.jzy.hio.platform.dto.tenantcompanyinfo.TendUserInfoDto;
+import com.jzy.hio.platform.redis.PlatformRedis;
+import com.jzy.hio.sys.SysConstants;
+import com.jzy.hio.sys.menu.service.MenuService;
+import com.jzy.hio.sys.organization.dto.GeneralDto;
+import com.jzy.hio.sys.role.dto.RoleDetailDto;
+import com.jzy.hio.sys.role.dto.RoleDto;
+import com.jzy.hio.sys.role.dto.RoleMenuDto;
+import com.jzy.hio.sys.role.param.RoleParam;
+import com.jzy.hio.sys.role.service.RoleService;
+import com.jzy.hio.sys.user.service.UserService;
+import com.jzy.hio.utils.Page;
+
+/**
+ * 角色
+ *
+ * @author wt.coffee<br />
+ *         2018年3月12日上午9:14:38
+ */
+@RestController
+@RequestMapping("role")
+public class RoleController extends BaseSysController {
+
+	@Autowired
+	private RoleService roleService;
+	@Autowired
+	private UserService userService;
+	@Autowired
+	private PlatformRedis platformRedis;
+	@Autowired
+	private MenuService menuService;
+
+	/**
+	 * 新增获取编辑
+	 *
+	 * @param role
+	 * @return
+	 */
+	@RequestMapping(value = "/saveAll", method = RequestMethod.POST, consumes = "application/json")
+	@PostMapping("saveAll")
+	public Object saveAll(@RequestBody RoleParam role) {
+		String roleName = role.getRole().getName();
+		boolean result = roleService.queryIsExists(roleName, null);
+		if (result == true) {
+			logger.warn("角色名不能重复 {}", roleName);
+			return HioException.sysRoleExist;
+		} else {
+			String pk = roleService.saveAll(role);
+			return pk;
+		}
+	}
+
+	/**
+	 * 编辑
+	 *
+	 * @param role
+	 * @return
+	 */
+	@RequestMapping(value = "/updateAll", method = RequestMethod.POST, consumes = "application/json")
+	public Object updateAll(@RequestBody RoleParam roleParam) {
+		OaSysRole role = roleParam.getRole();
+		if (isNotEmpty(role) && isNotEmpty(role.getName()) && isEquals(role.getId(), SysConstants.MYSQL_ROLE_SUPERID)) {
+			if (isNotEquals(role.getName(), SysConstants.MYSQL_ROLE_SUPERNAME)) {
+				logger.warn("超级管理员 -- 角色名不能修改");
+				return HioException.sysRoleSuperModidyForbid;
+			}
+			String roleName = role.getName();
+			boolean result = roleService.queryIsExists(roleName, role.getId());
+			if (result == true) {
+				logger.warn("角色名不能重复 {}", roleName);
+				return HioException.sysRoleExist;
+			} else {
+				// 继续
+			}
+		}
+		return roleService.updateAll(roleParam);
+	}
+
+	/**
+	 * 编辑--插入全部人员
+	 * 
+	 * @param role
+	 *            {role:{id:1005}}
+	 * @return
+	 */
+	@RequestMapping(value = "/updateAllUser", method = RequestMethod.POST, consumes = "application/json")
+	public Object updateAllUser(@RequestBody RoleParam roleParam) {
+		OaSysRole role = roleParam.getRole();
+		String tendId = getTendId();
+		List<OaSysUser> users = userService.queryListByTendId(tendId, false);
+		List<OaSysRoleUser> roleUsers = new ArrayList<>();
+		for (OaSysUser user : users) {
+			OaSysRoleUser roleUser = new OaSysRoleUser();
+			roleUser.setRoleId(role.getId());
+			roleUser.setUserId(user.getId());
+			roleUsers.add(roleUser);
+		}
+		roleParam.setUsers(roleUsers);
+		return roleService.updateAll(roleParam);
+	}
+
+	@Override
+	@DeleteMapping(value = "/delete/{id}")
+	public Object delete(@PathVariable("id") String id) throws HioMybatisPseudoDeleteException {
+		boolean isCanDelete = roleService.queryIsCanDelete(id);
+		if (isCanDelete == false) {
+			logger.warn("角色{}不能删除 ", id);
+			return HioException.sysRoleDeleteForbid;
+		}
+		int result = roleService.deleteAll(id);
+		return result;
+	}
+
+	/**
+	 * 查询角色、以及角色下的人数
+	 *
+	 * @param map
+	 *            map.put("name","roleName") <br/>
+	 *            map.put("pageNum","1") <br/>
+	 *            map.put("pageCount","1") <br/>
+	 *            map.put("orderBy","createDate desc")
+	 * @return
+	 * @throws HioMybatisQueryException
+	 */
+	@RequestMapping("queryRoles")
+	public Page<RoleDto> queryRoles(@RequestBody Map<String, Object> map) throws HioMybatisQueryException {
+		Page<RoleDto> page = roleService.queryRoles(map);
+		return page;
+	}
+
+	/**
+	 * 传入一个roleId
+	 * 
+	 * @param map
+	 * @return
+	 */
+	@PostMapping("queryRoleDetail")
+	public RoleDetailDto queryRoleAll(@RequestBody Map<String, Object> map) {
+		String roleId = getStr(map, "roleId");
+		RoleDetailDto roleAll = roleService.queryRoleAll(roleId);
+		return roleAll;
+	}
+
+	/**
+	 * 通用userId获取角色id
+	 *
+	 * @param userId
+	 * @return roleId列表
+	 */
+	@TargetFeign
+	@PostMapping("queryRolesByUserId")
+	public List<String> queryRoleByUserId(String userId) {
+		List<OaSysRole> list = roleService.queryRoleByUserId(getTendId(),userId);
+		List<String> result = new ArrayList<>();
+		for (OaSysRole role : list) {
+			result.add(role.getId());
+		}
+		return result;
+	}
+
+	/**
+	 * 
+	 * @param userIds
+	 *            用户id 逗号分割
+	 * @return
+	 */
+	@TargetFeign
+	@PostMapping("queryRoleByUserIds")
+	public Map<String, String> queryRoleByUserIds(String userIds) {
+		// map- key:userId value:角色名称 逗号分割
+		String[] userIdsArr = userIds.split(",");
+		//
+		Map<String, String> map = new HashMap<>();
+		for (String userId : userIdsArr) {
+			StringBuilder sb = new StringBuilder();
+			List<OaSysRole> list = roleService.queryRoleByUserId(getTendId(),userId);
+			for (OaSysRole role : list) {
+				if (sb.length() > 0) {
+					sb.append(",");
+				}
+				sb.append(role.getName());
+			}
+			map.put(userId, sb.toString());
+		}
+		return map;
+	}
+
+	/**
+	 * 查询角色名
+	 * 
+	 * @param tendId
+	 * @param id
+	 *            角色id
+	 * @return
+	 */
+	@TargetFeign
+	@PostMapping(value = "queryName")
+	public GeneralDto queryRoleNameById(@RequestParam("tendId") String tendId, @RequestParam("id") String id) {
+		return roleService.queryRoleNameById(tendId, id);
+	}
+
+	/**
+	 * 通过角色name查询角色id, 逗号分割，如果没查到则用空字符串代替<br>
+	 * 例如 "系统管理员,普通,普通员工" 返回 "1001,,1005"
+	 * 
+	 * @param roleNames
+	 * @return
+	 */
+	@PostMapping("queryRoleIdByRoleNames")
+	public String queryRoleIdByRoleNames(@RequestParam(value = "roleNames") String roleNames) {
+		String[] names = roleNames.split(",");
+		StringBuilder sb = new StringBuilder();
+		for (String roleName : names) {
+			Map<String, Object> map = new HashMap<>();
+			map.put("name", roleName);
+			OaSysRole role = roleService.getObjectByExample(map);
+			if (sb.length() > 0) {
+				sb.append(",");
+			}
+			if (role == null) {
+				logger.info("角色--{}  不存在", roleName);
+				sb.append("");
+			} else {
+				sb.append(role.getId());
+			}
+		}
+		return sb.toString();
+	}
+
+	/**
+	 * 根据hr用户ID获取其对应的用户角色
+	 * 
+	 * @param userId(用户ID)
+	 * @return ApiFeignResponse<RoleDto>
+	 */
+	@RequestMapping(value = "queryUserRole", method = RequestMethod.POST)
+	public List<RoleDto> queryUserRole(@RequestParam("userId") String userId) {
+		List<OaSysRole> roles = roleService.queryRoleByUserId(getTendId(),userId);
+		List<RoleDto> list = new ArrayList<>();
+		for (OaSysRole role : roles) {
+			RoleDto dto = new RoleDto();
+			dto.setRoleId(role.getId());
+			dto.setRoleName(role.getName());
+			dto.setRoleRemark(role.getRemark());
+			dto.setCreateTime(role.getCreateDate());
+			list.add(dto);
+		}
+		return list;
+	}
+
+	/**
+	 * 获取角色树列表
+	 * 
+	 * @param delflag(是否有效，默认值0)
+	 */
+	@PostMapping("queryRoleTree")
+	public List<RoleDto> queryRoleTree(@RequestParam(value = "delflag", defaultValue = "0") String delflag) {
+		Map<String, Object> map = new HashMap<>();
+		map.put(BaseConstants.HTTP_PAGE_NUM, "1");
+		map.put(BaseConstants.HTTP_PAGE_COUNT, 1000);
+		map.put(BaseConstants.HTTP_PAGE_COUNT, delflag);
+		Page<RoleDto> page = roleService.queryRoles(map);
+		return page.getList();
+	}
+
+	/**
+	 * 查询是否系统管理员
+	 * 
+	 * @param tendId
+	 * @param imUserId
+	 * @return
+	 */
+	@TargetFeign
+	@PostMapping("queryIsSuper")
+	public Boolean queryIsSuper(@RequestParam(value = "tendId") String tendId, @RequestParam(value = "imUserId") String imUserId) {
+		OaSysUser user = userService.getOaSysUserByImId(tendId, imUserId);
+		if (user == null) {
+			return false;
+		} else {
+			return isSuper(tendId, user.getId());
+		}
+	}
+
+	/**
+	 * 查询具备网盘权限的dto
+	 * 
+	 * @return
+	 */
+	@PostMapping("queryTendWithRole")
+	public List<TendUserInfoDto> queryTendWithRole(@RequestBody Map<String, Object> map) {
+		String code = getStr(map, "code");
+		List<TendUserInfoDto> tends = platformRedis.getTendUserList();
+		List<TendUserInfoDto> result = new ArrayList<>();
+		for (TendUserInfoDto tend : tends) {
+			// 外部联系人
+			if (isEquals(tend.getOuterLinkman(), 1)) {
+				continue;
+			}
+			try {
+				String userId = userService.getOAUserId(tend.getTendId(), tend.getUid());
+				List<RoleMenuDto> menus = menuService.queryMenuWithRole(tend.getTendId(), userId);
+				for (RoleMenuDto menu : menus) {
+					String menuCode = menu.getCode();
+					if (menuCode.contains(code)) {
+						result.add(tend);
+						break;
+					}
+				}
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+		}
+		return result;
+	}
+
+}

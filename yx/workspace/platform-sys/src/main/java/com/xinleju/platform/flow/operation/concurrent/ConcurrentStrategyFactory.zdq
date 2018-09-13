@@ -1,0 +1,17 @@
+package com.xinleju.platform.flow.operation.concurrent;
+
+import java.util.HashMap;
+import java.util.Map;
+
+public class ConcurrentStrategyFactory {
+	@SuppressWarnings("serial")
+	private static Map<String, ConcurrentStrategy> cache = new HashMap<String, ConcurrentStrategy>() {{
+		put(ConcurrentType.COMPETITION.getCode(), new CompetitionStrategy());
+		put(ConcurrentType.TOGETHER.getCode(), new TogetherStrategy());
+		put(ConcurrentType.SERIAL.getCode(), new SerialStrategy());
+	}};
+
+	public static ConcurrentStrategy newStrategy(String type) {
+		return cache.get(type);
+	}
+}

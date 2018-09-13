@@ -1,0 +1,366 @@
+package com.jzy.hio.flow.operation;
+
+import java.sql.Timestamp;
+import java.util.Date;
+import java.util.Iterator;
+import java.util.List;
+
+import com.jzy.hio.flow.dto.tobedeleted.ApprovalList;
+import com.jzy.hio.flow.dto.tobedeleted.ApprovalSubmitDto;
+import com.jzy.hio.flow.dto.tobedeleted.UserDto;
+import com.jzy.hio.flow.exception.FlowException;
+import com.jzy.hio.flow.rt.model.ACUnit;
+import com.jzy.hio.flow.rt.model.ApproverUnit;
+import com.jzy.hio.flow.rt.model.InstanceUnit;
+import com.jzy.hio.flow.rt.model.TaskUnit;
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang.StringUtils;
+import org.apache.log4j.Logger;
+
+import com.jzy.hio.flow.entity.MobileParam;
+import com.jzy.hio.flow.entity.SysNoticeMsg;
+import com.jzy.hio.flow.enums.ApproverNullStrategy;
+import com.jzy.hio.flow.enums.FlAcType;
+import com.jzy.hio.flow.enums.FlowMonitorPoint;
+import com.jzy.hio.flow.enums.InstanceOperateType;
+import com.jzy.hio.flow.enums.InstanceStatus;
+import com.jzy.hio.flow.enums.PostNullStrategy;
+import com.jzy.hio.flow.enums.TaskStatus;
+import com.jzy.hio.flow.enums.TaskType;
+import com.jzy.hio.flow.rt.model.PostUnit;
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+/**
+ * 开始操作
+ * 
+ * @author daoqi
+ *
+ */
+public class StartOperation extends DefaultOperation implements Operation {
+	
+	private static Logger log = Logger.getLogger(StartOperation.class);
+	
+	public StartOperation() {
+		super(OperationType.START);
+	}
+
+	@Override
+	public String action(InstanceUnit instanceUnit,
+			ApprovalSubmitDto approvalDto) throws Exception {
+		
+		setCurrentLocation(instanceUnit, approvalDto);
+		
+		saveTransition(currentApprover, approvalDto.getOperationName());
+		
+		//根据岗位为空、审批人为空策略，预告处理一遍审批列表，确定为空时显示与否:删除不显示的
+		handleNullLineDisplayOrNot(instanceUnit);
+		
+		//开始节点此处异常直接抛出
+		try {
+			operate(instanceUnit, approvalDto);
+		}catch(FlowException e) {
+			//由于监控原因流程挂起，穿透多层处理，结束模型操作，直接返回到模型保存！！！
+		}
+		
+		//3、设置实例当前审批人
+		setCurrentApprovers(instanceUnit);
+
+		//保存数据并发送待办
+		save(instanceUnit);
+		
+		//发送抄送人消息
+//		List<UserDto> ccPerson = this.currentAc.getCcPerson();	//this.currentAc值已变
+//		List<UserDto> ccPerson = this.instanceUnit.getAcList().get(0).getCcPerson();
+//		super.createToReadMsg(ccPerson, instanceUnit);
+
+		handleMessages(instanceUnit, approvalDto);
+		
+//		sendMessage(instanceUnit, task);
+		
+		noticeBusinessSystem(instanceUnit, approvalDto);
+		
+		log.info("流程动成功:instanceId=" + instanceUnit.getId());
+		
+		return "success";
+	}
+	
+
+	@Override
+	protected void operate(InstanceUnit instanceUnit, ApprovalSubmitDto approvalDto) throws Exception  {
+		
+		//1、流程实例启动
+		instanceUnit.setStatus(InstanceStatus.RUNNING.getValue());
+		instanceUnit.setStartDate(new Timestamp(System.currentTimeMillis()));
+		
+		//2、发起人的节点、岗位、人设置为完成(默认发起人一岗位一人)
+		ACUnit startAc = instanceUnit.getAcList().get(0);
+		complate(startAc);
+		
+		PostUnit startPost = startAc.getPosts().get(0);
+		complate(startPost);
+		
+		ApproverUnit startApprover = startPost.getApprovers().get(0);
+		completeStartTask(startApprover);
+		sendMessage(instanceUnit, startApprover);
+
+		//在发起人完成之后、第二环节开始之前
+		monitorHandle(null, instanceUnit.getFlId(), FlowMonitorPoint.FLOW_START);
+		
+		//2、查找一下人
+		//环节ON
+		turnOnNextAc(instanceUnit);
+		
+		//针对打回再发起情况，拼接打回前的审批记录
+		spliceOldRecord(instanceUnit, approvalDto.getInstanceIdBeforeReturn());
+	}
+	
+	private void spliceOldRecord(InstanceUnit instanceUnit, String instanceIdBeforeReturn) {
+		if(StringUtils.isEmpty(instanceIdBeforeReturn)) {
+			return ;
+		}
+		
+		List<ApprovalList> queryApproverDone = service.queryApproverDone(instanceIdBeforeReturn);
+		InstanceUnit oldRecord = service.translate(instanceUnit, queryApproverDone);
+		for(ACUnit acUnit : oldRecord.getAcList()) {
+			acUnit.setAcId(IDGenerator.getUUID());
+			acUnit.setDbAction(1);
+			List<PostUnit> posts = acUnit.getPosts();
+			if(CollectionUtils.isEmpty(posts)) {
+				continue;
+			}
+			for(PostUnit postUnit : posts) {
+				postUnit.setId(IDGenerator.getUUID());
+				postUnit.setAcId(acUnit.getAcId());
+				postUnit.setDbAction(1);
+				List<ApproverUnit> approvers = postUnit.getApprovers();
+				if(CollectionUtils.isEmpty(approvers)) {
+					continue;
+				}
+				for(ApproverUnit approver : approvers) {
+					approver.setId(IDGenerator.getUUID());
+					approver.setAcPostId(postUnit.getId());
+					approver.setDbAction(1);
+					approver.getTask().setDbAction(1);
+				}
+			}
+		}
+		instanceUnit.getAcList().addAll(0, oldRecord.getAcList());
+		super.resort(instanceUnit.getAcList());
+	}
+
+	protected void restart(InstanceUnit instanceUnit, ApprovalSubmitDto approvalDto) throws Exception  {
+		
+		//1、流程实例启动
+		instanceUnit.setStatus(InstanceStatus.RUNNING.getValue());
+//		instanceUnit.setStartDate(new Timestamp(System.currentTimeMillis()));
+		
+		//2、发起人的节点、岗位、人设置为完成(默认发起人一岗位一人)
+//		ACUnit startAc = instanceUnit.getAcList().get(0);
+//		complate(startAc);
+//		
+//		PostUnit startPost = startAc.getPosts().get(0);
+//		complate(startPost);
+//		
+//		ApproverUnit startApprover = startPost.getApprovers().get(0);
+//		completeStartTask(startApprover);
+		
+		//2、查找一下人
+		//环节ON
+		turnOnNextAc(instanceUnit);
+	}
+
+	private void handleNullLineDisplayOrNot(InstanceUnit instanceUnit) {
+		for (ACUnit acUnit : instanceUnit.getAcList()) {
+
+			List<PostUnit> posts = acUnit.getPosts();
+			if (CollectionUtils.isEmpty(posts)) {
+				if (PostNullStrategy.START_SKIP_DISPLAY_NONE.getValue().equals(acUnit.getPostNull())) {
+					if(!FlAcType.END.getAcType().equals(acUnit.getAcType())) {
+						acUnit.setDbAction(2);
+					}
+				}
+
+			} else {
+				int delCount = 0;
+				for (PostUnit post : posts) {
+					if (CollectionUtils.isEmpty(post.getApprovers())
+							&& ApproverNullStrategy.START_SKIP_DISPLAY_NONE.getValue().equals(acUnit.getApproverNull())) {
+						post.setDbAction(2);
+						delCount++;
+						
+						acUnit.setLeftPost(acUnit.getLeftPost() - 1);
+					}
+				}
+				if (delCount == posts.size()) {
+					acUnit.setDbAction(2);
+				}
+			}
+			
+			//拼接被删除环节的前后节点，被删除节点不可能是虚节点
+			if(acUnit.getDbAction() == 2) {
+				ACUnit preUnit = acUnit.getPreAcs().get(0);
+				ACUnit nextUnit = acUnit.getNextAcs().get(0);
+				
+				//处理由于减少分支导致的聚合节点的到达数变化的情况
+//				if(preUnit.getNextAcs().size() > 1 
+//						&& nextUnit.getPreAcs().size() > 1) {
+				if(FlAcType.FORK.getAcType().equals(preUnit.getAcType())
+						&& FlAcType.JOIN.getAcType().equals(nextUnit.getAcType())) {
+					nextUnit.setLeftPost(nextUnit.getLeftPost() - 1);
+				}
+				
+				if(preUnit.getNextAcs().size() == 1) {
+					preUnit.setNextAcIds(nextUnit.getAcId());
+					preUnit.setNextAcs(acUnit.getNextAcs());
+					nextUnit.setPreAcIds(preUnit.getAcId());
+					nextUnit.setPreAcs(acUnit.getPreAcs());
+					
+				} else {
+					String nextAcIds = preUnit.getNextAcIds();
+					nextAcIds = nextAcIds.replaceAll(acUnit.getAcId(), "");
+					List<ACUnit> nextAcs = preUnit.getNextAcs();
+					Iterator<ACUnit> iter = nextAcs.iterator();
+					while(iter.hasNext()) {
+						ACUnit ac = iter.next();
+						if(acUnit.getAcId().equals(ac.getAcId())) {
+							iter.remove();
+						}
+					}
+					
+					String preAcIds = nextUnit.getPreAcIds();
+					preAcIds = preAcIds.replaceAll(acUnit.getAcId(), "");
+					List<ACUnit> preAcs = nextUnit.getPreAcs();
+					Iterator<ACUnit> iter2 = preAcs.iterator();
+					while(iter2.hasNext()) {
+						ACUnit ac = iter2.next();
+						if(acUnit.getAcId().equals(ac.getAcId())) {
+							iter2.remove();
+						}
+					}
+				}
+			}
+		}
+	}
+
+	/**
+	 * 点亮下一环节
+	 * @param instanceUnit
+	 * @throws Exception
+	 */
+	private void turnOnNextAc(InstanceUnit instanceUnit) throws Exception {
+		ACUnit secondAc = instanceUnit.getAcList().get(1);
+		if(secondAc.getDbAction() == 2) {
+			secondAc = secondAc.getNextAcs().get(0);
+		}
+		if(FlAcType.JOIN.getAcType().equals(secondAc.getAcType())) {
+			throw new FlowException("模板错误：第二个节点是聚合节点！");
+		}
+		
+		if(FlAcType.FORK.getAcType().equals(secondAc.getAcType())) {
+			
+			//多分支处理
+			List<ACUnit> nextAcs = secondAc.getNextAcs();
+			for(ACUnit ac : nextAcs) {
+				this.setCurrentAc(ac);
+				turnOn(ac, instanceUnit);
+			}
+			
+		} else {
+			this.setCurrentAc(secondAc);
+			turnOn(secondAc, instanceUnit);
+		}
+		
+	}
+
+	private void completeStartTask(ApproverUnit startApprover) {
+		TaskUnit task = startApprover.getTask();
+		task.setTaskStatus(TaskStatus.FINISHED.getValue());
+		task.setStartTime(new Timestamp(System.currentTimeMillis()));
+		task.setEndTime(new Timestamp(System.currentTimeMillis()));
+		task.setTaskResult(OperationType.START.getCode());
+		task.setTaskResultName("发起流程");
+		task.setTaskComments(approvalDto.getUserNote());
+		task.setTaskType(TaskType.STARTER.getValue());
+		task.setDbAction(1);
+	}
+
+	@Override
+	public void setCurrentLocation(InstanceUnit instanceUnit, ApprovalSubmitDto approvalDto) {
+		this.setInstanceUnit(instanceUnit);
+		this.setApprovalDto(approvalDto);
+		
+		ACUnit currentAc = instanceUnit.getAcList().get(0);
+		PostUnit currentPost = currentAc.getPosts().get(0);
+		ApproverUnit currentApprover = currentPost.getApprovers().get(0);
+		this.setCurrentAc(currentAc);
+		this.setCurrentPost(currentPost);
+		this.setCurrentApprover(currentApprover);
+		this.setApprovalDto(approvalDto);
+	}
+
+	private void sendMessage(InstanceUnit instanceUnit, ApproverUnit startApprover) throws Exception {
+		String msgType = "FQ";
+		String url = "flow/runtime/approve/flow.html?"
+				+ "instanceId=" + instanceUnit.getId()
+				+ "&time=" + new Date().getTime();
+		
+		String mobileUrl = "mobile/approve/approve_detail.html";
+		MobileParam mobileParamBean = new MobileParam();
+		mobileParamBean.setInstanceId(instanceUnit.getId());
+		mobileParamBean.setBusinessId(instanceUnit.getBusinessId());
+		mobileParamBean.setAppId(instanceUnit.getAppId());
+		mobileParamBean.setTypeCode("START");
+		mobileParamBean.setTaskId(startApprover.getTask().getTaskId());
+		mobileParamBean.setApproveRole(startApprover.getTask().getTaskType());
+
+		UserDto user = new UserDto(startApprover.getApproverId(), startApprover.getApproverName());
+		SysNoticeMsg message = service.getMsgService().newFlowMsg(user, msgType, instanceUnit.getName(), 
+				url, mobileUrl, JacksonUtils.toJson(mobileParamBean));
+		message.setDealDate(new Timestamp(System.currentTimeMillis()));	//发起后即为处理完 TODO zhangdaoqiang
+		instanceUnit.getMessages().add(message);
+		startApprover.getTask().setMsgId(message.getId());
+		log.info("【我的发起消息】成功：" + message);
+		
+		//记录操作日志
+		String companyId = null;
+		String deptId = null;
+		String projectId = null;
+		String branchId = null;
+		String logType = InstanceOperateType.MY_START.getValue();
+		try {
+			service.getInstanceLogService().saveLogData(instanceUnit.getId(), startApprover.getOwner().getAcId(), 
+					startApprover.getId(), startApprover.getTask().getTaskId(), logType, startApprover.getApproverId(), 
+					companyId, deptId, projectId, branchId, null, null);
+		} catch (Exception e) {
+			throw new FlowException("记录流程日志异常：", e);
+		}
+	}
+
+//	/**
+//	 * 岗位ON
+//	 * @param post
+//	 * @param multiPerson
+//	 */
+//	private void turnOnPost(PostUnit post, String multiPerson) {
+//		post.setPostStatus(PostStatus.RUNNING.getValue());
+//		if(ConcurrentType.COMPETITION.getCode().equals(multiPerson)
+//				|| ConcurrentType.TOGETHER.getCode().equals(multiPerson)) {
+//			for(ApproverUnit approver : post.getApprovers()) {
+//				turnOnPerson(approver);
+//			}
+//		} else {
+//			ApproverUnit firstPerson = post.getApprovers().get(0);
+//			turnOnPerson(firstPerson);
+//		}
+//	}
+//
+//	private void turnOnPerson(ApproverUnit person) {
+//		TaskUnit task = person.getTask();
+//		task.setTaskStatus(TaskStatus.RUNNING.getValue());
+//		task.setTaskType(TaskType.APPROVER.getValue());
+//		task.setDbAction(1);
+//		
+//		log.info("任务启动成功，执行人：" + person.getApproverName());
+//	}
+}

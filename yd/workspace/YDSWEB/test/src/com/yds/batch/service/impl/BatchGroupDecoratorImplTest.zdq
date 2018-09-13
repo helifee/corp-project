@@ -1,0 +1,253 @@
+/*
+ * @(#)BatchGroupDecoratorImplTest.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 批处理系统
+ */
+
+package com.yds.batch.service.impl;
+
+import static com.yds.base.test.BeanAssert.assertBeanLenientEquals;
+import static com.yds.base.test.BeanAssert.assertListLenientEquals;
+
+import java.text.SimpleDateFormat;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.Iterator;
+import java.util.List;
+
+import javax.annotation.Resource;
+
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Ignore;
+import org.junit.Test;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.yds.base.test.AbstractSpringTransTest;
+import com.yds.batch.bean.BatchGroup;
+import com.yds.batch.dao.BatchGroupDao;
+import com.yds.batch.service.BatchConstants;
+import com.yds.batch.service.BatchGroupDecorator;
+
+/**
+ * 批处理任务组功能扩展类测试
+ * 
+ * @author wangduo
+ * @version 1.0 2010/05/25
+ */
+@Transactional(propagation = Propagation.NOT_SUPPORTED)
+public class BatchGroupDecoratorImplTest extends AbstractSpringTransTest {
+
+	private SimpleDateFormat dayFormat = new SimpleDateFormat(BatchConstants.DAY_FORMAT);
+	private SimpleDateFormat minuteFormat = new SimpleDateFormat(BatchConstants.MINUTE_FORMAT);
+
+	@Resource
+	private DbBackup dbBackup;
+	@Resource
+	private BatchGroupDao batchGroupDao;
+	@Resource
+	private BatchGroupDecorator batchGroupDecorator;
+
+	/**
+	 * @throws java.lang.Exception
+	 */
+	@Before
+	public void setUp() throws Exception {
+		// 备份数据库
+		dbBackup.setTables("bat_group", "bat_group_his", "bat_group_jobs", "bat_job", "bat_job_his");
+		dbBackup.backupTables();
+		initCommonData(BatchGroupDecoratorImpl.class);
+	}
+
+	/**
+	 * @throws java.lang.Exception
+	 */
+	@After
+	public void tearDown() throws Exception {
+		// 还原数据库
+		dbBackup.restoreTables();
+	}
+
+	/**
+	 * Test method for {@link com.yds.batch.service.impl.BatchGroupDecoratorImpl#updateExecStart()}.
+	 * 
+	 * @throws Exception
+	 */
+	@Test
+	@Ignore
+	public void testUpdateExecStart() throws Exception {
+		// 当日日期
+		Date dateNow = new Date();
+		String dateDayNow = dayFormat.format(dateNow);
+
+		// 插入测试数据
+		initData("input01.xls", "result01.xls");
+
+		List<BatchGroup> batchGroups = batchGroupDao.getBatchGroups();
+		for (BatchGroup batchGroup : batchGroups) {
+			batchGroupDecorator.setJobGroup(batchGroup);
+			batchGroupDecorator.updateExecStart();
+		}
+
+		// 期望结果
+		List<BatchGroup> expectList = getExpectList(BatchGroup.class);
+		// 实际结果
+		List<BatchGroup> actualList = findListBeanByCondition(BatchGroup.class, "param_BAT_GROUP");
+		assertListLenientEquals(expectList, actualList);
+
+		BatchGroup actualGroup = null;
+		for (Iterator<BatchGroup> iter = actualList.iterator(); iter.hasNext();) {
+			actualGroup = iter.next();
+			// 循环执行模式
+			if (BatchConstants.FREQ.CYCLES.value().equals(actualGroup.getExecFreq())) {
+				assertBeanLenientEquals(actualGroup.getExecDate(), dayFormat.parse(dateDayNow));
+
+				// 当前时间加上循环间隔
+				Calendar cal = Calendar.getInstance();
+				cal.setTime(actualGroup.getLastExecDt());
+				cal.add(Calendar.MINUTE, actualGroup.getExecInterval());
+
+				// 判断下次执行时间是否正确
+				assertBeanLenientEquals(actualGroup.getExecTime(),cal.get(Calendar.HOUR_OF_DAY) + ":"
+						+ cal.get(Calendar.MINUTE));
+			}
+		}
+
+	}
+
+	/**
+	 * Test method for {@link com.yds.batch.service.impl.BatchGroupDecoratorImpl#executeJobGroup()}.
+	 * 
+	 * @throws Exception
+	 */
+	@Test
+	@Ignore
+	public void testExecuteJobGroup() throws Exception {
+		// 插入测试数据
+		initData("input01.xls", "");
+
+		List<BatchGroup> batchGroups = batchGroupDao.getBatchGroups();
+		batchGroupDecorator.setJobGroup(batchGroups.get(0));
+
+		// 执行失败
+		Assert.assertEquals(BatchConstants.EXEC_STATUS.ERROREND.value(), batchGroupDecorator.executeJobGroup());
+
+		batchGroupDecorator.setJobGroup(batchGroups.get(1));
+
+		// 执行成功
+		Assert.assertEquals(BatchConstants.EXEC_STATUS.NORMALEND.value(), batchGroupDecorator.executeJobGroup());
+	}
+
+	/**
+	 * Test method for {@link com.yds.batch.service.impl.BatchGroupDecoratorImpl#updateExecEnd(String)}.
+	 * 
+	 * @throws Exception
+	 */
+	@Test
+	public void testUpdateExecEnd() throws Exception {
+
+		// 插入测试数据
+		initData("input02.xls", "result02.xls");
+		String execInfo = getParamObject(String.class);
+		List<BatchGroup> batchGroups = batchGroupDao.getBatchGroups();
+
+		BatchGroup jobGroup = null;
+
+		for (Iterator<BatchGroup> iter = batchGroups.iterator(); iter.hasNext();) {
+			jobGroup = iter.next();
+
+			// 设置任务为执行中
+			jobGroup.setExecStatus(BatchConstants.EXEC_STATUS.PROCESSING.value());
+
+			jobGroup.setLastExecDt(new Date());
+
+			batchGroupDecorator.setJobGroup(jobGroup);
+			batchGroupDecorator.updateExecEnd(execInfo);
+		}
+
+		// 任务组信息期望结果
+		List<BatchGroup> expectGroupInfo = getExpectList(BatchGroup.class);
+
+		// 任务组信息实际结果
+		List<BatchGroup> actualGroupInfo = findListBeanByCondition(BatchGroup.class, "param_BAT_GROUP");
+
+		assertListLenientEquals(expectGroupInfo, actualGroupInfo);
+
+		// 任务组履历期望结果
+		List<BatchGroup> expectGroupHis = getExpectList(BatchGroup.class, "expect_his");
+
+		// 任务组履历实际结果
+		List<BatchGroup> actualGroupHis = findListBeanByCondition(BatchGroup.class, "param_BAT_GROUP_HIS");
+
+		assertListLenientEquals(expectGroupHis, actualGroupHis);
+
+	}
+
+	/**
+	 * Test method for {@link com.yds.batch.service.impl.BatchGroupDecoratorImpl#isValid()}.
+	 * 
+	 * @throws Exception
+	 */
+	@Test
+	@Ignore
+	public void testIsValid() throws Exception {
+
+		// 插入测试数据
+		initData("input03.xls", "");
+
+		// 得到当前日期和时间
+		Date dateNow = new Date();
+		String dateDayNow = dayFormat.format(dateNow);
+		String dateTimeNow = minuteFormat.format(dateNow);
+
+		List<BatchGroup> batchGroups = batchGroupDao.getBatchGroups();
+		BatchGroup jobGroup = null;
+
+		for (Iterator<BatchGroup> iter = batchGroups.iterator(); iter.hasNext();) {
+
+			jobGroup = iter.next();
+
+			batchGroupDecorator.setJobGroup(jobGroup);
+
+			// 得到任务组ID的首字符
+			char firstChar = jobGroup.getGroupId().charAt(0);
+
+			Calendar cal = Calendar.getInstance();
+			cal.setTime(dateNow);
+
+			String execFreq = jobGroup.getExecFreq();
+
+			if (firstChar == '0') {
+				jobGroup.setExecTime(dateTimeNow);
+				// 指定时间执行
+				if (BatchConstants.FREQ.APPOINT.value().equals(execFreq)) {
+					jobGroup.setExecDate(dayFormat.parse(dateDayNow));
+				} else if (BatchConstants.FREQ.PER_WEEK.value().equals(execFreq)) {
+					// 每周执行
+					jobGroup.setExecDay(cal.get(Calendar.DAY_OF_WEEK));
+				} else if (BatchConstants.FREQ.PER_MONTH.value().equals(execFreq)) {
+					// 每月执行
+					jobGroup.setExecDay(cal.get(Calendar.DAY_OF_MONTH));
+				} else if (BatchConstants.FREQ.MONTH_END.value().equals(execFreq)) {
+					// 月末执行
+					jobGroup.setExecDay(cal.getActualMaximum(Calendar.DAY_OF_MONTH));
+				} else if (BatchConstants.FREQ.YEAR_END.value().equals(execFreq)) {
+					// 年末执行
+					jobGroup.setExecDay(cal.getActualMaximum(Calendar.DAY_OF_YEAR));
+				}
+
+				// 0 可通过
+				Assert.assertTrue(batchGroupDecorator.isValid());
+
+			} else if (firstChar == '1') {
+				// 1 不可通过
+				Assert.assertTrue(!batchGroupDecorator.isValid());
+			}
+		}
+	}
+
+}

@@ -1,0 +1,559 @@
+package com.xinleju.erp.finance.service;
+
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import javax.xml.bind.JAXBException;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.apache.tools.ant.util.DateUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.erp.base.app.bean.Page;
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.co.voucher.service.SyncFinaCoData;
+import com.xinleju.erp.data.cache.dto.SupplierInfoDTO;
+import com.xinleju.erp.ex.service.SyncFinaExData;
+import com.xinleju.erp.finance.dao.FiVoucherDataDao;
+import com.xinleju.erp.finance.models.FiAccountCaption;
+import com.xinleju.erp.finance.models.FiAccountSet;
+import com.xinleju.erp.finance.models.FiBusinessobject;
+import com.xinleju.erp.finance.models.FiEntryData;
+import com.xinleju.erp.finance.models.FiSysinfo;
+import com.xinleju.erp.finance.models.FiVoucher;
+import com.xinleju.erp.finance.models.FiVoucherData;
+import com.xinleju.erp.finance.models.FiVoucherExBill;
+import com.xinleju.erp.finance.models.FiVoucherTemplate;
+import com.xinleju.erp.finance.models.params.VoucherParams;
+import com.xinleju.erp.finance.xml.AuxiliaryItem;
+import com.xinleju.erp.finance.xml.Cashflowcase;
+import com.xinleju.erp.finance.xml.Entry;
+import com.xinleju.erp.finance.xml.Jaxb2Util;
+import com.xinleju.erp.finance.xml.Voucher;
+import com.xinleju.erp.finance.xml.VoucherBody;
+import com.xinleju.erp.finance.xml.VoucherHead;
+import com.xinleju.erp.finance.xml.supl.Basdoc;
+import com.xinleju.erp.finance.xml.supl.BasdocHead;
+import com.xinleju.erp.finance.xml.supl.Ufinterface;
+import com.xinleju.erp.flow.flowutils.bean.FlowResult;
+import com.xinleju.erp.sa.service.SyncFinaSaData;
+import com.xinleju.erp.sm.extend.dto.FinaResult;
+
+/**
+ * 凭证服务类
+ * 
+ * @author songjunjie ztl
+ */
+@Service
+@Qualifier("fiVoucherService")
+public class FiVoucherService extends BaseService {
+	private static final Log log = LogFactory.getLog(FiVoucherService.class);
+	
+	@Autowired
+	private FiVoucherDataDao fiVoucherDataDao;
+	@Autowired
+	private FiAccountCaptionService fiAccountCaptionService;
+	@Autowired
+	private SyncFinaDataService syncFinaDataService;
+	@Autowired
+	private FiVoucherTemplateService fiVoucherTemplateService;
+	@Autowired
+	private FiBizObjectService fiBizObjectService;
+	
+	/**
+	 * 客商属性  1：供应商
+	 */
+	private static final Integer CUST_TYPE = 1;
+	
+	/**
+	 * 客商类型 0：指外部单位
+	 */
+	private static final Integer CUST_PROP = 0;
+	
+	private Long sysId = 3l;
+
+	/**
+	 * 根据id返回凭证信息
+	 * 
+	 * @param voucherId
+	 * @return
+	 */
+	public FiVoucher getFiVoucherById(Long voucherId) {
+
+		FiVoucherData fiVoucherData = this.getDao().getById(FiVoucherData.class, voucherId);
+		if (fiVoucherData != null) {
+			FiVoucher fiVoucher = new FiVoucher();
+			fiVoucher.setFiVoucherData(fiVoucherData);
+			String hql = "FROM FiEntryData WHERE voucherDataId=?";
+			List<FiEntryData> list = this.getDao().findByHQL(FiEntryData.class, hql, voucherId);
+			fiVoucher.setFiEntryDataList(list);
+			String hql1 = "FROM FiVoucherExBill WHERE  voucherDataId = ?";
+			//List<FiVoucherBill> list1 = this.getDao().findByHQL(FiVoucherBill.class, hql1, voucherId);
+			List<FiVoucherExBill> bills = this.getDao().findByHQL(FiVoucherExBill.class, hql1, voucherId);
+			fiVoucher.setVoucherBillList(bills);
+			return fiVoucher;
+		}
+		return null;
+	}
+
+	/**
+	 * 查询凭证
+	 * 
+	 * @param status
+	 *            状态
+	 * @param beginDate
+	 *            开始日期
+	 * @param endDate
+	 *            结束日期
+	 * @param accountSetId
+	 * @return
+	 * @throws ParseException
+	 */
+	@SuppressWarnings({ "rawtypes", "unchecked" })
+	public Page searchVoucher(String status, String beginDate, String endDate, Long accountSetId,String typeId,Integer isfull, int start, int limit) throws Exception {
+		String hql = "FROM FiVoucherData WHERE 1=1 and ifnull(dr,0)=0 ";
+		String where = "";
+		List params = new ArrayList();
+		SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+		if (StringUtils.isNotBlank(status)) {
+			where += " AND sendStatus=?";
+			params.add(status);
+		}
+		if (StringUtils.isNotBlank(beginDate)) {
+			beginDate = beginDate + " 00:00:00";
+			Date date1 = sdf.parse(beginDate);
+			where += " AND createDate>=?";
+			params.add(date1);
+		}
+		if (StringUtils.isNotBlank(endDate)) {
+			endDate = endDate + " 23:59:59";
+			Date date2 = sdf.parse(endDate);
+			where += "AND createDate<=?";
+			params.add(date2);
+		}
+		if (accountSetId != null) {
+			where += " and accountSetId = ?";
+			params.add(accountSetId);
+		}
+		if (StringUtils.isNotBlank(typeId) && !typeId.equals("null")) {
+			where += " and bizTypeId in( "+typeId+" )";
+			//params.add(typeId);
+		}
+		//是否是完整凭证查询
+		if(isfull != 3){
+			where += " and status = ?";
+			params.add(isfull);
+		}
+		where += " order by id desc ";
+		hql += where;
+		Page page = this.getDao().findPageByHQL(FiVoucherData.class, hql, params.toArray(), start, limit);
+		return page;
+	}
+
+	/**
+	 * 根据查询参数获得凭证数据的
+	 * 
+	 * @param params
+	 * @return page{total,start,limit,items<FiVoucherData>}
+	 */
+	public Page getPageByParams(VoucherParams params) {
+		return fiVoucherDataDao.getVoucherPageByParams(params);
+	}
+
+	/**
+	 * 根据id获得凭证信息
+	 * 
+	 * @param voucherId
+	 * @return
+	 */
+	public FiVoucherData getVoucherData(Long voucherId) {
+		return getDao().getById(FiVoucherData.class, voucherId);
+
+	}
+
+	public void saveFiVoucherData(FiVoucherData fiVoucherData) {
+		getDao().saveOrUpdate(fiVoucherData);
+	}
+	
+	public FiEntryData getFiEntryDateById(Long fiEntryDateId){
+		return getDao().getById(FiEntryData.class, fiEntryDateId);
+	}
+	
+	
+	/**
+	 * 校验是否为完整的凭证
+	 * 校验规则：1.辅助核算没有匹配到   2：借贷金额不平
+	 * @param voucher
+	 * @param entryDataList
+	 * @return
+	 */
+	public boolean isFullVoucher(FiVoucherData voucher,List<FiEntryData> entryDataList,Long accountSetId){
+		boolean isFull = true;
+		Double creditAmountSum = voucher.getCreditAmount();
+		Double debitAmountSum = voucher.getDebitAmount();
+		//判断借贷金额是否相等
+		if (Math.abs(creditAmountSum) - Math.abs(debitAmountSum) != 0) {
+			isFull = false;
+		}
+		//未匹配到辅助核算
+		for(FiEntryData entryDate:entryDataList){
+			String captionCode = entryDate.getCaptionCode();
+			String assCompent = entryDate.getAssCompent();
+			FiAccountCaption fc = fiAccountCaptionService.getFiAccountCaptionByCode(captionCode,accountSetId);
+			if(fc!=null){
+	    	    String assName = fc.getAssName();
+	    	    if(StringUtils.isNotBlank(assName) && StringUtils.isBlank(assCompent)){
+	    	    	isFull = false;
+	    	    }
+			}else{
+				isFull = false;
+			}
+		}
+		
+		return isFull;
+		
+	}
+	
+	/**
+	 * 校验是否为完整的凭证
+	 * 校验规则：1.辅助核算没有匹配到   2：借贷金额不平
+	 * @param voucher
+	 * @param entryDataList
+	 * @return
+	 */
+	public Map isFull(FiVoucherData voucher,List<FiEntryData> entryDataList,Long accountSetId){
+		Map<Integer,String> map = new HashMap<Integer, String>();
+		boolean isFull = true;
+		Double creditAmountSum = voucher.getCreditAmount();
+		Double debitAmountSum = voucher.getDebitAmount();
+		String error = "";
+		
+		map.put(1, "true");
+		//判断借贷金额是否相等
+		if (Math.abs(creditAmountSum) - Math.abs(debitAmountSum) != 0) {
+			isFull = false;
+			error = "借贷不平";
+			//1:是否为完整凭证
+			map.put(1, "false");
+			map.put(2, error);
+		}
+		//未匹配到辅助核算
+		for(FiEntryData entryDate:entryDataList){
+			String captionCode = entryDate.getCaptionCode();
+			String assCompent = entryDate.getAssCompent();
+			FiAccountCaption fc = fiAccountCaptionService.getFiAccountCaptionByCode(captionCode,accountSetId);
+			if(fc!=null){
+    	    String assName = fc.getAssName();
+    	    if(StringUtils.isNotBlank(assName) && StringUtils.isBlank(assCompent)){
+    	    	isFull = false;
+    	    	error += "未匹配到辅助核算："+assName + ",";
+    	    	map.put(1, "false");
+    			map.put(2, error);
+    	    }
+			}else{
+				isFull = false;
+    	    	error += "未匹配到会计科目";
+    	    	map.put(1, "false");
+    			map.put(2, error);
+			}
+		}
+		
+		return map;
+		
+	}
+	
+	/**
+	 * 根据凭证ID获取单据
+	 * 
+	 * @param voucherId
+	 * @return
+	 */
+	public List<FiVoucherExBill> getBillsByVoucherIdAndBilltype(Long voucherId) {
+		String hql = "FROM FiVoucherExBill WHERE voucherDataId= ? ";
+		List<FiVoucherExBill> bills = this.getDao().findByHQL(FiVoucherExBill.class, hql, voucherId);
+		return bills;
+	}
+	
+	
+	public void updateVoucherDate(FiVoucherData voucher){
+		this.getDao().update(voucher);
+	}
+	
+	
+	public void delete(Long[] ids){
+		/*String hql = "delete FiVoucherData f where f.id = ?";
+		for(Long id : ids){
+			this.getDao().execute(hql, id);
+		}*/
+		String hql = "update FiVoucherData f set f.dr=1 where f.id = ?";
+		for(Long id : ids){
+			this.getDao().execute(hql, id);
+		}
+	}
+	
+	public void deleteVhoucherEntry(Long id) {
+		String hql = "delete FiEntryData f where f.id = ?";
+		this.getDao().execute(hql, id);
+	}
+	
+
+	protected void rewrite(FiVoucherData voucher,Map<String, Object> result,List<String> errBills,String errBillType,Long sysid){
+		sysId = sysid;
+		List<String> billIds = new ArrayList<String>();
+		String btype = "";
+		String voucherWord = "";
+		String voucherNo = "";
+		Long voucherId = null;
+		Integer creatStatus = null;
+		String createDate = DateUtils.format(voucher.getCreateDate(),"yyyy-MM-dd");
+		
+		Long typeId = Long.parseLong(voucher.getVoucherType());
+		FiVoucherTemplate voucherTemplate = fiVoucherTemplateService.getFiVoucherTemplateByTypeId(typeId);
+		String bizId = voucherTemplate.getBizObjectId();
+		FiBusinessobject fb = fiBizObjectService.getFiBusinessobjectByRegisClass(bizId,String.valueOf(sysId));
+		btype = fb.getBtype();
+		
+		if(errBills != null && errBills.size() > 0){
+			billIds = errBills;
+			//生成失败
+			creatStatus = 2;
+		}else{
+			//生成成功
+			creatStatus = 1;
+			voucherId = voucher.getId();
+			
+			voucherWord = voucher.getFlag();
+			voucherNo = voucher.getVoucherNo();
+			
+			List<FiVoucherExBill> bills = this.getBillsByVoucherIdAndBilltype(voucherId);
+			for(FiVoucherExBill bill:bills){
+				String billId = bill.getBillId();
+				billIds.add(billId);
+			}
+		}
+		
+		FinaResult fr = new FinaResult();
+		fr.setBillIds(billIds);
+		fr.setBillType(btype);
+		if(creatStatus==1){ // chc add 2016.6.23
+			fr.setVoucherWord(voucherWord);
+			fr.setVoucherNumber(voucherNo);
+			fr.setVoucherid(voucherId);
+		}
+		fr.setVoucherDate(createDate);
+		fr.setCreateVoucherStatus(creatStatus);
+		
+		if(sysId == 1){//销售
+			SyncFinaSaData syncFinaSaData = syncFinaDataService.getSyncFinaSaData();
+			if (syncFinaSaData == null) {
+				String msg = "调用销售系统接口【RewriteFinaSAResult】，无法从dubbo获得实例！";
+				log.error(msg);
+				
+			} else {
+				FlowResult<String> flowResultRewrite = syncFinaSaData
+						.rewriteResult(fr);
+				if (!flowResultRewrite.isSuccess()) {
+					log.info("凭证号为：" +voucherNo
+							+ "回写失败，因为：" + flowResultRewrite.getResult());
+					//处理凭证回写失败的凭证
+					//failVoucherIds.add(voucherId);
+					//凭证回写状态0:回写成功 1：回写失败
+					voucher.setRewriteStatus(1);
+					this.updateVoucherDate(voucher);
+				
+				} else {
+					log.info("凭证号为：" + voucherNo + "回写成功!");
+				}
+			}
+		}
+        if(sysId == 2){//成本
+        	SyncFinaCoData syncFinaCoData = syncFinaDataService.getSyncFinaCoData();
+        	
+    		if (syncFinaCoData == null) {
+    			String msg = "调用成本系统接口【RewriteFinaCoResult】，无法从dubbo获得实例！";
+    			log.error(msg);
+    			
+    		} else {
+    			FlowResult<String> flowResultRewrite = syncFinaCoData.rewriteFinaResult(fr);
+    					
+    			if (!flowResultRewrite.isSuccess()) {
+    				log.info("凭证号为：" +voucherNo
+    						+ "回写失败，因为：" + flowResultRewrite.getResult());
+    				//处理凭证回写失败的凭证
+    				//failVoucherIds.add(voucherId);
+    				//凭证回写状态0:回写成功 1：回写失败
+    				voucher.setRewriteStatus(1);
+    				this.updateVoucherDate(voucher);
+    			
+    			} else {
+    				log.info("凭证号为：" + voucherNo + "回写成功!");
+    			}
+    		}
+		}
+        if(sysId == 3){ //费用
+        	SyncFinaExData syncFinaExData = syncFinaDataService.getSyncFinaExData();
+        	if (syncFinaExData == null) {
+    			String msg = "调用费用系统接口【RewriteFinaExResult】，无法从dubbo获得实例！";
+    			log.error(msg);
+    			
+    		} else {
+    			FlowResult<String> flowResultRewrite = syncFinaExData
+    					.rewriteResult(fr);
+    			if (!flowResultRewrite.isSuccess()) {
+    				log.info("凭证号为：" +voucherNo
+    						+ "回写失败，因为：" + flowResultRewrite.getResult());
+    				//处理凭证回写失败的凭证
+    				//failVoucherIds.add(voucherId);
+    				//凭证回写状态0:回写成功 1：回写失败
+    				voucher.setRewriteStatus(1);
+    				this.updateVoucherDate(voucher);
+    			
+    			} else {
+    				log.info("凭证号为：" + voucherNo + "回写成功!");
+    			}
+    		}
+        }
+
+	}
+	
+	/**
+	 * 根据获取当前最大的凭证号
+	 * 
+	 * @param voucherId
+	 * @return
+	 */
+	public Integer getMaxVoucherNo() {
+		String sql = "select max(voucher_no) from fi_voucher_data";
+		//String hql = "select max(fvd.voucherNo) from FiVoucherData fvd";
+		Integer maxVoucherNo = 0;
+		try {
+			//maxVoucherNo = getDao().findInt("select max(voucherNo) from FiVoucherData");
+			maxVoucherNo = getDao().findIntBySQL(sql);
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		
+		return maxVoucherNo;
+	}
+	
+	
+	/**
+	 * 生成供应商同步的XML
+	 * 
+	 * @param voucher
+	 * @param entryDataList
+	 * @param voucherBillList
+	 * @return
+	 */
+	public String createSyncSuplsXml2NC(SupplierInfoDTO supl,FiAccountSet accountSet,FiSysinfo sysinfo,String categoryName) {
+	
+		Basdoc bd = new Basdoc();
+		bd.setId(String.valueOf(supl.getId()));
+		
+		BasdocHead bh = new BasdocHead();
+		bh.setPkcorp(accountSet.getCompanyCode());
+		bh.setPkareacl("EX");
+		bh.setCustcode(supl.getCode());
+		bh.setCustname(supl.getName());
+		bh.setCustshortname(supl.getName());
+		bh.setCusttype(CUST_TYPE);
+		bh.setCustprop(CUST_PROP);
+		//供方分类
+	    bh.setMemo(categoryName);
+		
+		bd.setBasdochead(bh);
+       
+		Ufinterface ufi = new Ufinterface();
+		ufi.setBilltype("bscubas");
+		ufi.setReplace("Y");
+		//设置发送方
+		ufi.setSender(sysinfo.getSender());
+		ufi.setReceiver("");
+		ufi.setIsexchange("Y");
+		ufi.setProc("add");
+	    ufi.setBasdoc(bd);
+		
+		String xml = "";
+		try {
+			xml = Jaxb2Util.objContextXml(ufi);
+			System.out.println("生成NC的XML===="+xml);
+		} catch (JAXBException e) {
+			e.printStackTrace();
+		}
+		return xml;
+	}
+
+	
+	protected void rewrite(String ids,String btype,Long sysId){
+		List<String> billIds = new ArrayList<String>();
+		Integer creatStatus = 5;
+		String[] strIds = ids.split(",");
+		for(int i=0;i<strIds.length;i++){
+			if(StringUtils.isNotBlank(strIds[i])){
+				billIds.add(strIds[i]);
+			}
+		}
+		
+		FinaResult fr = new FinaResult();
+		fr.setBillIds(billIds);
+		fr.setBillType(btype);
+		fr.setCreateVoucherStatus(creatStatus);
+    	
+    	if(sysId == 1){//销售
+			SyncFinaSaData syncFinaSaData = syncFinaDataService.getSyncFinaSaData();
+			if (syncFinaSaData == null) {
+				String msg = "调用销售系统接口【RewriteFinaSAResult】，无法从dubbo获得实例！";
+				log.error(msg);
+			} else {
+				FlowResult<String> flowResultRewrite = syncFinaSaData.rewriteResult(fr);
+				if (!flowResultRewrite.isSuccess()) {
+					log.info("回写失败，因为：" + flowResultRewrite.getResult());
+				} else {
+					log.info("回写成功!");
+				}
+			}
+		}
+        if(sysId == 2){//成本
+        	SyncFinaCoData syncFinaCoData = syncFinaDataService.getSyncFinaCoData();
+    		if (syncFinaCoData == null) {
+    			String msg = "调用成本系统接口【RewriteFinaCoResult】，无法从dubbo获得实例！";
+    			log.error(msg);
+    			
+    		} else {
+    			FlowResult<String> flowResultRewrite = syncFinaCoData.rewriteFinaResult(fr);
+    			if (!flowResultRewrite.isSuccess()) {
+    				log.info("回写失败，因为：" + flowResultRewrite.getResult());
+    			} else {
+    				log.info("回写成功!");
+    			}
+    		}
+		}
+        if(sysId == 3){ //费用
+        	SyncFinaExData syncFinaExData = syncFinaDataService.getSyncFinaExData();
+        	if (syncFinaExData == null) {
+    			String msg = "调用费用系统接口【RewriteFinaExResult】，无法从dubbo获得实例！";
+    			log.error(msg);
+    			
+    		} else {
+    			FlowResult<String> flowResultRewrite = syncFinaExData.rewriteResult(fr);
+    			if (!flowResultRewrite.isSuccess()) {
+    				log.info("回写失败，因为：" + flowResultRewrite.getResult());
+    			} else {
+    				log.info("回写成功!");
+    			}
+    		}
+        }
+    	
+    	
+	}
+}

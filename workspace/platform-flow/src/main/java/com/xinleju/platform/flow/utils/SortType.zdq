@@ -1,0 +1,26 @@
+package com.xinleju.platform.flow.utils;
+
+public enum SortType {
+	 UP_ONE("上移", "1"), DOWN_ONE("下移", "2"),TO_TOP("置顶", "3"),TO_BOTTOM ("置底", "4");  
+	    // 成员变量  
+	    private String name;  
+	    private String code;
+		public String getName() {
+			return name;
+		}
+		public void setName(String name) {
+			this.name = name;
+		}
+		public String getCode() {
+			return code;
+		}
+		public void setCode(String code) {
+			this.code = code;
+		}
+		private SortType(String name, String code) {
+			this.name = name;
+			this.code = code;
+		}
+	
+	    
+}

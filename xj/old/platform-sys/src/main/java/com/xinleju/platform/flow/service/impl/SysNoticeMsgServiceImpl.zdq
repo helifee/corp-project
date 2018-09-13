@@ -1,0 +1,1027 @@
+package com.xinleju.platform.flow.service.impl;
+
+import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
+import java.sql.Timestamp;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.ExecutorService;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang.StringUtils;
+import org.apache.http.HttpResponse;
+import org.apache.http.HttpStatus;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.entity.StringEntity;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClientBuilder;
+import org.apache.http.message.BasicHeader;
+import org.apache.http.protocol.HTTP;
+import org.apache.http.util.EntityUtils;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.platform.base.datasource.DataSourceContextHolder;
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.base.utils.LoginUtils;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.base.utils.SecurityUserBeanInfo;
+import com.xinleju.platform.base.utils.SecurityUserDto;
+import com.xinleju.platform.base.utils.ThreadPoolUtil;
+import com.xinleju.platform.flow.dao.SysNoticeMsgDao;
+import com.xinleju.platform.flow.dao.SysNoticeMsgTempDao;
+import com.xinleju.platform.flow.dto.SysNoticeMsgDto;
+import com.xinleju.platform.flow.dto.SysNoticeMsgStatDto;
+import com.xinleju.platform.flow.dto.UserDto;
+import com.xinleju.platform.flow.entity.MsgSendRecord;
+import com.xinleju.platform.flow.entity.SysNoticeMsg;
+import com.xinleju.platform.flow.entity.SysNoticeMsgTemp;
+import com.xinleju.platform.flow.exception.FlowException;
+import com.xinleju.platform.flow.service.MsgSendRecordService;
+import com.xinleju.platform.flow.service.SysNoticeMsgService;
+import com.xinleju.platform.flow.service.SysNoticeMsgUserConfigService;
+import com.xinleju.platform.flow.utils.ConfigurationUtil;
+import com.xinleju.platform.flow.utils.DateUtils;
+import com.xinleju.platform.flow.utils.FlowLogUtil;
+import com.xinleju.platform.flow.utils.FlowNoticeMsgUtils;
+import com.xinleju.platform.sys.org.entity.User;
+import com.xinleju.platform.sys.org.service.UserService;
+import com.xinleju.platform.tools.data.JacksonUtils;
+import com.xinleju.platform.weixin.message.Article;
+import com.xinleju.platform.weixin.message.Articles;
+import com.xinleju.platform.weixin.message.NewsMessage;
+import com.xinleju.platform.weixin.pojo.Token;
+import com.xinleju.platform.weixin.pojo.WeixinUser;
+import com.xinleju.platform.weixin.pojo.WeixinUserResponse;
+import com.xinleju.platform.weixin.utils.CommonUtil;
+import com.xinleju.platform.weixin.utils.ParamesAPI;
+import com.xinleju.platform.weixin.utils.SSOTokenService;
+
+import net.sf.json.JSONObject;
+
+/**
+ * 消息服务
+ * 
+ */
+@Service
+public class SysNoticeMsgServiceImpl extends  BaseServiceImpl<String,SysNoticeMsg> implements SysNoticeMsgService{
+	
+	private static final String APPCODE_LLOA = "LLOA";
+	private static final String APPLICATION_JSON = "application/json";
+	private static final String CONTENT_TYPE_TEXT_JSON = "text/json";
+
+	private static Logger log = Logger.getLogger("flowLogger");
+	private  ExecutorService threadPool = ThreadPoolUtil.getInstance() ;
+	@Autowired
+	private SysNoticeMsgDao msgDao;
+	
+	@Autowired
+	private MsgSendRecordService msgSendRecordService;
+	
+	@Autowired
+	private UserService userService;
+
+	@Autowired
+	private SysNoticeMsgTempDao sysNoticeMsgTempDao;
+
+	@Value("#{configuration['deploy.path']}")
+	private String deployPath;
+
+	@Autowired
+	private  SysNoticeMsgUserConfigService sysNoticeMsgUserConfigService;
+	@Override
+	public List<SysNoticeMsgDto> queryTwoSumData(Map<String, String> paramMap) {
+		return msgDao.queryTwoSumData(paramMap);
+	}
+
+	@Override
+	public List<SysNoticeMsg> queryHaveDoneList(Map<String, String> paramMap) {
+		
+		return msgDao.queryHaveDoneList(paramMap);
+	}
+
+	@Override
+	public boolean completeMessage(String msgId, String status) {
+		Map<String, Object> paramMap = new HashMap<String, Object>();
+		paramMap.put("opType", status);
+		paramMap.put("msgId", msgId);
+		Timestamp dealDate = null;
+		if("YB".equals(status)) {
+			dealDate = new Timestamp(System.currentTimeMillis());
+			paramMap.put("firstType", "DONE");
+		}
+		if("YY".equals(status)) {
+			paramMap.put("firstType", "HAVEREAD");
+		}
+		if("DB".equals(status)) {
+			paramMap.put("delflag", "0");
+		}
+		paramMap.put("dealDate", dealDate);
+		int result = msgDao.update(SysNoticeMsg.class.getName() + ".completeMessage", paramMap);
+		//推送IM已办/已阅消息
+		if(result>0){
+			sendImYBMsg(msgId);
+		}
+		return true;
+	}
+
+	//推送IM已办消息
+	public void sendImYBMsg(String msgId){
+		SysNoticeMsg msg;
+		try {
+			msg = getObjectById(msgId);
+			if(msg!=null){
+				String status=msg.getOpType();
+				if("YB".equals(status)||"YY".equals(status)) {
+					saveAndNotifyOthers(msg);
+				}
+			}
+		} catch (Exception e1) {
+		}
+	}
+	
+	@Override
+	public boolean setMessageOpened(String messageId) {
+		msgDao.setMessageOpened(messageId);
+		return true;
+	}
+
+	@Override
+	public List<SysNoticeMsgDto> queryDBDYList(Map<String, String> paramMap) {
+		//第一步 获取待办和待阅的总数
+		List<SysNoticeMsgDto> firstList = msgDao.queryTwoSumData(paramMap);
+		SysNoticeMsgDto firstItem = firstList.get(0);
+		List<SysNoticeMsgDto> dataList = new ArrayList<SysNoticeMsgDto>();
+		dataList.add(firstItem);
+		List<SysNoticeMsgDto> list = msgDao.queryDBDYList(paramMap);
+		if(list!=null && list.size()>0){
+			dataList.addAll(list);
+		}
+		return dataList;
+	}
+
+	@Override
+	public int updateStatusOfNoticeMsg(Map<String, Object> paramMap) throws Exception {
+		paramMap = processParamUserId(paramMap);
+		Boolean delflag = (Boolean) paramMap.get("delflag");
+		if("YB".equals(paramMap.get("newStatus"))){
+			paramMap.put("firstType", "DONE");
+		}
+		if("YY".equals(paramMap.get("newStatus"))) {
+			paramMap.put("firstType", "HAVEREAD");
+		}
+		if(Objects.equals(delflag,true)){
+			paramMap.put("firstType","REVOCATION");
+		}
+		//{"id":"oldplatform19212094432","firstType":"revocation","appCode":"OA","delflag":true}
+		int i= msgDao.updateStatusOfNoticeMsg(paramMap);
+
+			if(i>0&&Objects.equals(delflag,true)){
+				//老平台==推送IM 撤销待办
+				String id = String.valueOf(paramMap.get("id"));
+				String userInfo = String.valueOf(paramMap.get("userInfo"));
+				SysNoticeMsg msg = msgDao.getObjectById(id);
+				msg.setFirstType("REVOCATION");
+				try {
+					httpPostWithJSON("撤回ID消息", msg.getLoginName(), generateMsgToIm(msg),userInfo);
+				}catch (Exception e){
+					e.printStackTrace();
+				}
+			}else if(i>0&&!Objects.equals(delflag,true)) {
+				//推送IM已办消息
+				sendImYBMsg(paramMap.get("id").toString());
+			}
+
+		return i;
+	}
+
+	@Override
+	public SysNoticeMsg newFlowMsg(UserDto user, String msgType, String msgTitle, String url, String mobileUrl, String mobileParam) {
+		SysNoticeMsg msg = new SysNoticeMsg();
+		msg.setId(IDGenerator.getUUID());
+		msg.setCode(msg.getId());
+		msg.setTitle(msgTitle);
+		msg.setAppCode("PT");//平台
+		msg.setSource("flow");//巨洲云
+//		msg.setBusinessId(instance.getBusinessId());
+		msg.setMsgType(true);
+		msg.setSendDate(new Timestamp(System.currentTimeMillis()));
+		msg.setUserId(user.getId());
+		msg.setUserName(user.getName());
+		//2017-07-18由于目前newFlowMsg()中的loginName是空的,所以需要调用UserDtoServiceCustomer来补齐数据
+		String loginName = user.getLoginName(); 
+		if(loginName== null || "null".equals(loginName) || "".equals(loginName)){
+			try {
+				User tempUser = userService.getObjectById(msg.getUserId());
+				loginName = tempUser.getLoginName();
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+		}
+		msg.setLoginName(loginName);
+		msg.setOpType(msgType);
+		if(url != null && url.indexOf("msgId")<0){
+			msg.setUrl(url + "&msgId=" + msg.getId());
+		}else{
+			msg.setUrl(url);
+		}
+		
+		//打开页面带上消息Id
+		if(mobileUrl!=null && mobileUrl.indexOf("msgId=")<0){
+			//如果移动端的mobileUrl不包含 ?msgId="+msg.getId()+"&users=&isback=N&opCode=NA&tabIdx=0";
+			if(mobileUrl.indexOf("?")>0){
+				mobileUrl = mobileUrl+"&msgId="+msg.getId()+"&users=&isback=N&opCode=NA&tabIdx=0";
+			}else{
+				mobileUrl = mobileUrl+"?msgId="+msg.getId()+"&users=&isback=N&opCode=NA&tabIdx=0";
+			}
+		}
+		msg.setMobibleUrl(mobileUrl);
+		//补充firstType/secondType/thirdType的内容
+		//opType;//消息操作类型, DB：待办 ，DY
+		if("DB".equals(msg.getOpType()) ){
+			msg.setFirstType("PENDING");
+		}
+		if("DY".equals(msg.getOpType())){
+			msg.setFirstType("TOREAD");
+			
+			log.info("产生一条待阅消息：" + msg);
+			StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
+			for(StackTraceElement stack : stackTrace) {
+				log.info(stack);
+			}
+		}
+		
+		msg.setMobibleParam(mobileParam);
+		return msg;
+	}
+
+	@Override
+	public int deleteOpTypeDataByParamMap(Map<String, Object> paramMap) {
+		String userInfo = String.valueOf(paramMap.get("userInfo"));
+		paramMap = processParamUserId(paramMap);
+		int result = msgDao.deleteOpTypeDataByParamMap(paramMap);
+		if(result>0){
+			//同步IM撤销
+			SysNoticeMsg msg = JacksonUtils.fromJson(JacksonUtils.toJson(paramMap),SysNoticeMsg.class);
+			msg.setFirstType("REVOCATION");	//代表撤回
+			try {
+				httpPostWithJSON("撤回ID消息", msg.getLoginName(), generateMsgToIm(msg),userInfo);
+			}catch (Exception e){
+				e.printStackTrace();
+			}
+		}
+		return result;
+	}
+	private Map<String, Object> processParamUserId(Map<String, Object> map) {
+		if(map.get ("userId") instanceof List){
+			List<String> list = (List<String>)map.get("userId");
+			map.put ("userId",list.toArray ());
+			return map;
+		}else{
+			String userId = (String)map.get("userId");
+			if(userId!=null && !"-1".equals(userId) && !"".equals(userId)){
+				log.debug("\n\nbusiObjectId="+userId);
+				String[] itemIds = userId.split(",");
+				map.put("userId", itemIds);
+			}else{
+				map.remove("userId");
+			}
+		}
+		return map;
+	}
+
+	@Override
+	public Page pageQueryByParamMap(Map<String, Object> map, Integer start, Integer limit) throws Exception {
+		return msgDao.pageQueryByParamMap(map, start, limit);
+	}
+
+	@Override
+	public int updateStatusOfNoticeMsgByCurrentUser(Map<String, Object> paramMap) {
+		if("YB".equals(paramMap.get("newStatus"))){
+			paramMap.put("firstType", "DONE");
+		}
+		if("YY".equals(paramMap.get("newStatus"))) {
+			paramMap.put("firstType", "HAVEREAD");
+		}
+		int i= msgDao.updateStatusOfNoticeMsgByCurrentUser(paramMap);
+		//推送IM已办消息
+		if(i>0){
+			sendImYBMsg(paramMap.get("id").toString());
+		}
+		return i;
+	}
+
+	@Override
+	public String saveAndNotifyOthers(SysNoticeMsg msg) throws Exception {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo ();
+		//this.save(msg);
+		Integer res = 0;
+		try {
+			String opType = msg.getOpType();
+			if("DB".equals(opType) || "DY".equals(opType)){
+				if(Objects.equals(msg.getFirstType(),"CLOCKIN")
+						&&Objects.equals(msg.getSecondType(),"HR")
+						&&(Objects.equals("1144100757",msg.getThirdType())
+                            ||Objects.equals("1144100761",msg.getThirdType())
+                            ||Objects.equals("1144100759",msg.getThirdType()))
+                        ){
+					//hr 签到提醒/签退提醒/漏打卡提醒 不保存待阅消息，只推im的消息提醒
+						res = 1;
+				}else {
+					res = this.save(msg);//保存新消息
+				}
+				httpPostWithJSON("发送待办", msg.getLoginName(), generateMsgToIm(msg),JacksonUtils.toJson (securityUserBeanInfo));
+				//同步外部系统用户信息
+				log.info("同步外部用户消息开始---------发送待办");
+			 	/*new Thread(new Runnable() {
+					@Override
+					public void run() {
+						log.info("同步外部用户消息开始--------发送待办。。。run。。。。");
+						changeDateSource(securityUserBeanInfo.getTendCode());
+						Map param = new HashMap();
+						param.put("id",msg.getId());
+						param.put("code", msg.getCode());
+						param.put("firstType", msg.getFirstType());
+						param.put("title", msg.getTitle());
+						param.put("userId",msg.getUserId());
+						param.put("appCode", msg.getAppCode());
+						param.put("loginName", msg.getLoginName());
+						param.put("userName",msg.getUserName());
+						param.put("url",msg.getUrl());
+						param.put("mobibleUrl",msg.getMobibleUrl());
+						param.put("msgType",msg.getMsgType());
+						param.put("opType",msg.getOpType());
+						new FlowNoticeMsgUtils(JacksonUtils.toJson (securityUserBeanInfo),param, sysNoticeMsgUserConfigService, userService, sysNoticeMsgTempDao,deployPath).sendNotice();
+						try {
+							Thread.sleep(500);
+						}catch (InterruptedException ie){
+							ie.printStackTrace();
+						}
+
+					}
+				}).start();*/
+
+
+				threadPool.execute(new Runnable() {
+					@Override
+					public void run() {
+						log.info("同步外部用户消息开始--------发送待办。。。run。。。。");
+						changeDateSource(securityUserBeanInfo.getTendCode());
+						Map param = new HashMap();
+						param.put("id",msg.getId());
+						param.put("code", msg.getCode());
+						param.put("firstType", msg.getFirstType());
+						param.put("title", msg.getTitle());
+						param.put("userId",msg.getUserId());
+						param.put("appCode", msg.getAppCode());
+						param.put("source", msg.getSource());
+						param.put("loginName", msg.getLoginName());
+						param.put("userName",msg.getUserName());
+						param.put("url",msg.getUrl());
+						param.put("mobibleUrl",msg.getMobibleUrl());
+						param.put("msgType",msg.getMsgType());
+						param.put("opType",msg.getOpType());
+						new FlowNoticeMsgUtils(JacksonUtils.toJson (securityUserBeanInfo),param, sysNoticeMsgUserConfigService, userService, sysNoticeMsgTempDao,deployPath).sendNotice();
+						try {
+							Thread.sleep(500);
+						}catch (InterruptedException ie){
+							ie.printStackTrace();
+						}
+
+					}
+				});
+
+				
+			}else if("YB".equals(opType)||"YY".equals(opType)){
+
+				//消息状态改变，通知IM
+				httpPostWithJSON("改变消息状态", msg.getLoginName(), generateMsgToIm(msg),JacksonUtils.toJson (securityUserBeanInfo));
+				//同步外部系统用户信息
+				Map param = new HashMap();
+				param.put("oldStatus","YB".equals(opType)?"DB":"DY");
+				param.put("newStatus", opType);
+				param.put("firstType", msg.getFirstType());
+				param.put("appCode", msg.getAppCode());
+				param.put("id", msg.getId());
+				param.put("loginName", msg.getLoginName());
+				log.info("同步外部用户消息开始---------改变消息状态");
+			/*	new Thread(new Runnable() {
+					@Override
+					public void run() {
+						log.info("同步外部用户消息开始--------改变消息状态。。。run。。。。");
+						changeDateSource(securityUserBeanInfo.getTendCode());
+						new FlowNoticeMsgUtils(JacksonUtils.toJson (securityUserBeanInfo),param, sysNoticeMsgUserConfigService, userService, sysNoticeMsgTempDao,deployPath).modifyNotice();
+						try {
+							Thread.sleep(500);
+						}catch (InterruptedException ie){
+							ie.printStackTrace();
+						}
+					}
+				}).start();*/
+
+				threadPool.execute(new Runnable() {
+					@Override
+					public void run() {
+						log.info("同步外部用户消息开始--------改变消息状态。。。run。。。。");
+						changeDateSource(securityUserBeanInfo.getTendCode());
+						new FlowNoticeMsgUtils(JacksonUtils.toJson (securityUserBeanInfo),param, sysNoticeMsgUserConfigService, userService, sysNoticeMsgTempDao,deployPath).modifyNotice();
+						try {
+							Thread.sleep(500);
+						}catch (InterruptedException ie){
+							ie.printStackTrace();
+						}
+					}
+				});
+
+				res = 1;
+			} else if("FQ".equals(opType)) {
+				res = this.save(msg);
+			}
+			if(res == 1){
+				info.setSucess (true);
+				info.setMsg ("消息推送成功!");
+				info.setCode ("20000");
+			}else{
+				info.setSucess (false);
+				info.setMsg ("消息推送失败!");
+				info.setCode("50001");
+			}
+		} catch (Exception e) {
+			log.error("同步消息到IM接口调用失败!!!!"+ e.getLocalizedMessage());
+			e.printStackTrace();
+			info.setSucess (false);
+			info.setCode("50001");
+			info.setMsg ("推送消息失败！");
+			throw new FlowException(e);
+		}
+		return JacksonUtils.toJson (info);
+	}
+	
+	private String generateMsgToIm(SysNoticeMsg msg) throws UnsupportedEncodingException {
+		SecurityUserBeanInfo loginUser=LoginUtils.getSecurityUserBeanInfo();
+		log.info("推送im前请求JSON："+JacksonUtils.toJson(msg));
+		Timestamp sendDate = msg.getSendDate();
+		String sendTimeText = "";
+		DateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");   
+        try {   
+        	sendTimeText = sdf.format(sendDate);      
+        } catch (Exception e) {   
+            e.printStackTrace();   
+        }
+        
+		String content = URLEncoder.encode(msg.getTitle(), "UTF-8");
+		String msgInfo = msg.getExtendInfo();
+		String urlText ="platform-app/"+msg.getMobibleUrl();
+		String pcUrl="platform-app/"+msg.getUrl();
+		if(urlText!=null && urlText.indexOf("msgId")<0){
+			if(urlText.indexOf("?")>0){
+				urlText = urlText+"&msgId="+msg.getId()+"&users=&isback=N&opCode=NA&tabIdx=0";
+			}else{
+				urlText = urlText+"?msgId="+msg.getId()+"&users=&isback=N&opCode=NA&tabIdx=0";
+			}
+		}
+		if(urlText.indexOf("UserId")>=0||(Objects.equals (msg.getAppCode (),"OA")&&!Objects.equals(msg.getSource(),"flow"))){//兰陵或老平台不拼参数
+			urlText=msg.getMobibleUrl();
+			pcUrl=msg.getUrl();
+		}
+		if(StringUtils.isNotBlank(msg.getMobibleUrl())&&(msg.getMobibleUrl().toLowerCase().indexOf("http://")==0||msg.getMobibleUrl().toLowerCase().indexOf("https://")==0)){
+			urlText=msg.getMobibleUrl();
+		}
+		if(StringUtils.isNotBlank(msg.getUrl())&&(msg.getUrl().toString().indexOf("http://")==0|| msg.getUrl().toLowerCase().indexOf("https://")==0)){
+			pcUrl = msg.getUrl();
+		}
+		//处理hr考勤提醒是url为空
+		if(StringUtils.isBlank(msg.getUrl())){
+			pcUrl =msg.getUrl();
+		}
+		//处理hr考勤提醒是mobileUrl为空
+		if(StringUtils.isBlank(msg.getMobibleUrl())){
+			urlText = msg.getMobibleUrl();
+		}
+        String tendId=loginUser.getTendId();
+        if(StringUtils.isBlank(tendId)){
+        	//tendId为空时，通过userId获取tendId
+        	try {
+				User tempUser = userService.getObjectById(msg.getUserId());
+				tendId = tempUser.getTendId();
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+        }
+		String msgStr = "{\"sendTime\":\"" + sendTimeText + "\", \"msgId\":\"" + msg.getId()
+				+ "\", \"fromUser\":\"system\",\"firstType\":\"" + msg.getFirstType()
+				+ "\",\"secondType\":\"" + msg.getSecondType() + "\",\"thirdType\":\"" + msg.getThirdType()
+				+ "\"," + " \"msgContent\":\"" + content + "\"," + " \"msgInfo\":\"" + msgInfo + "\","+ "\"mobileMsgUrl\":\"" + urlText
+				+ "\",\"pcMsgUrl\":\"" + pcUrl + " \",\"tendId\":\"" + tendId+ "\",\"toUser\":[\"" + msg.getUserId() + "\"],\"token\":\"xyre\"}";
+		log.info("推送im前请求JSON："+msgStr);
+		return msgStr;
+	}
+	
+	/**
+	 * 发送IM消息
+	 * 
+	 * @param json
+	 * @return
+	 * @throws Exception
+	 */
+	public  JSONObject httpPostWithJSON(String operate, String receiver, String json,String userInfoJson) throws Exception {
+		threadPool.execute(new Runnable() {
+
+			@Override
+			public void run() {
+				String sendUrl = ConfigurationUtil.getValue("imServer.sendMessage");
+				CloseableHttpClient httpClient = HttpClientBuilder.create().build();
+				HttpPost httpPost = new HttpPost(sendUrl);
+				httpPost.addHeader(HTTP.CONTENT_TYPE, APPLICATION_JSON);
+				log.info("im推送消息---json="+json);
+				String result = null;
+				try {
+					StringEntity se = new StringEntity(json);
+					se.setContentType(CONTENT_TYPE_TEXT_JSON);
+					se.setContentEncoding(new BasicHeader(HTTP.CONTENT_TYPE, APPLICATION_JSON));
+					httpPost.setEntity(se);
+					HttpResponse res = httpClient.execute(httpPost);
+					if(res.getStatusLine().getStatusCode() == HttpStatus.SC_OK){
+						result = EntityUtils.toString(res.getEntity()); // 返回json格式字符串
+						log.debug("result>>> result="+result);
+					}else{
+						//TODO 消息推送失败记录重发
+						//postUrl:sendUrl,webService,webServiceMethod,postParam:json,userInfoJson,postType:httpClient
+						saveFailMsg(sendUrl,json,"","","httpClient",userInfoJson,"","");
+
+					}
+					log.info("im推送消息---result>>> StatusCode="+res.getStatusLine().getStatusCode());
+				} catch(Exception e) {
+					result = "发送IM消息失败";
+					//TODO 消息推送失败记录重发
+					//postUrl:sendUrl,webService,webServiceMethod,postParam:json,userInfoJson,postType:httpClient
+					saveFailMsg(sendUrl,json,"","","httpClient",userInfoJson,"","");
+				}
+				
+				FlowLogUtil.logSyncMsg("平台", "IM", operate, receiver, json, result);
+			}
+			
+		});
+	    return null;
+	}
+
+
+	
+	/*public  void main(String[] args){
+		try {
+			SysNoticeMsg msg = new SysNoticeMsg();
+			msg.setTitle("【新表单-成本流程借用-D】-测试一部-纪-测试公司-测试一部员工1-张道强测试060502");
+			msg.setUserId("595784def9e142d8b560e1a649c8f084");
+			msg.setFirstType("TASKTODO");
+			msg.setId("4a84fe9ed87f4b6581768ede366e9aa9");
+			msg.setUrl("flow/runtime/approve/approve.html?instanceId=06ac10dc5c4b4b5caecbfed5d9619192&requestSource=DB&taskId=b68d23ef5d9942d0be06bd77c86159d6&taskType=2&approveType=SH&businessId=934a8206bece45dbbe7fc6b3eb45e23a&pcUrl=http://192.168.3.84:8080/platform-app/sysManager/customFormInstance/customFormInstance_flow.html&time=1495594164186&msgId=0078f322c869439cad2cde655c4b187e");
+			msg.setMobibleUrl("/mobile/approve/approve_detail.html?msgId="+msg.getId()+"&users=&isback=N&opCode=NA&tabIdx=0");
+			String content = URLEncoder.encode(msg.getTitle(), "UTF-8");
+			String msgStr = "{\"fromUser\":\"system\",\"firstType\":\""+msg.getFirstType()+"\",\"secondType\":\""+msg.getSecondType()+"\",\"thirdType\":\""+msg.getThirdType()+"\","
+					+ " \"msgContent\":\""+content+"\","+ "\"mobileMsgUrl\":\""+msg.getMobibleUrl()+"\",\"pcMsgUrl\":\""+msg.getUrl()+"\",\"toUser\":[\""+msg.getUserId()+"\"],\"token\":\"xyre\"}";
+			//System.out.println("\n\n saveAndNotifyOthers msgStr="+msgStr);
+			httpPostWithJSON("发送待办", msg.getLoginName(), msgStr);
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+	}*/
+
+	@Override
+	public void batchSaveAndNotifyOthers(List<SysNoticeMsg> messages) throws Exception {
+		for(SysNoticeMsg msg : messages){
+			saveAndNotifyOthers(msg);
+		}
+	}
+
+	@Override
+	public SysNoticeMsgDto queryTotalStatData(Map<String, String> paramMap) {
+		List<SysNoticeMsgDto> msgList = msgDao.queryTwoSumData(paramMap);
+		SysNoticeMsgDto msgDto = msgList.get(0);//得到总的待办和待阅的数据
+        
+		//查询超过24小时未处理的待办消息
+		List<SysNoticeMsgDto> msg24List = msgDao.queryMsgDto24Hours(paramMap);
+		if (msgDto!=null) {
+			//此处还需要增加节假日的过滤条件
+			msgDto.setToDoSum24Hours(msg24List.size()+"");
+		}else{
+			msgDto=new SysNoticeMsgDto();
+			msgDto.setToDoSum("0");
+			msgDto.setToReadSum("0");
+			msgDto.setToDoSum24Hours("0");
+		}
+		return msgDto;
+	}
+
+	@Override
+	public SysNoticeMsgStatDto queryFirstTypeStatData(Map<String, String> map) {
+		return msgDao.queryFirstTypeStatData(map);
+	}
+
+	@Override
+	public int doSendWeixinMsgAction() throws Exception {
+		SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+		String tendId = userBeanInfo.getTendId();
+		String tendCode = userBeanInfo.getTendCode();
+		//调用微信接口获取凭证 
+		Token weixinToken = CommonUtil.getToken(ParamesAPI.corpId, ParamesAPI.corpsecret);
+		NewsMessage newsMessage = new NewsMessage();
+		newsMessage.setMsgtype("news");
+		newsMessage.setAgentid(ParamesAPI.mobiletodoAgentId);
+		
+		String mobileToDoServer = ConfigurationUtil.getValue("mobileToDoServer");
+		//第1部分: 先处理所有用户的待办任务消息
+		String opType = "DB";
+		Map<String, Object> queryMap = new HashMap<String, Object>();
+		queryMap.put("opType", opType);
+		
+		//推送微信消息时过滤旧OA同步过来的消息
+		queryMap.put("excludeAppCode", APPCODE_LLOA);
+		
+		//查询所有用户的待办/待阅的数据汇总, 入参是opType='DB'/'DY', 返回值是userId,loginName, tendId 和toDoSum的List
+		List<SysNoticeMsgDto> userToDoList = msgDao.queryAllUserToDoList(queryMap);
+		String dataType = "TO_DO";
+		//userToDoList 还要过滤掉那些没有关注过微信公众号的用户信息
+		int totalSum = 0;
+		List<SysNoticeMsgDto> focusTodoUserList = getFocusTodoUserList(userToDoList);
+		for(SysNoticeMsgDto msgDto : focusTodoUserList){//开始遍历userToDoList的数据, 进行逐个发送消息
+			totalSum += sendSingleWeixinMsgByUserId(tendId, tendCode, mobileToDoServer, msgDto, dataType, weixinToken, newsMessage);
+		}
+		
+		//第2部分: 再处理所有用户的待阅任务消息
+		opType = "DY";
+		Map<String, Object> queryMap2 = new HashMap<String, Object>();
+		queryMap2.put("opType", opType);
+		//查询所有用户的待办/待阅的数据汇总, 入参是opType='DB'/'DY', 返回值是userId,loginName, tendId 和toDoSum的List
+		userToDoList = msgDao.queryAllUserToDoList(queryMap2);
+		dataType = "TO_READ";
+		//userToDoList 还要过滤掉那些没有关注过微信公众号的用户信息
+		focusTodoUserList = getFocusTodoUserList(userToDoList);
+		for(SysNoticeMsgDto msgDto : focusTodoUserList){//开始遍历userToDoList的数据, 进行逐个发送消息
+			totalSum += sendSingleWeixinMsgByUserId(tendId, tendCode, mobileToDoServer, msgDto, dataType, weixinToken, newsMessage);
+		}
+		
+		return totalSum;
+	}
+
+	/**
+	 * 把userToDoList中剔除掉那些没有关注过微信公众号的用户信息
+	 * @param userToDoList
+	 * @return
+	 */
+	private List<SysNoticeMsgDto> getFocusTodoUserList(List<SysNoticeMsgDto> userToDoList) {
+		List<SysNoticeMsgDto> resultUserList = new ArrayList<SysNoticeMsgDto>();
+		WeixinUserResponse userResponse = CommonUtil.getAttentionUserResponse();
+		if(userResponse.getErrcode()==0){
+			List<WeixinUser> weixinUserList =userResponse.getUserlist();
+			for(SysNoticeMsgDto msgDto : userToDoList){
+				String msgLoginName = msgDto.getLoginName();
+				for(WeixinUser weixinUser : weixinUserList){
+					String userid = weixinUser.getUserid();
+					if(userid!=null && userid.equals(msgLoginName)){
+						resultUserList.add(msgDto);
+						continue;
+					}
+				}
+			} 
+		}
+		return resultUserList;
+	}
+
+	private int sendSingleWeixinMsgByUserId( String tendId , String tendCode,String mobileToDoServer, 
+			SysNoticeMsgDto userMsgDto, String dataType, Token token, NewsMessage newsMessage) throws Exception {
+		String userId = userMsgDto.getUserId();
+		String loginName = userMsgDto.getLoginName();
+		//第一步：查询某个用户userId的待办记录
+		Map<String, Object> queryMap = new HashMap<String, Object>();
+		queryMap.put("userId", userId);
+		queryMap.put("dataType", dataType);
+		//入参：msgDTO [dataType userId ] start=0, limit=100  //返回该用户对应的消息列表;
+		List<SysNoticeMsgDto> toDoList = msgDao.doQueryByParamMap(queryMap, 0, 100);
+		
+		//第二步：加工处理所返回来的待办记录，即过滤掉已经发送过微信消息的消息Id
+		//将查询结果的数据封装在List和Map对象中，
+		List<String> tempMsgIdList = new ArrayList<String>();
+		Map<String, SysNoticeMsgDto> msgObjectMap = new HashMap<String, SysNoticeMsgDto>();
+		for(SysNoticeMsgDto msgDto : toDoList){
+			tempMsgIdList.add(msgDto.getId());
+			msgObjectMap.put(msgDto.getId(), msgDto);
+		}
+		//下一行执行的是消息Id的过滤逻辑>>>> 查询出已发送的消息记录,然后把这些数据过滤掉
+		List<String> msgIdList = getMsgIdListByFilterOutSentData(userId, tempMsgIdList);//查询未发送过的消息记录ID
+		
+		//第三步：遍历真正需要发送消息Id，执行发送操作，同时记录已发送的消息记录；
+		//下一行进行给微信平台发消息>>>>
+		int gonum =1;  StringBuffer sbf;
+		for (String msgId : msgIdList) {
+			SysNoticeMsgDto msg = msgObjectMap.get(msgId);
+			Articles articles = new Articles();
+			List<Article> articleList = new ArrayList<Article>();
+			sbf = new StringBuffer(); 
+			
+			sbf.append("流程标题：").append(msg.getTitle()).append("\n\n")
+			.append("发起时间：").append(msg.getSendDate()).append("\n\n")
+			.append("DB".equals(msg.getOpType()) ? "待审批数共：" : "待阅数共：")
+			.append(userMsgDto.getToDoSum()).append("条");
+            String mobileUrl = msg.getMobibleUrl();
+            if(mobileUrl!=null && !mobileUrl.startsWith("http")){
+            	mobileUrl = mobileToDoServer+mobileUrl;
+            }
+            
+            if(mobileUrl==null){//如果mobileUrl未空,则不进行处理
+            	continue;
+            }
+			String fullText = SSOTokenService.processUrlTextWithSSOTokenByUserInfo(mobileUrl, userId, loginName, tendId, tendCode);
+			System.out.println("fullText="+fullText);
+			articleList.add(new Article("DB".equals(msg.getOpType()) ? "待审批消息" : "待阅消息", sbf.toString(), fullText));
+			
+			articles.setArticles(articleList);
+			newsMessage.setNews(articles);
+			newsMessage.setTouser(loginName);
+			JSONObject jsonObject = CommonUtil.SendNewsMsg(token.getAccessToken(), newsMessage);
+			
+			// 插入已经发送记录
+			MsgSendRecord msgSendRecord = new MsgSendRecord();
+			msgSendRecord.setId(IDGenerator.getUUID());
+			msgSendRecord.setMsgId(msgId);
+			msgSendRecord.setUserId(userId);
+			msgSendRecord.setTarget("0");
+			msgSendRecord.setLoginName(loginName);
+			msgSendRecord.setOpType(msg.getOpType());
+			msgSendRecord.setMsgTitle(msg.getTitle());
+			msgSendRecord.setAppCode(msg.getAppCode());
+			msgSendRecord.setSendDate(DateUtils.formatDateTime(new Date()));
+			msgSendRecord.setErrCode(jsonObject.getInt("errcode")+"");
+			msgSendRecord.setErrMsg(jsonObject.getString("errmsg"));
+			msgSendRecord.setDelflag(false);
+			msgSendRecordService.save(msgSendRecord);
+			gonum++;
+		}
+		return gonum;
+	}
+
+	//入参：此次待发送的消息Id的列表；返回值是剔除掉已经发送过的消息ID，已防止重复发送
+	private List<String> getMsgIdListByFilterOutSentData(String userId, List<String> tempMsgIdList) {
+		//内部逻辑是先查询出已发送的消息ID列表，然后将其从msgList减去这些已查询到的消息Id的
+		Map<String, Object> queryMap = new HashMap<String, Object>();
+		queryMap.put("userId", userId);
+		//获取已经给微信平台发送完消息的消息Id的列表
+	    List<String> sentMsgIdList = msgSendRecordService.queryMsgIdList(queryMap);
+	    if(sentMsgIdList!=null && sentMsgIdList.size()>0){
+	    	tempMsgIdList.removeAll(sentMsgIdList);
+	    }
+	    return tempMsgIdList;
+	}
+
+	@Override
+	public Page queryMsgListByPage(Map<String,Object> parameters){
+		Page page = new Page();
+		List<SysNoticeMsgDto> list = this.msgDao.queryFlowMsgListByPage(parameters);
+		
+		//给每个URL加上source参数
+		for(SysNoticeMsgDto msg : list) {
+			msg.setUrl(msg.getUrl() + "&source=" + msg.getOpType());
+		}
+		
+		page.setList(list);
+		int total = this.msgDao.queryFlowMsgListByPageCount(parameters);
+		page.setTotal(total);
+		page.setLimit((Integer) parameters.get("limit"));
+		page.setStart((Integer) parameters.get("start"));
+		return page;
+	}
+
+	@Override
+	public Map<String, Object> queryPersonalMsgForPortal(Map<String,Object> paramMap) {
+		Map<String,Object> resultMap = new HashMap<String,Object>();
+
+		List<String> opTypeList = new ArrayList<String>();
+		paramMap.remove("opType");
+		opTypeList.add("DB");
+		paramMap.put("opType",opTypeList);
+		//待办
+		Page gTasksList = this.queryMsgListByPage(paramMap);
+		resultMap.put("gTaskList",gTasksList);
+
+		paramMap.remove("opType");
+		opTypeList = new ArrayList<String>();
+		opTypeList.add("DY");
+		paramMap.put("opType",opTypeList);
+		//待阅
+		Page toBeReadList = this.queryMsgListByPage(paramMap);
+		resultMap.put("toBeReadList",toBeReadList);
+
+		paramMap.remove("opType");
+		opTypeList =  new ArrayList<String>();
+		opTypeList.add("YB");
+		opTypeList.add("YY");
+		paramMap.put("opType",opTypeList);
+		paramMap.put("orderByField","deal_date");
+		//已办/已阅
+		Page doneList = this.queryMsgListByPage(paramMap);
+		resultMap.put("doneList",doneList);
+
+		paramMap.remove("opType");
+		opTypeList = new ArrayList<String>();
+		opTypeList.add("FQ");
+		paramMap.put("opType",opTypeList);
+		//我的发起
+		Page selfStartList = this.queryMsgListByPage(paramMap);
+		resultMap.put("selfStartList",selfStartList);
+
+		return resultMap;
+	}
+	
+	//@Override
+	//public List<SysNoticeMsg> searchDataByKeyword(Map<String, String> paramMap) {
+	//	return msgDao.searchDataByKeyword(paramMap);
+	//}
+	@Override
+	public Page searchDataByKeywordPageParam(Map<String, Object> map) {
+		Integer start = (Integer) map.get("start");
+		Integer limit =  (Integer) map.get("limit");
+		map.remove("start");
+		map.remove("limit");
+		map.put("start", start);
+		map.put("limit", limit);
+		List<SysNoticeMsgDto>  list = msgDao.searchDataByKeywordPageParam(map);
+		Integer total = msgDao.searchDataCountByKeywordPageParam(map);
+		Page page = new Page();
+		page.setList(list);
+		page.setTotal(total);
+		page.setStart(start);
+		page.setLimit(limit);
+		return page;
+	}
+
+	@Override
+	public int deleteMsgOfAdminBy(String instanceId) {
+		return msgDao.deleteMsgOfAdminBy(instanceId);
+	}
+
+	@Override
+	public void deleteTodo(List<String> msgIds) {
+		SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo ();
+		Map<String, String> msgMap = new HashMap<String, String>();
+		List<SysNoticeMsg> msgList = new ArrayList<SysNoticeMsg>();
+		try {
+			for(String msgId : msgIds) {
+				SysNoticeMsg msg = getObjectById(msgId);
+				String loginName = msg.getLoginName();
+				msgMap.put(msgId, loginName);
+				msgList.add(msg);
+			}
+		} catch (Exception e) {
+			
+		}
+		
+		//删除IM消息
+		log.info ("准备删除IM消息："+JacksonUtils.toJson (msgList));
+		if(CollectionUtils.isEmpty(msgList)) {
+			return ;
+		}
+		try {
+			for(SysNoticeMsg msg : msgList) {
+				msg.setFirstType("REVOCATION");	//代表撤回
+				httpPostWithJSON("撤回ID消息", msg.getLoginName(), generateMsgToIm(msg),JacksonUtils.toJson (securityUserBeanInfo));
+				/*撤销消息--同步外部用户消息*/
+				Map param = new HashMap();
+				param.put("firstType", msg.getFirstType());
+				param.put("appCode", msg.getAppCode());
+				param.put("id", msg.getId());
+				param.put("loginName", msg.getLoginName());
+				param.put("delflag",true);
+
+				threadPool.execute(new Runnable() {
+					@Override
+					public void run() {
+						changeDateSource(securityUserBeanInfo.getTendCode());
+						new FlowNoticeMsgUtils(JacksonUtils.toJson (securityUserBeanInfo),param, sysNoticeMsgUserConfigService, userService, sysNoticeMsgTempDao,deployPath).modifyNotice();
+						try {
+							Thread.sleep(1000);
+						}catch (InterruptedException ie){
+							ie.printStackTrace();
+						}
+					}
+				});
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+	}
+
+	@Override
+	public int queryMsgTotal(Map<String, Object> params) {
+		return this.msgDao.queryFlowMsgListByPageCount(params);
+	}
+	
+	
+	@Override
+	public List<SysNoticeMsgDto> queryMsgList(Map<String,Object> parameters){
+		List<SysNoticeMsgDto> list = this.msgDao.queryFlowMsgListByPage(parameters);
+		
+		//给每个URL加上source参数
+		for(SysNoticeMsgDto msg : list) {
+			msg.setUrl(msg.getUrl() + "&source=" + msg.getOpType());
+		}
+		return list;
+	}
+
+	@Override
+	public int queryMsgMoreTotal(Map<String, Object> params) {
+		return msgDao.searchDataCountByKeywordPageParam(params);
+	}
+
+	@Override
+	public List<SysNoticeMsgDto> queryMsgMoreList(Map<String, Object> params) {
+		return msgDao.searchDataByKeywordPageParam(params);
+	}
+
+	@Override
+	public List<SysNoticeMsgDto> queryNoticeMsg(Map map) {
+		return msgDao.queryNoticeMsg (map);
+	}
+
+	private void saveFailMsg(String postUrl,String postParam,String webService,String webServiceMethod,String postType,String userInfoJson,String opType,String loginName){
+		SysNoticeMsgTemp temp = new SysNoticeMsgTemp ();
+		temp.setPostParam (postParam);
+		temp.setPostUrl (postUrl);
+		temp.setWebService (webService);
+		temp.setWebServiceMethod (webServiceMethod);
+		temp.setPostType (postType);
+		temp.setSuccess (false);
+		temp.setId (IDGenerator.getUUID ());
+		temp.setUserInfoJson (userInfoJson);
+		temp.setOpType (opType);
+		temp.setLoginName(loginName);
+		SecurityUserBeanInfo securityUserBeanInfo = JacksonUtils.fromJson (userInfoJson,SecurityUserBeanInfo.class);
+		changeDateSource (securityUserBeanInfo.getTendCode ());
+		sysNoticeMsgTempDao.save (temp);
+	}
+	private void changeDateSource(String tendCode){
+		DataSourceContextHolder.clearDataSourceType ();
+		DataSourceContextHolder.setDataSourceType (tendCode);
+		DataSourceContextHolder.getDataSourceType ();
+	}
+
+	@Override
+	public int updateStatusOfNoticeMsgBatch(Map<String, Object> paramMap) {
+		SecurityUserDto securityUserDto=LoginUtils.getSecurityUserBeanInfo().getSecurityUserDto();
+		List<String> paramIdList=Arrays.asList(paramMap.get("id").toString().split(","));
+		if(paramIdList!=null && paramIdList.size()>0){
+			paramMap.put("paramIdList", paramIdList);
+			paramMap.put("operatorId", securityUserDto.getId());
+			paramMap.put("operatorName", securityUserDto.getRealName());
+			paramMap.put("manualSet", "1");
+			int count= msgDao.updateStatusOfNoticeMsgByBatch(paramMap);
+			//推送IM已办消息
+			if(count>0){
+				for(int s=0;s<paramIdList.size();s++){
+					sendImYBMsg(paramIdList.get(s));
+				}
+			}
+			return count;
+		}else{
+			return 0;
+		}
+	}
+	@Override
+	public List<SysNoticeMsgDto> getMsgBussniessObjects(Map map) {
+		return msgDao.getMsgBussniessObjects (map);
+	}
+
+
+	@Override
+	public void deletePseudoBatchAndRecord(List<String> list) {
+		SecurityUserDto securityUserDto=LoginUtils.getSecurityUserBeanInfo().getSecurityUserDto();
+		Map<String,Object> paramMap=new HashMap<String,Object>();
+		if(list!=null && list.size()>0){
+			paramMap.put("idsList", list);
+			paramMap.put("operatorId", securityUserDto.getId());
+			paramMap.put("operatorName", securityUserDto.getRealName());
+			paramMap.put("manualSet", "1");
+			msgDao.delMsgAndRecord(paramMap);
+		}
+	}
+
+	@Override
+	public void assistMessageUpdate(Map<String, Object> paramMap) {
+		msgDao.assistMessageUpdate(paramMap);
+	}
+
+	@Override
+	public SysNoticeMsg getLanuchAssist(Map<String, Object> paramMap) {
+		return msgDao.getLanuchAssist(paramMap);
+	}
+}

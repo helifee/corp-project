@@ -1,0 +1,281 @@
+package com.xinleju.platform.portal.dto.service.impl;
+
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.utils.IDGenerator;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.base.utils.ErrorInfoCode;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.portal.dto.service.ComponentCategoryDtoServiceCustomer;
+import com.xinleju.platform.portal.entity.ComponentCategory;
+import com.xinleju.platform.portal.service.ComponentCategoryService;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+/**
+ * @author admin
+ * 
+ *
+ */
+ 
+public class ComponentCategoryDtoServiceProducer implements ComponentCategoryDtoServiceCustomer{
+	private static Logger log = Logger.getLogger(ComponentCategoryDtoServiceProducer.class);
+	@Autowired
+	private ComponentCategoryService componentCategoryService;
+	@Override
+	public String save(String userInfo, String saveJson){
+	   DubboServiceResultInfo info=new DubboServiceResultInfo();
+	   try {
+		   ComponentCategory componentCategory=JacksonUtils.fromJson(saveJson, ComponentCategory.class);
+		   if (componentCategory.getId() == null) {
+			   componentCategory.setId(IDGenerator.getUUID());
+		   }
+		   Map<String,Object> paramMap = new HashMap<String,Object>();
+		   paramMap.put("categoryName",componentCategory.getCategoryName());
+		   final ComponentCategory existComponentCategoryByName = null;
+		   List<ComponentCategory> list = componentCategoryService.queryList(paramMap);
+		   if(list!=null&&list.size()>0){
+			   info.setSucess(false);
+			   info.setMsg("类别名称重复!");
+			   info.setCode(ErrorInfoCode.UNIQUE_ERROR.getValue());
+			   return JacksonUtils.toJson(info);
+		   }
+
+		   final ComponentCategory existComponentCategory = componentCategoryService.getComponentCategoryBySerialNo(componentCategory);
+		   if(existComponentCategory!=null){
+			   info.setSucess(false);
+			   info.setMsg("对象编码重复!");
+			   info.setCode(ErrorInfoCode.UNIQUE_ERROR.getValue());
+		   }else{
+			   componentCategoryService.save(componentCategory);
+			   info.setResult(JacksonUtils.toJson(componentCategory));
+			   info.setSucess(true);
+			   info.setMsg("保存对象成功!");
+		   }
+		   
+		} catch (Exception e) {
+		 log.error("保存对象失败!"+e.getMessage());
+		 info.setSucess(false);
+		 info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+		 info.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+		 info.setExceptionMsg(e.getMessage());
+		}
+	   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String saveBatch(String userInfo, String saveJsonList)
+			 {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public String updateBatch(String userInfo, String updateJsonList)
+			 {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public String update(String userInfo, String updateJson)  {
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   ComponentCategory componentCategory=JacksonUtils.fromJson(updateJson, ComponentCategory.class);
+			   final ComponentCategory existComponentCategory = componentCategoryService.getComponentCategoryBySerialNo(componentCategory);
+			   if(existComponentCategory!=null){
+				   info.setSucess(false);
+				   info.setMsg("对象编码重复!");
+				   info.setCode(ErrorInfoCode.UNIQUE_ERROR.getValue());
+			   }else{
+				   int result=   componentCategoryService.update(componentCategory);
+				   info.setResult(JacksonUtils.toJson(result));
+				   info.setSucess(true);
+				   info.setMsg("更新对象成功!");
+			   }
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+			 info.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deleteObjectById(String userInfo, String deleteJson)
+	{
+		// TODO Auto-generated method stub
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   ComponentCategory componentCategory=JacksonUtils.fromJson(deleteJson, ComponentCategory.class);
+			   int result= componentCategoryService.deleteObjectById(componentCategory.getId());
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("删除对象成功!");
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deleteAllObjectByIds(String userInfo, String deleteJsonList)
+   {
+		// TODO Auto-generated method stub
+		 DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   if (StringUtils.isNotBlank(deleteJsonList)) {
+				   Map map=JacksonUtils.fromJson(deleteJsonList, HashMap.class);
+				   List<String> list=Arrays.asList(map.get("id").toString().split(","));
+				   int result= componentCategoryService.deleteAllObjectByIds(list);
+				   info.setResult(JacksonUtils.toJson(result));
+				   info.setSucess(true);
+				   info.setMsg("删除对象成功!");
+				}
+			} catch (Exception e) {
+			 log.error("删除对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getObjectById(String userInfo, String getJson)
+	 {
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			ComponentCategory componentCategory=JacksonUtils.fromJson(getJson, ComponentCategory.class);
+			ComponentCategory	result = componentCategoryService.getObjectById(componentCategory.getId());
+			info.setResult(JacksonUtils.toJson(result));
+		    info.setSucess(true);
+		    info.setMsg("获取对象成功!");
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getPage(String userInfo, String paramater) {
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map map=JacksonUtils.fromJson(paramater, HashMap.class);
+				Page page=componentCategoryService.getPage(map, (Integer)map.get("start"),  (Integer)map.get("limit"));
+				info.setResult(JacksonUtils.toJson(page));
+			    info.setSucess(true);
+			    info.setMsg("获取分页对象成功!");
+			}else{
+				Page page=componentCategoryService.getPage(new HashMap(), null, null);
+				info.setResult(JacksonUtils.toJson(page));
+			    info.setSucess(true);
+			    info.setMsg("获取分页对象成功!");
+			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取分页对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取分页对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String queryList(String userInfo, String paramater){
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map map=JacksonUtils.fromJson(paramater, HashMap.class);
+				List list=componentCategoryService.queryList(map);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}else{
+				List list=componentCategoryService.queryList(null);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取列表对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取列表对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getCount(String userInfo, String paramater)  {
+		// TODO Auto-generated method stub
+		return null;
+	}
+	
+	@Override
+	public String deletePseudoObjectById(String userInfo, String deleteJson)
+	{
+		// TODO Auto-generated method stub
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   ComponentCategory componentCategory=JacksonUtils.fromJson(deleteJson, ComponentCategory.class);
+			   int result= componentCategoryService.deletePseudoObjectById(componentCategory.getId());
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("删除对象成功!");
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deletePseudoAllObjectByIds(String userInfo, String deleteJsonList)
+   {
+		// TODO Auto-generated method stub
+		 DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   if (StringUtils.isNotBlank(deleteJsonList)) {
+				   Map map=JacksonUtils.fromJson(deleteJsonList, HashMap.class);
+				   List<String> list=Arrays.asList(map.get("id").toString().split(","));
+				   int result= componentCategoryService.deletePseudoAllObjectByIds(list);
+				   info.setResult(JacksonUtils.toJson(result));
+				   info.setSucess(true);
+				   info.setMsg("删除对象成功!");
+				}
+			} catch (Exception e) {
+			 log.error("删除对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+
+}

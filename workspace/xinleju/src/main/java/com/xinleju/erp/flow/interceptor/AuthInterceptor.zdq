@@ -1,0 +1,127 @@
+package com.xinleju.erp.flow.interceptor;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+
+import javax.servlet.http.HttpServletRequest;
+
+import org.apache.commons.collections.map.LinkedMap;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.struts2.ServletActionContext;
+
+import com.opensymphony.xwork2.ActionInvocation;
+import com.opensymphony.xwork2.interceptor.MethodFilterInterceptor;
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.utils.CollectionUtils;
+import com.xinleju.erp.flow.bean.LoginInfo;
+import com.xinleju.erp.flow.service.api.ApiConstant;
+import com.xinleju.erp.flow.service.api.OrgnAPIService;
+import com.xinleju.erp.flow.service.api.extend.BaseAPI;
+import com.xinleju.erp.flow.service.api.extend.BaseAPIService;
+import com.xinleju.erp.flow.service.api.extend.dto.FuncDTO;
+import com.xinleju.erp.flow.service.api.utils.RoleUtils;
+import com.xinleju.erp.flow.utils.FlowConstant;
+import com.xinleju.erp.frame.dao.AppDao;
+import com.xinleju.erp.frame.dao.RoleDao;
+import com.xinleju.erp.frame.dao.UserDao;
+import com.xinleju.erp.frame.models.Role;
+
+/**
+ * 
+ * 版权：(C) 版权所有 2000-2014 上海天好电子商务有限公司苏州分公司
+ * 登录验证
+ * @author   jun
+ * @version  $Id$
+ * @since
+ * @see
+ */
+
+public class AuthInterceptor extends MethodFilterInterceptor {
+    /**
+     * 序列化ID
+     */
+    private static final long serialVersionUID = 8180292365076400633L;
+
+    @Override
+    protected String doIntercept(ActionInvocation arg0) throws Exception {
+        HttpServletRequest request = ServletActionContext.getRequest();
+        LoginInfo li =  (LoginInfo)request.getSession().getAttribute(FlowConstant.LOGININFO);
+        String url = ServletActionContext.getRequest().getRequestURL().toString(); 
+        if (request.getUserPrincipal() != null && StringUtils.isNotBlank(request.getUserPrincipal().getName()) && (null == li || !request.getUserPrincipal().getName().trim().equals(li.getUserDTO().getLoginName()))){
+            String loginName = request.getUserPrincipal().getName();
+            if (StringUtils.isNotBlank(loginName)){
+                li = new LoginInfo();
+                UserDao userDao = App.getBean(UserDao.class);
+                Long userId = userDao.findUserIdByLoginName(loginName.trim());
+                BaseAPI baseAPIService = App.getBean(BaseAPI.class, ApiConstant.BEAN_CODE);
+                li.setUserDTO(baseAPIService.getUserById(userId).getResult());
+                li.setFuncDTOListMap(this.getFuncDTOListMap(loginName));
+                RoleDao roleDao = App.getBean(RoleDao.class);
+                List<Long> roleIdList = userDao.getRoleIds(loginName.trim());
+                if (null != roleIdList && roleIdList.size() > 0){
+                    OrgnAPIService orgnAPIService = App.getBean(OrgnAPIService.class);
+                    List<Role> roleList = roleDao.getRoleListByIds(CollectionUtils.collectAsString(roleIdList, ","));
+                    for (Role role : roleList){
+                        role.setNamefix(orgnAPIService.getPostPathWithStartFix(role.getId(), false));
+                    }
+                    li.setRoleDtoList(RoleUtils.buildRoleDtoList(roleList));
+                } else {
+                    li.setRoleDtoList(RoleUtils.buildRoleDtoList(new ArrayList<Role>()));
+                }
+                request.getSession().setAttribute(FlowConstant.LOGININFO, li);
+            }
+        }
+        
+        boolean isIgnoreOrAjaxUrl = isIgnoreOrAjaxUrl(url);
+        
+        //忽略的Url
+        if(isIgnoreOrAjaxUrl){
+            return arg0.invoke();
+        } 
+        /*
+        //Session不存在，导向到首页
+        if(li == null){
+            ServletActionContext.getResponse().sendRedirect(FlowConstant.LOGINURL);
+            return ActionSupport.NONE;  
+        }  
+         */
+        return arg0.invoke();
+    }
+    /**
+     * 获取各个系统模块列表
+     * @author jun
+     * @param loginName
+     * @return
+     */
+    @SuppressWarnings("unchecked")
+    private Map<com.xinleju.erp.frame.models.App, List<FuncDTO>> getFuncDTOListMap(String loginName){
+        Map<com.xinleju.erp.frame.models.App, List<FuncDTO>> funcDTOListMap = new LinkedMap();
+        if (StringUtils.isNotBlank(loginName)){
+            AppDao appDao = App.getBean(AppDao.class);
+            Map<String, com.xinleju.erp.frame.models.App> appMap = appDao.getAppMap();
+            if (null != appMap && appMap.size() > 0){
+                BaseAPI baseAPIService = App.getBean(BaseAPIService.class, ApiConstant.BEAN_CODE);
+                for (Entry<String, com.xinleju.erp.frame.models.App> map : appMap.entrySet()){
+                	if(map!=null && map.getKey()!=null){
+                		List<FuncDTO> funcDtoList = baseAPIService.getFuncAuth(loginName, map.getKey().trim()).getResult();
+                		
+                    	//过滤没有功能授权App(除首页外)
+                    	//如果没有funcList 目前只有两种情况，1、此功能模块没有授权 2、此功能模块没有注册菜单项（理论存在），
+                    	if((funcDtoList != null && funcDtoList.size() > 0) || map.getKey().equals("HP")) {
+                    		funcDTOListMap.put(map.getValue(), funcDtoList);
+                    	}
+                	}
+                	
+                }
+            }
+        }
+        return funcDTOListMap;
+    }
+    private boolean isIgnoreOrAjaxUrl(String url) {
+        return url.indexOf("setup!")!=-1 || url.indexOf("reg!")!=-1 || url.indexOf("code!")!=-1 ||  
+        url.indexOf("login")!=-1 || url.indexOf("logon")!=-1 ||
+        url.indexOf(".ajax")!=-1 || url.indexOf(".action")!=-1 ;
+    } 
+}

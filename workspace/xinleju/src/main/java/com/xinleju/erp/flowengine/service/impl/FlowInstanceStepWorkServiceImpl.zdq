@@ -1,0 +1,614 @@
+package com.xinleju.erp.flowengine.service.impl;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.Date;
+import java.util.List;
+
+import javax.annotation.Resource;
+
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.flow.models.OpRelation;
+import com.xinleju.erp.flowengine.dao.FlowInstanceStepWorkTaskDao;
+import com.xinleju.erp.flowengine.models.FlowInstanceStep;
+import com.xinleju.erp.flowengine.models.FlowInstanceStepWork;
+import com.xinleju.erp.flowengine.models.FlowInstanceStepWorkTask;
+import com.xinleju.erp.flowengine.service.FlowInstanceManagerService;
+import com.xinleju.erp.flowengine.service.FlowInstanceStepService;
+import com.xinleju.erp.flowengine.service.FlowInstanceStepWorkService;
+import com.xinleju.erp.flowengine.service.FlowInstanceStepWorkTaskService;
+import com.xinleju.erp.flowengine.utils.SortUtils;
+import com.xinleju.erp.flowengine.utils.StepTypeStatus;
+import com.xinleju.erp.flowengine.utils.TaskMsgContext;
+import com.xinleju.erp.flowengine.utils.TaskTypeStatus;
+import com.xinleju.erp.flowengine.utils.WorkTypeStatus;
+
+@Service
+public class FlowInstanceStepWorkServiceImpl extends BaseService implements FlowInstanceStepWorkService{
+
+	
+	@Autowired
+	private FlowInstanceStepWorkTaskService flowInstanceStepWorkTaskService;
+	@Resource
+	private FlowInstanceManagerService flowInstanceManagerService;
+	@Resource
+	private FlowInstanceStepWorkTaskDao flowInstanceStepWorkTaskDao;
+	@Resource
+	private FlowInstanceStepService flowInstanceStepService;
+	
+	/**
+	 * 
+	 *1. 完成工作-》如果返回true,代表step可以尝试结束了
+	 *2. 完成工作--》如果返回false,开启下个工作
+	 * @param flowInstanceStep
+	 * @param flowInstanceStepWork
+	 * @return
+	 */
+	public boolean tryComplementFlowInstanceStepWork(FlowInstanceStep flowInstanceStep ,FlowInstanceStepWork flowInstanceStepWork,FlowInstanceStepWorkTask flowInstanceStepWorkTask) throws Exception{
+		   // TODO Auto-generated method stub
+	       //完成work
+		   flowInstanceStepWorkTaskService.tryComplementWorkTask(flowInstanceStepWork, flowInstanceStepWorkTask);
+		   flowInstanceStepWork.setStatus(WorkTypeStatus.STATUS_COMPLETE);
+		   flowInstanceStepWork.setPassDate(new Date());
+		   flowInstanceManagerService.updateFlowInstanceStepWorkTask(flowInstanceStepWorkTask);
+		   
+	        //工作方式
+	        String workPattern=flowInstanceStep.getWorkPattern();
+	        List<FlowInstanceStepWork> flowInstanceStepWorks=flowInstanceStep.getLstFlowInstanceStepWork();
+	        flowInstanceStepWorks=SortUtils.sortFlowInstanceStepWork(flowInstanceStepWorks);
+	        
+	        //竞争
+	       if(StepTypeStatus.StepType.JZ.getValue().equals(workPattern)){
+		    	   for(FlowInstanceStepWork work:flowInstanceStepWorks){
+		    		  if(!flowInstanceStepWork.getGuid().equals(work.getGuid())&& work.getStatus() != TaskTypeStatus.STATUS_COMPLETE && work.getStatus() != TaskTypeStatus.STATUS_OVERDUE){
+		    			  //完成本环节
+		    			 tryOverFlowInstanceStepWork(work);
+		    		  }
+		    	   }
+		    	   return true;
+		   }else if(StepTypeStatus.StepType.BX.getValue().equals(workPattern)){
+			   List<FlowInstanceStepWork> nextFlowInstanceStepWorks=new ArrayList<FlowInstanceStepWork>();			   
+			   for(FlowInstanceStepWork work:flowInstanceStepWorks){
+				     if(work.getStatus() != TaskTypeStatus.STATUS_COMPLETE && work.getStatus() != TaskTypeStatus.STATUS_OVERDUE ){
+				    	 nextFlowInstanceStepWorks.add(work);
+				     }
+		    	}
+			    if(nextFlowInstanceStepWorks!=null && nextFlowInstanceStepWorks.size()>0){
+			    	return false;
+			    }else{
+			    	return true;
+			    }
+	       }else if(StepTypeStatus.StepType.CX.getValue().equals(workPattern)){
+	    	   boolean nextFlag=false;
+			   FlowInstanceStepWork nextFlowInstanceStepWork=null;
+			   for(FlowInstanceStepWork work:flowInstanceStepWorks){
+				      if(nextFlag){
+		    			  nextFlowInstanceStepWork=work;
+		    			  break;
+		    		  }
+		    		  if(flowInstanceStepWork.getGuid().equals(work.getGuid()) &&  work.getStatus()== TaskTypeStatus.STATUS_COMPLETE ){
+		    			  //完成本环节
+		    			  nextFlag=true;
+		    		  }
+		    		 
+		    	}
+			
+			    if(nextFlowInstanceStepWork!=null){
+			    	return	tryStartNextFlowInstanceStepWorkCx( flowInstanceStep ,nextFlowInstanceStepWork);
+			    }else{
+			    	return true;
+			    }
+	       }
+		  getDao().flush();
+	      return true;
+	}
+	
+	
+	public List<String> tryTestComplementFlowInstanceStepWork(FlowInstanceStep flowInstanceStep ,FlowInstanceStepWork flowInstanceStepWork,FlowInstanceStepWorkTask flowInstanceStepWorkTask) throws Exception{
+         List<String> userIds=new ArrayList<String>();
+        //工作方式
+        String workPattern=flowInstanceStep.getWorkPattern();
+        List<FlowInstanceStepWork> flowInstanceStepWorks=flowInstanceStep.getLstFlowInstanceStepWork();
+        flowInstanceStepWorks=SortUtils.sortFlowInstanceStepWork(flowInstanceStepWorks);
+        
+        List<FlowInstanceStepWork> shengyuFlowInstanceStepWorks=new ArrayList<FlowInstanceStepWork>();
+         //竞争
+       if(StepTypeStatus.StepType.JZ.getValue().equals(workPattern)){
+    	   
+    	   //没有剩余work
+    	   
+	   }else if(StepTypeStatus.StepType.BX.getValue().equals(workPattern)){		   
+		   for(FlowInstanceStepWork work:flowInstanceStepWorks){
+			     if(work.getStatus() != TaskTypeStatus.STATUS_COMPLETE && work.getStatus() != TaskTypeStatus.STATUS_OVERDUE  && !work.getGuid().equals(flowInstanceStepWork.getGuid()) ){
+			    	 shengyuFlowInstanceStepWorks.add(work);
+			     }
+	    	}
+       }else if(StepTypeStatus.StepType.CX.getValue().equals(workPattern)){
+    	   FlowInstanceStepWork nextFlowInstanceStepWork=null;
+    	   boolean nextFlag=false;
+		   for(FlowInstanceStepWork work:flowInstanceStepWorks){
+			      if(nextFlag){
+	    			  nextFlowInstanceStepWork=work;
+	    			  break;
+	    		  }
+	    		  if(flowInstanceStepWork.getGuid().equals(work.getGuid())){
+	    			  //完成本环节
+	    			  nextFlag=true;
+	    		  }
+	    		 
+	    	}
+		
+		    if(nextFlowInstanceStepWork!=null){
+		    	shengyuFlowInstanceStepWorks.add(nextFlowInstanceStepWork);
+		    }
+       }
+       if(shengyuFlowInstanceStepWorks!=null&& shengyuFlowInstanceStepWorks.size()>0){
+    	   
+    	   for(FlowInstanceStepWork    shengyuFlowInstanceStepWork:shengyuFlowInstanceStepWorks){
+    		   String postName=shengyuFlowInstanceStepWork.getParticipantPostName().substring(shengyuFlowInstanceStepWork.getParticipantPostName().lastIndexOf("/")+1,shengyuFlowInstanceStepWork.getParticipantPostName().length());
+    		   userIds.add(postName+"-"+shengyuFlowInstanceStepWork.getParticipantsDefineName());
+    	   }
+       }else{
+    	   List<FlowInstanceStep> steps= flowInstanceStepService.getNextFlowInstanceStepByCurrentStep(flowInstanceStep);
+    	   for(FlowInstanceStep step:steps){
+    		   List<FlowInstanceStepWork> works=step.getLstFlowInstanceStepWork();
+    		   for(FlowInstanceStepWork w:works){
+    			   String postName=w.getParticipantPostName().substring(w.getParticipantPostName().lastIndexOf("/")+1,w.getParticipantPostName().length());
+        		   userIds.add(postName+"-"+w.getParticipantsDefineName());
+    		   }
+    	   }
+  
+       }
+	   return userIds;
+	}
+	
+	/* 
+	 * 
+	 * 
+	 *1. 开启工作-》如果返回true,代表step可以尝试结束了
+	 *2. 开启工作--》如果返回false,开启工作成功
+	 * @see com.xinleju.erp.flowengine.service.FlowInstanceStepWorkService#tryStartFlowInstanceStepWork(com.xinleju.erp.flowengine.models.FlowInstanceStep)
+	 */
+	@Override
+	public boolean tryStartFlowInstanceStepWork (
+			FlowInstanceStep nextFlowInstanceStep) throws Exception{
+		// TODO Auto-generated method stub
+		    String workPattern=nextFlowInstanceStep.getWorkPattern();
+	        List<FlowInstanceStepWork> flowInstanceStepWorks=nextFlowInstanceStep.getLstFlowInstanceStepWork();
+	        flowInstanceStepWorks=SortUtils.sortFlowInstanceStepWork(flowInstanceStepWorks);
+	      
+	     if(nextFlowInstanceStep.getIsAuto() == StepTypeStatus.AUTOACTIVITE){
+	    	  //自动任务
+	    	  for(FlowInstanceStepWork flowInstanceStepWork:flowInstanceStepWorks){
+	    		  tryAutoComplementFlowInstanceStepWork(flowInstanceStepWork);
+	    	  }
+	    	  
+	    	 return true; 
+	      }else{
+	    	   //人工活动 || 配置错误也默认人工活动，为了防止以前没有配置的问题
+		        //竞争
+	 	        if(StepTypeStatus.StepType.JZ.getValue().equals(workPattern)){
+		    	   
+		    	   //如果存在自动通过的任务work,执行自动通过的work，其他work，直接作废
+	 	        	//如果work一个自动跳过，一个需要审批，是竞争关系的情况下，自动跳过环节后继续执行下一个环节
+		    	   
+	 	    	  boolean autoWork=false;
+	 	    	  FlowInstanceStepWork autoFlowInstanceStepWork=null;
+	
+	 	    	  String repeater="";
+	 	    	  for(FlowInstanceStepWork work:flowInstanceStepWorks){
+	 	    	      if(StringUtils.isBlank(work.getParticipants())){
+	 	    	    	 autoFlowInstanceStepWork=work;
+	 	    	    	 autoWork=true ;
+	 	    	    	 repeater=work.getParticipantsDefine();
+	 	    	    	 break;
+	 	    	      }
+	 	    	  }
+	 	    	  //具体的执行
+		    	  if(autoWork){
+		    		  boolean result= false;
+		    		  
+		    		  //自动跳过完成
+		    		  for(FlowInstanceStepWork work:flowInstanceStepWorks){
+		    			  if(work.getGuid().equals(autoFlowInstanceStepWork.getGuid())){
+		    				   result=  tryStartNextFlowInstanceStepWork(nextFlowInstanceStep ,work);
+		    				   break;
+		    			  }
+		    		  }
+		    		  //查看是否还有自己
+		    		  for(FlowInstanceStepWork work:flowInstanceStepWorks){
+		    			  if(work.getGuid().equals(autoFlowInstanceStepWork.getGuid())){
+		    				  
+		    			  }else{
+		    				  if(StringUtils.isNotBlank(work.getParticipants()) && work.getParticipants().equals(repeater)){
+		    					  result=  tryStartNextFlowInstanceStepWork(nextFlowInstanceStep ,work);
+		    				  }else{
+		    					  tryOverFlowInstanceStepWork(work);
+		    				  } 
+		    			  }
+		    		  }
+		    		 return result; 
+		    	  }else{
+		 	    	   boolean flag=true;
+			    	   for(FlowInstanceStepWork work:flowInstanceStepWorks){
+			    		  //存在不能完成任务false
+			    		  boolean result=  tryStartNextFlowInstanceStepWork(nextFlowInstanceStep ,work);
+			    		  if(!result){
+			    			  flag=false;
+			    		  }
+			    	   }
+			    	   if(flag){
+			    		   return true;
+			    	   }
+		    	  }
+		    	   
+			   }else if(StepTypeStatus.StepType.BX.getValue().equals(workPattern)){
+				   boolean flag=true;
+		    	   for(FlowInstanceStepWork work:flowInstanceStepWorks){
+		    		  boolean result=  tryStartNextFlowInstanceStepWork(nextFlowInstanceStep ,work);
+		    		  if(!result){
+		    			  flag=false;
+		    		  }
+		    	   }
+		    	   if(flag){
+		    		   return true;
+		    	   }
+		       }else if(StepTypeStatus.StepType.CX.getValue().equals(workPattern)){
+		    	   boolean flag=true;
+		    	   for(FlowInstanceStepWork work:flowInstanceStepWorks){
+		    		  boolean result=  tryStartNextFlowInstanceStepWork(nextFlowInstanceStep ,work);
+		    		  if(!result){
+		    			  flag=false;
+		    			  break;
+		    		  }
+		    	   }
+		    	   if(flag){
+		    		   return true;
+		    	   }
+		       }
+			  getDao().flush();
+	      }
+	      return false;
+	}
+
+	
+	
+	/**
+	 * 
+	 * 1.作废本工作
+	 * 2.作废本工作下的任务
+	 * 作废工作
+	 * @param flowInstanceStep
+	 * @param flowInstanceStepWork
+	 * @return
+	 */
+	public boolean tryOverFlowInstanceStepWork(FlowInstanceStepWork flowInstanceStepWork) throws Exception{
+		  // TODO Auto-generated method stub
+		  //作废任务
+		  flowInstanceStepWorkTaskService.tryOverWorkTask(flowInstanceStepWork);
+		  //作废工作
+		  flowInstanceStepWork.setStatus(WorkTypeStatus.STATUS_OVERDUE);
+		  flowInstanceManagerService.updateFlowInstanceStepWork(flowInstanceStepWork);
+	      return true;
+	}
+
+	
+	/**
+	 * 自动任务时候不需要创建任务，但需要完成相应工作
+	 * @param flowInstanceStepWork
+	 * @return
+	 * @throws Exception
+	 */
+	public boolean tryAutoComplementFlowInstanceStepWork(FlowInstanceStepWork flowInstanceStepWork) throws Exception{
+		  // TODO Auto-generated method stub
+		  //作废任务
+		  flowInstanceStepWorkTaskService.tryOverWorkTask(flowInstanceStepWork);
+		  //作废工作
+		  flowInstanceStepWork.setStatus(WorkTypeStatus.STATUS_COMPLETE);
+		  flowInstanceManagerService.updateFlowInstanceStepWork(flowInstanceStepWork);
+	      return true;
+	}
+	
+
+
+	/**
+	 * 开启true完成,false未完成，不能进行下一步
+	 * @param flowInstanceStep
+	 * @param flowInstanceStepWork
+	 * @return
+	 */
+	private boolean tryStartNextFlowInstanceStepWork(FlowInstanceStep flowInstanceStep ,FlowInstanceStepWork flowInstanceStepWork) throws Exception{
+		  // TODO Auto-generated method stub
+		  //开启下一个环节的所有任务，如果返回true,说明任务开启后，便结束，需要继续开启下一节点，一直到找不不到节点为止
+	      boolean result=flowInstanceStepWorkTaskService.tryStartNextWorkTask(flowInstanceStepWork);
+	      if(result){
+	    	  flowInstanceStepWork.setStatus(WorkTypeStatus.STATUS_COMPLETE);
+	    	  flowInstanceStepWork.setPassDate(new Date());
+			  flowInstanceManagerService.updateFlowInstanceStepWork(flowInstanceStepWork);
+			  return true;
+	      }else{
+	      	  flowInstanceStepWork.setStatus(WorkTypeStatus.STATUS_RUNNING);
+	     	  flowInstanceStepWork.setActivitiDate(new Date());
+			  flowInstanceManagerService.updateFlowInstanceStepWork(flowInstanceStepWork);;
+			  return false;
+	      }
+	}
+
+
+
+	private boolean tryStartNextFlowInstanceStepWorkCx(FlowInstanceStep flowInstanceStep ,FlowInstanceStepWork flowInstanceStepWork) throws Exception{
+		  // TODO Auto-generated method stub
+		  //开启下一个环节的所有任务，如果返回true,说明任务开启后，便结束，需要继续开启下一节点，一直到找不不到节点为止
+	      boolean result=flowInstanceStepWorkTaskService.tryStartNextWorkTask(flowInstanceStepWork);
+
+	      if(result){
+	    	   flowInstanceStepWork.setStatus(WorkTypeStatus.STATUS_COMPLETE);
+	    	   flowInstanceStepWork.setPassDate(new Date());
+	 		   flowInstanceManagerService.updateFlowInstanceStepWork(flowInstanceStepWork);
+			   boolean nextFlag=false;
+			   List<FlowInstanceStepWork> flowInstanceStepWorks=flowInstanceStep.getLstFlowInstanceStepWork();
+			   //加工排序
+		       flowInstanceStepWorks=SortUtils.sortFlowInstanceStepWork(flowInstanceStepWorks);
+			   FlowInstanceStepWork nextFlowInstanceStepWork=null;
+			   for(FlowInstanceStepWork work:flowInstanceStepWorks){
+				      if(nextFlag){
+		    			  nextFlowInstanceStepWork=work;
+		    			  break;
+		    		  }
+				      
+				      //最后一个未完成的
+		    		  if(flowInstanceStepWork.getGuid().equals(work.getGuid()) && work.getStatus() == TaskTypeStatus.STATUS_COMPLETE  ){
+		    			  //完成本环节
+		    			  nextFlag=true;
+		    		  }
+		    		 
+		    	}
+			    if(nextFlowInstanceStepWork!=null){
+			    	return tryStartNextFlowInstanceStepWorkCx( flowInstanceStep ,nextFlowInstanceStepWork);
+			    }
+			    return true;
+	      }else{
+	      	  flowInstanceStepWork.setStatus(WorkTypeStatus.STATUS_RUNNING);
+	     	  flowInstanceStepWork.setActivitiDate(new Date());
+			  flowInstanceManagerService.updateFlowInstanceStepWork(flowInstanceStepWork);
+	      }
+		  return false;
+	}
+
+
+
+
+
+
+
+	
+	
+
+	@Override
+	public boolean tryReplaceFlowInstanceStepWorkTask(
+			FlowInstanceStepWorkTask flowInstanceStepWorkTask, String userId,
+			String repalceUserId) throws Exception {
+		// TODO Auto-generated method stub
+
+		return flowInstanceStepWorkTaskService.tryReplaceFlowInstanceStepWorkTask(flowInstanceStepWorkTask, userId, repalceUserId);
+	}
+
+
+
+	@Override
+	public boolean tryXBtoflowInstanceStepWorkTask(FlowInstanceStep fiStep,
+			FlowInstanceStepWork flowInstanceStepWork,
+			FlowInstanceStepWorkTask flowInstanceStepWorkTask,
+			List<String> lstUserId) throws Exception {
+			// TODO Auto-generated method stub
+		    String workPattern=fiStep.getWorkPattern();
+	        List<FlowInstanceStepWork> flowInstanceStepWorks=fiStep.getLstFlowInstanceStepWork();
+	        flowInstanceStepWorks=SortUtils.sortFlowInstanceStepWork(flowInstanceStepWorks);
+	        //竞争
+	       if(StepTypeStatus.StepType.JZ.getValue().equals(workPattern)){
+	           for(FlowInstanceStepWork work:flowInstanceStepWorks){
+	        	   if(!flowInstanceStepWork.getGuid().equals(work.getGuid())){
+	        		   tryOverFlowInstanceStepWork(work);
+	        	   }
+	           }
+	       }
+		
+		
+		return flowInstanceStepWorkTaskService.tryStartXbFlowInstanceStepWorkTask(flowInstanceStepWork,flowInstanceStepWorkTask, lstUserId);
+	}
+
+
+
+	@Override
+	public boolean tryHFtoflowInstanceStepWorkTask(FlowInstanceStepWorkTask flowInstanceStepWorkTask) throws Exception {
+		// TODO Auto-generated method stub
+		//回复分为2种情况，1沟通中的回复，此回复要先产生新任务，2协办中的回复不需要产生新任务，只是结束本环节
+		//指派中的任务
+		String assignTaskId=flowInstanceStepWorkTask.getAssignTaskId();
+		String type=flowInstanceStepWorkTaskDao.getFlowInstanceStepWorkTaskType(assignTaskId);
+		if(TaskTypeStatus.TaskType.ZF.getCode().equals(type) || TaskTypeStatus.TaskType.ZC.getCode().equals(type) || TaskTypeStatus.TaskType.XB.getCode().equals(type)){
+			flowInstanceStepWorkTaskService.tryXBtoHFComplementTask(flowInstanceStepWorkTask);
+		}else if(TaskTypeStatus.TaskType.GT.getCode().equals(type)){
+			flowInstanceStepWorkTaskService.tryGTtoHFComplementTask(flowInstanceStepWorkTask);
+		}
+		return false;
+	}
+
+
+
+
+
+
+	/*
+	 * 打回本环节
+	 *  (non-Javadoc)
+	 * @see com.xinleju.erp.flowengine.servcie.FlowInstanceStepWorkService#tryBackFlowInstanceStepWork(com.xinleju.erp.flowengine.models.FlowInstanceStep, com.xinleju.erp.flowengine.models.FlowInstanceStepWork, com.xinleju.erp.flowengine.models.FlowInstanceStepWorkTask)
+	 */
+	@Override
+	public boolean tryBackFlowInstanceStepWork(
+			FlowInstanceStep flowInstanceStep,
+			FlowInstanceStepWork flowInstanceStepWork,
+			FlowInstanceStepWorkTask flowInstanceStepWorkTask) throws Exception{
+		   // TODO Auto-generated method stub
+		   flowInstanceStepWorkTaskService.tryComplementWorkTask(flowInstanceStepWork, flowInstanceStepWorkTask);
+		   flowInstanceStepWork.setStatus(WorkTypeStatus.STATUS_COMPLETE);
+		   flowInstanceStepWork.setPassDate(new Date());
+		   flowInstanceManagerService.updateFlowInstanceStepWork(flowInstanceStepWork);
+	       List<FlowInstanceStepWork> flowInstanceStepWorks=flowInstanceStep.getLstFlowInstanceStepWork();
+	       for(FlowInstanceStepWork work:flowInstanceStepWorks){
+	    	     if(flowInstanceStepWork.getGuid().equals(work.getGuid()) || work.getStatus() == WorkTypeStatus.STATUS_COMPLETE){
+	    			  //完成本环节
+	    			  continue;
+	    		  }else{
+	    			  
+	    		  }
+	    	      tryOverFlowInstanceStepWork(work);
+	      }
+		  return true;
+	}
+
+
+
+
+
+
+	@Override
+	public boolean tryZBtoflowInstanceStepWorkTask(FlowInstanceStep fiStep,
+			FlowInstanceStepWork flowInstanceStepWork,
+			FlowInstanceStepWorkTask flowInstanceStepWorkTask, String userId)
+			throws Exception {
+		// TODO Auto-generated method stub
+	    String workPattern=fiStep.getWorkPattern();
+        List<FlowInstanceStepWork> flowInstanceStepWorks=fiStep.getLstFlowInstanceStepWork();
+        flowInstanceStepWorks=SortUtils.sortFlowInstanceStepWork(flowInstanceStepWorks);
+        //竞争
+       if(StepTypeStatus.StepType.JZ.getValue().equals(workPattern)){
+           for(FlowInstanceStepWork work:flowInstanceStepWorks){
+        	   if(!flowInstanceStepWork.getGuid().equals(work.getGuid())){
+        		   tryOverFlowInstanceStepWork(work);
+        	   }
+           }
+       }
+		return flowInstanceStepWorkTaskService.tryStartZbFlowInstanceStepWorkTask(flowInstanceStepWork,flowInstanceStepWorkTask, userId);
+	}
+	
+
+	@Override
+	public boolean saveToGT(FlowInstanceStep fiStep,FlowInstanceStepWork flowInstanceStepWork,FlowInstanceStepWorkTask fiTask,  String userId) throws Exception {
+		// TODO Auto-generated method stub
+	    String workPattern=fiStep.getWorkPattern();
+        List<FlowInstanceStepWork> flowInstanceStepWorks=fiStep.getLstFlowInstanceStepWork();
+        flowInstanceStepWorks=SortUtils.sortFlowInstanceStepWork(flowInstanceStepWorks);
+        //竞争
+       if(StepTypeStatus.StepType.JZ.getValue().equals(workPattern)){
+           for(FlowInstanceStepWork work:flowInstanceStepWorks){
+        	   if(!flowInstanceStepWork.getGuid().equals(work.getGuid())){
+        		   tryOverFlowInstanceStepWork(work);
+        	   }
+           }
+       }
+		return flowInstanceStepWorkTaskService.tryStartGtFlowInstanceStepWorkTask(flowInstanceStepWork,fiTask, userId);
+	}
+	
+
+	@Override
+	public boolean saveRecycleCoHost(FlowInstanceStepWorkTask fiTask)
+			throws Exception {
+		// TODO Auto-generated method stub
+		List<FlowInstanceStepWorkTask> xbFlowInstanceStepWorkTasks=flowInstanceStepWorkTaskService.getFlowInstanceStepWorkTaskByAssignTaskId(fiTask.getAssignTaskId(), OpRelation.OP_USER_TYPE_XBR, TaskTypeStatus.STATUS_RUNNING);
+		if(xbFlowInstanceStepWorkTasks!=null && xbFlowInstanceStepWorkTasks.size()>0){
+			for(FlowInstanceStepWorkTask flowInstanceStepWorkTask:xbFlowInstanceStepWorkTasks){
+				flowInstanceStepWorkTask.setCompleteUserName(flowInstanceStepWorkTask.getParticipantUserName());
+				flowInstanceStepWorkTask.setOpCode(TaskMsgContext.SYSTEMHFCODE);
+				flowInstanceStepWorkTask.setUserNote(flowInstanceStepWorkTask.getAssignerUserName()+TaskMsgContext.RecycleXb);
+				flowInstanceStepWorkTaskService.tryXBtoHFComplementTask(flowInstanceStepWorkTask);
+			}
+		}
+		return false;
+	}
+
+
+	
+
+
+
+	@Override
+	public boolean tryStopTaskComplementFlowInstanceStep(
+			FlowInstanceStep flowInstanceStep) throws Exception {
+		// TODO Auto-generated method stub
+		 List<FlowInstanceStepWork> flowInstanceStepWorks=flowInstanceStep.getLstFlowInstanceStepWork();
+		 if(flowInstanceStepWorks!=null && flowInstanceStepWorks.size()>0){
+			 for(FlowInstanceStepWork flowInstanceStepWork:flowInstanceStepWorks){
+				    List<FlowInstanceStepWorkTask> flowInstanceStepWorkTasks=flowInstanceStepWork.getLstFlowInstanceStepWorkTask();
+				    if(flowInstanceStepWorkTasks!=null && flowInstanceStepWorkTasks.size()>0){
+					    flowInstanceStepWorkTaskService.tryComplementWorkTask(flowInstanceStepWork, flowInstanceStepWorkTasks.get(0));
+				    }
+					flowInstanceStepWork.setStatus(WorkTypeStatus.STATUS_COMPLETE);
+				    flowInstanceStepWork.setPassDate(new Date());
+				    flowInstanceManagerService.updateFlowInstanceStepWork(flowInstanceStepWork);
+			 }  
+		 }
+		 return true;
+	}
+	
+	
+
+
+	@Override
+	public boolean tryOverTaskComplementFlowInstanceStep(
+			FlowInstanceStep flowInstanceStep) throws Exception {
+		// TODO Auto-generated method stub
+		 List<FlowInstanceStepWork> flowInstanceStepWorks=flowInstanceStep.getLstFlowInstanceStepWork();
+		 if(flowInstanceStepWorks!=null && flowInstanceStepWorks.size()>0){
+			 for(FlowInstanceStepWork flowInstanceStepWork:flowInstanceStepWorks){
+				    flowInstanceStepWorkTaskService.tryOverWorkTask(flowInstanceStepWork);
+					flowInstanceStepWork.setStatus(WorkTypeStatus.STATUS_OVERDUE);
+				    flowInstanceStepWork.setPassDate(new Date());
+				    flowInstanceManagerService.updateFlowInstanceStepWork(flowInstanceStepWork);
+			 }  
+		 }
+		 return true;
+	}
+
+
+	public static void main(String[] args) {
+		 List<FlowInstanceStepWork> flowInstanceStepWorks=new ArrayList<FlowInstanceStepWork>();
+		 FlowInstanceStepWork a=new FlowInstanceStepWork();
+		 a.setDisplayName("王雪,裴一菲");
+		 a.setSort(530331638773810l);
+		 FlowInstanceStepWork b=new FlowInstanceStepWork();
+		 b.setDisplayName("冯楠");
+		 b.setSort(530331657089046l);
+		 FlowInstanceStepWork c=new FlowInstanceStepWork();
+		 c.setDisplayName("侯广军");
+		 c.setSort(530331676986027l);
+		 flowInstanceStepWorks.add(a);
+		
+		 flowInstanceStepWorks.add(b);
+		 flowInstanceStepWorks.add(c);
+		 Collections.sort(flowInstanceStepWorks,  new Comparator<FlowInstanceStepWork>(){
+				@Override
+				public int compare(FlowInstanceStepWork arg0, FlowInstanceStepWork arg1) {
+					// TODO Auto-generated method stub
+					  return new Long(arg0.getSort()).compareTo(new Long(arg1.getSort()));  
+				}  
+	        	
+	        });
+		 System.out.println(flowInstanceStepWorks);
+		 for(FlowInstanceStepWork f:flowInstanceStepWorks){
+			 System.out.println(f.getDisplayName());
+		 }
+	}
+
+
+
+
+
+	
+	
+}

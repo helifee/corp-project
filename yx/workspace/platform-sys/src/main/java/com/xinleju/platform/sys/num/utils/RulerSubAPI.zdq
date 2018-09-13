@@ -1,0 +1,28 @@
+package com.xinleju.platform.sys.num.utils;
+
+import java.util.Map;
+
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.xinleju.platform.sys.num.service.RulerSubService;
+
+public class RulerSubAPI {
+	@Autowired
+	private RulerSubService rulerSubService;
+	private static Logger log = Logger.getLogger(RulerSubAPI.class);
+	public String saveRulerSub(Map<String,Object> rulerSubMap){
+		String rulerSubNum=null;
+		try {
+			StringBuffer sb = rulerSubService.saveAndRulerData(rulerSubMap);
+			rulerSubNum=String.valueOf(sb);
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			//e.printStackTrace();
+			  log.error("保存编号失败");
+		}
+		
+		return rulerSubNum;
+		
+	}
+}

@@ -1,0 +1,106 @@
+package com.xinleju.platform.univ.attachment.service.impl;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.AttachmentDto;
+import com.xinleju.platform.base.utils.ConfigurationUtil;
+import com.xinleju.platform.base.utils.FastDFSClient;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.univ.attachment.dao.AttachmentDao;
+import com.xinleju.platform.univ.attachment.dao.AttachmentTempDao;
+import com.xinleju.platform.univ.attachment.entity.Attachment;
+import com.xinleju.platform.univ.attachment.service.AttachmentService;
+
+/**
+ * @author haoqp
+ * 
+ * 
+ */
+
+@Transactional
+@Service
+public class AttachmentServiceImpl extends  BaseServiceImpl<String,Attachment> implements AttachmentService{
+	
+
+	@Autowired
+	private AttachmentDao attachmentDao;
+	@Autowired
+	private AttachmentTempDao attachmentTempDao;
+	
+	@Override
+	public int save(Attachment attachment) {
+		
+		this.attachmentTempDao.deleteObjectById(attachment.getId());
+		return this.attachmentDao.save(attachment);
+		
+	}
+
+	@Override
+	public int saveBatch(List<Attachment> list) {
+		List<String> ids = new ArrayList<>();
+		for (Attachment att : list) {
+			ids.add(att.getId());
+		}
+		this.attachmentTempDao.deleteAllObjectByIds(ids);
+		return this.attachmentDao.saveBatch(list);
+	}
+
+	@Override
+	public int deleteObjectById(String id) throws Exception {
+		this.attachmentTempDao.deleteObjectById(id);
+		this.attachmentDao.deleteObjectById(id);
+		return super.deleteObjectById(id);
+	}
+
+	@Override
+	public List<AttachmentDto> queryListByCategoryIds(String[] ids) {
+		return attachmentDao.queryListByCategoryIds(ids);
+	}
+
+	@Override
+	public List<AttachmentDto> queryListWithCategoryName(Map<String, Object> paramater) throws Exception {
+		return attachmentDao.queryListWithCategoryName(AttachmentDto.class.getName() + "queryListWithCategoryName", paramater);
+	}
+
+	@Override
+	public Page getPageByCategoryIds(Map<String, Object> paramater, Integer start, Integer pageSize) throws Exception {
+		return attachmentDao.getPageByCategoryIds(paramater, start, pageSize);
+	}
+
+	@Override
+	public List<AttachmentDto> queryListByObject(Map<String, Object> paramater) throws Exception {
+		List<AttachmentDto> list = attachmentDao.queryListByObject(paramater);
+		// 根据附件信息查询附件URL
+		FastDFSClient fdfsClient = new FastDFSClient();
+		String groupName;
+		String remoteFileName;
+		String tempUrl;
+		for (AttachmentDto dto : list) {
+			if (StringUtils.isNotEmpty(dto.getPath())) {
+				groupName = dto.getPath().substring(0, dto.getPath().indexOf('/'));
+				remoteFileName = dto.getPath().substring(dto.getPath().indexOf('/') + 1);
+				tempUrl = fdfsClient.getFileAddrIP(groupName, remoteFileName);
+				if (StringUtils.isNotEmpty(tempUrl)) {
+					dto.setUrl(StringUtils.join(new String[]{"http://", tempUrl, ":",ConfigurationUtil.getValue("fdfs.storage.http.port", "8888"),"/", dto.getPath()}));
+				}
+			}
+		}
+		
+		
+		return list;
+	}
+
+	@Override
+	public List<Attachment> queryFlowList(Map<String, Object> paramater) throws Exception {
+		return attachmentDao.queryFlowList(paramater);
+	}
+
+}

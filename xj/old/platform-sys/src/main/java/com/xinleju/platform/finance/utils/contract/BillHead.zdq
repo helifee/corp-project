@@ -1,0 +1,126 @@
+package com.xinleju.platform.finance.utils.contract;
+import javax.xml.bind.annotation.XmlAccessType;
+import javax.xml.bind.annotation.XmlAccessorType;
+import javax.xml.bind.annotation.XmlElement;
+import javax.xml.bind.annotation.XmlType;
+
+@XmlAccessorType(XmlAccessType.FIELD)  
+@XmlType(name = "billhead", propOrder = {})
+public class BillHead {
+	@XmlElement(name="doccode")
+	private String doccode;
+	@XmlElement(name="docname")
+	private String docname;
+	@XmlElement(name="docsystype")
+	private String docsystype;
+	@XmlElement(name="pk_corp")
+	private String pkcorp;
+	@XmlElement(name="pk_defdoc")
+	private String pkdefdoc;
+	@XmlElement(name="pk_defdoclist")
+	private String pkdefdoclist;
+	@XmlElement(name="pk_defdoc1")
+	private String pkdefdoc1;
+	@XmlElement(name="sealflag")
+	private String sealflag;
+	
+	/**
+	 * @return the doccode
+	 */
+	public String getDoccode() {
+		return doccode;
+	}
+	/**
+	 * @param doccode the doccode to set
+	 */
+	public void setDoccode(String doccode) {
+		this.doccode = doccode;
+	}
+	/**
+	 * @return the docname
+	 */
+	public String getDocname() {
+		return docname;
+	}
+	/**
+	 * @param docname the docname to set
+	 */
+	public void setDocname(String docname) {
+		this.docname = docname;
+	}
+	/**
+	 * @return the docsystype
+	 */
+	public String getDocsystype() {
+		return docsystype;
+	}
+	/**
+	 * @param docsystype the docsystype to set
+	 */
+	public void setDocsystype(String docsystype) {
+		this.docsystype = docsystype;
+	}
+	
+	/**
+	 * @return the pkcorp
+	 */
+	public String getPkcorp() {
+		return pkcorp;
+	}
+	/**
+	 * @param pkcorp the pkcorp to set
+	 */
+	public void setPkcorp(String pkcorp) {
+		this.pkcorp = pkcorp;
+	}
+	
+	/**
+	 * @return the pkdefdoc
+	 */
+	public String getPkdefdoc() {
+		return pkdefdoc;
+	}
+	/**
+	 * @param pkdefdoc the pkdefdoc to set
+	 */
+	public void setPkdefdoc(String pkdefdoc) {
+		this.pkdefdoc = pkdefdoc;
+	}
+	/**
+	 * @return the pkdefdoclist
+	 */
+	public String getPkdefdoclist() {
+		return pkdefdoclist;
+	}
+	/**
+	 * @param pkdefdoclist the pkdefdoclist to set
+	 */
+	public void setPkdefdoclist(String pkdefdoclist) {
+		this.pkdefdoclist = pkdefdoclist;
+	}
+	/**
+	 * @return the pkdefdoc1
+	 */
+	public String getPkdefdoc1() {
+		return pkdefdoc1;
+	}
+	/**
+	 * @param pkdefdoc1 the pkdefdoc1 to set
+	 */
+	public void setPkdefdoc1(String pkdefdoc1) {
+		this.pkdefdoc1 = pkdefdoc1;
+	}
+	/**
+	 * @return the sealflag
+	 */
+	public String getSealflag() {
+		return sealflag;
+	}
+	/**
+	 * @param sealflag the sealflag to set
+	 */
+	public void setSealflag(String sealflag) {
+		this.sealflag = sealflag;
+	}
+	
+}

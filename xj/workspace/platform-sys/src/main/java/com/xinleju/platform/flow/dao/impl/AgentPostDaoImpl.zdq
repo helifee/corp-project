@@ -1,0 +1,36 @@
+package com.xinleju.platform.flow.dao.impl;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.platform.base.dao.impl.BaseDaoImpl;
+import com.xinleju.platform.flow.dao.AgentPostDao;
+import com.xinleju.platform.flow.entity.AgentPost;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Repository
+public class AgentPostDaoImpl extends BaseDaoImpl<String,AgentPost> implements AgentPostDao{
+
+	public AgentPostDaoImpl() {
+		super();
+	}
+
+	@Override
+	public List<String> queryAgentPostsBy(String agentId) {
+		Map<String, Object> params = new HashMap<String, Object>();
+		params.put("agentId", agentId);
+		return getSqlSession().selectList(AgentPost.class.getName() + ".queryAgentPostsByAgentId", params);
+	}
+	@Override
+	public List<Map<String, Object>> queryAgentPostList(Map<String,Object> map){
+		return getSqlSession().selectList(AgentPost.class.getName() + ".queryAgentPostList", map);
+	}
+}

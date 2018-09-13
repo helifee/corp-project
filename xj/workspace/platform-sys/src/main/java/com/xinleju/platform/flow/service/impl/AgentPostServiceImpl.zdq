@@ -1,0 +1,34 @@
+package com.xinleju.platform.flow.service.impl;
+
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.flow.dao.AgentPostDao;
+import com.xinleju.platform.flow.entity.AgentPost;
+import com.xinleju.platform.flow.service.AgentPostService;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class AgentPostServiceImpl extends  BaseServiceImpl<String,AgentPost> implements AgentPostService{
+
+	@Autowired
+	private AgentPostDao agentPostDao;
+
+	@Override
+	public List<String> queryAgentPostsBy(String agentId) {
+		return agentPostDao.queryAgentPostsBy(agentId);
+	}
+	@Override
+	public List<Map<String, Object>> queryAgentPostList(Map<String,Object> map){
+		return agentPostDao.queryAgentPostList(map);
+	}
+}

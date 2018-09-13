@@ -1,0 +1,24 @@
+package com.xinleju.platform.sys.base.dao.impl;
+
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.platform.base.dao.impl.BaseDaoImpl;
+import com.xinleju.platform.sys.base.dao.BaseDataDictionaryDao;
+import com.xinleju.platform.sys.base.entity.BaseDataDictionary;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Repository
+public class BaseDataDictionaryDaoImpl extends BaseDaoImpl<String,BaseDataDictionary> implements BaseDataDictionaryDao{
+
+	public BaseDataDictionaryDaoImpl() {
+		super();
+	}
+
+	
+	
+}

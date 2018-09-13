@@ -1,0 +1,36 @@
+package com.xinleju.platform.finance.utils.voucherxml;
+import javax.xml.bind.annotation.XmlAccessType;
+import javax.xml.bind.annotation.XmlAccessorType;
+import javax.xml.bind.annotation.XmlAttribute;
+import javax.xml.bind.annotation.XmlElement;
+import javax.xml.bind.annotation.XmlType;
+
+@XmlAccessorType(XmlAccessType.FIELD)  
+@XmlType(name = "voucher", propOrder = {})
+public class Voucher {
+@XmlAttribute
+private String id;
+public String getId() {
+	return id;
+}
+public void setId(String id) {
+	this.id = id;
+}
+@XmlElement(name="voucher_head")
+private VoucherHead voucherhead;
+@XmlElement(name="voucher_body")
+private VoucherBody voucherbody;
+public VoucherHead getVoucherhead() {
+	return voucherhead;
+}
+public void setVoucherhead(VoucherHead voucherhead) {
+	this.voucherhead = voucherhead;
+}
+public VoucherBody getVoucherbody() {
+	return voucherbody;
+}
+public void setVoucherbody(VoucherBody voucherbody) {
+	this.voucherbody = voucherbody;
+}
+
+}

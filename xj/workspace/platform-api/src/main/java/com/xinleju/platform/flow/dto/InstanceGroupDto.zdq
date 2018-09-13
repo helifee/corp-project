@@ -1,0 +1,187 @@
+package com.xinleju.platform.flow.dto;
+
+import com.xinleju.platform.base.dto.BaseDto;
+
+
+import java.sql.Timestamp;
+
+
+
+/**
+ * @author admin
+ * 
+ *
+ */
+public class InstanceGroupDto extends BaseDto{
+
+		
+	//流程环节id
+	private String acId;
+    
+  		
+	//岗位激活时间
+	private Timestamp activateDate;
+    
+  		
+	//岗位完成时间
+	private Timestamp endDate;
+    
+  		
+	//状态: 1:未运行,2:运行中 ,3:完成
+	private String status;
+    
+  		
+	//是否有效
+	private Boolean disable;
+    
+  		
+	//无效方式: 1:人工删除完成,2:被动完成
+	private String disableType;
+    
+  		
+	//岗位名称
+	private String postName;
+    
+  		
+	//岗位解析类型: 1:角色,2:岗位,3:人员
+	private String parseType;
+    
+  		
+	//岗位id
+	private String postId;
+    
+  		
+	//任务参与者
+	private String participantName;
+    
+  		
+	//任务参与者id
+	private String participantId;
+    
+  		
+	//排序
+	private Long px;
+    
+  		
+	//来源: 1:模板,2:加签
+	private String source;
+    
+  		
+	//来源id
+	private String sourceId;
+    
+  		
+		
+	public String getAcId() {
+		return acId;
+	}
+	public void setAcId(String acId) {
+		this.acId = acId;
+	}
+    
+  		
+	public Timestamp getActivateDate() {
+		return activateDate;
+	}
+	public void setActivateDate(Timestamp activateDate) {
+		this.activateDate = activateDate;
+	}
+    
+  		
+	public Timestamp getEndDate() {
+		return endDate;
+	}
+	public void setEndDate(Timestamp endDate) {
+		this.endDate = endDate;
+	}
+    
+  		
+	public String getStatus() {
+		return status;
+	}
+	public void setStatus(String status) {
+		this.status = status;
+	}
+    
+  		
+	public Boolean getDisable() {
+		return disable;
+	}
+	public void setDisable(Boolean disable) {
+		this.disable = disable;
+	}
+    
+  		
+	public String getDisableType() {
+		return disableType;
+	}
+	public void setDisableType(String disableType) {
+		this.disableType = disableType;
+	}
+    
+  		
+	public String getPostName() {
+		return postName;
+	}
+	public void setPostName(String postName) {
+		this.postName = postName;
+	}
+    
+  		
+	public String getParseType() {
+		return parseType;
+	}
+	public void setParseType(String parseType) {
+		this.parseType = parseType;
+	}
+    
+  		
+	public String getPostId() {
+		return postId;
+	}
+	public void setPostId(String postId) {
+		this.postId = postId;
+	}
+    
+  		
+	public String getParticipantName() {
+		return participantName;
+	}
+	public void setParticipantName(String participantName) {
+		this.participantName = participantName;
+	}
+    
+  		
+	public String getParticipantId() {
+		return participantId;
+	}
+	public void setParticipantId(String participantId) {
+		this.participantId = participantId;
+	}
+    
+  		
+	public Long getPx() {
+		return px;
+	}
+	public void setPx(Long px) {
+		this.px = px;
+	}
+    
+  		
+	public String getSource() {
+		return source;
+	}
+	public void setSource(String source) {
+		this.source = source;
+	}
+    
+  		
+	public String getSourceId() {
+		return sourceId;
+	}
+	public void setSourceId(String sourceId) {
+		this.sourceId = sourceId;
+	}
+    
+  		
+}

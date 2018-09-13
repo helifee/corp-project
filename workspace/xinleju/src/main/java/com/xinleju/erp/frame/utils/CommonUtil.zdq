@@ -1,0 +1,289 @@
+package com.xinleju.erp.frame.utils;
+
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import javax.persistence.Table;
+
+import net.sf.json.JSONArray;
+import net.sf.json.JSONObject;
+import net.sf.json.JsonConfig;
+import net.sf.json.processors.DefaultValueProcessor;
+
+import com.xinleju.erp.frame.dto.JsonTreeTableTemplete;
+import com.xinleju.erp.frame.models.BaseEntity;
+import com.xinleju.erp.frame.models.EntityExtender;
+
+public class CommonUtil {
+	
+	public static String stringValue(Object obj){
+		return obj == null ? "" :obj.toString();
+	}
+	
+	public static Double doubleValue(Object obj){
+		return  obj == null ? 0d : Double.valueOf(obj.toString());
+	}
+	public static Long[] transformIds(String[] strs){
+		List<Long> list = new ArrayList<Long>();
+		if(strs == null || strs.length == 0)
+			return new Long[0];
+		for(String str : strs)
+			list.add(Long.valueOf(str));
+		return list.toArray(new Long[0]);
+	}
+	
+	public static String transSQL(Object[] objs){
+		if(objs == null || objs.length == 0)
+			return " = 'error'";
+		StringBuffer inpart = new StringBuffer(" in (");
+		for(Object obj : objs){
+			if(obj == null)
+				continue;
+			boolean isNumber = obj instanceof Number;
+			if(!isNumber)
+				inpart.append("'");
+			inpart.append(obj.toString());
+			if(!isNumber)
+				inpart.append("'");
+			inpart.append(",");
+		}
+		inpart.replace(inpart.length()-1, inpart.length(), ")");
+		return inpart.toString();
+	}
+	
+	
+	public static JSONObject transListResult(int total,List<?> list){
+		return transListResult(total, list, null);
+	}
+	
+	public static JSONObject transListResult(int total,List<?> list,Class<? extends EntityExtender> clazz){
+		EntityExtender extender = null;
+		if(clazz != null){
+			Constructor<? extends EntityExtender> constructor;
+			try {
+				constructor = clazz.getConstructor();
+				extender = constructor.newInstance();
+			} catch(Exception e) {
+				e.printStackTrace();
+			}
+		}
+		return transListResultEx(total, list,extender);
+	}
+	
+	/**
+	 * net.sf.json.JSONObject提供的转Object对Java.util.Date类型转换有问题com.alibaba.fastjson.JSONObjec提供的toJavaObject支持Date转换
+	 * @param jsonstr
+	 * @param clazz
+	 * @return
+	 */
+	public static <T extends Object> T json2Object(String jsonstr,Class<T> clazz ){
+		return com.alibaba.fastjson.JSONObject.parseObject(jsonstr, clazz);
+	}
+	
+	public static <T extends Object>List<T> json2List(String jsonstr, Class<T> clazz  ){
+		return com.alibaba.fastjson.JSONArray.parseArray(jsonstr, clazz);
+	}
+	
+	public static JSONObject transListResultEx(int total,List<?> list,EntityExtender extender){
+		JSONObject res = new JSONObject();
+		res.put("total", total);
+		JSONArray array = transListEx(list, extender);
+		res.put("rows", array);
+		return res;
+	}
+	
+	public  static JSONObject transEx(Object obj,EntityExtender extender){
+		JsonConfig cfg = new JsonConfig();
+		cfg.registerDefaultValueProcessor(Long.class,     new DefaultValueProcessor() {  
+            public Object getDefaultValue(@SuppressWarnings("rawtypes") Class type) {  
+	               return null;  
+           }} );  
+		return transEx(obj,cfg, extender);
+	}
+	
+	public  static JSONObject transEx(Object obj,JsonConfig cfg,EntityExtender extender){
+		JSONObject jobj = JSONObject.fromObject(obj,cfg);
+		if(extender != null)
+			append(jobj, obj, extender);
+		return jobj;
+	}
+	
+	public static JSONArray transListEx(List<?> list,EntityExtender extender){
+		JSONArray array = new JSONArray();
+		if(list != null && list.size() > 0){
+			for(Object obj : list){
+				JsonConfig cfg = new JsonConfig();
+				cfg.registerDefaultValueProcessor(Long.class,     new DefaultValueProcessor() {  
+		            public Object getDefaultValue(@SuppressWarnings("rawtypes") Class type) {  
+			               return null;  
+		           }} );  
+				JSONObject jobj =transEx(obj, cfg, extender);
+				array.add(jobj);
+			}
+		}
+		return array;
+	}
+	
+	private static void append(JSONObject jobj, Object obj ,EntityExtender extender){
+		if(extender == null)
+			return;
+		Class<? extends EntityExtender> clazz = extender.getClass();
+		if(clazz == null)
+			return;
+		try{
+			for(Field field : clazz.getDeclaredFields()){
+				if(field == null)
+					continue;
+				String name = field.getName();
+				jobj.put(name, 	BeanUtil.getAttribute(name, extender,obj));
+			}
+		}catch(Exception e){
+		}
+	}
+	
+	public static JSONArray transTree(List<?> objList,JsonTreeTableTemplete jttt){
+		JSONArray jsonTree = new JSONArray();
+		Map<String,List<Object>> map = new HashMap<String,List<Object>>();
+		EntityExtender extender = null;
+		if(jttt.getExtenderClass() != null){
+			Constructor<? extends EntityExtender> constructor;
+			try {
+				constructor = jttt.getExtenderClass().getConstructor();
+				extender = constructor.newInstance();
+			} catch(Exception e) {
+				e.printStackTrace();
+			}
+		}
+		for(Object obj : objList){
+		   Object temp = BeanUtil.getAttribute(jttt.getPidfield(), obj);
+			String key =( temp ==null || temp.equals("null") || temp.toString().length()== 0)? "root":temp.toString();
+			List<Object> list = map.get(key);
+			if(list == null){
+				list =new ArrayList<Object>();
+				map.put(key, list);
+			}
+			list.add(obj);
+		}
+		transTree(map, jsonTree,"root", jttt.getIdfield(),jttt.getFields(),extender);
+		return jsonTree;
+	}
+	private static void transTree(Map<String,List<Object>> map,JSONArray jsonTree,String pid,String idfield,String[] fields,EntityExtender extender){
+		List<Object> list = map.get(pid);
+		if(list == null || list.size() == 0)
+			return;
+		for(Object obj : list){
+			JSONObject item = new JSONObject();
+			item.put(idfield, BeanUtil.getAttribute(idfield, obj));
+			for(String field : fields){
+				if(idfield.equals(field))
+					continue;
+				item.put(field, BeanUtil.getAttribute(field, obj));
+			}
+			if(extender != null)
+				append(item, obj, extender);
+			JSONArray jarray = new JSONArray();
+			Object temp = BeanUtil.getAttribute(idfield, obj);
+			if(temp == null)
+				return;
+			transTree(map, jarray, temp.toString(),idfield,fields,extender);
+			if(jarray.size() > 0 )
+				item.put("children", jarray);
+			jsonTree.add(item.toString());
+			jsonTree.toString();
+		}
+	}
+	
+	
+	public static Map<Object,Object> transform(List<?> list ,String keyfield ,String valuefield ){
+		Map<Object,Object> map = new HashMap<Object,Object>();
+		if(list == null || list.size() == 0)
+			return map;
+		for(Object obj : list){
+			if(obj == null)
+				continue;
+			Object key = BeanUtil.getAttribute(keyfield, obj);
+			Object value = BeanUtil.getAttribute(valuefield, obj);
+			map.put(key, value);
+		}
+		return map;
+	}
+	
+	/**
+	 * 
+	 * @param map
+	 * @return [{key:xxx,value:xxx},{key:yyy,value:yyy}]
+	 */
+	public static JSONArray transRef(Map<?,?> map){
+		JSONArray jarr = new JSONArray();
+		if(map == null || map.isEmpty())
+			return jarr;
+		for(Object key : map.keySet()){
+			JSONObject jobj = new JSONObject();
+			jobj.put("key",key );
+			jobj.put("value",map.get(key) );
+			jarr.add(jobj);
+		}
+		return jarr;
+	}
+
+	public static <T extends Object> Map<String, T> toMap(List<T> list , String... fields) {
+		Map<String,T> map = new HashMap<String,T>();
+		if(list == null || list.size() == 0)
+			return map;
+		for(T obj : list){
+			StringBuffer buffer = new StringBuffer();
+			for(String field : fields){
+				Object key = BeanUtil.getAttribute(field, obj);
+				buffer.append(key == null ? "null":key.toString()).append("#");
+			}
+			String key;
+			if(buffer.length() > 0 ){
+				key = buffer.substring(0,buffer.length() -1);
+			}else{
+				key = buffer.toString();
+			}
+			map.put(key, obj);
+		}
+		return map;
+	}
+	
+	public static String  getMultiKey(Object... values){
+		StringBuffer buffer = new StringBuffer();
+		for(Object key : values){
+			buffer.append(key == null ? "null":key.toString()).append("#");
+		}
+		String key;
+		if(buffer.length() > 0 ){
+			key = buffer.substring(0,buffer.length() -1);
+		}else{
+			key = buffer.toString();
+		}
+		return key;
+	}
+	public static <T extends Object> Map<Object,List<T>> toMultiMap(List<T> list , String  field) {
+		Map<Object,List<T>> map = new HashMap<Object,List<T>>();
+		if(list == null || list.size() == 0)
+			return map;
+		for(T obj : list){
+			Object key = BeanUtil.getAttribute(field, obj);
+			List<T> tList = map.get(key);
+			if(tList == null){
+				tList = new ArrayList<T>();
+				map.put(key, tList);
+			}
+			tList.add(obj);
+		}
+		return map;
+	}
+	
+	public static String getTableName(Class<? extends BaseEntity> clazz){
+		Table table = clazz.getAnnotation(Table.class);
+		if(table == null)
+			return null;
+		return table.name();
+	}
+}

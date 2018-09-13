@@ -1,0 +1,233 @@
+package com.jzy.hio.crm.controller;
+
+import java.util.Date;
+import java.util.List;
+
+import com.jzy.hio.exception.HioException;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.controller.BaseController;
+import com.jzy.hio.constant.CrmConstant;
+import com.jzy.hio.crm.dto.AttachmentParamDto;
+import com.jzy.hio.crm.dto.CrmCustomerFollowPlanDto;
+import com.jzy.hio.crm.dto.CrmCustomerFollowPlanNewDto;
+import com.jzy.hio.crm.param.CrmCustomerFollowParam;
+import com.jzy.hio.crm.param.CrmCustomerFollowPlanParam;
+import com.jzy.hio.crm.service.CrmContactService;
+import com.jzy.hio.crm.service.CrmCustomerFollowPlanService;
+import com.jzy.hio.crm.service.CrmCustomerOpportunitiesService;
+import com.jzy.hio.crm.service.CrmCustomerService;
+import com.jzy.hio.crm.utils.PageResult;
+import com.jzy.hio.entity.CrmContact;
+import com.jzy.hio.entity.CrmCustomer;
+import com.jzy.hio.entity.CrmCustomerFollowPlan;
+import com.jzy.hio.entity.CrmCustomerOpportunities;
+import com.jzy.hio.springmvc.ApiResponse;
+import com.jzy.hio.utils.LoginUser;
+
+/**
+ * 跟进计划
+ *
+ * @author
+ */
+@RestController
+@RequestMapping("/followPlan")
+public class CrmCustomerFollowPlanController extends BaseController {
+
+    @Autowired
+    private CrmCustomerFollowPlanService crmCustomerFollowPlanService;
+    @Autowired
+    private CrmCustomerService crmCustomerService;
+    @Autowired
+    private CrmContactService crmContactService;
+    @Autowired
+    private CrmCustomerOpportunitiesService crmCustomerOpportunitiesService;
+
+	/**
+	 * 获取上传参数和业务id
+	 * @return
+	 */
+	@PostMapping("/getAttachmentParam")
+	public ApiResponse<AttachmentParamDto> getAttachmentParam(){
+		ApiResponse<AttachmentParamDto> res = new ApiResponse<>(200, "查询成功");
+		AttachmentParamDto attachmentParamDto = new AttachmentParamDto();
+		attachmentParamDto.setApp(BaseConstants.App.CRM.getId());
+		attachmentParamDto.setCategory(BaseConstants.AttachmentCategory.CRM_FOLLOWHIS.getId());
+		attachmentParamDto.setBusinessId(Base.generatePk(CrmCustomerFollowPlan.class));
+		res.setResult(attachmentParamDto);
+		return res;
+	}
+	
+    /**
+     * 新建跟进计划
+     *
+     * @return
+     */
+    @PostMapping("/saveFollow")
+    public ApiResponse<Void> saveFollow(@RequestBody CrmCustomerFollowParam follow) {
+        ApiResponse<Void> res = new ApiResponse<>(200, "操作成功");
+        crmCustomerFollowPlanService.saveFollow(follow);
+        return res;
+    }
+    
+    /**
+     * 查询跟进计划
+     *
+     * @param id
+     * @return
+     */
+    @PostMapping("/get/{id}")
+    public ApiResponse<CrmCustomerFollowPlanNewDto> get(@PathVariable("id") String id) {
+        ApiResponse<CrmCustomerFollowPlanNewDto> res = new ApiResponse<>(200, "查询成功");
+        // 查询产品
+        CrmCustomerFollowPlan customerFollowPlan = crmCustomerFollowPlanService.getObjectById(id);
+        if (customerFollowPlan == null) {
+            res.setMessage("该跟进计划不存在");
+            res.setStatus(101);
+            return res;
+        }
+        if (customerFollowPlan.getDelflag().equals(CrmConstant.DEL_TRUE)) {
+        	res.setMessage("跟进计划已删除");
+        	res.setStatus(101);
+        	return res;
+        }
+        CrmCustomerFollowPlanNewDto planDto = new CrmCustomerFollowPlanNewDto();
+        BeanUtils.copyProperties(customerFollowPlan, planDto);
+        
+        String customerId = customerFollowPlan.getCustomerId();
+        String contactId = customerFollowPlan.getContactId();
+        String opportunityId = customerFollowPlan.getOpportunityId();
+        if (StringUtils.isNotBlank(customerId)) {
+        	CrmCustomer customer = crmCustomerService.getObjectById(customerId);
+            if (!isRolePermission(BaseConstants.MYSQL_MENU_CODE_CRM_MANAGE)) {
+                if (customer == null) {
+                    throw new HioException("未找到客户");
+                }
+                String uid = getUserIdOA();
+                if (!customer.getOwnerPersonId().equals(uid)) {
+                    throw new HioException("您没有该客户权限");
+                }
+            }
+        	if (customer != null) {
+        		planDto.setCustomerName(customer.getName());
+			}
+		}
+        
+        if (StringUtils.isNotBlank(contactId)) {
+        	CrmContact contact = crmContactService.getObjectById(contactId);
+        	if (contact != null) {
+        		planDto.setContactName(contact.getName());
+			}
+		}
+        
+        if (StringUtils.isNotBlank(opportunityId)) {
+        	CrmCustomerOpportunities customerOpportunities  = crmCustomerOpportunitiesService.getObjectById(opportunityId);
+        	if (customerOpportunities != null) {
+        		planDto.setOpportunityName(customerOpportunities.getName());
+			}
+		}
+        
+        res.setResult(planDto);
+        
+        return res;
+    }
+    
+    /**
+     * 删除跟进计划
+     *
+     * @return
+     */
+    @PostMapping("/delete/{id}")
+    public ApiResponse<Void> delete(@PathVariable("id") String id) {
+		ApiResponse<Void> res = new ApiResponse<>(200, "删除成功");
+		
+		LoginUser loginUser = getLoginUser();
+        String uid = loginUser.getUserId();
+		CrmCustomerFollowPlan plan = new CrmCustomerFollowPlan();
+		plan.setId(id);
+		plan.setDelflag(CrmConstant.DEL_TRUE);
+		plan.setUpdateDate(new Date());
+		plan.setUpdatePersonId(uid);
+		// 删除联系人
+		crmCustomerFollowPlanService.update(plan);
+		
+		return res;
+	}
+
+    /**
+     * 查询跟进计划
+     * 暂时作废不使用
+     * @param followPlan
+     * @return
+     */
+    @Deprecated
+    @PostMapping("queryList")
+    public ApiResponse<List<CrmCustomerFollowPlan>> queryList(@RequestBody CrmCustomerFollowPlan followPlan) {
+        ApiResponse<List<CrmCustomerFollowPlan>> res = new ApiResponse<>(200, "查询成功");
+        String uid = getUserIdOA();
+        followPlan.setCreatePersonId(uid);
+        List<CrmCustomerFollowPlan> followHisList = crmCustomerFollowPlanService.queryList(followPlan);
+        res.setResult(followHisList);
+        return res;
+    }
+
+
+    /**
+     * 我的CRM  本日计划跟进客户
+     *
+     * @return
+     */
+    @PostMapping("/queryFollowPlan")
+    public Object queryFollowPlan() {
+        LoginUser loginUser = getLoginUser();
+        String userId = loginUser.getUserId();
+        List<CrmCustomerFollowPlanDto> crmCustomerFollowPlanDtos = crmCustomerFollowPlanService.queryFollowPlan(userId);
+        return crmCustomerFollowPlanDtos;
+    }
+
+    /**
+     * 计划全部查询
+     *
+     * @param crmCustomerFollowPlanParam
+     * @return
+     */
+    @PostMapping("/queryFollowPlanList")
+    public PageResult queryFollowPlanList(@RequestBody CrmCustomerFollowPlanParam crmCustomerFollowPlanParam) {
+        LoginUser loginUser = getLoginUser();
+        String userId = loginUser.getUserId();
+        crmCustomerFollowPlanParam.setUserId(userId);
+
+        // 前端没有小时分，需要加一天查询指定到23:59:59.999
+        if (crmCustomerFollowPlanParam.getEndTime() != null) {
+            crmCustomerFollowPlanParam.setEndTime(new Date(crmCustomerFollowPlanParam.getEndTime().getTime() + 1000*60*60*24-1));
+        }
+        return crmCustomerFollowPlanService.queryFollowPlanList(crmCustomerFollowPlanParam);
+    }
+
+    /**
+     *客户联系人商机跟进计划
+     * @param crmCustomerFollowPlanParam
+     * @return
+     */
+    @PostMapping("/queryPlanList")
+    public PageResult queryPlanList(@RequestBody CrmCustomerFollowPlanParam crmCustomerFollowPlanParam) {
+        // 前端没有小时分，需要加一天查询指定到23:59:59.999
+        String uid = getUserIdOA();
+        if (!isRolePermission(BaseConstants.MYSQL_MENU_CODE_CRM_MANAGE)) {
+            crmCustomerFollowPlanParam.setUserId(uid);
+        }
+        if (crmCustomerFollowPlanParam.getEndTime() != null) {
+            crmCustomerFollowPlanParam.setEndTime(new Date(crmCustomerFollowPlanParam.getEndTime().getTime() + 1000*60*60*24 - 1));
+        }
+       return crmCustomerFollowPlanService.queryPlanList(crmCustomerFollowPlanParam);
+    }
+}

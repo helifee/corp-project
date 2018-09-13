@@ -1,0 +1,264 @@
+package com.xinleju.erp.finance.action;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.UnsupportedEncodingException;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.log4j.Logger;
+import org.apache.poi.hssf.usermodel.HSSFWorkbook;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.opensymphony.xwork2.ModelDriven;
+import com.xinleju.erp.base.app.action.BaseAction;
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.utils.JsonUtils;
+import com.xinleju.erp.data.cache.api.MDFinanceCacheService;
+import com.xinleju.erp.data.cache.dto.FinancePaymentTypeDTO;
+import com.xinleju.erp.finance.dto.FiPaymentTypeDTO;
+import com.xinleju.erp.finance.dto.FunNameDTO;
+import com.xinleju.erp.finance.models.FiAccountCaption;
+import com.xinleju.erp.finance.models.FiAccountSetData;
+import com.xinleju.erp.finance.models.FiPaymentType;
+import com.xinleju.erp.finance.models.extender.FiPaymentTypeTreeExtender;
+import com.xinleju.erp.finance.models.extender.FiCollectionTypeComboTreeExtender;
+import com.xinleju.erp.finance.models.extender.FiCompanyComboTreeExtender;
+import com.xinleju.erp.finance.service.FiAccountCaptionService;
+import com.xinleju.erp.finance.service.FiAccountSetDataService;
+import com.xinleju.erp.finance.service.FiPaymentTypeService;
+import com.xinleju.erp.finance.utils.ExcelHandlerUtil;
+import com.xinleju.erp.finance.utils.IExcelHandler;
+import com.xinleju.erp.flow.utils.LoginInfoUtils;
+import com.xinleju.erp.frame.dto.JsonTreeTableTemplete;
+import com.xinleju.erp.frame.utils.CommonUtil;
+import com.xinleju.erp.sa.service.SyncFinaSaData;
+import com.xinleju.erp.sm.extend.dto.FinaData;
+import com.xinleju.erp.sm.extend.dto.FinaQueryParams;
+
+import net.sf.json.JSONArray;
+
+/**
+ * 代收类型科目对照 ACTION
+ * @author chc
+ *
+ */
+public class FiPaymentTypeAction extends BaseAction implements ModelDriven<FiPaymentType>{
+	
+	@Autowired
+	private FiPaymentTypeService fiPaymentTypeService;
+	@Autowired
+	private FiAccountCaptionService fiAccountCaptionService;
+	@Autowired
+	private FiAccountSetDataService fiAccountSetDataService;
+	private FiPaymentType fiPaymentType = new FiPaymentType();
+	private File  uploadfile;
+	
+	/**
+	 * 列表
+	 * 
+	 * @return
+	 */
+	public String list() {
+		Long accountSetId = getParameterLong("accountSetId");
+		String accountSetCode = request.getParameter("accountSetCode");
+		Long sysId = getParameterLong("sysId");
+		request.setAttribute("accountSetCode", accountSetCode);
+		request.setAttribute("sysId", sysId);
+		request.setAttribute("accountSetId", accountSetId);
+		return "list";
+	}
+	
+	/**
+	 * 加载银行科目对照的treeGrid的json数据
+	 */
+	public void loadTreeGrid() {
+		try{
+		Long accountSetId = getParameterLong("accountSetId");
+		String accountSetCode = request.getParameter("accountSetCode");
+		Long sysId = getParameterLong("sysId");
+		String status = "1";
+		List<FiPaymentTypeDTO> fiPaymentTypeDTOs = null;
+		if (StringUtils.isNotBlank(accountSetCode))
+			//System.out.println();
+			fiPaymentTypeDTOs = fiPaymentTypeService.getFiPaymentTypeDTOList(accountSetId, status,sysId);
+		else
+			fiPaymentTypeDTOs = new ArrayList<FiPaymentTypeDTO>();
+		JsonTreeTableTemplete jttt = new JsonTreeTableTemplete("id", "pid", FiPaymentTypeDTO.class, FiPaymentTypeTreeExtender.class);
+		JSONArray jsonTree = CommonUtil.transTree(fiPaymentTypeDTOs, jttt);
+		renderJson(jsonTree.toString());
+		}catch(Exception e){
+			e.printStackTrace();
+		}
+	}
+	
+	public void loadComboTree() {
+		Long accountSetId = getParameterLong("accountSetId");
+		Long companyId = getParameterLong("companyId");
+		String accountSetCode = request.getParameter("accountSetCode");
+		Long sysId = getParameterLong("sysId");
+		//sysId = 2l;
+		String status = "1";
+		List<FiPaymentTypeDTO> fiPaymentTypeDTOList = null;
+		if (StringUtils.isNotBlank(accountSetCode))
+			fiPaymentTypeDTOList = fiPaymentTypeService.getFiPaymentTypeDTOList(accountSetId, status,sysId);
+		else
+			fiPaymentTypeDTOList = new ArrayList<FiPaymentTypeDTO>();
+		JsonTreeTableTemplete jttt = new JsonTreeTableTemplete("id", "pid", FiPaymentTypeDTO.class, FiPaymentTypeTreeExtender.class);
+		JSONArray jsonTree = CommonUtil.transTree(fiPaymentTypeDTOList, jttt);
+		renderJson(jsonTree.toString());
+	}
+	
+	public void loadCollectionTypeTree() {
+		MDFinanceCacheService syncFinaSaData = (MDFinanceCacheService) App.getBean("mdFinanceCacheService");
+		FinaQueryParams params = new FinaQueryParams();
+		params.setCurrentPage(0);
+		List<FinancePaymentTypeDTO> fds = syncFinaSaData.getAllFinancePaymentListType().getResult();
+		List<FiPaymentTypeDTO> list = new ArrayList<FiPaymentTypeDTO>();
+		for(FinancePaymentTypeDTO data:fds){
+			FiPaymentTypeDTO dto = new FiPaymentTypeDTO();
+			dto.setId(data.getId()+"");
+			String pid = "";
+			if(!"0".equals(data.getParentId()+"")){
+				pid = data.getParentId()+"";
+			}
+			dto.setPid(pid);
+			dto.setTypeCode(data.getFullCode());
+			dto.setTypeName(data.getName());
+			list.add(dto);
+		}
+		JsonTreeTableTemplete jttt = new JsonTreeTableTemplete("id", "pid", FiPaymentTypeDTO.class, FiPaymentTypeTreeExtender.class);
+		JSONArray jsonTree = CommonUtil.transTree(list, jttt);
+		renderJson(jsonTree.toString());
+	}
+	
+	/**
+	 * 保存或者更代收类型科目对照
+	 */
+	public void saveOrUpdate() {
+		Map<String, Object> result = new HashMap<String, Object>();
+		if (fiPaymentType.getId() != null) {
+			fiPaymentType.setEditDate(new Date());
+			fiPaymentType.setStatus(1);
+			fiPaymentType.setEditUserId(LoginInfoUtils.getLoginInfoUserDtoId(request));
+		} else {
+			fiPaymentType.setCreateDate(new Date());
+			fiPaymentType.setStatus(1);
+			fiPaymentType.setCreateUserId(LoginInfoUtils.getLoginInfoUserDtoId(request));
+		}
+
+		try {
+			fiPaymentTypeService.saveOrUpdate(fiPaymentType);
+			result.put("success", true);
+			result.put("msg", "操作成功");
+			renderHtml(JsonUtils.toJSONString(result));
+		} catch (Exception e) {
+			result.put("success", false);
+			result.put("msg", e.getMessage());
+			renderHtml(JsonUtils.toJSONString(result));
+		}
+	}
+
+	public void delete() {
+		Map<String, Object> result = new HashMap<String, Object>();
+		try {
+			fiPaymentTypeService.delete(fiPaymentType);
+			result.put("success", true);
+			renderHtml(JsonUtils.toJSONString(result));
+		} catch (Exception e) {
+			result.put("success", false);
+			result.put("msg", e.getMessage());
+			renderHtml(JsonUtils.toJSONString(result));
+		}
+	}
+	
+	/*
+	 * 代收类型科目对照 导出
+	 */
+	public void exportPr(){
+		try {
+			String accountSetCode = request.getParameter("accountSetCode");
+			String sysId = request.getParameter("sysId");
+			String accountSetId = request.getParameter("accountSetId");
+			List<IExcelHandler> iexcelHandlerList = new ArrayList<IExcelHandler>();
+			iexcelHandlerList.add(fiPaymentTypeService);
+			HSSFWorkbook wb = ExcelHandlerUtil.onexport(iexcelHandlerList,accountSetCode,Long.parseLong(sysId),Long.parseLong(accountSetId),null);
+			onExport(wb,"款项类型科目对照.xls");
+		} catch (Exception e) {
+			e.printStackTrace();
+			Logger.getLogger(this.getClass()).error(e.getMessage());
+		}
+	}
+	
+	public void onExport(HSSFWorkbook wb,String fileName) throws UnsupportedEncodingException{
+		response.setContentType("application/vnd.ms-excel");
+		String downloadFileName=new String(fileName.getBytes("gb2312"), "iso8859-1");
+		
+		response.setHeader("Content-disposition","attachment;filename="+downloadFileName);
+		OutputStream ouputStream = null;
+		try {
+			ouputStream = response.getOutputStream();
+			wb.write(ouputStream);
+			ouputStream.flush();
+			ouputStream.close();
+		} catch (IOException e) {
+			Logger.getLogger(this.getClass()).error(e.getMessage());
+			Logger.getLogger(this.getClass()).error("业务异常",e);
+		}finally{
+			if (ouputStream != null)
+				try {
+					ouputStream.close();
+				} catch (IOException e) {
+					Logger.getLogger(this.getClass()).error(e.getMessage());
+					Logger.getLogger(this.getClass()).error("业务异常",e);
+				}
+            
+		}
+	}
+	
+	/**
+	 * 代收类型科目对照导入
+	 */
+	public void  importPr(){
+		try {
+			String accountSetCode = request.getParameter("accountSetCode");//账套好
+			String sysId = request.getParameter("sysId");//系统
+			String accountSetId = request.getParameter("accountSetId");
+			List<IExcelHandler> iexcelHandlerList = new ArrayList<IExcelHandler>();
+			iexcelHandlerList.add(fiPaymentTypeService);
+			FileInputStream fileInputStream = new FileInputStream(uploadfile);
+			ExcelHandlerUtil.importPr(fileInputStream,accountSetCode,sysId,null,accountSetId,iexcelHandlerList,null);
+		} catch (Exception e) {
+			e.printStackTrace();
+			Logger.getLogger(this.getClass()).error(e.getMessage());
+			Logger.getLogger(this.getClass()).error("业务异常",e);
+		}
+	}
+
+	public FiPaymentType getModel() {
+		return fiPaymentType;
+	}
+
+	public FiPaymentType getFiPaymentType() {
+		return fiPaymentType;
+	}
+
+	public void setFiPaymentType(FiPaymentType fiPaymentType) {
+		this.fiPaymentType = fiPaymentType;
+	}
+
+	public File getUploadfile() {
+		return uploadfile;
+	}
+
+	public void setUploadfile(File uploadfile) {
+		this.uploadfile = uploadfile;
+	}
+	
+}

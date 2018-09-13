@@ -1,0 +1,24 @@
+package com.xinleju.platform.finance.dao.impl;
+
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.platform.base.dao.impl.BaseDaoImpl;
+import com.xinleju.platform.finance.dao.VoucherTemplateTypeDao;
+import com.xinleju.platform.finance.entity.VoucherTemplateType;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Repository
+public class VoucherTemplateTypeDaoImpl extends BaseDaoImpl<String,VoucherTemplateType> implements VoucherTemplateTypeDao{
+
+	public VoucherTemplateTypeDaoImpl() {
+		super();
+	}
+
+	
+	
+}

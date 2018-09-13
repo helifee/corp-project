@@ -1,0 +1,204 @@
+package com.xinleju.erp.flow.action;
+
+import java.io.UnsupportedEncodingException;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+
+
+
+import com.xinleju.erp.base.app.action.BaseAction;
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.utils.JsonUtils;
+import com.xinleju.erp.flow.bean.IdName;
+import com.xinleju.erp.flow.models.FlowWarning;
+import com.xinleju.erp.flow.service.IFlowWarningService;
+import com.xinleju.erp.flow.service.IFlowWarningTaskService;
+import com.xinleju.erp.flow.service.api.ParticipantAPIService;
+import com.xinleju.erp.flow.service.api.extend.BaseAPIService;
+import com.xinleju.erp.flow.utils.FlowConstant;
+import com.xinleju.erp.frame.models.Msg;
+
+/**
+ * @author zhengxj
+ * 流程预警设置Action
+ */
+public class FlowWarningAction extends BaseAction {
+
+    @Autowired
+    private IFlowWarningService flowWarningService;
+    
+    @Autowired
+    private IFlowWarningTaskService flowWarningTaskService;
+    
+    @Autowired
+    private ParticipantAPIService participantAPIService;
+    
+    private FlowWarning flowWarning;
+    
+    /**
+     * 预警设置页面
+     * @return
+     */
+    public String setup() {
+//        flowWarningTaskService.wi2FlowWarningTask();
+//        flowWarningTaskService.startFlowWarningTask();
+        flowWarning = flowWarningService.getLastestFlowWarning();
+        return "setup";
+    }
+    
+    /**
+     * 预警设置保存
+     * @return
+     */
+    public String save() {
+        if (flowWarning.getId() == null) {
+            flowWarning.setCreateTime(new Date());
+        }
+        flowWarning.setUpdateTime(flowWarning.getId() != null ? new Date() : null);
+        flowWarningService.saveOrUpdate(flowWarning);
+        return this.setup();
+    }
+    
+    /**
+     * 消息催办
+     * @return
+     */
+    public String notice() {
+        /**
+         * 取消催办
+         */
+        String flowWarningTaskId = request.getParameter("flowWarningTaskId");
+        App.getBean(BaseAPIService.class).sendMsg(FlowConstant.APP_CODE_PT, flowWarningTaskId, "消息催办", null, null, Msg.OP_TYPE_YD, Msg.MSG_TYPE_TZ.toString(), null, null);
+        return "notice";
+    }
+    
+    /**
+     * 选择人员树
+     */
+    @SuppressWarnings("unchecked")
+    public void getTree() {
+
+        String q = getParameter("q");
+        Long parentId = Long.parseLong(getRequest().getParameter("parentId").substring(IdName.PREFIX_LENGTH));
+
+        String prefix = getRequest().getParameter("prefix");
+        List<IdName> returnList = new ArrayList<IdName>();
+       
+        if (prefix.equals(IdName.ROOT_PREFIX)) {
+            returnList.add(new IdName(0L, "标准角色", IdName.ROLE_PREFIX));
+            returnList.add(new IdName(0L, ParticipantAction.QUARTERS + "/用户", IdName.PART_PREFIX));
+        } else if (prefix.equals(IdName.PART_PREFIX)) {
+            returnList.addAll(participantAPIService.findChildEntityAll(parentId, participantAPIService.getZcRootStructTypeIdByStructTypeCode(), q));
+        } else if (prefix.equals(IdName.ROLE_PREFIX)) {
+            returnList.addAll(participantAPIService.getAllRoleList(parentId, q));
+        } else if (prefix.equals(IdName.GENERAL_PREFIX)) { // 通用角色查询
+            returnList.addAll(participantAPIService.getGeneralRoleList());
+        } else if (prefix.equals(IdName.PBIZ_PREFIX)) {
+            returnList.addAll(participantAPIService.getBizParticipantList());
+        } else if (prefix.equals(IdName.XDPA_PREFIX) && parentId.intValue() == 0) {
+            returnList.addAll(participantAPIService.getXiangduiParticipantList());
+        } else if (prefix.equals(IdName.APPS_PREFIX) && parentId.intValue() == 0) {
+            returnList.addAll(participantAPIService.getAllAppList());
+        } else if (prefix.equals(IdName.APPS_PREFIX)) {
+            returnList.addAll(participantAPIService.getSmServiceObjectListByAppId(parentId.longValue()));
+        } else if (prefix.equals(IdName.OBJS_PREFIX)) {
+            returnList.addAll(participantAPIService.getSmServiceObjectFieldListByObjectId(parentId.longValue()));
+        }
+        
+        List<Map<String, Object>> trees = new ArrayList<Map<String, Object>>();
+        for (IdName idName : returnList) {
+
+            Map<String, Object> tree = new HashMap<String, Object>();
+            tree.put("id", idName.getPrefix() + idName.getId());
+            tree.put("text", idName.getName());
+
+            boolean isLeaf = false;
+            if (idName.getPrefix().equals(IdName.USER_PREFIX)){
+                isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.OBJF_PREFIX)){
+                isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.XDPA_PREFIX) && idName.getId()>0){
+                isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.PBIZ_PREFIX) && idName.getId().intValue() != 0 ){
+                isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.ORGN_PREFIX) && idName.isLeaf(false) && (Integer) ((Map<String, Object>) idName.getTarget()).get("isUserEmpty") == 1){
+                isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.ROLE_PREFIX)){
+                isLeaf = !participantAPIService.isExistedSon(idName.getId());
+            } else if (idName.getPrefix().equals(IdName.GENERAL_PREFIX) && idName.getId()>0){
+                isLeaf = true;
+            }
+            tree.put("leaf", isLeaf);
+            tree.put("prefix", idName.getPrefix());
+            tree.put("type", idName.getType());
+            if (prefix.equals(IdName.ROOT_PREFIX)) {
+                tree.put("checkable", false);
+            }else{
+                tree.put("checkable", true);
+            }
+
+            if (idName.getPrefix().equals(IdName.GENERAL_PREFIX)) { // 通用角色
+                tree.put("iconCls", "img_role");
+            }if (idName.getPrefix().equals(IdName.ROLE_PREFIX)) {
+                tree.put("iconCls", "img_role");
+            } else if (idName.getPrefix().equals(IdName.USER_PREFIX)) {
+                tree.put("iconCls", "img_user");
+            } else if (idName.getPrefix().equals(IdName.PART_PREFIX)) {
+                if("user".equals(idName.getType())){
+                    tree.put("iconCls", "img_user");
+                    tree.put("leaf", true);
+                }
+                else if("role".equals(idName.getType())){
+                    tree.put("iconCls", "img_role");
+                }
+                else if("group".equals(idName.getType())){
+                    tree.put("iconCls", "img_group");
+                }
+                else{
+                    tree.put("iconCls", "img_orgn");
+                }
+               
+            } else if (idName.getPrefix().equals(IdName.PBIZ_PREFIX)) {
+                tree.put("iconCls", "img_bizp");
+            }
+
+            trees.add(tree);
+        }
+        
+
+        Map<String, Object> pageMap = new HashMap<String, Object>();
+        pageMap.put("total", trees.size());
+        pageMap.put("nodes", trees);
+        String jsonString = JsonUtils.toJSONString(trees);
+        renderJson(jsonString);
+    }
+
+    public String userSelect() {
+        String datas = request.getParameter("datas");
+        try {
+            if (StringUtils.isNotBlank(datas)) {
+            	datas = java.net.URLDecoder.decode(datas,"UTF-8"); 
+            }
+        } catch (UnsupportedEncodingException e) {
+            e.printStackTrace();
+        }   
+        request.setAttribute("datas", datas);
+        request.setAttribute("opType", request.getParameter("opType"));
+        return "userSelect";
+    }
+    
+    public FlowWarning getFlowWarning() {
+        return flowWarning;
+    }
+
+    public void setFlowWarning(FlowWarning flowWarning) {
+        this.flowWarning = flowWarning;
+    }
+    
+}

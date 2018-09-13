@@ -1,0 +1,129 @@
+package com.xinleju.platform.out.app.log;
+
+import java.sql.Timestamp;
+
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.base.utils.LoginUtils;
+import com.xinleju.platform.base.utils.SecurityOrganizationDto;
+import com.xinleju.platform.base.utils.SecurityUserBeanInfo;
+import com.xinleju.platform.base.utils.SecurityUserDto;
+import com.xinleju.platform.out.app.log.service.LogOutServiceCustomer;
+import com.xinleju.platform.sys.log.entity.LogDubbo;
+import com.xinleju.platform.sys.log.entity.LogOperation;
+import com.xinleju.platform.sys.log.entity.LogTask;
+import com.xinleju.platform.sys.log.service.LogDubboService;
+import com.xinleju.platform.sys.log.service.LogOperationService;
+import com.xinleju.platform.sys.log.service.LogTaskService;
+import com.xinleju.platform.tools.data.JacksonUtils;
+import com.xinleju.platform.utils.BrowseTool;
+
+public class LogOutServiceProducer implements LogOutServiceCustomer {
+	private static Logger log = Logger.getLogger(LogOutServiceProducer.class);
+
+	@Autowired
+	private LogDubboService logDubboService;
+	@Autowired
+	private LogOperationService logOperationService;
+	@Autowired
+	private LogTaskService logTaskService;
+	
+	
+	/**
+	 * dubbo服务记录日志 
+	 * @param userJson
+	 * @param paramaterJson(json格式Map:{sysCode=系统code ,dubboMethod=调用方法,startTime=开始时间（Timestamp）,endTime=结束时间（Timestamp）,
+	 * 									executeTime=执行时间(int),resFlag=运行结果（0失败，1成功）,info=信息描述,returnContent=返回内容})
+	 * @return json格式 DubboServiceResultInfo
+	 * @author gyh
+	 */
+	@Override
+	public String saveDubboLog(String userJson, String paramater) {
+		LogDubbo logDubbo=JacksonUtils.fromJson(paramater, LogDubbo.class);
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		info.setSucess(true);
+		info.setMsg("记录成功");
+		try {
+			logDubbo.setId(IDGenerator.getUUID());
+			logDubboService.save(logDubbo);
+		} catch (Exception e) {
+			//e.printStackTrace();
+		}
+		return JacksonUtils.toJson(info);
+	}
+	
+	/**
+	 * 操作业务日志 
+	 * @param userJson
+	 * @param paramaterJson(json格式Map:{ sysCode=系统code,
+	  									loginIp=用户ip,
+									 	loginBrowser=用户浏览器,
+									  	node=操作内容,
+	  									note=操作结果})
+	 * @return json格式 DubboServiceResultInfo
+	 * @author gyh
+	 */
+	@Override
+	public String saveOpeLog(String userInfo, String paramater) {
+		LogOperation ope=JacksonUtils.fromJson(paramater, LogOperation.class);
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		info.setSucess(true);
+		info.setMsg("记录成功");
+		try {
+			SecurityUserBeanInfo beanInfo=LoginUtils.getSecurityUserBeanInfo();
+			ope.setId(IDGenerator.getUUID());
+			if(beanInfo!=null && beanInfo.getSecurityUserDto() !=null){
+				SecurityUserDto u=beanInfo.getSecurityUserDto();
+				ope.setLoginName(u.getLoginName());
+				ope.setName(u.getRealName());
+				if (beanInfo.getSecurityDirectCompanyDto()!=null) {
+					SecurityOrganizationDto c=beanInfo.getSecurityDirectCompanyDto();
+					ope.setComName(c.getName());
+					ope.setComId(c.getId());				
+				}
+			}
+			if (ope.getLoginBrowser()!=null) {
+				ope.setLoginBrowser(BrowseTool.checkBrowse(ope.getLoginBrowser()));
+			}
+			ope.setOperationTime(new Timestamp(System.currentTimeMillis()));
+			ope.setOperationTypeId("4");//操作业务
+			logOperationService.save(ope);
+		} catch (Exception e) {
+			//e.printStackTrace();
+		}
+		return JacksonUtils.toJson(info);
+	}
+	/**
+	 * 自动任务日志 
+	 * @param userJson
+	 * @param paramaterJson(json格式Map:{ sysCode=系统Code ,
+	  									taskCode=自动任务编码,
+									 	taskName=自动任务名称,
+									  	startTime=开始时间（Timestamp）,
+									  	endTime=结束时间（Timestamp）,
+									  	executeTime=耗时(Long),
+									  	executeStatus=是否成功（ture是，false否）
+	  									runInfo=执行信息描述})
+	 * @return json格式 DubboServiceResultInfo
+	 * @author gyh
+	 */
+	@Override
+	public String saveTaskLog(String userJson, String paramater) {
+		LogTask log=JacksonUtils.fromJson(paramater, LogTask.class);
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		info.setSucess(true);
+		info.setMsg("记录成功");
+		try {
+			log.setId(IDGenerator.getUUID());
+			logTaskService.save(log);
+		} catch (Exception e) {
+			//e.printStackTrace();
+		}
+		return JacksonUtils.toJson(info);
+	}
+	
+	
+}

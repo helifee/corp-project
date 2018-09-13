@@ -1,0 +1,459 @@
+package com.jzy.hio.sys.organization.controller;
+
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.RedisKeyConstant;
+import com.jzy.hio.base.anno.TargetIM;
+import com.jzy.hio.base.controller.BaseSysController;
+import com.jzy.hio.entity.OaSysExternalContact;
+import com.jzy.hio.entity.OaSysExternalShare;
+import com.jzy.hio.entity.OaSysOrganization;
+import com.jzy.hio.entity.OaSysUser;
+import com.jzy.hio.entity.OaSysUserPosition;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.exception.HioMybatisQueryException;
+import com.jzy.hio.feign.PlatformFeignService;
+import com.jzy.hio.platform.dto.aliasdto.AliasDto.ImFriendAliasDto;
+import com.jzy.hio.platform.dto.tenantcompanyinfo.TendUserInfoDto;
+import com.jzy.hio.platform.dto.userinfo.ImUserInfoDto;
+import com.jzy.hio.platform.redis.PlatformRedis;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.redis.RedisService;
+import com.jzy.hio.redis.service.RedisGetService;
+import com.jzy.hio.sys.SysConstants;
+import com.jzy.hio.sys.external.dto.ExternalManagerDto;
+import com.jzy.hio.sys.external.service.ExternalContactService;
+import com.jzy.hio.sys.organization.dto.CompanyUpdateDto;
+import com.jzy.hio.sys.organization.dto.OrganizationImDto;
+import com.jzy.hio.sys.organization.dto.OrganizationUpdateDto;
+import com.jzy.hio.sys.organization.param.OrganizationOuterQueryParam;
+import com.jzy.hio.sys.organization.param.OrganizationUpdateParam;
+import com.jzy.hio.sys.organization.service.OrganizationService;
+import com.jzy.hio.sys.role.service.RoleService;
+import com.jzy.hio.sys.user.dto.ImUserDto;
+import com.jzy.hio.sys.user.service.UserService;
+import com.jzy.hio.utils.LoginUser;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * 组织架构更新 -- 移动端专用
+ *
+ * @author wt.coffee
+ * @date 2018年4月12日下午6:18:46
+ */
+@RestController
+@RequestMapping("organization/update")
+@TargetIM // 移动端专用的
+public class OrganizationUpdateController extends BaseSysController {
+
+	@Autowired
+	private RedisGetService redisGetService;
+	@Autowired
+	private RedisService redisService;
+
+	@Autowired
+	private PlatformRedis platformRedisService;
+	@Autowired
+	private RoleService roleService;
+	@Autowired
+	private PlatformFeignService platformFeignService;
+	@Autowired
+	private UserService userService;
+	@Autowired
+	private ExternalContactService externalContactService;
+	@Autowired
+	private OrganizationService organizationService;
+
+	/**
+	 * 查询需要更新的公司ids<br>
+	 * 如果用户还未激活、、则查询不出所在的公司
+	 *
+	 * @param paramMap
+	 *            updateTime
+	 * @return List<CompanyIMDto>
+	 */
+	@TargetIM
+	@PostMapping("queryCompany")
+	public CompanyUpdateDto queryCompany(@RequestBody Map<String, Object> paramMap) {
+		// 校验数据
+		if (isEmpty(paramMap.get("updateTime"))) {
+			paramMap.put("updateTime", "0");
+		}
+		//
+		CompanyUpdateDto result = new CompanyUpdateDto();
+		result.setUpdateTime(System.currentTimeMillis() + "");
+		String userIdIM = getUserIdIM();
+		Long updateTime = getLong(paramMap, "updateTime", -1L);
+	
+		LoginUser login = getLoginUser();
+		// 1、查询当前用户 有几个租户
+		List<String> tendIds = login.getTendIds();
+		List<String> innerTendIds = login.getInnerTendIds();
+		List<String> outerTendIds = login.getOuterTendIds();
+		logger.info("获取到的所有租户列表 {}", tendIds);
+		logger.info("获取到的内部租户列表 {}", innerTendIds);
+		logger.info("获取到的外部租户列表 {}", outerTendIds);
+		// 2、遍历、查询每个租户下 需要更新的公司、过滤外部合作企业
+		if (isEmpty(innerTendIds)){
+			return result;
+		}
+		List<OrganizationUpdateDto> updateDtoList = new ArrayList<>();
+		for (String tendId : innerTendIds) {
+			OrganizationUpdateDto updateDto = new OrganizationUpdateDto();
+			updateDto.setTendId(tendId);
+			updateDto.setUpdateTime(System.currentTimeMillis() + "");
+			OaSysUser user = userService.getOaSysUserByImId(tendId, userIdIM);
+			// 如果该租户下 该用户不是在职状态、则不查询
+			if (user == null || isNotEquals(user.getWorkStatus(), SysConstants.UserWorkStatus.JOB.getWorkStatus())) {
+				logger.info("用户userIdIM{}--tendId{}不是在职状态", userIdIM, tendId);
+				continue;
+			}
+			String json = JedisUtil.fetchRow(RedisKeyConstant.userTendList + userIdIM, tendId);
+			TendUserInfoDto userInfo = json2obj(json, TendUserInfoDto.class);
+			if (userInfo != null && isEquals("1", userInfo.getReserve1())) {
+				updateDto.setDefaultFlag(getStr(userInfo.getDefaultFlag()));
+			} else {
+				logger.error("查询redis信息失败  userIdIM {} tendId {}", userIdIM, tendId);
+			}
+			// 需要更新的公司
+			List<OrganizationImDto> companyList = new ArrayList<>();
+			List<OaSysOrganization> organizations = redisGetService.queryAll(tendId, OaSysOrganization.class);
+			for (OaSysOrganization org : organizations) {
+				Long time = org.getUpdateDate() == null ? 1 : org.getUpdateDate().getTime();
+				if (isEquals(org.getType(), BaseConstants.MYSQL_ORGANIZATION_TYPE_COMPANY) && time > updateTime) {
+					// result.append(org.getId());
+					OrganizationImDto orgDto = new OrganizationImDto(org);
+                    if (isNotEmpty(orgDto.getLeaderId())){
+                        OaSysUser leader = redisService.getRowEntity(tendId, OaSysUser.class, orgDto.getLeaderId());
+                        if(isNotEmpty(leader)){
+                            orgDto.setLeaderName(leader.getRealName());
+                        }
+                    }
+					orgDto.setCompanyId(org.getId());
+					orgDto.setCompanyName(org.getName());
+					// ## 注意下列代码 OrganizationController#queryAllOrganizationsByUserId中也有
+					ApiFeignResponse<String> resp = platformFeignService.getTenantCompanyCreater(tendId);
+					if (isSuccess(resp)) {
+						orgDto.setCreatorImUserId(resp.getResult());
+					} else {
+						logger.error("tendId== {}", tendId);
+						// throw new HioMybatisQueryException("查询公司创建人失败");
+					}
+					List<String> managerImUserId = roleService.queryManagerUserIdIM(tendId);
+					orgDto.setManagerImUserId(managerImUserId);
+					companyList.add(orgDto);
+					break;// 结束当前for循环
+				}
+			}
+			updateDto.setOrganizationList(companyList);
+			updateDtoList.add(updateDto);
+		}
+		result.setList(updateDtoList);
+		return result;
+	}
+
+	/**
+	 * 查询组织架构ids--不包含用户<br>
+	 * 组织id -1代表外部联系人
+	 *
+	 * @param paramMap
+	 *            tendId
+	 * @return
+	 */
+	@TargetIM
+	@PostMapping("queryOrganization")
+	public Object queryOrganization(@RequestBody OrganizationUpdateParam param) {
+		String tendId = param.getTendId();
+		List<OrganizationUpdateParam.OrganizationParam> companyList = param.getOrganizationList();
+		// 返回结果
+		OrganizationUpdateDto updateDto = new OrganizationUpdateDto();
+		updateDto.setTendId(tendId);
+		updateDto.setUpdateTime(System.currentTimeMillis() + "");
+		// 保存组织
+		List<OrganizationImDto> imOrgs = new ArrayList<>();
+		updateDto.setOrganizationList(imOrgs);
+		// 1、遍历传入的公司列表---查询公司下面 有更新的部门
+		for (OrganizationUpdateParam.OrganizationParam company : companyList) {
+			String companyId = company.getOrganizationId();
+			Long updateTime = company.getUpdateTime();
+			List<OaSysOrganization> organizations = redisGetService.queryAll(tendId, OaSysOrganization.class);
+			if (isEmpty(organizations)) {
+				throw new HioException("查询到的OaSysOrganization列表数据为空" + tendId);
+			}
+			for (OaSysOrganization organization : organizations) {
+				// 2-1过滤公司下的部门---排除公司
+				if (organization.getParentId() == null) {
+					// 4、检查公司下面是否有直属人员
+					// List<ImUserDto> imUsers = new ArrayList<>();
+					// 公司下面的员工
+					List<ImUserDto> employees = this.getUserInOrganization(updateTime, tendId, companyId);
+					// imUsers.addAll(employees);
+					if (employees.size() > 0) {
+						OrganizationImDto imOrg = new OrganizationImDto(organization);
+						if (isNotEmpty(imOrg.getLeaderId())){
+							OaSysUser leader = redisService.getRowEntity(tendId, OaSysUser.class, imOrg.getLeaderId());
+							if(isNotEmpty(leader)){
+								imOrg.setLeaderName(leader.getRealName());
+								imOrg.setLeaderImUserId(leader.getImUserId());
+							}
+						}
+						imOrgs.add(imOrg);
+					}
+					// updateDto.setUserList(imUsers);
+					continue;
+				}
+				// 2-2过滤公司下的部门---排除分本公司的部门
+				if (organization.getPrefixId().startsWith(companyId) == false) {
+					continue;
+				}
+				// 3 比对公司下的部门 是否有更新
+				Long time = organization.getUpdateDate() == null ? 1 : organization.getUpdateDate().getTime();
+				if (time > updateTime) {
+					OrganizationImDto imOrg = new OrganizationImDto(organization);
+					if (isNotEmpty(imOrg.getLeaderId())){
+						OaSysUser leader = redisService.getRowEntity(tendId, OaSysUser.class, imOrg.getLeaderId());
+						if(isNotEmpty(leader)){
+							imOrg.setLeaderName(leader.getRealName());
+							imOrg.setLeaderImUserId(leader.getImUserId());
+						}
+					}
+					// 该组织的公司信息
+					OaSysOrganization companyInfo = redisService.getRowEntity(tendId, OaSysOrganization.class, companyId);
+					imOrg.setCompanyId(companyId);
+					imOrg.setCompanyName(companyInfo.getName());
+					imOrgs.add(imOrg);
+				}
+			}
+			// 5、检查公司下面的外部联系人--是否有更新----。外部联系人的组织id(parentId)设定为-1
+			List<OaSysExternalContact> externalContacts = redisGetService.queryAll(tendId, OaSysExternalContact.class);
+			for (OaSysExternalContact contact : externalContacts) {
+				Long time = contact.getUpdateDate() == null ? 1 : contact.getUpdateDate().getTime();
+				if (time > updateTime) {
+					// ImUserDto external = new ImUserDto(tendId, contact);
+					// employees.add(external);
+					OrganizationImDto imOrg = new OrganizationImDto(contact);
+					imOrgs.add(imOrg);
+					break;// 只循环一次
+				}
+			}
+		}
+		return updateDto;
+	}
+
+	/**
+	 * 按照组织id查询该组织下的用户<br/>
+	 * 增量查询
+	 *
+	 * @return
+	 */
+	@TargetIM
+	@PostMapping("queryUser")
+	public Object queryUser(@RequestBody OrganizationUpdateParam param) {
+		OaSysUser currentUser = userService.getOaSysUserByImId(param.getTendId(), getUserIdIM());
+		if (currentUser == null || currentUser.getDelflag().intValue() == BaseConstants.MYSQL_DELFLAG_DELETED) {
+			throw new HioMybatisQueryException("该租户下没有该用户");
+		}
+		// 参数
+		List<OrganizationUpdateParam.OrganizationParam> orgList = param.getOrganizationList();
+		String tendId = param.getTendId();
+		// 返回结果
+		OrganizationUpdateDto updateDto = new OrganizationUpdateDto();
+		updateDto.setTendId(tendId);
+		updateDto.setUpdateTime(System.currentTimeMillis() + "");
+		// ImUserDto 或者 OaSysExternalContact
+		List<ImUserDto> userList = new ArrayList<>();
+		updateDto.setUserList(userList);
+		for (OrganizationUpdateParam.OrganizationParam org : orgList) {
+			String organizationId = org.getOrganizationId();
+			Long updateTime = org.getUpdateTime();
+			// 查询外部联系人
+			if (isEquals("-1", organizationId)) {
+				// 外部联系人的组织id设定为-1
+				List<OaSysExternalContact> externalContacts = redisGetService.queryAll(tendId, OaSysExternalContact.class);
+				List<ImUserDto> imUsers = new ArrayList<>();
+				for (OaSysExternalContact contact : externalContacts) {
+					Long time = contact.getUpdateDate() == null ? 1 : contact.getUpdateDate().getTime();
+					if (time > updateTime) {
+						ImUserDto user = new ImUserDto(tendId, contact);
+						OaSysExternalShare oaSysExternalShare = externalContactService.queryExternalShare(tendId, currentUser.getId(), contact.getId());
+						if (oaSysExternalShare != null) {
+							if (oaSysExternalShare.getType().equals(BaseConstants.MYSQL_EXTERNAL_SHARE)) {
+								user.setExternalType(BaseConstants.MYSQL_ORGANIZATION_TYPE_EXTERNAL_SHARE);
+							} else if (oaSysExternalShare.getType().equals(BaseConstants.MYSQL_EXTERNAL_MANAGER)) {
+								user.setExternalType(BaseConstants.MYSQL_ORGANIZATION_TYPE_EXTERNAL_MANAGER);
+							}
+						} else {
+							user.setExternalType(BaseConstants.MYSQL_ORGANIZATION_TYPE_EXTERNAL_NONE);
+						}
+						ExternalManagerDto externalManagerDto = externalContactService.queryExternalManager(tendId, contact.getId());
+						if (externalManagerDto != null) {
+							user.setExternalManagerId(isEmpty(externalManagerDto.getId()) ? "" : externalManagerDto.getId());
+							user.setExternalManagerName(isEmpty(externalManagerDto.getName()) ? "" : externalManagerDto.getName());
+						} else {
+							user.setExternalManagerId("");
+							user.setExternalManagerName("");
+						}
+						user.setExternalCompany(isEmpty(contact.getCompany()) ? "" : contact.getCompany());
+						user.setExternalCreatorName(isEmpty(contact.getCreatePersonName()) ? "" : contact.getCreatePersonName());
+						user.setExternalCreatorId(isEmpty(contact.getCreatePersonId()) ? "" : contact.getCreatePersonId());
+						//
+						handleUserInfo(user);
+						imUsers.add(user);
+					}
+				}
+				//
+				userList.addAll(imUsers);
+			} else {
+				List<ImUserDto> imUsers = getUserInOrganization(updateTime, tendId, organizationId);
+				userList.addAll(imUsers);
+			}
+		}
+		return updateDto;
+	}
+
+	/**
+	 * 查询合作企业 以及合作企业下的人员
+	 *
+	 * @return
+	 */
+	@PostMapping("queryOuterCompanyUser")
+	@TargetIM
+	public List<OrganizationImDto> queryOuterCompany(@RequestBody OrganizationOuterQueryParam apiParam) {
+		List<OrganizationImDto> companyOuterDtoList = new ArrayList<>();
+		LoginUser login = getLoginUser();
+		List<String> outerTendIds = login.getOuterTendIds();
+		OrganizationImDto companyOuterDto = null;
+		// add 16点55分 2018/06/05 如果tendId传的是空的，查询全部的tendId
+		if (isEmpty(apiParam.getTendId())) {
+			apiParam.setTendId(outerTendIds);
+		}
+		if (isEmpty(apiParam.getTendId())) {
+			return Collections.emptyList();
+		}
+		for (int i = 0; i < apiParam.getTendId().size(); i++) {
+			String tendId = apiParam.getTendId().get(i);
+			if (!outerTendIds.contains(tendId)) {
+				continue;
+			}
+			OaSysOrganization company = organizationService.queryCompanyOrganization(tendId);
+			companyOuterDto = new OrganizationImDto(company);
+			companyOuterDto.setTendId(tendId);
+			// 查询关联用户
+			List<ImUserDto> oaUsers = externalContactService.queryExternalShareOaUserListByIMUserId(tendId, getUserIdIM());
+			if (isNotEmpty(oaUsers)) {
+				for (int j = 0; j < oaUsers.size(); j++) {
+					ImUserDto imUserDto = oaUsers.get(j);
+					handleUserInfo(imUserDto);
+
+				}
+
+			}
+			companyOuterDto.setU_list(oaUsers);
+			companyOuterDtoList.add(companyOuterDto);
+		}
+		return companyOuterDtoList;
+	}
+
+	/**
+	 * 获取公司或者部门下面的员工
+	 *
+	 * @param updateTime
+	 * @param tendId
+	 * @param organizationId
+	 * @return
+	 */
+	private List<ImUserDto> getUserInOrganization(long updateTime, String tendId, String organizationId) {
+		OaSysOrganization oaSysOrganization = redisService.getRowEntity(tendId, OaSysOrganization.class, organizationId);
+		List<OaSysUserPosition> userPositionList = redisGetService.queryAll(tendId, OaSysUserPosition.class);
+		// key-userId
+		Map<String, List<OaSysUserPosition>> userIdPositionMap = new HashMap<>();
+		for (OaSysUserPosition position : userPositionList) {
+			// && position.getDelflag() == SysConstants.MYSQL_DELFLAG_NORMAL
+			if (isEquals(position.getOrganizationId(), organizationId)) {
+				List<OaSysUserPosition> oaSysUserPositions = userIdPositionMap.get(position.getUserId());
+				if (oaSysUserPositions == null){
+					oaSysUserPositions = new ArrayList<>();
+				}
+				oaSysUserPositions.add(position);
+				userIdPositionMap.put(position.getUserId(), oaSysUserPositions);
+			}
+		}
+
+		List<OaSysUser> users = redisGetService.queryAll(tendId, OaSysUser.class);
+		List<ImUserDto> imUsers = new ArrayList<>();
+		for (OaSysUser user : users) {
+			// add by kimchou exclude user`s usertype = 2 ,it is external contact
+			if (String.valueOf(BaseConstants.MYSQL_USER_TYPE_EXTERNAL).equals(user.getUserType())) {
+				continue;
+			}
+			// add by kimchou exclude user's workStatus in (3) is not invited status,it is not show on devices
+			// start
+			if (user.getWorkStatus().equals(SysConstants.UserWorkStatus.NO_INVITE.getWorkStatus())) {
+				continue;
+			}
+			// end
+
+			if (userIdPositionMap.keySet().contains(user.getId())) {
+				List<OaSysUserPosition> positions = userIdPositionMap.get(user.getId());
+				if (isEmpty(positions)){
+					continue;
+				}
+				Long time = user.getUpdateDate() == null ? 1 : user.getUpdateDate().getTime();
+				if (time > updateTime) {
+					for (int i = 0; i < positions.size(); i++) {
+						OaSysUserPosition position = positions.get(i);
+						ImUserDto imUser = new ImUserDto(tendId, user, position);
+						handleUserInfo(imUser);
+						if (isNotEmpty(oaSysOrganization)&&isEquals(oaSysOrganization.getLeaderId(),imUser.getId())){
+							imUser.setSort(0);
+						}
+						imUsers.add(imUser);
+					}
+				}
+			}
+		}
+		return imUsers;
+	}
+
+	/**
+	 * 完善用户信息: 头像-昵称
+	 * 
+	 * @param imUser
+	 */
+	private void handleUserInfo(ImUserDto imUser) {
+		ImUserInfoDto imUserInfoDto = platformRedisService.getImUser(imUser.getImUserId());
+		if (isEmpty(imUserInfoDto)) {
+			logger.info("用户未注册 {}", imUser.getImUserId());
+			return;
+		}
+		String resourceImgUrl = imUserInfoDto.getResourceImgUrl();
+		imUser.setResourceImgUrl(resourceImgUrl);
+		String nickname = imUserInfoDto.getName();
+		imUser.setNickname(nickname);
+		String nameSimple = imUserInfoDto.getNameSimple();
+		imUser.setNameSimple(nameSimple);
+		String nameFull = imUserInfoDto.getNameFull();
+		imUser.setNameFull(nameFull);
+		if (isEquals(imUser.getType(),BaseConstants.MYSQL_ORGANIZATION_TYPE_EXTERNAL)){
+			imUser.setSex(isEmpty(imUserInfoDto.getSex())?"1":String.valueOf(imUserInfoDto.getSex()));
+			//外部联系人取im的性别
+		}
+		// 备注
+		ImFriendAliasDto alias = platformRedisService.getFAliasNameByUid(getUserIdIM(), imUser.getImUserId());
+		if (alias != null) {
+			imUser.setAliasName(alias.getAliasName());
+			imUser.setAliasNameFull(alias.getAliasNameFull());
+			imUser.setAliasNameSimple(alias.getAliasNameSimple());
+		}
+	}
+}

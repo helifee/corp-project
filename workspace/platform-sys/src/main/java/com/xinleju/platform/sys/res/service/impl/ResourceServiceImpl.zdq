@@ -1,0 +1,229 @@
+package com.xinleju.platform.sys.res.service.impl;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.sys.res.dao.ResourceDao;
+import com.xinleju.platform.sys.res.dto.DataNodeDto;
+import com.xinleju.platform.sys.res.dto.ResourceDto;
+import com.xinleju.platform.sys.res.entity.AppSystem;
+import com.xinleju.platform.sys.res.entity.Resource;
+import com.xinleju.platform.sys.res.service.AppSystemService;
+import com.xinleju.platform.sys.res.service.ResourceService;
+import com.xinleju.platform.sys.res.utils.InvalidCustomException;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class ResourceServiceImpl extends  BaseServiceImpl<String,Resource> implements ResourceService{
+	
+
+	@Autowired
+	private ResourceDao resourceDao;
+	@Autowired
+	private AppSystemService appSystemService;
+	
+	
+	@Override
+	public List<DataNodeDto> queryResourceListByAppId(Map<String, Object> paramater)throws Exception {
+		return resourceDao.queryResourceListByAppId(paramater);
+	}
+
+	@Override
+	public List<DataNodeDto> queryResourceListByParentId(String paramater)throws Exception {
+		return resourceDao.queryResourceListByParentId(paramater);
+	}
+
+	
+	@Override
+	public List<ResourceDto> queryListByCondition(Map<String, Object> map) throws Exception{
+		return resourceDao.queryListByCondition(map);
+	}
+	/**
+	 * 校验编码重复
+	 * @param map 参数
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public Integer getCodeCount(Map<String, Object> map) throws Exception{
+		return resourceDao.getCodeCount(map);
+	}
+	/**
+	 * 修改菜单，并维护全路径
+	 * @param map 参数
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	@Transactional(readOnly=false,rollbackFor=Exception.class)
+	public Integer updateMenu(Resource resource) throws Exception{
+		int result=0;
+		try {
+			//排序或名称修改，维护全路径级下级菜单按钮全路径  add by gyh 2017-4-2
+			Resource resOld=getObjectById(resource.getId());
+			if(resOld==null){
+				throw new InvalidCustomException("不存在此菜单");
+			}
+			boolean flag=false;
+			Map<String, Object> map=new HashMap<String,Object>();
+			//修改上级菜单，维护全路径
+			if(resource.getParentId()!=null&& StringUtils.isNotBlank(resource.getParentId())){
+				String parentId=resource.getParentId();
+				Resource resP=getObjectById(parentId);
+				resource.setPrefixId(resP.getPrefixId()+"/"+resource.getId());
+				resource.setPrefixName(resP.getPrefixName()+"/"+resource.getName());
+				resource.setPrefixSort(resP.getPrefixSort()+"-"+String.format("B%05d", resource.getSort()));
+				map.put("prefixIdOld", resOld.getPrefixId());
+				map.put("prefixIdNew", resource.getPrefixId());
+				map.put("prefixNameOld", resOld.getPrefixName()+"/");
+				map.put("prefixNameNew", resource.getPrefixName()+"/");
+				map.put("prefixSortOld", resOld.getPrefixSort());
+				map.put("prefixSortNew", resource.getPrefixSort());
+				map.put("menuFlag", true);
+				flag=true;
+			}else if(resource.getParentId()==null || StringUtils.isBlank(resource.getParentId()) ){
+				String appId=resource.getAppId();
+				AppSystem app=appSystemService.getObjectById(appId);
+				resource.setPrefixId(app.getPrefixId()+"/"+resource.getId());
+				resource.setPrefixName(app.getPrefixName()+"/"+resource.getName());
+				resource.setPrefixSort(app.getPrefixSort()+"-"+String.format("B%05d", resource.getSort()));
+				map.put("prefixIdOld", resOld.getPrefixId());
+				map.put("prefixIdNew", resource.getPrefixId());
+				map.put("prefixNameOld", resOld.getPrefixName()+"/");
+				map.put("prefixNameNew", resource.getPrefixName()+"/");
+				map.put("prefixSortOld", resOld.getPrefixSort());
+				map.put("prefixSortNew", resource.getPrefixSort());
+				map.put("menuFlag", true);
+				flag=true;
+			}
+			if(flag){
+				appSystemService.updateAllPreFix(map);
+			}
+			//修改排序号，禁用同时禁用下级菜单，启用同时启用上级菜单
+			if (!resOld.getStatus().equals(resource.getStatus())) {
+				if(resource.getStatus().equals("0")){//禁用
+					map.put("menuId", resOld.getPrefixId());
+					map.put("tableCol", "status");
+					map.put("val", 0);
+					resourceDao.lockMenu(map);
+				}else{
+					String prefixId=resOld.getPrefixId();
+					String menuIds[]=prefixId.split("/");
+					map.put("menuIds", menuIds);
+					resourceDao.unLockMenu(map);
+				}
+			}
+			result = update(resource);
+		} catch (Exception e) {
+			throw e;
+		}
+		return result;
+	}
+	/**
+	 * 查询所有父节点
+	 * @param map appId系统ID
+	 * @return
+	 * @throws Exception
+	 */
+	public List<String> selectAllParentId(Map<String, Object> map) throws Exception{
+		return resourceDao.selectAllParentId(map);
+	}
+	/**
+	 * 维护相关表全路径
+	 * @param map 参数
+	 * @return
+	 * @throws Exception
+	 */
+	@Transactional(readOnly=false,rollbackFor=Exception.class)
+	public Integer upOrDown(Map<String, Object> map) throws Exception{
+		Integer res=0;
+		try {
+			String menuId1=(String)map.get("menuId1");
+			String sort1=(String)map.get("sort1");
+			String menuId2=(String)map.get("menuId2");
+			String sort2=(String)map.get("sort2");
+			Resource res1=getObjectById(menuId1);
+			Resource res2=getObjectById(menuId2);
+			String prefixSortOld1=res1.getPrefixSort();
+			String prefixSortOld2=res2.getPrefixSort();
+			//业务排序
+			res1.setSort(Long.valueOf(sort2));
+			res2.setSort(Long.valueOf(sort1));
+			res1.setPrefixSort(prefixSortOld2);
+			res2.setPrefixSort(prefixSortOld1);
+			Map<String,Object> param=new HashMap<String,Object>();
+			//修改排序全路径-res1
+			param.put("prefixIdOld", res1.getPrefixId());
+			param.put("prefixSortOld", prefixSortOld1);
+			param.put("prefixSortNew", res1.getPrefixSort());
+			param.put("menuFlag", true);
+			appSystemService.updateAllPreFix(param);		
+			update(res1);
+			//修改排序全路径-app2
+			param.put("prefixIdOld", res2.getPrefixId());
+			param.put("prefixSortOld", prefixSortOld2);
+			param.put("prefixSortNew", res2.getPrefixSort());
+			param.put("menuFlag", true);
+			appSystemService.updateAllPreFix(param);		
+			update(res2);
+			res = 1;
+		} catch (Exception e) {
+			throw new InvalidCustomException("排序出错");
+		}
+		return res;
+	}
+	
+	/**
+	 * 判断菜单是否存在下级菜单或按钮
+	 * @param map 参数
+	 * @return
+	 * @throws Exception
+	 */
+	public Integer selectSonNum(Map<String,Object> map) throws Exception{
+		return resourceDao.selectSonNum(map);
+	}
+	/**
+	 * 获取用户的菜单
+	 * @param map
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public List<ResourceDto> queryAuthMenu(Map<String,Object> map) throws Exception{
+		List<ResourceDto> resourceDtoList = resourceDao.queryAuthMenu(map);
+		for(ResourceDto r :resourceDtoList){
+			String[] ids = r.getPrefixId().split("/");
+			r.setLevel(new Long(ids.length));
+		}
+		
+		return resourceDtoList;
+	}
+	
+	/**
+	 * 删除菜单及其下级
+	 * @param resource
+	 * @return
+	 * @throws Exception 
+	 */
+	@Override
+	public Integer deleteMeneAllSon(Resource resource) throws Exception {
+		Resource res=resourceDao.getObjectById(resource.getId());
+		Map<String,Object> map =new HashMap<String, Object>();
+		map.put("menuId", res.getPrefixId());
+		map.put("tableCol", "delflag");
+		map.put("val", 1);
+		return resourceDao.lockMenu(map);
+	}
+}

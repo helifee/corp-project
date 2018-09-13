@@ -1,0 +1,171 @@
+/*
+ * @(#)BatchJobExecutorImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 批处理系统
+ */
+
+package com.yds.batch.service.impl;
+
+import java.util.Date;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.springframework.beans.BeansException;
+import org.springframework.beans.factory.config.BeanDefinition;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.ApplicationContextAware;
+import org.springframework.context.annotation.Scope;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.yds.batch.bean.BatchJob;
+import com.yds.batch.dao.BatchJobDao;
+import com.yds.batch.service.BatchConstants;
+import com.yds.batch.service.BatchJobExecutor;
+import com.yds.batch.service.BatchJobRun;
+import com.yds.util.service.DbContextHolder;
+
+/**
+ * @see BatchJobExecutor
+ */
+@Scope(BeanDefinition.SCOPE_PROTOTYPE)
+@Service("batchJobExecutor")
+public class BatchJobExecutorImpl implements BatchJobExecutor,ApplicationContextAware {
+
+	private static final Log LOG = LogFactory.getLog(BatchJobExecutorImpl.class);
+	
+	/** spring容器. */
+	private ApplicationContext ctx;
+	
+	private BatchJobDao batchJobDao;
+	
+	/**
+	 * {@inheritDoc}
+	 * @throws Throwable 
+	 */
+	@Transactional(propagation = Propagation.REQUIRES_NEW, timeout = 60)
+	@Override
+	public int executeJob(BatchJob job) throws Throwable {
+		//回复为默认的数据源
+		DbContextHolder.clearDbType();
+		BatchJobRun realJob = null;
+		
+		String execStatus = BatchConstants.EXEC_STATUS.NORMALEND.value();
+		
+		try {
+			
+			// 设置执行开始时间
+			job.setExecStartDt(new Date());
+			
+			// 得到待执行类的实例
+			realJob = (BatchJobRun)ctx.getBean(job.getJobClass());
+		
+			realJob.jobRun();
+			return 0;
+		} catch (Throwable e) {
+			
+			execStatus = BatchConstants.EXEC_STATUS.ERROREND.value();
+			
+			if (BatchConstants.RETRY_ALLOW.equals(job.getRetryFlg())) {
+				LOG.error("任务组" + job.getGroupId() + "中 任务" + job.getJobId() + "执行失败，执行重试。", e);
+				execStatus = runRetry(job, realJob);
+				
+			} else {
+				// 如果中断程序影响组里batch继续运行,抛出异常
+				if(BatchConstants.IS_EXECUTE.NO.value().equals(job.getSysAffectFlg())){
+					LOG.error("任务组" + job.getGroupId() + "中 任务" + job.getJobId() + "执行失败，执行中断。", e);
+				}
+			}
+			return 1;
+		} finally {
+			
+			job.setExecStatus(execStatus);
+			job.setExecEndDt(new Date());
+			
+			// 插入任务执行履历
+			batchJobDao.insertExecHis(job);
+
+		}		
+
+	}
+
+	/**
+	 * 任务重试执行
+	 * 
+	 * @param job 任务
+	 * @param realJob 实际任务
+	 * @return 执行结果
+	 * @throws Throwable 
+	 */
+	private String runRetry(BatchJob job, BatchJobRun realJob) throws Throwable {
+		
+		// 重试是否完成
+		boolean jobFinished = false;
+		
+		// 重试次数
+		int retryCnt = job.getRetryCnt();
+		
+		// 重实间隔
+		int retryInterval = job.getRetryInterval();
+		
+		// 实际运行次数
+		int execCnt = 0;
+		
+		String execStatus = BatchConstants.EXEC_STATUS.ERROREND.value();
+		
+		if (retryCnt == 0) {
+			return execStatus;
+		}
+		
+		while (!jobFinished) {
+			
+			try {
+				
+				execCnt++;
+				
+				// 执行次数已到,设置执行完成
+				if (execCnt == retryCnt) {
+					jobFinished = true;
+				}
+				
+				// 等待间隔
+				if (retryInterval != 0) {
+					Thread.sleep((long)retryInterval * 1000);
+				}
+				
+				realJob.jobRun();
+				
+				jobFinished = true;
+				execStatus = BatchConstants.EXEC_STATUS.NORMALEND.value();
+				
+			} catch (Throwable e) {
+
+				LOG.error("任务组" + job.getGroupId() + "中 任务" + job.getJobId() + 
+						"第" + execCnt + "次 执行重试 执行失败。", e);
+				
+				if (jobFinished) {
+					throw e;
+				}
+			}
+		}
+		
+		return execStatus;
+	}
+	
+	@Override
+	public void setApplicationContext(ApplicationContext ctx)
+			throws BeansException {
+		this.ctx = ctx;
+		
+	}
+	
+	/**
+	 * @param batchJobDao the batchJobDao to set
+	 */
+	public void setBatchJobDao(BatchJobDao batchJobDao) {
+		this.batchJobDao = batchJobDao;
+	}
+}

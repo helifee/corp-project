@@ -1,0 +1,152 @@
+package com.xinleju.platform.base.dto;
+
+import java.io.Serializable;
+import java.sql.Timestamp;
+
+public  class BaseDto implements Serializable{
+
+	private String id;  
+
+	private Timestamp createDate; 
+
+	private Timestamp updateDate; 
+
+	private String createPersonId;
+
+	private String createPersonName;  
+
+	private String updatePersonId;
+
+	private String updatePersonName;
+
+	private String createOrgId;   
+
+	private String createOrgName;  
+
+	private String createCompanyId;   
+
+	private String createCompanyName; 
+	
+	private Integer concurrencyVersion ; 
+
+    private Boolean delflag;
+    
+    private String tendId; 
+
+
+	public String getId() {
+		return id;
+	}
+
+	public void setId(String id) {
+		this.id = id;
+	}
+
+
+	public String getCreatePersonId() {
+		return createPersonId;
+	}
+
+	public void setCreatePersonId(String createPersonId) {
+		this.createPersonId = createPersonId;
+	}
+
+	public String getCreatePersonName() {
+		return createPersonName;
+	}
+
+	public void setCreatePersonName(String createPersonName) {
+		this.createPersonName = createPersonName;
+	}
+
+	public String getUpdatePersonId() {
+		return updatePersonId;
+	}
+
+	public void setUpdatePersonId(String updatePersonId) {
+		this.updatePersonId = updatePersonId;
+	}
+
+	public String getUpdatePersonName() {
+		return updatePersonName;
+	}
+
+	public void setUpdatePersonName(String updatePersonName) {
+		this.updatePersonName = updatePersonName;
+	}
+
+	public String getCreateOrgId() {
+		return createOrgId;
+	}
+
+	public void setCreateOrgId(String createOrgId) {
+		this.createOrgId = createOrgId;
+	}
+
+	public String getCreateOrgName() {
+		return createOrgName;
+	}
+
+	public void setCreateOrgName(String createOrgName) {
+		this.createOrgName = createOrgName;
+	}
+
+	public String getCreateCompanyId() {
+		return createCompanyId;
+	}
+
+	public void setCreateCompanyId(String createCompanyId) {
+		this.createCompanyId = createCompanyId;
+	}
+
+	public String getCreateCompanyName() {
+		return createCompanyName;
+	}
+
+	public void setCreateCompanyName(String createCompanyName) {
+		this.createCompanyName = createCompanyName;
+	}
+
+
+	public Integer getConcurrencyVersion() {
+		return concurrencyVersion;
+	}
+
+	public void setConcurrencyVersion(Integer concurrencyVersion) {
+		this.concurrencyVersion = concurrencyVersion;
+	}
+
+	public Timestamp getCreateDate() {
+		return createDate;
+	}
+
+	public void setCreateDate(Timestamp createDate) {
+		this.createDate = createDate;
+	}
+
+	public Timestamp getUpdateDate() {
+		return updateDate;
+	}
+
+	public void setUpdateDate(Timestamp updateDate) {
+		this.updateDate = updateDate;
+	}
+
+	public Boolean getDelflag() {
+		return delflag;
+	}
+
+	public void setDelflag(Boolean delflag) {
+		this.delflag = delflag;
+	}
+
+	public String getTendId() {
+		return tendId;
+	}
+
+	public void setTendId(String tendId) {
+		this.tendId = tendId;
+	}
+
+    
+}

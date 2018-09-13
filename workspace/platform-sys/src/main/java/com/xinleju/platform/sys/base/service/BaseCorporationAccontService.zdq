@@ -1,0 +1,27 @@
+package com.xinleju.platform.sys.base.service;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.sys.base.entity.BaseCorporationAccont;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface BaseCorporationAccontService extends  BaseService <String,BaseCorporationAccont>{
+	/**
+	 * 根据公司法人id查询法人账号集合
+	 * @param id
+	 * @return
+	 */
+	public List<Map<String,Object>> getBaseCorporationAccontByCorporationId(
+			String id);
+	public List<BaseCorporationAccont> getBaseCorporationAccontListByCorporationId(
+			String id);
+
+	
+}

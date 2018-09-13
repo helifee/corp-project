@@ -1,0 +1,193 @@
+package com.xinleju.platform.flow.service.impl;
+
+import java.sql.Timestamp;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.flow.dao.MonitorSettingDao;
+import com.xinleju.platform.flow.dto.MonitorSettingDto;
+import com.xinleju.platform.flow.entity.MonitorFl;
+import com.xinleju.platform.flow.entity.MonitorPerson;
+import com.xinleju.platform.flow.entity.MonitorPoint;
+import com.xinleju.platform.flow.entity.MonitorSetting;
+import com.xinleju.platform.flow.entity.MonitoredPerson;
+import com.xinleju.platform.flow.enumeration.FlowMonitorType;
+import com.xinleju.platform.flow.model.FlowMonitorBean;
+import com.xinleju.platform.flow.service.MonitorFlService;
+import com.xinleju.platform.flow.service.MonitorPersonService;
+import com.xinleju.platform.flow.service.MonitorPointService;
+import com.xinleju.platform.flow.service.MonitorSettingService;
+import com.xinleju.platform.flow.service.MonitoredPersonService;
+
+/**
+ * 流程监控配置服务
+ */
+@Service
+public class MonitorSettingServiceImpl extends BaseServiceImpl<String, MonitorSetting>
+		implements MonitorSettingService {
+
+	@Autowired
+	private MonitorSettingDao monitorSettingDao;
+	@Autowired
+	private MonitorFlService monitorFlService;
+	@Autowired
+	private MonitorPersonService monitorService;
+	@Autowired
+	private MonitoredPersonService monitoredService;
+	@Autowired
+	private MonitorPointService monitorPointService;
+
+	@Override
+	public void saveAllSettingData(MonitorSettingDto settingDto) throws Exception {
+		// 1-保存或更新监控设置的主数据
+		MonitorSetting object = new MonitorSetting();
+		BeanUtils.copyProperties(settingDto, object);
+		object.setType(settingDto.getMonitorType());
+		String setttingId = settingDto.getId();
+		if ("-1".equals(setttingId)) {// -1表示新增
+			setttingId = IDGenerator.getUUID();
+			object.setId(setttingId);
+			this.save(object);
+			settingDto.setId(setttingId);
+		} else {// 修改
+			monitorSettingDao.deleteAllFlowBySettingId(setttingId);
+			monitorSettingDao.deleteAllMonitorBySettingId(setttingId);
+			monitorSettingDao.deleteAllMonitoredBySettingId(setttingId);
+			monitorSettingDao.deleteAllMonitorPoint(setttingId);
+			this.update(object);
+		}
+
+		// 2-保存监控人的数据
+		saveMonitorPersonData(settingDto, setttingId);
+		
+		// 3-处理监控点数据
+		saveMonitorPointData(settingDto, setttingId);
+		
+		// 4-保存被监控人的数据
+		if(FlowMonitorType.PERSON.getValue().equals(settingDto.getMonitorType())) {
+			saveMonitoredPersonData(settingDto, setttingId);
+			
+			// 5-保存监控模板的数据
+		} else if(FlowMonitorType.TEMPLATE.getValue().equals(settingDto.getMonitorType())) {
+			saveMonitorFlowData(settingDto, setttingId);
+			
+			//异常监控
+		} else {
+			
+		}
+	}
+
+	private void saveMonitorPointData(MonitorSettingDto settingDto, String setttingId) throws Exception {
+		List<Map<String,String>> pointList = settingDto.getPointList();
+		for(Map<String, String> point : pointList) {
+			MonitorPoint monitorPoint = new MonitorPoint();
+			monitorPoint.setId(IDGenerator.getUUID());
+			monitorPoint.setMonitorSettingId(setttingId);
+			monitorPoint.setPointId(point.get("pointId"));
+			monitorPoint.setPointName(point.get("pointName"));
+			monitorPoint.setHandle(point.get("handle"));
+			monitorPointService.save(monitorPoint);
+		}
+	}
+
+	public void saveMonitoredPersonData(MonitorSettingDto settingDto, String settingId) throws Exception {
+		List<Map<String, String>> monitoredDtoList = settingDto.getMonitoredList();
+		for (Map<String, String> monitoredDto : monitoredDtoList) {
+			MonitoredPerson monitored = new MonitoredPerson();
+			monitored.setMonitorSettingId(settingId);
+			monitored.setId(IDGenerator.getUUID());
+			monitored.setMonitoredId(monitoredDto.get("id"));
+			monitored.setMonitoredName(monitoredDto.get("name"));
+			monitored.setMonitoredType(monitoredDto.get("type"));
+			monitoredService.save(monitored);
+		}
+	}
+
+	public void saveMonitorPersonData(MonitorSettingDto settingDto, String settingId) throws Exception {
+		List<Map<String, String>> monitorDtoList = settingDto.getMonitorList();
+		for (Map<String, String> monitorDto : monitorDtoList) {
+			MonitorPerson monitor = new MonitorPerson();
+			monitor.setMonitorSettingId(settingId);
+			monitor.setId(IDGenerator.getUUID());
+			monitor.setMonitorId(monitorDto.get("id"));
+			monitor.setMonitorName(monitorDto.get("name"));
+			monitor.setMonitorType(monitorDto.get("type"));
+			monitorService.save(monitor);
+		}
+	}
+
+	public void saveMonitorFlowData(MonitorSettingDto settingDto, String settingId) throws Exception {
+		List<Map<String, String>> flowDtoList = settingDto.getFlowList();
+		for (Map<String, String> flowDto : flowDtoList) {
+			MonitorFl flow = new MonitorFl();
+			flow.setMonitorSettingId(settingId);
+			flow.setId(IDGenerator.getUUID());
+			flow.setFlId(flowDto.get("code"));
+			flow.setFlName(flowDto.get("flName"));
+			monitorFlService.save(flow);
+		}
+	}
+
+	@Override
+	public int changeStatusBySettingId(String settingId, String status) throws Exception {
+		System.out.println("changeStatusBySettingId()>>> settingId=" + settingId);
+		MonitorSetting monitorSetting = this.getObjectById(settingId);
+		monitorSetting.setStatus(status);
+		return update(monitorSetting);
+	}
+
+	@Override
+	public List<Map<String, String>> queryMonitorList(String settingId) {
+		return monitorSettingDao.queryMonitorList(settingId);
+	}
+
+	@Override
+	public List<Map<String, String>> queryMonitoredList(String settingId) {
+		return monitorSettingDao.queryMonitoredList(settingId);
+	}
+
+	@Override
+	public List<Map<String, String>> queryFlowList(String settingId) {
+		return monitorSettingDao.queryFlowList(settingId);
+	}
+
+	@Override
+	public List<Map<String, String>> queryPointList(String settingId) {
+		return monitorSettingDao.queryPointList(settingId);
+	}
+
+	@Override
+	public List<FlowMonitorBean> queryMonitorByUser(String monitoredId, String postId, String monitoryPointType) {
+		Map<String, Object> params = new HashMap<String, Object>();
+		params.put("monitoredId", monitoredId);
+		params.put("postId", postId);
+		params.put("monitoryPointType", monitoryPointType);
+		params.put("currentTime", new Timestamp(System.currentTimeMillis()));
+		return monitorSettingDao.queryMonitorByUser(params);
+	}
+
+	@Override
+	public List<FlowMonitorBean> queryMonitorByFlow(String flId, String monitoryPointType) {
+		Map<String, Object> params = new HashMap<String, Object>();
+		params.put("flId", flId);
+		params.put("monitoryPointType", monitoryPointType);
+		params.put("currentTime", new Timestamp(System.currentTimeMillis()));
+		return monitorSettingDao.queryMonitorByFlow(params);
+	}
+
+	@Override
+	public List<FlowMonitorBean> queryMonitorWhenException(String monitoryPointType) {
+		Map<String, Object> params = new HashMap<String, Object>();
+		params.put("monitoryPointType", monitoryPointType);
+		params.put("currentTime", new Timestamp(System.currentTimeMillis()));
+		return monitorSettingDao.queryMonitorWhenException(params);
+	}
+
+}

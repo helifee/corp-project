@@ -1,0 +1,464 @@
+package com.jzy.hio.oa.meeting.service.impl;
+
+import java.sql.Timestamp;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.log4j.Logger;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.base.utils.DubboServiceResultInfo;
+import com.jzy.hio.base.utils.ErrorInfoCode;
+import com.jzy.hio.base.utils.IDGenerator;
+import com.jzy.hio.base.utils.Page;
+import com.jzy.hio.base.utils.SecurityOrganizationDto;
+import com.jzy.hio.base.utils.SecurityUserBeanInfo;
+import com.jzy.hio.feign.FlowFeignService;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.feign.dto.UserDto;
+import com.jzy.hio.feign.dto.flow.SysNoticeMsgDto;
+import com.jzy.hio.oa.meeting.dto.MeetingSummaryDto;
+import com.jzy.hio.oa.meeting.entity.MeetingPartner;
+import com.jzy.hio.oa.meeting.entity.MeetingSummary;
+import com.jzy.hio.oa.meeting.mapper.MeetingDao;
+import com.jzy.hio.oa.meeting.mapper.MeetingPartnerDao;
+import com.jzy.hio.oa.meeting.mapper.MeetingSummaryDao;
+import com.jzy.hio.oa.meeting.service.MeetingSummaryService;
+import com.jzy.hio.oa.meeting.utils.MeetingStatusType;
+import com.jzy.hio.oa.meeting.utils.UserIdentifiy;
+import com.jzy.tools.data.JacksonUtils;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class MeetingSummaryServiceImpl extends BaseServiceImpl<String, MeetingSummary> implements MeetingSummaryService {
+	private static Logger log = Logger.getLogger(MeetingSummaryServiceImpl.class);
+
+	@Autowired
+	private MeetingSummaryDao meetingSummaryDao;
+
+	@Autowired
+	private MeetingDao meetingDao;
+	@Autowired
+	private MeetingPartnerDao meetingPartnerDao;
+	
+	@Autowired
+	private SysFeignService sysFeignService;
+	
+	@Autowired
+	private FlowFeignService flowFeignService;
+
+	/*@Autowired
+	private SysNoticeMsgService sysNoticeMsgDtoServiceCustomer;
+	@Autowired
+	private UserService userDtoServiceCustomer;*/
+
+	@Override
+	public Page queryObjectsByPage(Map map) {
+		// TODO Auto-generated method stub
+		return meetingSummaryDao.queryObjectsByPage(map);
+	}
+
+	@Override
+	public Page getMeetingSummaryByPage(Map map) throws Exception {
+		// TODO Auto-generated method stub
+		Page page = new Page();
+		List<Map<String, Object>> list = meetingSummaryDao.getMeetingSummaryPage(map);
+		Integer count = meetingSummaryDao.getMeetingSummaryCount(map);
+		page.setLimit((Integer) map.get("limit"));
+		page.setList(list);
+		page.setStart((Integer) map.get("start"));
+		page.setTotal(count);
+		return page;
+	}
+
+	@Override
+	public Map getStartFlowInfo(SecurityUserBeanInfo securityUserBeanInfo, String id) throws Exception {
+		MeetingSummary meetingSummary = meetingSummaryDao.selectByPrimaryKey(id);
+		Map<String, Object> flowData = this.getMeetingSummaryDataToJson(meetingSummary);
+		Map<String, Object> map = new HashMap<String, Object>();
+		map.put("flow_phone_data", flowData);
+		map.put("flow_business_data", flowData);
+		Map<String, Object> param = new HashMap<String, Object>();
+		SecurityOrganizationDto securityDirectCompanyDto = securityUserBeanInfo.getSecurityDirectCompanyDto();
+		if (securityDirectCompanyDto != null) {
+			String companyId = securityDirectCompanyDto.getId();
+			String companyName = securityDirectCompanyDto.getName();
+			param.put("flow_business_company_id", companyId);
+			param.put("flow_business_company_name", companyName);
+		} else {
+			param.put("flow_business_company_id", null);
+			param.put("flow_business_company_name", null);
+
+		}
+		SecurityOrganizationDto securityDirectDeptDto = securityUserBeanInfo.getSecurityDirectDeptDto();
+		if (securityDirectDeptDto != null) {
+			String deptId = securityDirectDeptDto.getId();
+			String deptName = securityDirectDeptDto.getName();
+			param.put("flow_business_dept_id", deptId);
+			param.put("flow_business_dept_name", deptName);
+		} else {
+			param.put("flow_business_dept_id", null);
+			param.put("flow_business_dept_name", null);
+		}
+		SecurityOrganizationDto securityGroupDto = securityUserBeanInfo.getSecurityGroupDto();
+		if (securityGroupDto != null) {
+			String projectId = securityGroupDto.getId();
+			String projectName = securityGroupDto.getName();
+			param.put("flow_business_project_id", projectId);
+			param.put("flow_business_project_name", projectName);
+		} else {
+			param.put("flow_business_project_id", null);
+			param.put("flow_business_project_name", null);
+		}
+		SecurityOrganizationDto securityBranchDto = securityUserBeanInfo.getSecurityBranchDto();
+		if (securityBranchDto != null) {
+			String branchId = securityBranchDto.getId();
+			String branchName = securityBranchDto.getName();
+			param.put("flow_business_project_branch_id", branchId);
+			param.put("flow_business_project_branch_name", branchName);
+		} else {
+			param.put("flow_business_project_branch_id", null);
+			param.put("flow_business_project_branch_name", null);
+		}
+		String createPersonId = meetingSummary.getCreatePersonId();
+		param.put("start_user_id", createPersonId);
+		param.put("start_user_name", meetingSummary.getCreatePersonName());
+		param.put("mtTitle", meetingSummary.getMtTitle());
+		param.put("meetingType", meetingSummary.getMeetingType());
+		map.put("flow_business_variable_data", param);
+		return map;
+	}
+
+	private Map<String, Object> getMeetingSummaryDataToJson(MeetingSummary meetingSummary) throws Exception {
+		Map<String, Object> resultMap = new HashMap<String, Object>();
+		Map<String, Object> map1 = new HashMap<>();
+		Map<String, Object> map2 = new HashMap<>();
+		Map<String, Object> map3 = new HashMap<>();
+		Map<String, Object> map4 = new HashMap<>();
+		Map<String, Object> map5 = new HashMap<>();
+		Map<String, Object> map6 = new HashMap<>();
+		Map<String, Object> map7 = new HashMap<>();
+		Map<String, Object> map8 = new HashMap<>();
+		Map<String, Object> map9 = new HashMap<>();
+		Map<String, Object> map10 = new HashMap<>();
+		Map<String, Object> map11 = new HashMap<>();
+		Map<String, Object> map12 = new HashMap<>();
+		Map<String, Object> map13 = new HashMap<>();
+		Map<String, Object> map14 = new HashMap<>();
+		Map<String, Object> map15 = new HashMap<>();
+		Map<String, Object> map16 = new HashMap<>();
+		Map<String, Object> map17 = new HashMap<>();
+		List<Map<String, Object>> list = new ArrayList<Map<String, Object>>();
+		map1.put("name", "会议主题");
+		map1.put("value", meetingSummary.getMtTitle());
+		map2.put("name", "会议类别");
+		map2.put("value", meetingSummary.getMeetingType());
+		map3.put("name", "录入时间");
+		map3.put("value", meetingSummary.getEntryDate());
+		map4.put("name", "实际开始时间");
+		map4.put("value", meetingSummary.getActualBeginTime());
+		map6.put("name", "会议地点");
+		map6.put("value", meetingSummary.getActualAddress());
+		map7.put("name", "主持人");
+		map7.put("value", meetingSummary.getEmceeName());
+		map8.put("name", "组织人");
+		map8.put("value", meetingSummary.getMeetingOrganizationName());
+		map9.put("name", "要求与会人员");
+		map9.put("value", meetingSummary.getRequirAttendeesName());
+		map10.put("name", "实际与会人员");
+		map10.put("value", meetingSummary.getActualAttendeesName());
+		map11.put("name", "纪要传送人员");
+		map11.put("value", meetingSummary.getCopySendName());
+		map12.put("name", "其他可阅者");
+		map12.put("value", meetingSummary.getOtherReaders());
+		map14.put("name", "会议内容");
+		map14.put("value", meetingSummary.getMeetingContent());
+		map15.put("name", "会议记录");
+		map15.put("value", meetingSummary.getMeetingRecord());
+		map16.put("name", "会议表决");
+		map16.put("value", meetingSummary.getMeetingResult());
+		map16.put("name", "附件");
+		map16.put("value", meetingSummary.getDocumentAttachments());
+		list.add(map1);
+		list.add(map2);
+		list.add(map3);
+		list.add(map4);
+		list.add(map5);
+		list.add(map6);
+		list.add(map7);
+		list.add(map8);
+		list.add(map9);
+		list.add(map10);
+		list.add(map11);
+		list.add(map12);
+		list.add(map13);
+		list.add(map14);
+		list.add(map15);
+		list.add(map16);
+		list.add(map17);
+		resultMap.put("dataList", list);
+		return resultMap;
+	}
+
+	/*
+	 * (non-Javadoc)
+	 * 
+	 * @see com.jzy.hio.oa.meeting.service.MeetingService#updateStatus(java.util.Map)
+	 */
+	@Override
+	public int updateStatus(String userInfo, Map map) throws Exception {
+		log.info("流程回调业务对象改状态的返回数据：" + map);
+		String id = (String) map.get("businessId");
+		String status = (String) map.get("status");
+		String instanceId = (String) map.get("instanceId");
+		MeetingSummary summary = meetingSummaryDao.selectByPrimaryKey(id);
+		summary.setInstanceId(instanceId);
+
+		if (status.equals(MeetingStatusType.CANCEL.getCode()) || status.equals(MeetingStatusType.WITHDRAW.getCode()) || status.equals(MeetingStatusType.REJECT.getCode())) {
+			summary.setStatus(MeetingStatusType.DRAFT.getCode());
+			summary.setFlowStatus(status);
+		} else if (status.equals(MeetingStatusType.RUNNING.getCode()) || status.equals(MeetingStatusType.HANGUP.getCode())) {
+			summary.setStatus(MeetingStatusType.RUNNING.getCode());
+			summary.setFlowStatus(status);
+		} else if (status.equals(MeetingStatusType.FINISHED.getCode())) {
+			summary.setStatus(MeetingStatusType.COMPLETEMINUTES.getCode());
+			summary.setFlowStatus(status);
+		}
+		// 流程审批完成后，如果审批状态是 已完成，则要发起待阅通知
+		if (status.equals(MeetingStatusType.FINISHED.getCode())) {
+			log.info("流程通知已结束，切流程状态是已结束，需发起代办待阅通知：" + "---businessId---" + map.get("businessId") + "---status---" + map.get("status") + "----instanceId--" + map.get("instanceId")
+					+ "------");
+			startNotice(userInfo, summary, status);
+			log.info("流程通知已结束，切流程状态是已结束，发起代办成功！");
+		}
+		log.info("更改流程回调业务对象改状态的接口结束：" + "---businessId---" + map.get("businessId") + "---status---" + map.get("status") + "----instanceId--" + map.get("instanceId") + "------");
+		// log.info("流程回调执行的更改会议纪要sql，此日志是否显示：" +meetingSummaryDao.update(summary));
+		log.info("流程回调执行的更改会议纪要对象：" + summary);
+		return meetingSummaryDao.updateByPrimaryKeySelective(summary);
+
+	}
+
+	/**
+	 * 流程审批完成后，如果审批状态是 已完成，则要发起代办通知
+	 */
+	public void startNotice(String userInfo, MeetingSummary meetingSummary, String status) {
+
+		if (status.equals(MeetingStatusType.FINISHED.getCode())) {
+			String flag = "copySend";
+			if (meetingSummary.getActualAttendeesId() != null && !"".equals(meetingSummary.getActualAttendeesId())) {
+				// 会议创建完之后推送一条代办到流程,此时发待办
+				saveSysNoticeMsg(userInfo, meetingSummary, meetingSummary.getActualAttendeesId(), flag);
+			}
+			if (meetingSummary.getCopySendId() != null && !"".equals(meetingSummary.getCopySendId())) {
+				// 会议创建完之后推送一条代办到流程,此时发待办，抄送人永远发送待阅
+				saveSysNoticeMsg(userInfo, meetingSummary, meetingSummary.getCopySendId(), flag);
+			}
+
+		}
+
+	}
+
+	public void saveSysNoticeMsg(String userInfo, MeetingSummary meetingSummary, String userIds, String flag) {
+		if(userIds != null && !"".equals(userIds)){
+			//根据userId获取用户信息
+			Map<String,Object> mapIds = new HashMap<String,Object>();
+			mapIds.put("userIds", userIds);
+			//String dubboResultInfo=userDtoServiceCustomer.getUserInfoByUserIds(userInfo, JacksonUtils.toJson(mapIds));
+			List<Map<String,String>> userList = sysFeignService.getUserByUserIds(mapIds);
+		  
+		    List<String> listPhones = new ArrayList<String>();
+			if(userList.size()>0){
+					for (Map map : userList) {
+						if(map.get("mobile") != null && map.get("mobile").toString() != null && !"".equals(map.get("mobile").toString())){
+							listPhones.add(map.get("mobile").toString());
+						}
+						SysNoticeMsgDto sysNoticeMsgDto = new SysNoticeMsgDto();
+						String noticeId = IDGenerator.getUUID();
+						sysNoticeMsgDto.setId(noticeId);
+						//sysNoticeMsgDto.setCode("");
+						sysNoticeMsgDto.setTitle("主题: "+meetingSummary.getMtTitle()+".的会议纪要已完成，请查看.");
+						
+						sysNoticeMsgDto.setLoginName(map.get("loginName").toString());
+						sysNoticeMsgDto.setUserId(map.get("id").toString());
+						sysNoticeMsgDto.setUserName(map.get("name").toString());
+						sysNoticeMsgDto.setMsgType(false);
+						//如果是催办获取取消会议则都发，则发待阅
+						String noticeFlag = null;
+						if(flag.equals("reminder") || flag.equals("cancel") || flag.equals("copySend") || flag.equals("summaryReminder")){
+							//如果是催办，则发待阅
+							sysNoticeMsgDto.setOpType("DY");
+							noticeFlag="DY";
+						}else if(flag.equals("create")){
+							//会议刚创建，则全部给与会人员发待办
+							if(meetingSummary.getNotifiyWay().equals("0")){
+								sysNoticeMsgDto.setOpType("DY");
+								noticeFlag="DY";
+							}else{
+								sysNoticeMsgDto.setOpType("DB");
+								noticeFlag="DB";
+							}
+						}
+						sysNoticeMsgDto.setSource("flow");//巨洲云
+						sysNoticeMsgDto.setAppCode("OA");//OA
+						sysNoticeMsgDto.setBusinessId(meetingSummary.getId());
+						//暂时传空IP
+						sysNoticeMsgDto.setIpAddress("");
+						
+						SimpleDateFormat dateFormater = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+						Date date=new Date();
+						Timestamp timestamp = Timestamp.valueOf(dateFormater.format(date));
+						
+						sysNoticeMsgDto.setSendDate(timestamp);
+						sysNoticeMsgDto.setExtendInfo("meeting");
+						sysNoticeMsgDto.setUrl("meeting/meetingSummary/meetingSummary_view.html?act=view&id="+meetingSummary.getId()+"&update="+false+"&noticeFlag="+noticeFlag);
+						sysNoticeMsgDto.setIsOpen(true);
+						sysNoticeMsgDto.setDelflag(false);
+						sysNoticeMsgDto.setFirstType("MEETING");
+						String sysNoticeMsgJson= JacksonUtils.toJson(sysNoticeMsgDto);
+						flowFeignService.saveSysNoticeMsg(sysNoticeMsgJson);
+					}
+		    }
+		    //推送完流程之后，给与会人员发送短信
+		   /* if(listPhones.size() > 0){
+		    	String phones = StringUtils.join(listPhones.toArray(),",");
+		    	 Map<String, String> map = new HashMap<String, String>();
+				 map.put("msg", "请您参加会议,"+" 主题是: "+meeting.getTitle());
+				 map.put("phones", phones);
+				 String paramaterJson = JacksonUtils.toJson(map);
+				 mailAndPhoneServiceCustomer.sendPhoneMsg(userInfo, paramaterJson);
+				 mailAndPhoneServiceCustomer.sendMailMsg(userJson, paramaterJson);
+		    }*/
+		}
+
+	}
+
+	public void saveMeetingPartner(String userInfo, MeetingSummary meetingSummary, String userId, String flag) {
+		List<MeetingPartner> reployList = new ArrayList<MeetingPartner>();
+		String[] userids = userId.split(",");
+		for (String userIdTem : userids) {
+			MeetingPartner meetingPartner = new MeetingPartner();
+			meetingPartner.setId(IDGenerator.getUUID());
+			meetingPartner.setBusinessId(meetingSummary.getId());
+			meetingPartner.setUserId(userIdTem);
+			// 根据用户id获取用户信息
+			/*try {
+				User userDto = userDtoServiceCustomer.getObjectById(userIdTem);
+				meetingPartner.setUserName(userDto.getRealName());
+			} catch (Exception e) {
+				e.printStackTrace();
+			}*/
+			Map<String, Object> map = new HashMap<String, Object>();
+		    map.put("userId", userIdTem);
+		    String userDtoJson = sysFeignService.selectUserInfoById(map);
+		    UserDto userDto = JacksonUtils.fromJson(userDtoJson, UserDto.class);
+		    meetingPartner.setUserName(userDto.getRealName());
+			
+			
+			// 默认与会人员参加会议
+			// meetingPartner.setJoinFlag("1");
+			if (flag.equals(UserIdentifiy.attendees.getName())) {
+				meetingPartner.setUserIdentifiy(UserIdentifiy.attendees.getCode());
+			} else if (flag.equals(UserIdentifiy.Emcee.getName())) {
+				meetingPartner.setUserIdentifiy(UserIdentifiy.Emcee.getCode());
+			} else if (flag.equals(UserIdentifiy.Recorder.getName())) {
+				meetingPartner.setUserIdentifiy(UserIdentifiy.Recorder.getCode());
+			} else if (flag.equals(UserIdentifiy.meetingOrganization.getName())) {
+				meetingPartner.setUserIdentifiy(UserIdentifiy.meetingOrganization.getCode());
+			} else if (flag.equals(UserIdentifiy.copySend.getName())) {
+				meetingPartner.setUserIdentifiy(UserIdentifiy.copySend.getCode());
+			} else if (flag.equals(UserIdentifiy.OtherReaders.getName())) {
+				meetingPartner.setUserIdentifiy(UserIdentifiy.OtherReaders.getCode());
+			} else if (flag.equals(UserIdentifiy.CreateUser.getName())) {
+				meetingPartner.setUserIdentifiy(UserIdentifiy.CreateUser.getCode());
+			} else if (flag.equals(UserIdentifiy.ActualAttendees.getName())) {
+				meetingPartner.setUserIdentifiy(UserIdentifiy.ActualAttendees.getCode());
+			}
+
+			reployList.add(meetingPartner);
+		}
+		meetingPartnerDao.insertList(reployList);
+	}
+
+	@Override
+	public int saveMeetingSummary(String userInfo, MeetingSummary meetingSummary) throws Exception {
+		meetingSummaryDao.insertSelective(meetingSummary);
+		// 保存会议纪要相应的人员信息
+		/*if (meetingSummary.getCreateUserId() != null && !"".equals(meetingSummary.getCreateUserId())) {
+			saveMeetingPartner(userInfo, meetingSummary, meetingSummary.getCreateUserId(), "创建人");
+		}*/
+		if (meetingSummary.getCreatePersonId() != null && !"".equals(meetingSummary.getCreatePersonId())) {
+			saveMeetingPartner(userInfo, meetingSummary, meetingSummary.getCreatePersonId(), "创建人");
+		}
+		
+		if (meetingSummary.getActualAttendeesId() != null && !"".equals(meetingSummary.getActualAttendeesId())) {
+			saveMeetingPartner(userInfo, meetingSummary, meetingSummary.getActualAttendeesId(), "实际参会人");
+		}
+		if (meetingSummary.getCopySendId() != null && !"".equals(meetingSummary.getCopySendId())) {
+			saveMeetingPartner(userInfo, meetingSummary, meetingSummary.getCopySendId(), "抄送人");
+		}
+		if (meetingSummary.getOtherReadersId() != null && !"".equals(meetingSummary.getOtherReadersId())) {
+			saveMeetingPartner(userInfo, meetingSummary, meetingSummary.getOtherReadersId(), "其他可阅读者");
+		}
+
+		// 流程审批完成后，如果审批状态是 已完成，则要发起待阅通知
+		if (meetingSummary.getFlowStatus().equals(MeetingStatusType.FINISHED.getCode())) {
+			startNotice(userInfo, meetingSummary, meetingSummary.getFlowStatus());
+		}
+		return 0;
+	}
+
+	@Override
+	public String saveTemporary(String userJson, String saveJson) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+			MeetingSummaryDto meetingSummaryDto=JacksonUtils.fromJson(saveJson, MeetingSummaryDto.class);
+			//格式化入库的时间格式
+			SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");//设置日期格式
+			String currentTime = df.format(new Date());// new Date()为获取当前系统时间
+			if(meetingSummaryDto.getPlanBeginTime() == null || "".equals(meetingSummaryDto.getPlanBeginTime())){
+				meetingSummaryDto.setPlanBeginTime(null);
+			}
+			if(meetingSummaryDto.getActualBeginTime() == null || "".equals(meetingSummaryDto.getActualBeginTime())){
+				meetingSummaryDto.setActualBeginTime(null);
+			}
+			if(meetingSummaryDto.getEntryDate() == null || "".equals(meetingSummaryDto.getEntryDate())){
+				meetingSummaryDto.setEntryDate(currentTime);
+			}
+			//先清空暂存数据在保存数据
+			super.deleteObjectById(meetingSummaryDto.getId());
+			MeetingSummary meetingSummary = new MeetingSummary();
+			BeanUtils.copyProperties(meetingSummaryDto, meetingSummary);
+			if(meetingSummaryDto.getConclusion() != null && !"".equals(meetingSummaryDto.getConclusion()) && "sj".equals(meetingSummaryDto.getConclusion())){
+				meetingSummary.setStatus(MeetingStatusType.COMPLETEMINUTES.getCode());
+				meetingSummary.setFlowStatus(MeetingStatusType.FINISHED.getCode());
+			}else{
+				meetingSummary.setFlowStatus(MeetingStatusType.DRAFT.getCode());
+				//直接发起流程审批，会议状态为审批中
+				meetingSummary.setStatus(MeetingStatusType.DRAFT.getCode());
+			} 
+			this.saveMeetingSummary(userJson,meetingSummary);
+			info.setResult(JacksonUtils.toJson(meetingSummary));
+			info.setSucess(true);
+			info.setMsg("暂存对象成功!");
+		} catch (Exception e) {
+			log.error("暂存对象失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("暂存对象失败!");
+			info.setExceptionMsg(e.getMessage());
+			info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+		}
+		return JacksonUtils.toJson(info);
+	}
+}

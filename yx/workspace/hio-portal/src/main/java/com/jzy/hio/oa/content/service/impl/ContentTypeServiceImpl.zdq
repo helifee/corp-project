@@ -1,0 +1,636 @@
+package com.jzy.hio.oa.content.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.BeanWrapper;
+import org.springframework.beans.BeanWrapperImpl;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.base.utils.DubboServiceResultInfo;
+import com.jzy.hio.base.utils.IDGenerator;
+import com.jzy.hio.base.utils.Page;
+import com.jzy.hio.oa.content.dto.ContentTypeAndAuthorDto;
+import com.jzy.hio.oa.content.dto.ContentTypeTreeData;
+import com.jzy.hio.oa.content.entity.ContentChild;
+import com.jzy.hio.oa.content.entity.ContentRowAttribute;
+import com.jzy.hio.oa.content.entity.ContentRowType;
+import com.jzy.hio.oa.content.entity.ContentType;
+import com.jzy.hio.oa.content.mapper.ContentAuthorDao;
+import com.jzy.hio.oa.content.mapper.ContentChildDao;
+import com.jzy.hio.oa.content.mapper.ContentRowAttributeDao;
+import com.jzy.hio.oa.content.mapper.ContentRowTypeDao;
+import com.jzy.hio.oa.content.mapper.ContentTypeDao;
+import com.jzy.hio.oa.content.service.ContentAuthorService;
+import com.jzy.hio.oa.content.service.ContentChildService;
+import com.jzy.hio.oa.content.service.ContentRowAttributeService;
+import com.jzy.hio.oa.content.service.ContentRowTypeService;
+import com.jzy.hio.oa.content.service.ContentTypeService;
+import com.jzy.hio.oa.content.util.ContentEnum;
+import com.jzy.tools.data.JacksonUtils;
+
+/**
+ * @author admin
+ */
+
+@Service
+public class ContentTypeServiceImpl extends BaseServiceImpl<String, ContentType> implements ContentTypeService {
+
+	private static Logger log = LoggerFactory.getLogger(ContentTypeServiceImpl.class);
+
+	private Class entityClass; // 实体类
+
+	@Autowired
+	private ContentTypeDao contentTypeDao;
+
+	@Autowired
+	private ContentAuthorDao contentAuthorDao;
+
+	@Autowired
+	private ContentRowAttributeDao contentRowAttributeDao;
+
+	@Autowired
+	private ContentChildDao contentChildDao;
+
+	@Autowired
+	private ContentRowTypeDao contentRowTypeDao;
+	@Autowired
+	private ContentAuthorService contentAuthorService;
+	@Autowired
+	private ContentRowAttributeService contentRowAttributeService;
+	@Autowired
+	private ContentChildService contentChildService;
+	@Autowired
+	private ContentRowTypeService contentRowTypeService;
+
+	// 菜单注册服务
+	// @Autowired
+	// private ResourceDtoServiceCustomer resourceDtoServiceCustomer;
+	// // 功能点注册
+	// @Autowired
+	// private OperationDtoServiceCustomer operationDtoServiceCustomer;
+	// // 组件注册
+	// @Autowired
+	// private ComponentCategoryService componentCategoryDtoServiceCustomer;
+	// @Autowired
+	// private ComponentService componentDtoServiceCustomer;
+
+	/**
+	 * 查询知识管理大类总数
+	 *
+	 * @return
+	 */
+	public int getCountFolders() {
+		return contentTypeDao.getCountFolders();
+	}
+
+	@Override
+	public List<ContentTypeTreeData> getContentTypeTree() {
+		// TODO Auto-generated method stub
+		return contentTypeDao.getContentTypeTree();
+	}
+
+	@Override
+	public Long queryTotalFileSize(ContentType contentType) {
+		contentTypeDao.queryTotalFileSize(contentType);
+		return null;
+	}
+
+	/**
+	 * 获取对象的空值属性
+	 * 
+	 * @param source
+	 * @return
+	 */
+	public static String[] getNullPropertyNames(Object source) {
+		final BeanWrapper src = new BeanWrapperImpl(source);
+		java.beans.PropertyDescriptor[] pds = src.getPropertyDescriptors();
+
+		Set<String> emptyNames = new HashSet<String>();
+		for (java.beans.PropertyDescriptor pd : pds) {
+			Object srcValue = src.getPropertyValue(pd.getName());
+			if (srcValue == null)
+				emptyNames.add(pd.getName());
+		}
+		String[] result = new String[emptyNames.size()];
+
+		return emptyNames.toArray(result);
+	}
+
+	/**
+	 * 同步保存大类表以及权限表和属性表
+	 *
+	 * @param userInfo
+	 * @param saveJson
+	 * @return
+	 */
+	@Override
+	public String saveContentTypeAndAuthor(String userInfo, String saveJson) throws RuntimeException {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		ContentTypeAndAuthorDto contentTypeAnDAuthorDto = JacksonUtils.fromJson(saveJson, ContentTypeAndAuthorDto.class);
+		// 然后保存该知识大类对象
+		ContentType contentType = new ContentType();
+		BeanUtils.copyProperties(contentTypeAnDAuthorDto, contentType, getNullPropertyNames(contentTypeAnDAuthorDto));
+		contentType.setId(contentTypeAnDAuthorDto.getId());
+		if (contentTypeAnDAuthorDto.getCountCapacity() != null) {
+			contentType.setCountCapacity(Long.parseLong(contentTypeAnDAuthorDto.getCountCapacity()));
+		}
+		if (contentTypeAnDAuthorDto.getFileSize() != null) {
+			contentType.setFileSize(Long.parseLong(contentTypeAnDAuthorDto.getFileSize()));
+		}
+		ContentType oldContentType = contentTypeDao.selectByPrimaryKey(contentType.getId());
+		ContentType childContentType = oldContentType;
+		if (oldContentType == null) {
+			Map<String, Object> paramMap = new HashMap<String, Object>();
+			paramMap.put("code", contentType.getCode());
+			paramMap.put("delflag", false);
+			List<ContentType> contentTypes = null;
+			try {
+				contentTypes = this.queryListByExample(paramMap);
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+			if (contentTypes != null && contentTypes.size() > 0) {
+				throw new RuntimeException("编码重复!");
+			}
+			contentTypeDao.insertSelective(contentType);
+		} else {
+			Map<String, Object> paramMap = new HashMap<String, Object>();
+			paramMap.put("code", contentType.getCode());
+			paramMap.put("delflag", false);
+			ContentType repeatContentType = null;
+			List<ContentType> contentTypes = null;
+			try {
+				contentTypes = this.queryListByExample(paramMap);
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+			if (contentTypes != null && contentTypes.size() > 0) {
+				repeatContentType = contentTypes.get(0);
+			}
+			if (repeatContentType != null && !repeatContentType.getId().equals(contentType.getId())) {
+				throw new RuntimeException("编码重复!");
+			}
+			BeanUtils.copyProperties(contentType, oldContentType, getNullPropertyNames(contentType));
+			contentTypeDao.updateByPrimaryKeySelective(oldContentType);
+
+			// 同步知识目录中大类下各个目录的所属目录
+			Map<String, Object> childParamMap = new HashMap<String, Object>();
+			childParamMap.put("contentType", oldContentType.getId());
+			List<ContentChild> contentChildList = new ArrayList<>();
+			try {
+				contentChildList = contentChildService.queryListByExample(childParamMap);
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+			for (ContentChild contentChild : contentChildList) {
+				String fullPath = contentChild.getFullPath();
+				if (fullPath.indexOf("/") > -1) {
+					fullPath = oldContentType.getName() + fullPath.substring(fullPath.indexOf("/"));
+				} else {
+					fullPath = oldContentType.getName();
+				}
+
+				contentChild.setFullPath(fullPath);
+				contentChildDao.updateByPrimaryKeySelective(contentChild);
+			}
+		}
+
+		// 每个知识大类新建的时候，都会有默认的21条基本数据属性，所以要往 数据属性表插入21条数据
+		Map<String, Object> paramater = new HashMap<String, Object>();
+		paramater.put("contentTypeId", "0");
+		List<ContentRowAttribute> contentRowAttributelist = contentRowAttributeService.querySearchAttrList(paramater);
+
+		// 新建时默认插入21条基本属性
+		if (oldContentType == null) {
+			// 批量保存的参数list
+			List<ContentRowAttribute> batchList = new ArrayList<ContentRowAttribute>();
+			if (contentRowAttributelist.size() > 0) {
+				for (ContentRowAttribute contentRowAttribute : contentRowAttributelist) {
+					contentRowAttribute.setId(IDGenerator.getUUID());
+					contentRowAttribute.setContentTypeId(contentType.getId());
+					if (contentType.getNewsType() != null && "titlePic".equals(contentRowAttribute.getFieldCode())
+							&& ContentEnum.PIC_NEWS.equals(ContentEnum.valueOf(contentType.getNewsType()))) {
+						contentRowAttribute.setIsUsing(true);
+					}
+
+					batchList.add(contentRowAttribute);
+				}
+				// 然后把知识大类的数据属性批量保存
+				contentRowAttributeDao.insertList(batchList);
+			}
+		}
+
+		// 注册组件
+		String componentJson = contentTypeAnDAuthorDto.getComponentJson();
+		if (componentJson != null && !"".equals(componentJson)) {
+			this.registerComponent(userInfo, componentJson);
+		}
+
+		// 注册菜单
+		String menuJson = contentTypeAnDAuthorDto.getMenuJson();
+		new Thread(new Runnable() {
+			@Override
+			public void run() {
+				registerMenu(userInfo, menuJson);
+			}
+		}).start();
+
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public int deleteContentTypeAndAuthor(String userInfo, String deleteJson) {
+		int result = 0;
+		ContentType contentType = JacksonUtils.fromJson(deleteJson, ContentType.class);
+		// 先删除知识大类信息
+		contentTypeDao.selectByExample(contentType.getId());
+		// 然后删除知识大类下面的知识目录信息
+		contentChildService.deleteContentChildByParentId(contentType.getId());
+		// 然后删除与知识大类关联的数据属性信息表
+		contentRowAttributeService.deleteContentRowAttributeByContentTypeId(contentType.getId());
+		// 然后删除该知识大类下面的新闻信息
+		contentRowTypeService.deleteContentRowTypeByContentTypeId(contentType.getId());
+		// 然后删除该知识大类所具备的权限
+		result = contentAuthorService.deleteContentAuthorByTypeId(contentType.getId());
+
+		return result;
+	}
+
+	@Override
+	public Page getContentTypeByPage(Map map) throws Exception {
+		// TODO Auto-generated method stub
+		// Page page = this.contentTypeDao.queryObjectsByPage(map);
+		// return page;
+		return null;
+	}
+
+	@Override
+	public int deletePseudoAllObjectByIds(String userInfo, List<String> ids) throws Exception {
+		int deleteCount = 0;
+		if (ids != null && ids.size() > 0) {
+			for (String id : ids) {
+				ContentType contentType = this.getObjectById(id);
+
+				// 获取大类下目录
+				Map<String, Object> childParamMap = new HashMap<String, Object>();
+				childParamMap.put("contentTypeId", id);
+				childParamMap.put("delflag", false);
+				List<ContentChild> contentChildList = this.contentChildService.queryListByExample(childParamMap);
+				if (contentChildList != null && contentChildList.size() > 0) {
+					throw new Exception("知识大类【" + contentType.getName() + "】下存在子目录，请先删除对应的子目录！");
+				}
+
+				// 获取大类下文档条目
+				Map<String, Object> rowParamMap = new HashMap<String, Object>();
+				rowParamMap.put("contentTypeId", id);
+				rowParamMap.put("delflag", false);
+				List<ContentRowType> contentRowTypeList = this.contentRowTypeService.queryListByExample(rowParamMap);
+				if (contentRowTypeList != null && contentRowTypeList.size() > 0) {
+					throw new Exception("知识大类【" + contentType.getName() + "】下存在知识条目，请先删除对应的知识条目！");
+				}
+
+				// 查找知识大类对应的菜单
+				// String menuResult = resourceDtoServiceCustomer.getObjectById(userInfo, "{\"id\":\"" + id + "\"}");
+				// DubboServiceResultInfo menuResultInfo = JacksonUtils.fromJson(menuResult, DubboServiceResultInfo.class);
+				// if (!menuResultInfo.isSucess()) {
+				// throw new Exception("数据删除失败！");
+				// }
+				// String menuObj = menuResultInfo.getResult();
+				// Map<String, Object> menuMap = JacksonUtils.fromJson(menuObj, HashMap.class);
+				//
+				// // 先删除注册的按钮，如果按钮删除不成功则此数据无法删除
+				// String operationListResult = operationDtoServiceCustomer.queryList(userInfo, "{\"resourceId\":\"" + id + "\"}");
+				// DubboServiceResultInfo operationResultInfo = JacksonUtils.fromJson(operationListResult, DubboServiceResultInfo.class);
+				// if (!operationResultInfo.isSucess()) {
+				// throw new Exception("数据删除失败！");
+				// }
+				// String operationListObj = operationResultInfo.getResult();
+				// List<Map<String, Object>> operationListMap = JacksonUtils.fromJson(operationListObj, List.class, Map.class);
+				// String delOperationResult = null;
+				// if (operationListMap != null && operationListMap.size() > 0) {
+				// for (Map<String, Object> operationMap : operationListMap) {
+				// delOperationResult = operationDtoServiceCustomer.deletePseudoObjectById(userInfo, "{\"id\":\"" + (String) operationMap.get("id") + "\"}");
+				// if (delOperationResult != null) {
+				// DubboServiceResultInfo delOperationResultInfo = JacksonUtils.fromJson(delOperationResult, DubboServiceResultInfo.class);
+				// if (!delOperationResultInfo.isSucess()) {
+				// throw new Exception("按钮删除失败！");
+				// }
+				// }
+				// }
+				// }
+				//
+				// // 删除菜单
+				// String delMenuResult = null;
+				// if (menuMap != null) {
+				// delMenuResult = resourceDtoServiceCustomer.deletePseudoObjectById(userInfo, "{\"id\":\"" + id + "\"}");
+				// }
+				// if (delMenuResult != null) {
+				// DubboServiceResultInfo delMenuResultInfo = JacksonUtils.fromJson(delMenuResult, DubboServiceResultInfo.class);
+				// if (!delMenuResultInfo.isSucess()) {
+				// throw new Exception("菜单删除失败！");
+				// }
+				// }
+				//
+				// // 删除注册的组件，如果组件删除不成功则此数据无法删除
+				// Component component = componentDtoServiceCustomer.getObjectById(id);
+				// if (component == null) {
+				// throw new Exception("数据删除失败！");
+				// }
+				//
+				// // 删除组件
+				// int delComponentResult = 0;
+				// if (component != null) {
+				// delComponentResult = componentDtoServiceCustomer.deletePseudoObjectById(id);
+				// }
+				// if (delComponentResult == 0) {
+				// throw new Exception("组件删除失败！");
+				// }
+
+				// 获取大类属性
+				Map<String, Object> attrParamMap = new HashMap<String, Object>();
+				attrParamMap.put("contentTypeId", id);
+				attrParamMap.put("delflag", false);
+				List<ContentRowAttribute> contentRowAttributeList = this.contentRowAttributeService.queryListByExample(attrParamMap);
+				for (ContentRowAttribute contentRowAttribute : contentRowAttributeList) {
+					try {
+						this.contentRowAttributeService.deletePseudoObjectById(contentRowAttribute.getId());
+					} catch (Exception e) {
+						throw new Exception("知识大类【" + contentType.getName() + "】属性删除失败！");
+					}
+				}
+
+				// 删除知识大类
+				deleteCount += this.deletePseudoObjectById(id);
+
+			}
+		}
+		return deleteCount;
+	}
+
+	/**
+	 * 向系统中动态注册菜单
+	 *
+	 * @param userInfo
+	 * @param saveJson
+	 * @return
+	 * @throws Exception
+	 */
+	private String registerMenu(String userInfo, String saveJson) {
+		Map<String, Object> menuMap = JacksonUtils.fromJson(saveJson, HashMap.class);
+
+		// String menuResult = resourceDtoServiceCustomer.getObjectById(userInfo, "{\"id\":\"" + (String) menuMap.get("id") + "\"}");
+		// Map<String, Object> menuResultMap = JacksonUtils.fromJson(menuResult, HashMap.class);
+		// String menuStr = (String) menuResultMap.get("result");
+		// Map<String, Object> oldMenuMap = JacksonUtils.fromJson(menuStr, HashMap.class);
+		String registerMenuResult = null;
+		// if (oldMenuMap != null) {
+		// oldMenuMap.putAll(menuMap);
+		// saveJson = JacksonUtils.toJson(oldMenuMap);
+		// registerMenuResult = resourceDtoServiceCustomer.update(userInfo, saveJson);
+		// } else {
+		// String resultJson = JacksonUtils.toJson(menuMap);
+		// registerMenuResult = resourceDtoServiceCustomer.save(userInfo, resultJson);
+		// }
+
+		// DubboServiceResultInfo dubboServiceResultInfo = JacksonUtils.fromJson(registerMenuResult, DubboServiceResultInfo.class);
+		// if (!dubboServiceResultInfo.isSucess()) {
+		// throw new RuntimeException("菜单注册失败！");
+		// }
+
+		// 为新注册的菜单注册一个查询按钮
+		Map<String, Object> operationMap = new HashMap<String, Object>();
+		// operationMap.put("id",menuMap.get("id"));
+		operationMap.put("name", "查询");
+		operationMap.put("code", (String) menuMap.get("code") + "_QUERY");
+		operationMap.put("appId", menuMap.get("appId"));
+		operationMap.put("resourceId", menuMap.get("id"));
+		operationMap.put("type", "1");
+		saveJson = JacksonUtils.toJson(operationMap);
+		registOperation(userInfo, saveJson);
+
+		// 为新注册的菜单注册一个新增按钮
+		Map<String, Object> operationAddMap = new HashMap<String, Object>();
+		// operationMap.put("id",menuMap.get("id"));
+		operationAddMap.put("name", "新增");
+		operationAddMap.put("code", (String) menuMap.get("code") + "_CREATE");
+		operationAddMap.put("appId", menuMap.get("appId"));
+		operationAddMap.put("resourceId", menuMap.get("id"));
+		operationAddMap.put("type", "0");
+		saveJson = JacksonUtils.toJson(operationAddMap);
+		registOperation(userInfo, saveJson);
+
+		// 为新注册的菜单注册一个修改按钮
+		Map<String, Object> operationUpdateMap = new HashMap<String, Object>();
+		// operationMap.put("id",menuMap.get("id"));
+		operationUpdateMap.put("name", "修改");
+		operationUpdateMap.put("code", (String) menuMap.get("code") + "_UPDATE");
+		operationUpdateMap.put("appId", menuMap.get("appId"));
+		operationUpdateMap.put("resourceId", menuMap.get("id"));
+		operationUpdateMap.put("type", "0");
+		saveJson = JacksonUtils.toJson(operationUpdateMap);
+		registOperation(userInfo, saveJson);
+
+		// 为新注册的菜单注册一个删除按钮
+		Map<String, Object> operationDeleteMap = new HashMap<String, Object>();
+		// operationMap.put("id",menuMap.get("id"));
+		operationDeleteMap.put("name", "删除");
+		operationDeleteMap.put("code", (String) menuMap.get("code") + "_DELETE");
+		operationDeleteMap.put("appId", menuMap.get("appId"));
+		operationDeleteMap.put("resourceId", menuMap.get("id"));
+		operationDeleteMap.put("type", "0");
+		saveJson = JacksonUtils.toJson(operationDeleteMap);
+		registOperation(userInfo, saveJson);
+
+		// 为新注册的菜单注册一个置顶按钮
+		Map<String, Object> operationStickMap = new HashMap<String, Object>();
+		// operationMap.put("id",menuMap.get("id"));
+		operationStickMap.put("name", "置顶");
+		operationStickMap.put("code", (String) menuMap.get("code") + "_STICK");
+		operationStickMap.put("appId", menuMap.get("appId"));
+		operationStickMap.put("resourceId", menuMap.get("id"));
+		operationStickMap.put("type", "0");
+		saveJson = JacksonUtils.toJson(operationStickMap);
+		registOperation(userInfo, saveJson);
+
+		// 为新注册的菜单注册一个发布按钮
+		Map<String, Object> operationPublishMap = new HashMap<String, Object>();
+		// operationMap.put("id",menuMap.get("id"));
+		operationPublishMap.put("name", "发布");
+		operationPublishMap.put("code", (String) menuMap.get("code") + "_PUBLISH");
+		operationPublishMap.put("appId", menuMap.get("appId"));
+		operationPublishMap.put("resourceId", menuMap.get("id"));
+		operationPublishMap.put("type", "0");
+		saveJson = JacksonUtils.toJson(operationPublishMap);
+		registOperation(userInfo, saveJson);
+
+		// 为新注册的菜单注册一个上移按钮
+		Map<String, Object> operationUpMoveMap = new HashMap<String, Object>();
+		// operationMap.put("id",menuMap.get("id"));
+		operationUpMoveMap.put("name", "上移");
+		operationUpMoveMap.put("code", (String) menuMap.get("code") + "_UP_MOVE");
+		operationUpMoveMap.put("appId", menuMap.get("appId"));
+		operationUpMoveMap.put("resourceId", menuMap.get("id"));
+		operationUpMoveMap.put("type", "0");
+		saveJson = JacksonUtils.toJson(operationUpMoveMap);
+		registOperation(userInfo, saveJson);
+
+		// 为新注册的菜单注册一个下移按钮
+		Map<String, Object> operationDownMoveMap = new HashMap<String, Object>();
+		// operationMap.put("id",menuMap.get("id"));
+		operationDownMoveMap.put("name", "下移");
+		operationDownMoveMap.put("code", (String) menuMap.get("code") + "_DOWN_MOVE");
+		operationDownMoveMap.put("appId", menuMap.get("appId"));
+		operationDownMoveMap.put("resourceId", menuMap.get("id"));
+		operationDownMoveMap.put("type", "0");
+		saveJson = JacksonUtils.toJson(operationDownMoveMap);
+		registOperation(userInfo, saveJson);
+
+		// 为新注册的菜单注册一个分类转移按钮
+		Map<String, Object> operationTransMap = new HashMap<String, Object>();
+		// operationMap.put("id",menuMap.get("id"));
+		operationTransMap.put("name", "分类转移");
+		operationTransMap.put("code", (String) menuMap.get("code") + "_TRANS");
+		operationTransMap.put("appId", menuMap.get("appId"));
+		operationTransMap.put("resourceId", menuMap.get("id"));
+		operationTransMap.put("type", "0");
+		saveJson = JacksonUtils.toJson(operationTransMap);
+		registOperation(userInfo, saveJson);
+
+		// 为新注册的菜单注册一个取消发布按钮
+		Map<String, Object> operationUnPublishMap = new HashMap<String, Object>();
+		// operationMap.put("id",menuMap.get("id"));
+		operationUnPublishMap.put("name", "取消发布");
+		operationUnPublishMap.put("code", (String) menuMap.get("code") + "_UN_PUBLISH");
+		operationUnPublishMap.put("appId", menuMap.get("appId"));
+		operationUnPublishMap.put("resourceId", menuMap.get("id"));
+		operationUnPublishMap.put("type", "0");
+		saveJson = JacksonUtils.toJson(operationUnPublishMap);
+		registOperation(userInfo, saveJson);
+
+		// 为新注册的菜单注册一个取消置顶按钮
+		Map<String, Object> operationUnStickMap = new HashMap<String, Object>();
+		// operationMap.put("id",menuMap.get("id"));
+		operationUnStickMap.put("name", "取消置顶");
+		operationUnStickMap.put("code", (String) menuMap.get("code") + "_UN_STICK");
+		operationUnStickMap.put("appId", menuMap.get("appId"));
+		operationUnStickMap.put("resourceId", menuMap.get("id"));
+		operationUnStickMap.put("type", "0");
+		saveJson = JacksonUtils.toJson(operationUnStickMap);
+		registOperation(userInfo, saveJson);
+
+		// 为新注册的菜单注册一个查看审批按钮
+		Map<String, Object> operationViewApproveMap = new HashMap<String, Object>();
+		// operationMap.put("id",menuMap.get("id"));
+		operationViewApproveMap.put("name", "查看审批");
+		operationViewApproveMap.put("code", (String) menuMap.get("code") + "_VIEW_APPROVE");
+		operationViewApproveMap.put("appId", menuMap.get("appId"));
+		operationViewApproveMap.put("resourceId", menuMap.get("id"));
+		operationViewApproveMap.put("type", "0");
+		saveJson = JacksonUtils.toJson(operationViewApproveMap);
+		registOperation(userInfo, saveJson);
+
+		return registerMenuResult;
+	}
+
+	/**
+	 * 向系统中动态注册操作按钮
+	 *
+	 * @param userInfo
+	 * @param saveJson
+	 * @return
+	 * @throws Exception
+	 */
+	private String registOperation(String userInfo, String saveJson) {
+		Map<String, Object> operationMap = JacksonUtils.fromJson(saveJson, HashMap.class);
+
+		// String operationResult = operationDtoServiceCustomer.getObjectById(userInfo,"{\"id\":\""+(String)operationMap.get("id")+"\"}");
+		// String operationResult = operationDtoServiceCustomer.queryList(userInfo, JacksonUtils.toJson(operationMap));
+		// Map<String, Object> operationResultMap = JacksonUtils.fromJson(operationResult, HashMap.class);
+		//
+		// String oldoperationStr = (String) operationResultMap.get("result");
+		// List<Map<String, Object>> list = JacksonUtils.fromJson(oldoperationStr, ArrayList.class, HashMap.class);
+		// Map<String, Object> oldoperationResultMap = null;//
+		// if (list != null && list.size() > 0) {
+		// oldoperationResultMap = list.get(0);
+		// // operationMap.put("id",oldoperationResultMap.get("id"));
+		// }
+		//
+		String registerOperationResult = null;
+		// if (oldoperationResultMap != null) {
+		// oldoperationResultMap.putAll(operationMap);
+		// saveJson = JacksonUtils.toJson(oldoperationResultMap);
+		// registerOperationResult = operationDtoServiceCustomer.update(userInfo, saveJson);
+		// } else {
+		// operationMap.put("id", IDGenerator.getUUID());
+		// saveJson = JacksonUtils.toJson(operationMap);
+		// registerOperationResult = operationDtoServiceCustomer.save(userInfo, saveJson);
+		// }
+
+		DubboServiceResultInfo dubboServiceResultInfo = JacksonUtils.fromJson(registerOperationResult, DubboServiceResultInfo.class);
+		if (!dubboServiceResultInfo.isSucess()) {
+			throw new RuntimeException("按钮注册失败！");
+		}
+		return registerOperationResult;
+	}
+
+	/**
+	 * @param userInfo
+	 * @param saveJson
+	 * @return
+	 * @throws Exception
+	 */
+	private String registerComponent(String userInfo, String saveJson) {
+		Map<String, Object> componentMap = JacksonUtils.fromJson(saveJson, HashMap.class);
+
+		// 查看是否有OA类型的组件分类，没有的话创建一个
+		Map<String, Object> paramMap = new HashMap<String, Object>();
+		paramMap.put("categoryCode", "OA");
+		// List<ComponentCategory> list = new ArrayList<>();
+		// try {
+		// list = this.componentCategoryDtoServiceCustomer.queryListByExample(paramMap);
+		// } catch (Exception e) {
+		// e.printStackTrace();
+		// }
+		// String categoryId = null;
+		// if (list == null || list.size() == 0) {
+		// Map<String, Object> categoryMap = new HashMap<String, Object>();
+		// categoryId = IDGenerator.getUUID();
+		// categoryMap.put("id", categoryId);
+		// categoryMap.put("categoryCode", "OA");
+		// categoryMap.put("categoryName", "协同办公");
+		// categoryMap.put("categoryDesc", "协同办公应用组件分类");
+		//// this.componentCategoryDtoServiceCustomer.save(userInfo, JacksonUtils.toJson(categoryMap));
+		// } else {
+		// categoryId = (String) list.get(0).getId();
+		// }
+		// componentMap.put("categoryId", categoryId);
+
+		// 根据新组件内容查找已存在组件
+		// ComponentCategory componentResult = this.componentDtoServiceCustomer.getObjectById(categoryId);
+		// if (componentResult != null) {
+		// oldComponent.putAll(componentMap);
+		// saveJson = JacksonUtils.toJson(oldComponent);
+		// registerComponentResult = componentDtoServiceCustomer.update(userInfo, saveJson);
+		// } else {
+		// saveJson = JacksonUtils.toJson(componentMap);
+		// registerComponentResult = componentDtoServiceCustomer.save(userInfo, saveJson);
+		// }
+		// DubboServiceResultInfo dubboServiceResultInfo = JacksonUtils.fromJson(registerComponentResult, DubboServiceResultInfo.class);
+		// if (!dubboServiceResultInfo.isSucess()) {
+		// throw new RuntimeException("组件注册失败！");
+		// }
+
+		// return registerComponentResult;
+		return null;
+	}
+}

@@ -1,0 +1,1024 @@
+package com.jzy.hio.flow.service.impl;
+
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.stream.Collectors;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.annotation.DataSource;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.exception.HioMybatisQueryException;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.flow.entity.FlowCopy;
+import com.jzy.hio.flow.entity.FlowCustomForm;
+import com.jzy.hio.flow.entity.FlowInstance;
+import com.jzy.hio.flow.entity.FlowInstanceAc;
+import com.jzy.hio.flow.entity.FlowTemplate;
+import com.jzy.hio.flow.entity.FlowTemplateApprover;
+import com.jzy.hio.flow.entity.FlowVariables;
+import com.jzy.hio.flow.entity.dto.ApprovalCountDto;
+import com.jzy.hio.flow.entity.dto.ApprovalDto;
+import com.jzy.hio.flow.entity.dto.FormItem;
+import com.jzy.hio.flow.entity.dto.InstanceAcRecordDto;
+import com.jzy.hio.flow.entity.dto.InstanceApproverRecordDto;
+import com.jzy.hio.flow.entity.dto.InstanceDetailsDto;
+import com.jzy.hio.flow.entity.enums.FlowApproverEnum;
+import com.jzy.hio.flow.entity.enums.FlowStateEnum;
+import com.jzy.hio.flow.entity.param.AddLabelParam;
+import com.jzy.hio.flow.entity.param.ApprovalParam;
+import com.jzy.hio.flow.entity.param.CopyParam;
+import com.jzy.hio.flow.entity.param.FlowApprovalParam;
+import com.jzy.hio.flow.entity.param.FlowRejectParam;
+import com.jzy.hio.flow.entity.param.FlowSimulationParam;
+import com.jzy.hio.flow.entity.param.FlowSubmitParam;
+import com.jzy.hio.flow.entity.param.InstanceDetailsParam;
+import com.jzy.hio.flow.entity.param.UpdateApproverParam;
+import com.jzy.hio.flow.mapper.FlowChangeApproverDao;
+import com.jzy.hio.flow.mapper.FlowCopyDao;
+import com.jzy.hio.flow.mapper.FlowFollowInstanceDao;
+import com.jzy.hio.flow.mapper.FlowInstanceAcDao;
+import com.jzy.hio.flow.mapper.FlowInstanceApprovalRecordDao;
+import com.jzy.hio.flow.mapper.FlowInstanceDao;
+import com.jzy.hio.flow.mapper.FlowLinkLineDao;
+import com.jzy.hio.flow.mapper.FlowTemplateAcCopyDao;
+import com.jzy.hio.flow.mapper.FlowTemplateAcDao;
+import com.jzy.hio.flow.mapper.FlowTemplateApproverDao;
+import com.jzy.hio.flow.mapper.FlowTemplateDao;
+import com.jzy.hio.flow.param.FlowByProjectParam;
+import com.jzy.hio.flow.runtime.AbstractBaseOperation;
+import com.jzy.hio.flow.runtime.OperateType;
+import com.jzy.hio.flow.runtime.Operation;
+import com.jzy.hio.flow.runtime.OperationFactory;
+import com.jzy.hio.flow.runtime.StartOperation;
+import com.jzy.hio.flow.service.FlowCopyService;
+import com.jzy.hio.flow.service.FlowCustomFormInstanceService;
+import com.jzy.hio.flow.service.FlowCustomFormService;
+import com.jzy.hio.flow.service.FlowInstanceApprovalRecordService;
+import com.jzy.hio.flow.service.FlowInstanceService;
+import com.jzy.hio.flow.service.FlowTemplateRoleService;
+import com.jzy.hio.flow.utils.FlowConstants;
+import com.jzy.hio.flow.utils.RedisLock;
+import com.jzy.hio.flow.utils.TransitionUserNameUtils;
+import com.jzy.hio.platform.message.MessageFeignService;
+import com.jzy.hio.sys.organization.dto.FlowPositionDto;
+import com.jzy.hio.sys.organization.dto.FlowUserDto;
+import com.jzy.hio.sys.user.dto.IMUserDetailInfoDto;
+import com.jzy.hio.sys.user.dto.UserDto;
+import com.jzy.hio.utils.LoginUser;
+import com.jzy.hio.utils.Page;
+
+/**
+ * 流程实例服务
+ *
+ * @author chaoyang
+ *
+ */
+@Service
+public class FlowInstanceServiceImpl extends BaseServiceImpl<FlowInstance> implements FlowInstanceService {
+
+	private Logger logger = LoggerFactory.getLogger(FlowInstanceServiceImpl.class);
+
+	private static final String DELIMITER = ",";
+
+	@Autowired
+	private FlowInstanceDao flowInstanceDao;
+
+	@Autowired
+	FlowFollowInstanceDao flowFollowInstanceDao;
+
+	@Autowired
+	private FlowTemplateAcDao flowTemplateAcDao;
+
+	@Autowired
+	private FlowTemplateDao flowTemplateDao;
+
+	@Autowired
+	private FlowTemplateAcCopyDao flowTemplateAcCopyDao;
+
+	@Autowired
+	private FlowCopyDao flowCopyDao;
+
+	@Autowired
+	private FlowCopyService flowCopyService;
+	@Autowired
+	private FlowLinkLineDao flowLinkLineDao;
+
+	@Autowired
+	private FlowTemplateApproverDao flowTemplateApproverDao;
+
+	@Autowired
+	private FlowInstanceAcDao flowInstanceAcDao;
+
+	@Autowired
+	private FlowInstanceApprovalRecordDao flowInstanceApprovalRecordDao;
+
+	@Autowired
+	private FlowChangeApproverDao flowChangeApproverDao;
+	@Autowired
+	private FlowInstanceApprovalRecordService flowInstanceApprovalRecordService;
+
+	@Autowired
+	private SysFeignService sysFeignService;
+
+	@Autowired
+	private MessageFeignService messageFeignService;
+
+	@Autowired
+	private FlowCustomFormInstanceService flowCustomFormInstanceService;
+
+	@Autowired
+	private FlowCustomFormService flowCustomFormService;
+
+	@Autowired
+	private TransitionUserNameUtils transitionUserNameUtils;
+
+	@Autowired
+	private FlowTemplateRoleService flowTemplateRoleService;
+
+	@Autowired
+	private RedisLock redisLock;
+
+	@SuppressWarnings({ "rawtypes", "unchecked" })
+	@Override
+	public Page getInstanceList(ApprovalParam approvalParam) {
+
+		// 监控列表 判断 start
+		if (approvalParam.isMonitor()) {
+			if (!isSuper()) {
+
+				boolean authorization = super.isRolePermission(BaseConstants.MYSQL_MENU_CODE_FLOW_MANAGE);
+				if (!authorization) {
+					logger.error("没用操作权限");
+					throw new HioException(FlowConstants.NO_PERMISSION_TO_OPERATION.getMessage(),
+							FlowConstants.NO_PERMISSION_TO_OPERATION.getStatus());
+				}
+			}
+		}
+ 		// end
+		LoginUser loginUser = this.getLoginUser();
+		approvalParam.setCreatePerson(loginUser.getUserId());
+		Integer totalCount = flowInstanceDao.getCountInstanceList(approvalParam);
+ 
+		Page page = new Page();
+		page.setPageNum(approvalParam.getPageNum());
+		page.setPageCount(approvalParam.getPageCount());
+		List<ApprovalDto> list = null;
+		approvalParam.setPageNum((approvalParam.getPageNum().intValue() - 1) * approvalParam.getPageCount());
+		approvalParam.setPageCount(approvalParam.getPageCount());
+		if (totalCount.intValue() != 0) {
+ 			List<String> orderby = approvalParam.getOrderby();
+			if (CollectionUtils.isNotEmpty(orderby)) {
+				StringBuilder sql = new StringBuilder();
+				for (String key : orderby) {
+					if (sql.length() == 0) {
+						sql.append(" order by " + key.split(DELIMITER)[0] + " " + key.split(DELIMITER)[1]);
+					} else {
+						sql.append(" , " + key.split(DELIMITER)[0] + " " + key.split(DELIMITER)[1]);
+					}
+				}
+				approvalParam.setDynamicSql(sql.toString());
+			}
+
+			list = flowInstanceDao.getInstanceList(approvalParam);
+
+ 		}
+
+		if (CollectionUtils.isNotEmpty(list)) {
+			transitionUserNameUtils.extractApprover(list);
+			list = transitionUserNameUtils.getList(list, loginUser.getTendId());
+		}
+ 		page.setTotal(totalCount);
+		page.setPageTotal(totalCount % approvalParam.getPageCount() == 0 ? totalCount / approvalParam.getPageCount()
+				: totalCount / approvalParam.getPageCount() + 1);
+		page.setList(list);
+		return page;
+	}
+
+	
+
+	@Override
+	@Transactional(rollbackFor = Exception.class)
+	public String startFlow(FlowSubmitParam startParam) throws Exception {
+
+		Operation operation = new OperationFactory().newOperation(OperateType.START, this);
+
+		String instanceId = null;
+		try {
+			instanceId = operation.action(startParam);
+
+		} catch (Exception e) {
+			// 分布式事务补偿 （流程实例新增时异常而第三方保存成功）
+			if ("1".equals(startParam.getOperateType())) {
+				AbstractBaseOperation op = (AbstractBaseOperation) operation;
+				String businessId = op.getFlowVariables().getBusinessId();
+				FlowCustomForm flowCustomForm = op.getFlowVariables().getFlowCustomForm();
+				if (flowCustomForm != null) {
+					String customFormId = flowCustomForm.getId();
+					try {
+						op.deleteBusinessData(customFormId, businessId);
+					} catch (Exception ee) {
+						throw ee;
+					}
+				}
+			}
+			throw e;
+		}
+
+		return instanceId;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 *
+	 * @throws Exception
+	 */
+	@Override
+	@Transactional(rollbackFor = Exception.class)
+	public String saveDraft(FlowSubmitParam flowStartParam) throws Exception {
+		logger.info("{} 进入草稿保存", getLoginUser().getUserId());
+		flowStartParam.setInstanceState(FlowStateEnum.DRAFT.getState());
+		Operation operation = new OperationFactory().newOperation(OperateType.DRAFT, this);
+		String instanceId = operation.action(flowStartParam);
+		return instanceId;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public InstanceDetailsDto flowView(InstanceDetailsParam instanceDetailsParam) {
+		Operation afterAddOperation = new OperationFactory().newOperation(OperateType.DETAIL, this);
+		InstanceDetailsDto detailOperation = afterAddOperation.detailOperation(instanceDetailsParam);
+		return detailOperation;
+
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	@Transactional(rollbackFor = Exception.class)
+	public int approve(FlowApprovalParam flowApprovalParam) {
+		Operation afterAddOperation = new OperationFactory().newOperation(OperateType.PASS, this);
+		afterAddOperation.passAction(flowApprovalParam);
+		return 1;
+	}
+
+	@Override
+	@Transactional(rollbackFor = Exception.class)
+	public int frontAddLabel(AddLabelParam addLabelParam) {
+
+		Operation afterAddOperation = new OperationFactory().newOperation(OperateType.FRONT_ADD_NODE, this);
+		afterAddOperation.addLabelAction(addLabelParam);
+		return 1;
+	}
+
+	@Override
+	@Transactional(rollbackFor = Exception.class)
+	public int afterAddLabel(AddLabelParam addLabelParam) {
+		Operation afterAddOperation = new OperationFactory().newOperation(OperateType.AFTER_ADD_NODE, this);
+		afterAddOperation.addLabelAction(addLabelParam);
+		return 1;
+	}
+
+	@Override
+	@Transactional(rollbackFor = Exception.class)
+	public int reject(FlowRejectParam flowRejectParam) {
+
+		Operation rejectOperation = new OperationFactory().newOperation(OperateType.REJECT, this);
+		rejectOperation.rejectAction(flowRejectParam);
+
+		return 1;
+	}
+
+	@Override
+	@Transactional(rollbackFor = Exception.class)
+	public int updateApprover(UpdateApproverParam updateApproverParam) {
+		Operation rejectOperation = new OperationFactory().newOperation(OperateType.REPLACE_APPROVER, this);
+		rejectOperation.replaceApproverOperateation(updateApproverParam);
+		return 0;
+	}
+
+	@Transactional(rollbackFor = Exception.class)
+	@Override
+	public int withdraw(String instanceId) {
+
+		Operation withdrawOperation = new OperationFactory().newOperation(OperateType.WITHDRAW, this);
+		withdrawOperation.withDrawOperation(instanceId);
+
+		return 1;
+	}
+
+	@Transactional(rollbackFor = Exception.class)
+	@Override
+	public int flowCopy(CopyParam copyParam) {
+
+		Operation copyOperation = new OperationFactory().newOperation(OperateType.COPY, this);
+		copyOperation.copyOperation(copyParam);
+		return 1;
+	}
+
+	@Transactional(rollbackFor = Exception.class)
+	@Override
+	public int approvalSkip(String instanceId) {
+		Operation copyOperation = new OperationFactory().newOperation(OperateType.SKIP, this);
+		copyOperation.skipOperation(instanceId);
+		return 1;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public Object flowSimulate(FlowSimulationParam flowSimulationParam) {
+		String flowTemplateCode = flowSimulationParam.getFlowTemplateCode();
+		FlowTemplate flowTemplate = this.getFlowTemplateDao().getFlowTemplateByCode(flowTemplateCode);
+		StartOperation startOpertion = (StartOperation) new OperationFactory().newOperation(OperateType.START, this);
+		String templateId = flowTemplate.getId();
+		String instanceId = Base.generatePk(FlowInstance.class);
+		List<FormItem> businessData = flowSimulationParam.getBusinessData();
+
+		// TODO
+		FlowVariables flowVariables = startOpertion.getFlowVariables();
+		flowVariables.setBusinessData(businessData);
+		flowVariables.setTemplate(flowTemplate);
+		List<FlowInstanceAc> instanceNodes = startOpertion.resolveTemplate(templateId, instanceId);
+
+		// 按节点深度排序
+		sortByLevel(instanceNodes);
+
+		Iterator<FlowInstanceAc> iterator = instanceNodes.iterator();
+
+		while (iterator.hasNext()) {
+			Integer nodeType = iterator.next().getNodeType();
+			if (nodeType == 1 || nodeType == 3 || nodeType == 4 || nodeType == 5) {
+				iterator.remove();
+			}
+		}
+
+		List<InstanceAcRecordDto> result = setApproverInfo(instanceNodes, templateId,
+				flowSimulationParam.getFlowStarter());
+
+		return result;
+	}
+
+	/**
+	 * 查出模板对应的审批人信息
+	 *
+	 * @param instanceNodes
+	 * @param templateId
+	 * @return
+	 */
+	private List<InstanceAcRecordDto> setApproverInfo(List<FlowInstanceAc> instanceNodes, String templateId,
+			String flowStarter) {
+
+		FlowTemplateApprover flowTemplateApprover = new FlowTemplateApprover();
+		flowTemplateApprover.setFlowTemplateId(templateId);
+		List<FlowTemplateApprover> templateApproverList = flowTemplateApproverDao.select(flowTemplateApprover);
+
+		List<InstanceAcRecordDto> instanceAcRecordList = new ArrayList<>();
+
+		firstNodeApproverIsCreatePerson(instanceNodes, templateApproverList, instanceAcRecordList, templateId);
+
+		if (CollectionUtils.isNotEmpty(instanceAcRecordList)) {
+			return instanceAcRecordList;
+		}
+
+		List<String> superiorsOrUserList = new ArrayList<>();
+
+		Map<String, List<FlowTemplateApprover>> templateApproverMap = new HashMap<>();
+
+		// 查出模板所有审批是直属上级的
+		superiorsOrUserList.addAll(templateApproverList.stream()
+				.filter(acApprover -> acApprover.getApprovalType() == FlowApproverEnum.SUPERIORS.getType())
+				.map(FlowTemplateApprover::getFlowAcId).collect(Collectors.toList()));
+		// 如果有设置直属上级 调用feign
+		String superiorsUserId = null;
+
+		if (CollectionUtils.isNotEmpty(superiorsOrUserList)) {
+
+			superiorsOrUserList.clear();
+
+			ApiFeignResponse<IMUserDetailInfoDto> orgLeaderUserInfo = sysFeignService
+					.getOrgLeaderUserInfo(getLoginUser().getTendId(), flowStarter);
+
+			if (orgLeaderUserInfo.getStatus() == 200) {
+				if (orgLeaderUserInfo.getResult() == null) {
+					throw new HioException("当前发起人无直属上级！");
+				}
+
+				superiorsUserId = orgLeaderUserInfo.getResult().getImUserId();
+				superiorsOrUserList.add(superiorsUserId);
+				// 直属上级处理
+				for (FlowTemplateApprover approver : templateApproverList) {
+					if (approver.getApprovalType() == FlowApproverEnum.SUPERIORS.getType()) {
+						approver.setApproverId(orgLeaderUserInfo.getResult().getId());
+						approver.setApprovalTypeName(orgLeaderUserInfo.getResult().getName());
+					}
+				}
+			} else {
+
+				logger.error("  调用feign接口查询上级Id 失敗 ");
+				throw new HioException(FlowConstants.FLOW_TEMPLATE_ACTYPE_NOT_EXIST.getMessage(),
+						FlowConstants.FLOW_TEMPLATE_ACTYPE_NOT_EXIST.getStatus());
+			}
+		}
+
+		// 发起人处理
+		for (FlowTemplateApprover approver : templateApproverList) {
+			if (approver.getApprovalType() == FlowApproverEnum.INITIATOR.getType()) {
+				// ApiFeignResponse<SysCurrencyDto> sysCurrencyDtoApiFeignResponse =
+				// sysFeignService
+				// .queryImUserIdByOaUserId(getTendId(), flowStarter);
+				// String imUserId = sysCurrencyDtoApiFeignResponse.getResult().getImUserId();
+				approver.setApproverId(flowStarter);
+			}
+		}
+
+		// 提取出模板所有审批人是用户的
+		superiorsOrUserList.addAll(templateApproverList.stream()
+				.filter(acApprover -> acApprover.getApprovalType() == FlowApproverEnum.USER.getType()
+						|| acApprover.getApprovalType() == FlowApproverEnum.INITIATOR.getType())
+				.map(FlowTemplateApprover::getApproverId).collect(Collectors.toList()));
+
+		// // 表示本组织
+		// List<String> listInside = new ArrayList<>();
+		// // 表示外部联系人
+		// List<String> listExternal = new ArrayList<>();
+		//
+		// listInside.addAll(templateApproverList.stream()
+		// .filter(acApprover -> acApprover.getApprovalType() ==
+		// FlowApproverEnum.USER.getType()
+		// && 0 == acApprover.getUserType()
+		// || acApprover.getApprovalType() == FlowApproverEnum.INITIATOR.getType())
+		// .map(FlowTemplateApprover::getImUserId).collect(Collectors.toList()));
+		//
+		// listExternal.addAll(templateApproverList.stream()
+		// .filter(acApprover -> acApprover.getApprovalType() ==
+		// FlowApproverEnum.USER.getType()
+		// && 1 == acApprover.getUserType())
+		// .map(FlowTemplateApprover::getImUserId).collect(Collectors.toList()));
+		//
+		// Map<Integer, List<String>> imUserId = new HashMap<>();
+		// imUserId.put(0, listInside);
+		// imUserId.put(1, listExternal);
+
+		List<String> userId = templateApproverList.stream().map(FlowTemplateApprover::getApproverId)
+				.collect(Collectors.toList());
+		// SkyDriveParam skyDriveParamApprover=new SkyDriveParam();
+		// skyDriveParamApprover.setUserIds(userId);
+		// skyDriveParamApprover.setStatus(0);
+		// ApiFeignResponse<List<FlowUserDto>> ApproverResult =
+		// sysFeignService.queryPositionNameByUserIds(skyDriveParamApprover);
+
+		/**
+		 * 用户对应的 名称信息
+		 */
+		// Map<String, FlowUserDto> userMap =
+		// transitionUserNameUtils.idsTransitionName(superiorsOrUserList,
+		// getLoginUser().getTendId());
+
+		Map<String, FlowUserDto> userMap = transitionUserNameUtils.getIdsTransitionName(userId,
+				getLoginUser().getTendId());
+
+		for (FlowTemplateApprover approver : templateApproverList) {
+			if (approver.getApprovalType() == 3 || approver.getApprovalType() == 5) {
+				approver.setApprovalTypeName(userMap.get(approver.getApproverId()).getUserName());
+			}
+		}
+
+		// 查出模板对应的审批人信息
+		for (FlowInstanceAc flowInstanceAc : instanceNodes) {
+			String templateNodeId = flowInstanceAc.getTemplateNodeId();
+			templateApproverMap.put(templateNodeId, templateApproverList.stream()
+					.filter(ac -> ac.getFlowAcId().equals(templateNodeId)).collect(Collectors.toList()));
+		}
+
+		/**
+		 * 遍历模板对应的审批人 for (Entry<String, String> entry : map.entrySet()) {
+		 * entry.getKey(); entry.getValue(); }
+		 */
+
+		Map<String, List<FlowTemplateApprover>> approverMap = new LinkedHashMap<>();
+		for (FlowInstanceAc flowInstanceAc : instanceNodes) {
+			for (Entry<String, List<FlowTemplateApprover>> entry : templateApproverMap.entrySet()) {
+				if (entry.getKey().equals(flowInstanceAc.getTemplateNodeId())) {
+					approverMap.put(flowInstanceAc.getTemplateNodeId(), entry.getValue());
+				}
+			}
+		}
+		Iterator<Entry<String, List<FlowTemplateApprover>>> iterator = approverMap.entrySet().iterator();
+
+		while (iterator.hasNext()) {
+			Entry<String, List<FlowTemplateApprover>> entry = iterator.next();
+			InstanceAcRecordDto instanceAcRecordDto = new InstanceAcRecordDto();
+			instanceAcRecordDto.setTemplateAcId(entry.getKey());
+			List<FlowTemplateApprover> apprvoerList = entry.getValue();
+			List<InstanceApproverRecordDto> analysisApprover = analysisApprover(superiorsUserId, superiorsOrUserList,
+					apprvoerList, userMap, flowStarter);
+			instanceAcRecordDto.setApproverList(analysisApprover);
+			instanceAcRecordList.add(instanceAcRecordDto);
+		}
+
+		return instanceAcRecordList;
+	}
+
+	/**
+	 * 验证第一节点的审批人是否是发起人
+	 *
+	 * @param instanceNodes
+	 * @param templateApproverList
+	 * @param instanceAcRecordList
+	 */
+
+	private void firstNodeApproverIsCreatePerson(List<FlowInstanceAc> instanceNodes,
+			List<FlowTemplateApprover> templateApproverList, List<InstanceAcRecordDto> instanceAcRecordList,
+			String templateId) {
+
+		// FlowInstanceAc flowInstanceAc = instanceNodes.get(0);
+		// List<FlowTemplateApprover> collect = templateApproverList.stream()
+		// .filter(templateApprover ->
+		// templateApprover.getFlowAcId().equals(flowInstanceAc.getTemplateNodeId())
+		// && templateApprover.getApprovalType() ==
+		// FlowApproverEnum.INITIATOR.getType())
+		// .collect(Collectors.toList());
+		FlowTemplate flowTemplate = flowTemplateDao.selectByPrimaryKey(templateId);
+		if (flowTemplate.getFlowAutoComplate() == "1") {
+			if (CollectionUtils.isNotEmpty(templateApproverList)) {
+				List<String> userIds = new ArrayList<>(1);
+				userIds.add(getLoginUser().getUserId());
+				Map<String, FlowUserDto> userInfoMap = transitionUserNameUtils.idsTransitionName(userIds,
+						getLoginUser().getTendId());
+				InstanceAcRecordDto instanceAcRecordDto = new InstanceAcRecordDto();
+				instanceAcRecordDto.setTemplateAcId(templateApproverList.get(0).getFlowAcId());
+				List<InstanceApproverRecordDto> list = new ArrayList<>(1);
+				InstanceApproverRecordDto instanceApproverRecordDto = new InstanceApproverRecordDto();
+				FlowUserDto flowUserDto = userInfoMap.get(getLoginUser().getUserId());
+
+				instanceApproverRecordDto.setApprovalUserName(flowUserDto.getUserName());
+				List<FlowPositionDto> positions = flowUserDto.getPositions();
+				List<String> positionNames = positions.stream().map(FlowPositionDto::getOrganizationName)
+						.collect(Collectors.toList());
+
+				if (CollectionUtils.isNotEmpty(positionNames)) {
+					instanceApproverRecordDto.setPostName(String.join(",", positionNames));
+				}
+
+				list.add(instanceApproverRecordDto);
+				instanceAcRecordDto.setApproverList(list);
+
+				instanceAcRecordList.add(instanceAcRecordDto);
+			}
+		}
+
+	}
+
+	/**
+	 * 解析模板审批人
+	 *
+	 * @param superiorsUserId
+	 * @param superiorsOrUserList
+	 * @param apprvoerList
+	 * @param userMap
+	 * @return
+	 */
+	private List<InstanceApproverRecordDto> analysisApprover(String superiorsUserId, List<String> superiorsOrUserList,
+			List<FlowTemplateApprover> apprvoerList, Map<String, FlowUserDto> userMap, String flowStarter) {
+
+		List<InstanceApproverRecordDto> approverRecord = new ArrayList<InstanceApproverRecordDto>();
+
+		for (FlowTemplateApprover flowTemplateApprover : apprvoerList) {
+			InstanceApproverRecordDto instanceApproverRecordDto = new InstanceApproverRecordDto();
+			FlowUserDto flowUserDto = null;
+			if (flowTemplateApprover.getApprovalType() == FlowApproverEnum.USER.getType()) {
+				flowUserDto = userMap.get(flowTemplateApprover.getApproverId());
+			} else if (flowTemplateApprover.getApprovalType() == FlowApproverEnum.INITIATOR.getType()) {
+				flowUserDto = userMap.get(flowTemplateApprover.getApproverId());
+			} else if (flowTemplateApprover.getApprovalType() == FlowApproverEnum.SUPERIORS.getType()) {
+				// 直属上级处理返回
+				flowUserDto = userMap.get(flowTemplateApprover.getApproverId());
+			} else if (flowTemplateApprover.getApprovalType() == FlowApproverEnum.DEPT_ROLE.getType()) {
+				String[] typeIds = flowTemplateApprover.getApproverId().split(DELIMITER);
+				HashMap<String, Object> hashMap = new HashMap<>(2);
+				hashMap.put("organizationId", typeIds[1]);
+				hashMap.put("roleId", typeIds[0]);
+				hashMap.put("tendId", getTendId());
+				ApiFeignResponse<List<UserDto>> userListByOrgAndRoleId = sysFeignService
+						.getUserListByOrgAndRoleId(hashMap);
+				if (userListByOrgAndRoleId.getStatus() == 200) {
+					for (UserDto userDto : userListByOrgAndRoleId.getResult()) {
+						InstanceApproverRecordDto instanceApproverRecord = new InstanceApproverRecordDto();
+						instanceApproverRecord.setApprovalUserName(userDto.getName());
+						instanceApproverRecord.setPostName(userDto.getPosition());
+						approverRecord.add(instanceApproverRecord);
+					}
+				}
+			} else if (flowTemplateApprover.getApprovalType() == FlowApproverEnum.CURRENT_DEPT_ROLE.getType()) {
+				HashMap<String, Object> hashMap = new HashMap<>(3);
+				hashMap.put("userId", flowStarter);
+				hashMap.put("roleId", flowTemplateApprover.getApproverId());
+				hashMap.put("tendId", getTendId());
+				ApiFeignResponse<List<UserDto>> userListByOrgAndRoleId = sysFeignService
+						.getUserListByOrgAndRoleId(hashMap);
+				if (userListByOrgAndRoleId.getStatus() == 200) {
+					for (UserDto userDto : userListByOrgAndRoleId.getResult()) {
+						InstanceApproverRecordDto instanceApproverRecord = new InstanceApproverRecordDto();
+						instanceApproverRecord.setApprovalUserName(userDto.getName());
+						instanceApproverRecord.setPostName(userDto.getPosition());
+						approverRecord.add(instanceApproverRecord);
+					}
+				}
+			}
+			if (flowTemplateApprover.getApprovalType() == FlowApproverEnum.USER.getType()
+					|| flowTemplateApprover.getApprovalType() == FlowApproverEnum.INITIATOR.getType()
+					|| flowTemplateApprover.getApprovalType() == FlowApproverEnum.SUPERIORS.getType()) {
+				instanceApproverRecordDto.setApprovalUserName(flowUserDto.getUserName());
+				List<FlowPositionDto> positions = flowUserDto.getPositions();
+				String positionName = null;
+				if (positions != null && positions.size() > 0) {
+					positionName = flowUserDto.getPositions().get(0).getPositionName();
+				}
+				if (StringUtils.isNotEmpty(positionName)) {
+					instanceApproverRecordDto.setPostName(positionName);
+				}
+				approverRecord.add(instanceApproverRecordDto);
+			}
+		}
+
+		return approverRecord;
+	}
+
+	private void sortByLevel(List<FlowInstanceAc> instanceNodes) {
+		Map<String, FlowInstanceAc> filter = new HashMap<String, FlowInstanceAc>();
+		for (FlowInstanceAc node : instanceNodes) {
+			filter.put(node.getId(), node);
+		}
+
+		setLevel(instanceNodes.get(0), filter, 0);
+		// logger.info("设置Level结果：" + instanceNodes);
+		sort(instanceNodes);
+		// logger.info("排序结果：" + instanceNodes);
+	}
+
+	private void sort(List<FlowInstanceAc> instanceNodes) {
+		instanceNodes.sort(new Comparator<FlowInstanceAc>() {
+
+			@Override
+			public int compare(FlowInstanceAc current, FlowInstanceAc next) {
+				if (current.getLevel() < next.getLevel()) {
+					// logger.info("********{}*********-1************{}*********",current.getLevel(),next.getLevel());
+					return -1;
+				} else if (current.getLevel() > next.getLevel()) {
+					// logger.info("********{}*********1************{}*********",current.getLevel(),next.getLevel());
+					return 1;
+				}
+				return 0;
+			}
+		});
+	}
+
+	private void setLevel(FlowInstanceAc currentNode, Map<String, FlowInstanceAc> filter, int level) {
+		currentNode.setLevel(level);
+		// logger.info("****************level:{}***************",level);
+		// logger.info("****************currentNode:{}***************",currentNode);
+		List<String> nextNodeIdList = currentNode.getNextNodeIdList();
+		if (CollectionUtils.isEmpty(nextNodeIdList)) {
+			return;
+		}
+
+		for (String nextNodeId : nextNodeIdList) {
+			FlowInstanceAc nextNode = filter.get(nextNodeId);
+			setLevel(nextNode, filter, ++level);
+		}
+	}
+
+	@Override
+	public List<ApprovalDto> approvalList(int state) {
+		ApprovalParam approvalParam = new ApprovalParam();
+		List<ApprovalDto> myApprvoalList = null;
+		// sql业务处理用
+		approvalParam.setIndex(1);
+		approvalParam.setPageNum(0);
+		approvalParam.setPageCount(5);
+		// 待审
+		if (state == FlowConstants.UNTREATED_LIST) {
+			approvalParam.setApprovalUser(getUserIdOA());
+			approvalParam.setState(state);
+			myApprvoalList = flowInstanceApprovalRecordDao.getMyApprvoalList(approvalParam);
+			// 待阅
+		} else if (state == FlowConstants.UNREAD_LIST) {
+			approvalParam.setCreatePerson(getUserIdOA());
+			approvalParam.setIsRead(0);
+			myApprvoalList = flowCopyDao.getFlowCopyList(approvalParam);
+			// 已办
+		} else if (state == FlowConstants.ALREADY_PROCESSED_LIST) {
+			approvalParam.setState(2);
+			approvalParam.setApprovalUser(getUserIdOA());
+			myApprvoalList = flowInstanceApprovalRecordDao.getMyApprvoalList(approvalParam);
+			// 我发起的
+		} else if (state == FlowConstants.MY_START_FLOW_LIST) {
+			approvalParam.setCreatePerson(getUserIdOA());
+
+			myApprvoalList = flowInstanceDao.getInstanceList(approvalParam);
+		} else {
+			throw new HioException(FlowConstants.ILLEGAL_PARAMETER_TYPE.getMessage(),
+					FlowConstants.ILLEGAL_PARAMETER_TYPE.getStatus());
+		}
+
+		if (CollectionUtils.isNotEmpty(myApprvoalList)) {
+
+			myApprvoalList = transitionUserNameUtils.getList(myApprvoalList, getLoginUser().getTendId());
+		}
+
+		return myApprvoalList;
+	}
+
+	@Override
+	public Page<ApprovalDto> getInstanceListByProjectId(FlowByProjectParam flowByProjectParam) {
+
+		Page<ApprovalDto> page = new Page<ApprovalDto>();
+		page.setPageNum(flowByProjectParam.getPageNum());
+		page.setPageCount(flowByProjectParam.getPageCount());
+		Integer totalCount = flowInstanceDao.getInstanceListCountByProjectId(flowByProjectParam);
+		if (totalCount != null && totalCount > 0) {
+			flowByProjectParam.setPageNum((flowByProjectParam.getPageNum() - 1) * flowByProjectParam.getPageCount());
+			flowByProjectParam.setPageCount(flowByProjectParam.getPageCount());
+			List<ApprovalDto> instanceList = flowInstanceDao.getInstanceListByProjectId(flowByProjectParam);
+			if(CollectionUtils.isNotEmpty(instanceList)) {
+				transitionUserNameUtils.extractApprover(instanceList);
+				transitionUserNameUtils.getList(instanceList, getLoginUser().getTendId());
+			}
+			page.setList(instanceList);
+		}
+		page.setTotal(totalCount);
+		page.setPageTotal(
+				totalCount % flowByProjectParam.getPageCount() == 0 ? totalCount / flowByProjectParam.getPageCount()
+						: totalCount / flowByProjectParam.getPageCount() + 1);
+		return page;
+	}
+
+	@Override
+	public int mobileApproval(@DataSource String tendId, FlowApprovalParam flowApprovalParam) {
+
+		int approve = approve(flowApprovalParam);
+
+		return approve;
+	}
+
+	/**
+	 * 移动端：查询当前人的待审、待阅总数
+	 * 
+	 * @author yangning
+	 * @param tendList
+	 * @return
+	 */
+	@Override
+	public List<ApprovalCountDto> mobileQueryCount(List<String> tendList) {
+
+		FlowCopy flowCopy = new FlowCopy();
+
+		flowCopy.setIsRead(FlowConstants.UNTREATED_LIST);
+
+		List<ApprovalCountDto> approvalCountDtoList = new ArrayList<>();
+		for (String tendId : tendList) {
+			logger.info("********************移动端切库**************{}********", tendId);
+			String OAId = "";
+			ApiFeignResponse<String> apiFeignResponse = sysFeignService.queryOaUserIdByImUserId(getUserIdIM(), tendId);
+			if (apiFeignResponse.getStatus() == 200.) {
+				OAId = apiFeignResponse.getResult();
+
+			} else {
+				logger.error("***** 根据IMID查询oaid失败!  ***IMID=**  tendId:" + tendId, getUserIdIM());
+				throw new HioMybatisQueryException("根据IMID查询oaid失败");
+			}
+			if (isEmpty(OAId)) {
+				logger.error("***** OAID为空!!  ***IMID=**  tendId:" + tendId, getUserIdIM());
+				throw new HioMybatisQueryException("查询失败!");
+			}
+			flowCopy.setCopyUser(OAId);
+			ApprovalCountDto approvalCountDto = new ApprovalCountDto();
+			Integer unReadCount = flowCopyService.queryMyUnreadCount(tendId, flowCopy);
+			Integer unApprovalCount = flowInstanceApprovalRecordService.queryMyUnApprovalCount(tendId, OAId);
+			int totalCount = 0;
+			if (unReadCount != null) {
+				totalCount += unReadCount.intValue();
+			}
+			if (unApprovalCount != null) {
+				totalCount += unApprovalCount.intValue();
+			}
+			approvalCountDto.setTendId(tendId);
+			approvalCountDto.setCount(totalCount);
+			approvalCountDtoList.add(approvalCountDto);
+			logger.info("********************移动端切库***approvalCountDto***********{}********", approvalCountDto);
+		}
+		logger.info("********************移动端切库***approvalCountDtoList***********{}********", approvalCountDtoList);
+		return approvalCountDtoList;
+	}
+
+	/**
+	 * @author yangning 查询首页审批数量
+	 * @param state
+	 * @return
+	 */
+	@Override
+	public int approvalListCount(int state) {
+		ApprovalParam approvalParam = new ApprovalParam();
+		int myApprvoalList = 0;
+		// sql业务处理用
+		// approvalParam.setIsRead(1);
+		approvalParam.setIndex(1);
+		approvalParam.setPageNum(0);
+		approvalParam.setPageCount(5);
+		// 待审
+		if (state == FlowConstants.UNTREATED_LIST) {
+			approvalParam.setApprovalUser(getUserIdOA());
+			approvalParam.setState(state);
+			myApprvoalList = flowInstanceApprovalRecordService.getMyApproveCount(approvalParam);
+
+			// 待阅
+		} else if (state == FlowConstants.UNREAD_LIST) {
+			approvalParam.setCreatePerson(getUserIdOA());
+			approvalParam.setIsRead(FlowConstants.UNREAD);
+
+			approvalParam.setIsRead(0);
+			myApprvoalList = flowCopyDao.getCountFlowCopyList(approvalParam);
+
+			// 已办
+		} else if (state == FlowConstants.ALREADY_PROCESSED_LIST) {
+			approvalParam.setState(2);
+			approvalParam.setApprovalUser(getUserIdOA());
+			myApprvoalList = flowInstanceApprovalRecordService.getMyApproveCount(approvalParam);
+
+			// 我发起的
+		} else if (state == FlowConstants.MY_START_FLOW_LIST) {
+			approvalParam.setCreatePerson(getUserIdOA());
+			myApprvoalList = flowInstanceDao.getCountInstanceList(approvalParam);
+
+		} else {
+			throw new HioException(FlowConstants.ILLEGAL_PARAMETER_TYPE.getMessage(),
+					FlowConstants.ILLEGAL_PARAMETER_TYPE.getStatus());
+		}
+		return myApprvoalList;
+	}
+
+	@Override
+	public int mobileReject(@DataSource String tendId, FlowRejectParam flowRejectParam) {
+		// TODO Auto-generated method stub
+		flowRejectParam.setTendId(tendId);
+		int reject = reject(flowRejectParam);
+
+		return reject;
+	}
+
+	@Override
+	public InstanceDetailsDto mobileFlowView(@DataSource String tendId, InstanceDetailsParam instanceDetailsParam) {
+
+		instanceDetailsParam.setTendId(tendId);
+
+		InstanceDetailsDto flowView = flowView(instanceDetailsParam);
+
+		return flowView;
+	}
+
+	@Override
+	public List<String> alreadyCopy(String instanceId) {
+
+		List<String> alreadyCopyApprover = flowCopyDao.getAlreadyCopyApprover(instanceId);
+
+		return alreadyCopyApprover;
+	}
+
+	public FlowInstanceAcDao getFlowInstanceAcDao() {
+		return flowInstanceAcDao;
+	}
+
+	public MessageFeignService getMessageFeignService() {
+		return messageFeignService;
+	}
+
+	public FlowTemplateAcDao getFlowTemplateAcDao() {
+		return flowTemplateAcDao;
+	}
+
+	public FlowLinkLineDao getFlowLinkLineDao() {
+		return flowLinkLineDao;
+	}
+
+	public FlowInstanceApprovalRecordDao getFlowInstanceApprovalRecordDao() {
+		return flowInstanceApprovalRecordDao;
+	}
+
+	public FlowCopyDao getFlowCopyDao() {
+		return flowCopyDao;
+	}
+
+	public FlowInstanceDao getFlowInstanceDao() {
+		return flowInstanceDao;
+	}
+
+	public void setFlowTemplateAcDao(FlowTemplateAcDao flowTemplateAcDao) {
+		this.flowTemplateAcDao = flowTemplateAcDao;
+	}
+
+	public FlowTemplateDao getFlowTemplateDao() {
+		return flowTemplateDao;
+	}
+
+	public void setFlowTemplateDao(FlowTemplateDao flowTemplateDao) {
+		this.flowTemplateDao = flowTemplateDao;
+	}
+
+	public FlowCustomFormInstanceService getFlowCustomFormInstanceService() {
+		return flowCustomFormInstanceService;
+	}
+
+	public FlowCustomFormService getFlowCustomFormService() {
+		return flowCustomFormService;
+	}
+
+	public FlowFollowInstanceDao getFlowFollowInstanceDao() {
+		return flowFollowInstanceDao;
+	}
+
+	public void setFlowFollowInstanceDao(FlowFollowInstanceDao flowFollowInstanceDao) {
+		this.flowFollowInstanceDao = flowFollowInstanceDao;
+	}
+
+	public void setFlowCopyDao(FlowCopyDao flowCopyDao) {
+		this.flowCopyDao = flowCopyDao;
+	}
+
+	public TransitionUserNameUtils getTransitionUserNameUtils() {
+		return transitionUserNameUtils;
+	}
+
+	public void setTransitionUserNameUtils(TransitionUserNameUtils transitionUserNameUtils) {
+		this.transitionUserNameUtils = transitionUserNameUtils;
+	}
+
+	public FlowTemplateRoleService getFlowTemplateRoleService() {
+		return flowTemplateRoleService;
+	}
+
+	public SysFeignService getSysFeignService() {
+		return sysFeignService;
+	}
+
+	public RedisLock getRedisLock() {
+		return redisLock;
+	}
+
+	public void setRedisLock(RedisLock redisLock) {
+		this.redisLock = redisLock;
+	}
+
+	public FlowTemplateAcCopyDao getFlowTemplateAcCopyDao() {
+		return flowTemplateAcCopyDao;
+	}
+
+	public FlowTemplateApproverDao getFlowTemplateApproverDao() {
+		return flowTemplateApproverDao;
+	}
+
+	public FlowCopyService getFlowCopyService() {
+		return flowCopyService;
+	}
+
+	public FlowChangeApproverDao getFlowChangeApproverDao() {
+		return flowChangeApproverDao;
+	}
+
+	public boolean checkRunFlowBy(String customFormId, String businessId) {
+		FlowInstance params = new FlowInstance();
+		params.setCustomFormId(customFormId);
+		params.setBusinessId(businessId);
+		params.setDelflag(0);
+		List<FlowInstance> instances = flowInstanceDao.select(params);
+		if (CollectionUtils.isNotEmpty(instances)) {
+			for (FlowInstance instance : instances) {
+				if (FlowStateEnum.RUN.getState() == instance.getState()) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+}

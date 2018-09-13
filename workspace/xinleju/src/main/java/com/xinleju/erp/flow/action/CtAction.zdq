@@ -1,0 +1,651 @@
+package com.xinleju.erp.flow.action;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.collections.map.LinkedMap;
+import org.apache.commons.lang3.StringUtils;
+import org.hibernate.FetchMode;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.Order;
+import org.hibernate.criterion.Property;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+
+import com.alibaba.fastjson.serializer.PropertyFilter;
+import com.xinleju.erp.base.app.action.BaseAction;
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.utils.JsonUtils;
+import com.xinleju.erp.base.utils.StringHelper;
+import com.xinleju.erp.flow.models.Ct;
+import com.xinleju.erp.flow.models.Fl;
+import com.xinleju.erp.flow.service.CtService;
+import com.xinleju.erp.flow.service.api.ApiConstant;
+import com.xinleju.erp.flow.service.api.extend.BaseAPI;
+import com.xinleju.erp.flow.service.extend.dto.CateMgrDto;
+import com.xinleju.erp.flow.service.extend.dto.CtDto;
+import com.xinleju.erp.flow.utils.LoginInfoUtils;
+import com.xinleju.erp.frame.models.LogRecord;
+import com.xinleju.erp.frame.models.ServiceObjectDefine;
+
+public class CtAction extends BaseAction {
+    
+    private CtDto ctDto;
+    
+    private Ct ct;
+
+    private ServiceObjectDefine sod;
+    
+    @Autowired
+    private CtService ctService;
+    
+    /**
+     * 组织机构首页
+     * 
+     * @return
+     */
+    @SuppressWarnings("unchecked")
+    public String index() {
+        Map<String, String> statusMap = new LinkedMap();
+        statusMap.put(CateMgrDto.IS_DISABLED_N, "启用");
+//        statusMap.put(CateMgrDto.IS_DISABLED_Y, "禁用");
+        request.setAttribute("statusMap", statusMap);
+        Map<String, String> valStatusMap = new LinkedMap();
+        valStatusMap.put(CateMgrDto.IS_DISABLED_N, "启用");
+        valStatusMap.put(CateMgrDto.IS_DISABLED_Y, "禁用");
+        request.setAttribute("valStatusMap", valStatusMap);
+        
+        //针对流程目录
+        String isDisabled = "";
+        //针对流程模板
+        String ifDisabled = "";
+        Long ctId = null;
+        Long serviceObjectDefineId = null;
+        Long appId = null;
+        String nameOrCode = "";
+        if(null != ctDto){
+            if (StringUtils.isNotBlank(ctDto.getCtId())){
+                ctId = Long.valueOf(ctDto.getCtId().trim());
+            }
+            if (StringUtils.isNotBlank(ctDto.getServiceObjectDefineId())){
+                serviceObjectDefineId = Long.valueOf(ctDto.getServiceObjectDefineId().trim());
+            }
+            if (StringUtils.isNotBlank(ctDto.getAppId())){
+                appId = Long.valueOf(ctDto.getAppId().trim());
+            }
+            isDisabled = ctDto.getStatus();
+            ifDisabled = ctDto.getValStatus();
+            nameOrCode = ctDto.getKeyword();
+        }
+        DetachedCriteria dcAs = DetachedCriteria.forClass(Fl.class, "flowAs");
+        dcAs.setProjection(Property.forName("flowVersion").max());
+        dcAs.add(Property.forName("flowAs.flowCode").eqProperty("flowObj.flowCode"));
+        DetachedCriteria dc = DetachedCriteria.forClass(Fl.class, "flowObj");
+        dc.add(Property.forName("flowVersion").eq(dcAs));
+        dc.setFetchMode("ct", FetchMode.JOIN);
+        dc.setFetchMode("serviceObjectDefine", FetchMode.JOIN);
+        if(StringUtils.isNotBlank(nameOrCode)){
+            dc.add(Restrictions.or(Restrictions.ilike("flowName", "%" + nameOrCode.trim() + "%"), Restrictions.ilike("flowCode", "%" + nameOrCode.trim() + "%")));
+        }
+      /*  if (ifDisabled == null || !StringHelper.parseBoolean(ifDisabled)) {
+            dc.add(Restrictions.or(Restrictions.isNull("isDisabled"), Restrictions.eq("isDisabled", 0)));
+        } else {
+            dc.add(Restrictions.eq("isDisabled", 1));
+        }*/
+        if (ifDisabled == null || "".equals(ifDisabled)) {
+            
+        } else {
+            if ("0".equals(ifDisabled)) {
+                dc.add(Restrictions.eq("isDisabled", 0));
+            } else {
+                dc.add(Restrictions.eq("isDisabled", 1));
+            }
+        }
+        if (ctId != null && ctId != 0){
+            ct = getCommonService().getById(Ct.class, ctId);
+            //如果当前目录已删除就将目录设为空
+            if (null != ct && null != ct.getIsDisabled() && ct.getIsDisabled().intValue() == 1
+                    && StringUtils.isNotBlank(isDisabled) && !StringHelper.parseBoolean(isDisabled)){
+                ct = null;
+                ctId = null;
+                ctDto.setCtId(null);
+            }
+            if (null != ctId && ctId > 0){
+                List<Long> subCtIdList = this.getSubCtIdList(ctId, isDisabled);
+                subCtIdList.add(ctId);
+                dc.add(Restrictions.in("ctId", subCtIdList));
+            } else {
+                dc.add(Restrictions.eq("ctId", 0L));
+            }
+        }
+        if (serviceObjectDefineId != null && serviceObjectDefineId != 0){
+            sod = getCommonService().getById(ServiceObjectDefine.class, serviceObjectDefineId);
+            dc.add(Restrictions.eq("serviceObjectDefineId", serviceObjectDefineId));
+        }
+        if (appId != null && appId != 0){
+            String sqlStr = "select s.id from sm_service_object_define s inner join sm_app a on s.module_code = a.code where a.id = ? ";
+            List<Long> sodIdList = App.getBean(JdbcTemplate.class).queryForList(sqlStr, new Object[]{appId}, Long.class);
+            if (null != sodIdList && sodIdList.size() > 0){
+                dc.add(Restrictions.in("serviceObjectDefineId", sodIdList));
+            } else {
+                dc.add(Restrictions.eq("serviceObjectDefineId", 0L));
+            }
+        }
+        dc.addOrder(Order.asc("flSort"));
+        dc.addOrder(Order.asc("id"));
+        try {
+			page = getCommonService().findPage(dc, start, limit);
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+        if(ctId!=null){
+            String selectPath = "/Root_0/Cate_0/" + this.getCtIdPath(ctId);
+            if (StringUtils.isNotBlank(selectPath) && selectPath.endsWith("/")){
+                selectPath = selectPath.substring(0, selectPath.lastIndexOf("/"));
+            }
+            request.setAttribute("selectPath", selectPath);
+        } else if(serviceObjectDefineId!=null){
+            //必须是存在的有且只有一个
+            Long curAppId = App.getBean(JdbcTemplate.class).queryForLong("select min(a.id) from sm_service_object_define s inner join sm_app a on s.module_code = a.code where s.id = ? ", serviceObjectDefineId);
+            String selectPath = "/Root_0/Object_0/App_" + curAppId + "/Object_" + serviceObjectDefineId;
+            request.setAttribute("selectPath", selectPath);
+        } else if(appId!=null){
+            String selectPath = "/Root_0/Object_0/App_" + appId ;
+            request.setAttribute("selectPath", selectPath);
+        } else {
+            String selectPath = "/Root_0";
+            request.setAttribute("selectPath", selectPath);
+        }
+        return "index";
+    }
+    
+    public void listAjax() {
+    	Long ctId = getParameterLong("ctId");
+        Long serviceObjectDefineId = getParameterLong("serviceObjectDefineId");
+        Long appId = getParameterLong("appId");
+        String isDisabled = getParameter("isDisabled");
+        String keyword = request.getParameter("keyword");
+    	
+        DetachedCriteria dcAs = DetachedCriteria.forClass(Fl.class, "flowAs");
+        dcAs.setProjection(Property.forName("flowVersion").max());
+        dcAs.add(Property.forName("flowAs.flowCode").eqProperty("flowObj.flowCode"));
+        DetachedCriteria dc = DetachedCriteria.forClass(Fl.class, "flowObj");
+        dc.add(Property.forName("flowVersion").eq(dcAs));
+        dc.setFetchMode("ct", FetchMode.JOIN);
+        dc.setFetchMode("serviceObjectDefine", FetchMode.JOIN);
+        dc.add(Restrictions.eq("isDisabled", 0));
+        if(StringUtils.isNotBlank(keyword)){
+            dc.add(Restrictions.or(Restrictions.ilike("flowName", "%" + keyword.trim() + "%"), Restrictions.ilike("flowCode", "%" + keyword.trim() + "%")));
+        }
+        if (ctId != null && ctId != 0){
+            ct = getCommonService().getById(Ct.class, ctId);
+            //如果当前目录已删除就将目录设为空
+            if (null != ct && null != ct.getIsDisabled() && ct.getIsDisabled().intValue() == 1
+                    && StringUtils.isNotBlank(isDisabled) && !StringHelper.parseBoolean(isDisabled)){
+                ct = null;
+                ctId = null;
+                ctDto.setCtId(null);
+            }
+            if (null != ctId && ctId > 0){
+                List<Long> subCtIdList = this.getSubCtIdList(ctId, isDisabled);
+                subCtIdList.add(ctId);
+                dc.add(Restrictions.in("ctId", subCtIdList));
+            } else {
+                dc.add(Restrictions.eq("ctId", 0L));
+            }
+        }
+        if (serviceObjectDefineId != null && serviceObjectDefineId != 0){
+            sod = getCommonService().getById(ServiceObjectDefine.class, serviceObjectDefineId);
+            dc.add(Restrictions.eq("serviceObjectDefineId", serviceObjectDefineId));
+        }
+        if (appId != null && appId != 0){
+            String sqlStr = "select s.id from sm_service_object_define s inner join sm_app a on s.module_code = a.code where a.id = ? ";
+            List<Long> sodIdList = App.getBean(JdbcTemplate.class).queryForList(sqlStr, new Object[]{appId}, Long.class);
+            if (null != sodIdList && sodIdList.size() > 0){
+                dc.add(Restrictions.in("serviceObjectDefineId", sodIdList));
+            } else {
+                dc.add(Restrictions.eq("serviceObjectDefineId", 0L));
+            }
+        }
+
+        dc.addOrder(Order.asc("flSort"));
+        dc.addOrder(Order.asc("id"));
+        page = getCommonService().findPage(dc, start, limit);
+        
+        Fl fl = null;
+        StringBuffer json = new StringBuffer();
+        String allPath = null;
+        for ( Object obj : page.getItems() ) {
+        	fl = (Fl) obj;
+        	allPath = "未分类";
+			if ( fl.getServiceObjectDefine() != null ) {
+				if ( fl.getServiceObjectDefine().getAppName() != null && fl.getServiceObjectDefine().getAppName().length() > 0 ) {
+					allPath = fl.getServiceObjectDefine().getAppName() + "/";
+
+					if ( fl.getServiceObjectDefine().getName() != null && fl.getServiceObjectDefine().getName().length() > 0 ) {
+						allPath += fl.getServiceObjectDefine().getName();
+					}
+				}
+			}
+        	
+        	json.append(",{")
+        		.append("\"flowId\" : \"").append(fl.getId()).append("\",")
+	    		.append("\"flowCode\" : \"").append(fl.getFlowCode()).append("\",")
+	    		.append("\"flowName\" : \"").append(fl.getFlowName()).append("\",")
+	    		.append("\"flowVersion\" : \"").append(fl.getFlowVersion()).append("\",")
+	    		.append("\"ctName\" : \"").append( fl.getCt() == null ? "未分类" : fl.getCt().getName() ).append("\",")
+	    		.append("\"allPath\" : \"").append(allPath).append("\",")
+	    		.append("\"isCommited\" : \"").append(fl.getIsCommited() == 1 ? "已提交" : "编辑中").append("\",")
+	    		.append("\"isDefault\" : \"").append(fl.getIsDefault() == 1 ? "是" : "否").append("\"")
+        	
+        		.append("}");
+        	
+        }
+        super.renderJson("[" + (json.length() > 0 ? json.substring(1) : json.toString()) + "]");
+        
+//		super.renderJson(fls);
+    }
+    
+    /**
+     * 得到ids
+     * @author jun
+     * @param ctId
+     * @param isDisabled
+     * @return
+     */
+    private List<Long> getSubCtIdList(Long ctId, String isDisabled){
+        return ctService.getSubCtIdList(ctId, isDisabled);
+    }
+    /**
+     * 得到ids
+     * @author jun
+     * @param ctId
+     * @param isDisabled
+     * @return
+     */
+    private String getCtIdPath(Long parentCtId){
+        return ctService.getCtIdPath(parentCtId);
+    }
+    /**
+     * 
+     * @author jun
+     * @param id
+     * @return
+     */
+    public static String getCtNamePath(Long id){
+        return CtService.getCtNamePath(id);
+    }
+    
+    /**
+     * 树首页
+     * 
+     * @return String
+     */
+    @SuppressWarnings("deprecation")
+    public String tree() {
+        setParameterAttribute("isDisabled");
+        Long ctId = getParameterLong("ctId",null,true);
+        Long serviceObjectDefineId = getParameterLong("serviceObjectDefineId",null,true);
+        Long appId = getParameterLong("appId",null,true);
+        if(ctId!=null){
+            String selectPath = "/Root_0/Cate_0/" + this.getCtIdPath(ctId);
+            if (StringUtils.isNotBlank(selectPath) && selectPath.endsWith("/")){
+                selectPath = selectPath.substring(0, selectPath.lastIndexOf("/"));
+            }
+            request.setAttribute("selectPath", selectPath);
+        } else if(serviceObjectDefineId!=null){
+            //必须是存在的有且只有一个
+            Long curAppId = App.getBean(JdbcTemplate.class).queryForLong("select min(a.id) from sm_service_object_define s inner join sm_app a on s.module_code = a.code where s.id = ? ", serviceObjectDefineId);
+            String selectPath = "/Root_0/Object_0/App_" + curAppId + "/Object_" + serviceObjectDefineId;
+            request.setAttribute("selectPath", selectPath);
+        } else if(appId!=null){
+            String selectPath = "/Root_0/Object_0/App_" + appId ;
+            request.setAttribute("selectPath", selectPath);
+        } else {
+            String selectPath = "/Root_0";
+            request.setAttribute("selectPath", selectPath);
+        }
+        return "tree";
+    }
+
+    /**
+     * 获取部门数据
+     */
+    public void getTree() {
+
+        String prefix = getParameter("prefix");
+        Long parentId = getParameterLong("parentId");
+
+        boolean isDisabled = false;
+        if (StringUtils.isNotBlank(getParameter("isDisabled")) && !StringHelper.parseBoolean(getParameter("isDisabled"))){
+            isDisabled = true;
+        }
+        List<Map<String, Object>> resultList = new ArrayList<Map<String, Object>>();
+        if (StringUtils.isNotBlank(prefix)){
+            if (prefix.equals("Root_")){
+                Map<String, Object> tree = new HashMap<String, Object>();
+                tree.put("id", "Cate_" + 0);
+                tree.put("targetId", 0);
+                tree.put("leaf", false);
+                tree.put("isDisabled", false);
+                tree.put("prefix","Cate_");
+                tree.put("text", "流程类型");
+                resultList.add(tree);
+                tree = new HashMap<String, Object>();
+                tree.put("id", "Object_" + 0);
+                tree.put("targetId", 0);
+                tree.put("leaf", false);
+                tree.put("isDisabled", false);
+                tree.put("prefix","Object_");
+                tree.put("text", "业务对象");
+                resultList.add(tree);
+            //流程目录
+            } else if (prefix.equals("Cate_")){
+                List<Ct> ctList = new ArrayList<Ct>();
+                if (parentId == null || parentId.intValue() == 0) {
+                    ctList = getCommonService().findAll(Ct.class, "parentId is null" + (isDisabled ? " and (isDisabled is null or isDisabled = 0) " : " "), new Object[] {}, "position asc,id asc");
+
+                } else {
+                    ctList = getCommonService().findAll(Ct.class, "parentId = ? " + (isDisabled ? " and (isDisabled is null or isDisabled = 0) " : " "), new Object[] { parentId }, "position asc,id asc");
+                }
+                for (Ct c : ctList) {
+                    boolean IsDisabled =  c.getIsDisabled()!=null && c.getIsDisabled().intValue() == 1;
+                    Map<String, Object> tree = new HashMap<String, Object>();
+                    tree.put("id", "Cate_" + c.getId());
+                    
+                    tree.put("targetId", c.getId());
+                    tree.put("leaf", c.getSubCount() == 0);
+                    tree.put("isDisabled",IsDisabled);
+                    tree.put("prefix","Cate_");
+                    if(IsDisabled){
+                        tree.put("text", "<font style=\"color:red\">" + c.getName() + "</font>"); 
+                    }
+                    else{
+                        tree.put("text", c.getName());
+                    }
+                    resultList.add(tree);
+                }
+            //业务对象
+            } else if (prefix.equals("Object_")){
+                //系统
+                if (parentId == null || parentId.intValue() == 0){
+                    List<Map<String,Object>> appMapList = App.getBean(JdbcTemplate.class).queryForList("select a.id as id,a.name as name,a.px as px,(select count(s.id) from sm_service_object_define s where s.module_code = a.code) as subCount from sm_app a order by a.px asc");
+                    if (null != appMapList && appMapList.size() > 0){
+                        for (Map<String,Object> c : appMapList) {
+                            Map<String, Object> tree = new HashMap<String, Object>();
+                            tree.put("id", "App_" + c.get("id"));
+                            tree.put("targetId", c.get("id"));
+                            tree.put("leaf", !(null != c.get("subCount") && StringUtils.isNumeric(c.get("subCount").toString()) && Long.valueOf(c.get("subCount").toString()) > 0));
+                            tree.put("isDisabled", false);
+                            tree.put("prefix","App_");
+                            tree.put("text", c.get("name"));
+                            resultList.add(tree);
+                        }
+                    }
+                }
+            } else if (prefix.equals("App_")){
+            	String sql = "select a.id as id,a.name as name from sm_service_object_define a inner join sm_app p on a.module_code = p.code where p.id = ? order by a.id asc";
+                List<Map<String,Object>> sodMapList = App.getBean(JdbcTemplate.class).queryForList(sql, parentId);
+                if (null != sodMapList && sodMapList.size() > 0){
+                    for (Map<String,Object> c : sodMapList) {
+                        Map<String, Object> tree = new HashMap<String, Object>();
+                        tree.put("id", "Object_" + c.get("id"));
+                        tree.put("targetId", c.get("id"));
+                        tree.put("leaf", true);
+                        tree.put("isDisabled", false);
+                        tree.put("prefix","Object_");
+                        tree.put("text", c.get("name"));
+                        resultList.add(tree);
+                    }
+                }
+            }
+        }
+        super.renderJson(resultList);
+    }
+    
+    public String selectCtTree(){
+        request.setAttribute("treeRootPrefix", getParameter("treeRootPrefix"));
+        request.setAttribute("treeRootId", getParameter("treeRootId"));
+        return "selectCtTree";
+    }
+    public String selectCtTrees(){
+        request.setAttribute("treeRootPrefix", getParameter("treeRootPrefix"));
+        request.setAttribute("treeRootId", getParameter("treeRootId"));
+        request.setAttribute("treeRootName", getParameter("treeRootName"));
+        return "selectCtTrees";
+    }
+    public String edit() {
+        ct = super.edit(Ct.class);
+        ct = (ct == null ? new Ct() : ct);
+        Long parentId = getParameterLong("parentId");
+        if (parentId != null && parentId > 0) {
+            ct.setParentId(parentId);
+        }
+        return "edit";
+    }
+
+    public void save() {
+        ct.setEditTime(new Date());
+        if(null != ct && null == ct.getCreateTime()){
+            ct.setCreateTime(new Date());
+        }
+        getCommonService().saveOrUpdate(ct);
+        
+
+		//加日志
+		BaseAPI baseAPIService = com.xinleju.erp.base.app.config.App.getBean(BaseAPI.class, ApiConstant.BEAN_CODE);
+		Long uid=LoginInfoUtils.getLoginInfoUserDtoId(request);
+		baseAPIService.saveLog(uid, "PT", "流程管理", "CtAction.save()", "保存流程设置", null, "json串",  LogRecord.SIGN_INSERT,LogRecord.TYPE_OTHER);
+		
+		
+        super.renderJson(ct);
+    }
+    public void updateCt(){
+        Map<String,Object> result = new HashMap<String,Object>();
+        try{
+            String ids = getParameter("ids");
+            Integer isdisabled = getParameterInt("isdisabled");
+            if (null == isdisabled){
+                isdisabled = 0;
+            }
+            if(StringUtils.isNotBlank(ids)) {
+                String[] idAry = ids.split(";");
+                for(String id : idAry) {
+                    getCommonService().execute("update Ct set isDisabled = ? where id = ?", isdisabled, Long.valueOf(id));
+                }
+            }
+            result.put("success", true);
+        }catch(Exception e){
+            result.put("success", false);
+            result.put("msg", e.getMessage());
+        }
+
+		//加日志
+		BaseAPI baseAPIService = com.xinleju.erp.base.app.config.App.getBean(BaseAPI.class, ApiConstant.BEAN_CODE);
+		Long uid=LoginInfoUtils.getLoginInfoUserDtoId(request);
+		baseAPIService.saveLog(uid, "PT", "流程管理", "CtAction.updateCt()", "修改流程", null, "json串",  LogRecord.SIGN_UPDATE,LogRecord.TYPE_OTHER);
+		
+        renderJson(result);
+    }
+    
+    public void deleteCt(){
+        Map<String,Object> result = new HashMap<String,Object>();
+        try{
+            String ids = getParameter("ids");
+            if(StringUtils.isNotBlank(ids)) {
+                String[] idAry = ids.split(";");
+                StringBuilder sb=new StringBuilder();
+                for(String id : idAry) {
+                    sb.append("'"+id+"',");
+                }
+                if(StringUtils.isNotBlank(sb.toString())){
+                	String inId=sb.delete(sb.length()-1,sb.length()).toString();
+                	int i=getCommonService().findIntBySQL("select count(l.id) from  tf_fl l where l.ct_id in("+inId+")", null);
+                	if(i>0){
+                		 result.put("success", false);
+                         result.put("msg", "存在已经被引用的记录");
+                	}else{
+                		 for(String id : idAry) {
+                			 getCommonService().execute("delete from Ct  where id = ?", Long.parseLong(id));
+                         }
+                	}
+                }
+            }
+            result.put("success", true);
+        }catch(Exception e){
+        	e.printStackTrace();
+            result.put("success", false);
+            result.put("msg", e.getMessage());
+        }
+        renderJson(result);
+    }
+    
+    public void updateFlCateId(){
+        //TODO
+    }
+    
+    public void disCt() {
+        getCommonService().execute("update Ct set isDisabled = 1 where id = ?", id);
+        ct = getCommonService().getById(Ct.class, id);
+        PropertyFilter filter = new PropertyFilter() {
+            public boolean apply(Object source, String name, Object value) {
+                if("parent".equals(name)){
+                    return false;
+                }
+                return true;
+            }
+        };
+
+        String x = JsonUtils.toJSONString(ct, filter);
+        super.renderJson(x);
+    }
+
+    public void unDisCt() {
+
+        getCommonService().execute("update Ct set isDisabled = 0 where id = ?", id);
+
+        ct = getCommonService().getById(Ct.class, id);
+        PropertyFilter filter = new PropertyFilter() {
+            public boolean apply(Object source, String name, Object value) {
+                if("parent".equals(name)){
+                    return false;
+                }
+                return true;
+            }
+        };
+        String x = JsonUtils.toJSONString(ct, filter);
+        super.renderJson(x);
+    }
+    /**
+     * 得到业务对象信息
+     * @author jun
+     */
+    public void getCtInfo(){
+        Map<String, Object> result = new HashMap<String, Object>();
+        if (null != id) {
+            String ctId = id + "";
+            String ctNamePath = getCtNamePath(id);
+            result.put("ctId", ctId);
+            result.put("flowCtName", ctNamePath);
+        }
+        renderJson(result);
+    }
+    public void delete() {
+        redirect("Ct!list.do");
+    }
+    
+    
+    /**
+     * 进入批量修改参与人的页面
+     * @return
+     */
+    public String toBatchChangeParticipant(){
+    	Long ctId = getParameterLong("ctId");
+    	return "toBatchChangeParticipant";
+    }
+    
+    /**
+     * 进入人员选择界面
+     * @return
+     */
+    public String selectPaticipantIndex(){
+    	String nameDom = getParameter("nameDom");
+    	String idDom = getParameter("idDom");
+    	return "selectPaticipantIndex";
+    }
+    
+    /**
+     * 变更参与人
+     */
+    public void changeParticipant() {
+    	Map<String,Object> result = new HashMap<String,Object>();
+    	Long ctId = getParameterLong("ctId");
+    	String sourceName = getParameter("sourceName");
+    	String sourceId = getParameter("sourceId");
+    	
+    	String targetName = getParameter("targetName");
+    	String targetId = getParameter("targetId");
+    	
+    	String includeChild = getParameter("includeChild");
+    	
+    	if(ctId == null) {
+    		result.put("success", false);
+    		result.put("msg", "流程分类丢失！");
+    		renderJson(result);
+    		return;
+    	}
+    	
+    	if(StringUtils.isBlank(sourceId)) {
+    		result.put("success", false);
+    		result.put("msg", "请选择原处理人！");
+    		renderJson(result);
+    		return;
+    	}
+    	
+    	if(StringUtils.isBlank(targetId)) {
+    		result.put("success", false);
+    		result.put("msg", "请选择替换处理人！");
+    		renderJson(result);
+    		return;
+    	}
+    	try{
+    		boolean ifIncludeChild = StringHelper.parseBoolean(includeChild);
+    		ctService.changeParticipant(sourceId+":"+sourceName,targetId+":"+targetName,ctId,ifIncludeChild);
+    		result.put("success", true);
+    	}catch(Exception e) {
+    		e.printStackTrace();
+    		result.put("success", false);
+    		result.put("msg", "系统异常！");
+    	}
+    	renderJson(result);
+    }
+    
+
+    public Ct getCt() {
+        return ct;
+    }
+
+    public void setCt(Ct ct) {
+        this.ct = ct;
+    }
+
+    public ServiceObjectDefine getSod() {
+        return sod;
+    }
+
+    public void setSod(ServiceObjectDefine sod) {
+        this.sod = sod;
+    }
+    public CtDto getCtDto() {
+        return ctDto;
+    }
+    public void setCtDto(CtDto ctDto) {
+        this.ctDto = ctDto;
+    }
+
+}

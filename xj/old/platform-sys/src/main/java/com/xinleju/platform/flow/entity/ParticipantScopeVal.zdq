@@ -1,0 +1,44 @@
+package com.xinleju.platform.flow.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Table(value="PT_FLOW_PARTICIPANT_SCOPE_VAL",desc="流程参与者值")
+public class ParticipantScopeVal extends BaseEntity{
+	
+		
+	@Column(value="val",desc="值")
+	private String val;
+    
+  		
+	@Column(value="participant_id",desc="主表id")
+	private String participantId;
+    
+  		
+		
+	public String getVal() {
+		return val;
+	}
+	public void setVal(String val) {
+		this.val = val;
+	}
+    
+  		
+	public String getParticipantId() {
+		return participantId;
+	}
+	public void setParticipantId(String participantId) {
+		this.participantId = participantId;
+	}
+    
+  		
+	
+}

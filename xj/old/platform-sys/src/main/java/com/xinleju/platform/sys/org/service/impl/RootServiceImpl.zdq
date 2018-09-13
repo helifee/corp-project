@@ -1,0 +1,45 @@
+package com.xinleju.platform.sys.org.service.impl;
+
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.sys.org.dao.RootDao;
+import com.xinleju.platform.sys.org.dto.OrgnazationNodeDto;
+import com.xinleju.platform.sys.org.entity.Root;
+import com.xinleju.platform.sys.org.service.RootService;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class RootServiceImpl extends  BaseServiceImpl<String,Root> implements RootService{
+	
+
+	@Autowired
+	private RootDao rootDao;
+	
+	/**
+	 * 获取目录子节点目录
+	 * @param parentId
+	 * @return
+	 */
+	public List<OrgnazationNodeDto> queryListRoot(Map<String,Object> map) throws Exception{
+		return rootDao.queryListRoot(map);
+	}
+	
+	/**
+	 * 获取所有目录节点
+	 * @return
+	 */
+	public List<OrgnazationNodeDto> queryAllRoot(Map<String,Object> map) throws Exception{
+		return rootDao.queryAllRoot(map);
+	}
+}

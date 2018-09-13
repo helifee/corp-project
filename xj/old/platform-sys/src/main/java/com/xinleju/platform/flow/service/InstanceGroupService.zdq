@@ -1,0 +1,28 @@
+package com.xinleju.platform.flow.service;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.flow.entity.InstanceGroup;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface InstanceGroupService extends  BaseService <String,InstanceGroup>{
+
+	void replaceInstanceGroup(String userJson,List<InstanceGroup> groupList) throws Exception;
+
+	int update(String id, Map<String, Object> params);
+
+	/**
+	 * 根据实例ID查询所有实例节点相关审批人
+	 * @param paramMap
+	 * @return
+	 */
+	public List<Map<String,Object>> queryListByInstanceId(Map<String,Object> paramMap);
+	
+}

@@ -1,0 +1,197 @@
+package com.xinleju.platform.flow.service.impl;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.math.RandomUtils;
+
+import com.xinleju.platform.flow.service.ExpressionTranslator;
+
+public class GeneralExpressionTranslator implements ExpressionTranslator {
+	
+	private List<String> tempKeys = new ArrayList<String>();
+
+	@Override
+	public String translate(String expression) {
+		return translate(expression, new HashMap<String, Object>());
+	}
+	
+	@Override
+	public String translate(String expression, Map<String, Object> env) {
+		expression = replaceOperator(expression);
+		expression = markString(expression);
+		expression = deleteBrackets(expression);
+		
+		//not in处理
+		expression = handleNotInCollection(expression, env);
+		
+		//in处理
+		expression = handleInCollection(expression, env);
+		
+		//like处理
+		expression = handleLike(expression);
+
+		return expression;
+	}
+	
+	/**
+	 * eg. (name like 'zhang') ——> string.contains(name,'zhang')
+	 * @param expression
+	 * @return
+	 */
+	private String handleLike(String expression) {
+		while(expression.contains(" like ")) {
+			int indexOfLike = expression.indexOf(" like ");
+			int indexOfLeft = -1;
+			for(int i = indexOfLike; i>= 0; i--) {
+				if('(' == expression.charAt(i)) {
+					indexOfLeft = i;
+					break;
+				}
+			}
+			
+			int indexOfRight = -1;
+			for(int i = indexOfLike; i<expression.length(); i++) {
+				if(')' == expression.charAt(i)) {
+					indexOfRight = i;
+					break;
+				}
+			}
+			//将In表达式的集合值保存于比较环境中
+			String likeValue = expression.substring(indexOfLike + 6, indexOfRight).trim();
+			
+			String compareTarget = expression.substring(indexOfLeft + 1, indexOfLike).trim();
+			String newInExpression = "string.contains(" + compareTarget + "," + likeValue + ")";
+			expression = expression.substring(0, indexOfLeft + 1) + newInExpression 
+					+ expression.substring(indexOfRight, expression.length());
+			
+		}
+		return expression;
+	}
+
+	/**
+	 * eg. (type in a,b,c) and (amount=90) ————> include(list, type)
+	 * @param expression
+	 * @param env 
+	 * @return
+	 */
+	private String handleInCollection(String expression, Map<String, Object> env) {
+		while(expression.contains(" in ")) {
+			int indexOfIn = expression.indexOf(" in ");
+			int indexOfLeft = -1;
+			for(int i = indexOfIn; i>= 0; i--) {
+				if('(' == expression.charAt(i)) {
+					indexOfLeft = i;
+					break;
+				}
+			}
+			
+			int indexOfRight = -1;
+			for(int i = indexOfIn; i<expression.length(); i++) {
+				if(')' == expression.charAt(i)) {
+					indexOfRight = i;
+					break;
+				}
+			}
+			//将In表达式的集合值保存于比较环境中
+			String listValue = expression.substring(indexOfIn + 4, indexOfRight).trim();
+			String[] list = listValue.split(",");
+			String listName = "list" + RandomUtils.nextInt(5);
+			env.put(listName, Arrays.asList(list));
+			this.tempKeys.add(listName);
+			
+			String compareTarget = expression.substring(indexOfLeft + 1, indexOfIn).trim();
+			String newInExpression = "include(" + listName + ", " + compareTarget + ")";
+			expression = expression.substring(0, indexOfLeft + 1) + newInExpression 
+					+ expression.substring(indexOfRight, expression.length());
+			
+		}
+		return expression;
+	}
+	
+	/**
+	 * eg. (type not in a,b,c) and (amount=90) ————> !include(list, type)
+	 * @param expression
+	 * @param env 
+	 * @return
+	 */
+	private String handleNotInCollection(String expression, Map<String, Object> env) {
+		while(expression.contains(" not in ")) {
+			int indexOfIn = expression.indexOf(" not in ");
+			int indexOfLeft = -1;
+			for(int i = indexOfIn; i>= 0; i--) {
+				if('(' == expression.charAt(i)) {
+					indexOfLeft = i;
+					break;
+				}
+			}
+			
+			int indexOfRight = -1;
+			for(int i = indexOfIn; i<expression.length(); i++) {
+				if(')' == expression.charAt(i)) {
+					indexOfRight = i;
+					break;
+				}
+			}
+			//将In表达式的集合值保存于比较环境中
+			String listValue = expression.substring(indexOfIn + 8, indexOfRight).trim();
+			String[] list = listValue.split(",");
+			String listName = "list" + RandomUtils.nextInt(5);
+			env.put(listName, Arrays.asList(list));
+			this.tempKeys.add(listName);
+			
+			String compareTarget = expression.substring(indexOfLeft + 1, indexOfIn).trim();
+			String newInExpression = "!include(" + listName + ", " + compareTarget + ")";
+			expression = expression.substring(0, indexOfLeft + 1) + newInExpression 
+					+ expression.substring(indexOfRight, expression.length());
+			
+		}
+		return expression;
+	}
+
+
+	private String replaceOperator(String expression) {
+		expression = expression.replaceAll("and", "&&");
+		expression = expression.replaceAll(" or ", " || ");
+		expression = expression.replaceAll("(?<!(<|>|!))=(?!=)", "==");
+		return expression;
+	}
+	
+	/**
+	 * TODO zhangdaoqiang
+	 * 
+	 * @param expression
+	 * @return
+	 */
+	private String markString(String expression) {
+		return expression;
+	}
+	
+	private String deleteBrackets(String expression) {
+		StringBuilder retExpression = new StringBuilder(expression);
+		for(int i=0; i<retExpression.length(); i++) {
+			char curChar = retExpression.charAt(i);
+			if(curChar == '[' || curChar == ']') {
+				retExpression.deleteCharAt(i);
+			}
+		}
+		return retExpression.toString();
+	}
+	
+	@Override
+	public void clearTempKeys(Map<String, Object> env) {
+		for(String tempKey : tempKeys) {
+			env.remove(tempKey);
+		}
+	}
+	
+	public static void main(String[] args) {
+		String expression = "(amount=90) and ([type] in a,b,c) and (amount=90) and ([type] not in a,b,c) or ([name] like 'zhang')";
+		System.out.println(new GeneralExpressionTranslator().translate(expression));
+	}
+
+
+}

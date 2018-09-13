@@ -1,0 +1,403 @@
+package com.xinleju.erp.flow.dao.impl;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.erp.base.utils.CollectionUtils;
+import com.xinleju.erp.base.utils.StringHelper;
+import com.xinleju.erp.flow.flowutils.bean.Gvs;
+import com.xinleju.erp.flow.frameapi.domain.User;
+import com.xinleju.erp.flow.models.Ac;
+import com.xinleju.erp.flow.models.Ai;
+import com.xinleju.erp.flow.models.Fi;
+import com.xinleju.erp.flow.models.Hai;
+import com.xinleju.erp.flow.models.Tr;
+import com.xinleju.erp.flow.service.AiService.FromOrNext;
+import com.xinleju.erp.flow.utils.FlowUtils;
+
+/**
+ * 
+ * 
+ * <p>
+ * </p>
+ * <p>
+ * </p>
+ * 
+ * @author 孙朝辉
+ * @version $Id: AiDAO.java 2319 2015-01-19 08:26:02Z zhongjun $
+ * @since
+ * 
+ */
+@Repository
+public class AiDAO extends BaseDAO {
+
+    /**
+     * 
+     * <p>
+     * 创建活动实例
+     * </p>
+     * <p>
+     * 根据指定的acList创建Ai
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param acList
+     *            节点定义
+     * @param fi
+     *            流程实例
+     */
+    public void createAiList(List<Ac> acList, Fi fi) {
+        List<Ai> aiList = new ArrayList<Ai>();
+        for (Ac ac : acList) {
+            aiList.add(generateAi(fi, ac));
+        }
+        if (null != aiList && aiList.size() > 0){
+            getDao().saveOrUpdateAll(aiList);
+        }
+    }
+
+    /**
+     * 
+     * <p>
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param fiId
+     *            流程实例ID
+     * @return 首节点实例
+     */
+    public Ai getStartAi(Long fiId) {
+        Ai ai = getDao().findFirst(Ai.class, "fiId = ? and ac.isStart = 1", new Object[] { fiId }, new String[] { "fi", "ac", "fl" });
+        return ai;
+    }
+
+    /**
+     * 
+     * <p>
+     * 获取指定环节外部编码的环节实例
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param fiId
+     *            流程实例ID
+     * @param outCode
+     *            环节编码
+     * @return 环节实例
+     */
+    public Ai getAi(Long fiId, String outCode) {
+        Ai ai = getDao().findFirst(Ai.class, "ac.outCode = ? and fiId = ?", new Object[] { outCode, fiId }, new String[] { "fi", "ac" });
+        return ai;
+    }
+
+    /**
+     * 
+     * <p>
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param fiId
+     *            流程实例ID
+     * @param statuses
+     *            指定的状态列表
+     * @return 环节实例列表
+     */
+    public List<Ai> getAiList(Long fiId, Integer... statuses) {
+        return this.getAiList(fiId, null, statuses);
+    }
+    /**
+     * 
+     *〈简述〉
+     *〈详细描述〉
+     * @author jun
+     * @param fiId 流程实例ID
+     * @param maxTp ai的最大tp
+     * @param statuses 指定的状态列表
+     * @return 环节实例列表
+     */
+    public List<Ai> getAiList(Long fiId, Integer maxTp, Integer[] statuses){
+        List<Ai> aiList = getDao().findAll(Ai.class, "fiId=?" + (statuses != null && statuses.length > 0
+                ? " and status in(" + StringHelper.join(statuses, ",") + ")" : "") + (null != maxTp ? " and ac.tp < " + maxTp.intValue() : "")
+                , new Object[] { fiId }, new String[] { "ac", "fl" });
+        return aiList;
+    }
+    
+    /**
+     * 
+     * <p>
+     * 挂起活动实例
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param aiId
+     *            环节实例ID
+     * @param suspendCode
+     *            挂起编码
+     * @param user
+     *            操作人
+     * 
+     */
+    public void suspendAi(Long aiId, String suspendCode, User user) {
+        getDao().execute(
+                "update Ai set isSuspend = ?,suspendCode = ?,suspendDate = ?,suspendUserName = ?,suspendUserLoginName = ?,suspendUserId = ? where id = ?",
+                new Object[] { 1, suspendCode, new Date(), user.getUserName(), user.getLoginName(), user.getUserId(), aiId });
+
+    }
+
+    /**
+     * 
+     * <p>
+     * 解挂环节实例
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param aiId
+     *            环节实例ID
+     * 
+     */
+    public void unSuspendAi(Long aiId) {
+        getDao().execute(
+                "update Ai set isSuspend = ?,suspendCode = ?,suspendTime = ?,suspendUserName = ?,suspendUserLoginName = ?,suspendUserId = ? where id = ?",
+                new Object[] { 0, "", null, null, null, null, aiId });
+
+    }
+
+    /**
+     * 
+     * <p>
+     * 获取当前ai,直接的前置活动实例，如果前置节点时自动节点，则递归前置获取
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param currentAi
+     *            当前ai
+     * @param next_a_or_from_a_acs
+     *            所有前置、后置节点
+     * @param next_a_or_from_a_trs
+     *            所有前置、后置流转
+     * @param gvs
+     *            全局变量
+     * @param statuses
+     *            状态
+     * @return 活动实例
+     * 
+     */
+    public List<Ai> getFrom1ListDeepSearchAutoAi(Ai currentAi, List<Ac> next_a_or_from_a_acs, List<Tr> next_a_or_from_a_trs, Gvs gvs,
+            Integer... statuses) {
+        return getFrom1OrNext1ListDeepSearchAutoAi(FromOrNext.FROM, currentAi, next_a_or_from_a_acs, next_a_or_from_a_trs, gvs, statuses);
+    }
+
+    /**
+     * 
+     * <p>
+     * 获取当前ai,直接的后置活动实例，如果后置节点时自动节点，则递归后置获取
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param currentAi
+     *            当前ai
+     * @param next_a_or_from_a_acs
+     *            所有前置、后置节点
+     * @param next_a_or_from_a_trs
+     *            所有前置、后置流转
+     * @param gvs
+     *            全局变量
+     * @param statuses
+     *            状态
+     * @return 活动实例
+     */
+    public List<Ai> getNext1ListDeepSearchAutoAi(Ai currentAi, List<Ac> next_a_or_from_a_acs, List<Tr> next_a_or_from_a_trs, Gvs gvs,
+            Integer... statuses) {
+        return getFrom1OrNext1ListDeepSearchAutoAi(FromOrNext.NEXT, currentAi, next_a_or_from_a_acs, next_a_or_from_a_trs, gvs, statuses);
+    }
+
+    /**
+     * 
+     * <p>
+     * 获取当前ai,直接的后置/前置活动实例，如果后置/前置节点时自动节点，则递归后置/前置获取
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param flag
+     *            前置/后置选项
+     * @param currentAi
+     *            当前ai
+     * @param next_a_or_from_a_ais
+     *            所有前置、后置节点
+     * @param next_a_or_from_a_trs
+     *            所有前置、后置流转
+     * @param gvs
+     *            全局变量
+     * @param statuses
+     *            状态
+     * @return 活动实例
+     */
+    private List<Ai> getFrom1OrNext1ListDeepSearchAutoAi(FromOrNext flag, Ai currentAi, List<Ac> next_a_or_from_a_ais, List<Tr> next_a_or_from_a_trs,
+            Gvs gvs, Integer... statuses) {
+
+        List<Ac> pass2AcList = FlowUtils.getNodeIdsOfFrom1OrNext1ListDeepSearchAuto(flag, currentAi.getAc(), next_a_or_from_a_ais, next_a_or_from_a_trs,
+                gvs);
+        List<String> pass2AcNodeIdList = CollectionUtils.collectAsList(pass2AcList, "nodeId");
+        List<Ai> toListCond = new ArrayList<Ai>();
+        if (pass2AcList.size() > 0) {
+            toListCond = getListByNodeIdList(currentAi.getFiId(), pass2AcNodeIdList, statuses);
+        }
+
+        return toListCond;
+    }
+
+    /**
+     * 
+     * <p>
+     * 保存操作记录
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param ai
+     *            活动实例
+     * @param logCode
+     *            编码
+     */
+    public void log(Ai ai, String logCode) {
+
+        Hai hai = new Hai();
+        hai.setAiId(ai.getId());
+        hai.setLogCode(logCode);
+
+        hai.setStatus(ai.getStatus());
+
+        hai.setAcId(ai.getAcId());
+        hai.setFiId(ai.getFiId());
+        hai.setFlId(ai.getFlId());
+
+        getDao().save(hai);
+    }
+
+    /**
+     * 
+     * <p>
+     * 获取ai所有后置节点实例
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param ai
+     *            活动实例
+     * @param statuses
+     *            状态
+     * @return 活动实例
+     */
+    public List<Ai> getNextAList(Ai ai, Integer... statuses) {
+        String nextA = ai.getAc().getNext_a();
+        return getListByNodeIdList(ai.getFiId(), StringHelper.splitAsStringList(nextA, "-"), statuses);
+    }
+
+    /**
+     * 
+     * <p>
+     * 获取ai所有前置节点实例
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param ai
+     *            活动实例
+     * @param statuses
+     *            状态
+     * @return 活动实例
+     */
+    public List<Ai> getFromAList(Ai ai, Integer... statuses) {
+        String fromA = ai.getAc().getFrom_a();
+        return getListByNodeIdList(ai.getFiId(), StringHelper.splitAsStringList(fromA, "-"), statuses);
+    }
+
+    /**
+     * 
+     * <p>
+     * 获取指定nodeId的节点实例列表
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param fiId
+     *            流程实例ID
+     * @param nodeIds
+     *            节点nodeId集合
+     * @param statuses
+     *            状态
+     * @return 活动实例
+     */
+    public List<Ai> getListByNodeIdList(Long fiId, List<String> nodeIds, Integer... statuses) {
+        List<Ai> aiList = new ArrayList<Ai>();
+
+        if (nodeIds.size() > 0) {
+            String whereClaus = "fiId = " + fiId + " and ac.nodeId in (" + StringHelper.join(nodeIds, ",", "'") + ")"
+                    + ((statuses != null && statuses.length > 0 && statuses[0] != null) ? " and status in(" + StringHelper.join(statuses, ",") + ")" : "");
+            // 对TP进行排序,参考tryStartNextAi(..)
+            aiList = getDao().findAll(Ai.class, whereClaus, null, "ac.tp asc", new String[] { "fi", "ac" });
+        }
+        return aiList;
+    }
+
+    /**
+     * 
+     * <p>
+     * 创建环节实例
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param fi
+     *            流程实例
+     * @param ac
+     *            环节定义
+     * @return 环节实例
+     */
+    private Ai generateAi(Fi fi, Ac ac) {
+        Ai ai = new Ai();
+        ai.setFiId(fi.getId());
+        ai.setFlId(fi.getFlId());
+        ai.setFi(fi);
+        ai.setFl(fi.getFl());
+        ai.setAcId(ac.getId());
+        ai.setAc(ac);
+        ai.setStatus(Ai.STATUS_CREATED);
+        ai.setIsDelay(0);
+        ai.setIsSuspend(0);
+        ai.setDisplayName(ac.getNodeName());
+        ai.setPx(0);
+        // Override 6 properties of Ac
+        ai.setIsTimelimit(ac.getIsTimelimit());
+        ai.setTimeLimit(ac.getTimeLimit());
+        ai.setTimeUnit(ac.getTimeUnit());
+        ai.setIsTimingStart(ac.getIsTimingStart());
+        ai.setIsTimingEnd(ac.getIsTimingEnd());
+
+        return ai;
+
+    }
+}

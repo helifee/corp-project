@@ -1,0 +1,561 @@
+package com.jzy.hio.crm.controller;
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import javax.annotation.Resource;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.poi.hssf.usermodel.HSSFCellStyle;
+import org.apache.poi.hssf.usermodel.HSSFWorkbook;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.xssf.usermodel.XSSFCell;
+import org.apache.poi.xssf.usermodel.XSSFCellStyle;
+import org.apache.poi.xssf.usermodel.XSSFRow;
+import org.apache.poi.xssf.usermodel.XSSFSheet;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.controller.BaseController;
+import com.jzy.hio.constant.CrmConstant;
+import com.jzy.hio.crm.dto.AttachmentParamDto;
+import com.jzy.hio.crm.dto.CrmCustomerImportDto;
+import com.jzy.hio.crm.dto.CrmImportResultDto;
+import com.jzy.hio.crm.dto.CrmStatisticalCountDto;
+import com.jzy.hio.crm.dto.CrmStatusCountDto;
+import com.jzy.hio.crm.dto.CustomerNamesDto;
+import com.jzy.hio.crm.param.CrmAssignedCustParam;
+import com.jzy.hio.crm.param.CrmAssignedMsgParam;
+import com.jzy.hio.crm.param.CrmCommonParam;
+import com.jzy.hio.crm.param.CrmCustomerSearchParam;
+import com.jzy.hio.crm.param.CrmCustomerparam;
+import com.jzy.hio.crm.param.CrmValNameParam;
+import com.jzy.hio.crm.param.CustomerParam;
+import com.jzy.hio.crm.param.FileImportParam;
+import com.jzy.hio.crm.service.CrmCustomerService;
+import com.jzy.hio.crm.utils.CrmCommonInvokeUtil;
+import com.jzy.hio.crm.utils.PageResult;
+import com.jzy.hio.entity.CrmCustomer;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.exception.HioMybatisInsertException;
+import com.jzy.hio.springmvc.ApiResponse;
+import com.jzy.hio.sys.organization.dto.FlowUserDto;
+import com.jzy.hio.utils.ExcelUtils;
+
+/**
+ * 客户
+ * @author
+ *
+ */
+@RestController
+@RequestMapping("/customer")
+public class CrmCustomerController extends BaseController {
+
+	private static final Logger logger = LoggerFactory.getLogger(CrmCustomerController.class);
+	
+    @Resource
+    private ExcelUtils excelUtils;
+    @Autowired
+    private CrmCommonInvokeUtil crmCommonInvokeUtil;
+	@Autowired
+	private CrmCustomerService crmCustomerService;
+	
+	/**
+	 * 获取上传参数和业务id
+	 * @return
+	 */
+	@PostMapping("/getAttachmentParam")
+	public ApiResponse<AttachmentParamDto> getAttachmentParam(){
+		ApiResponse<AttachmentParamDto> res = new ApiResponse<>(200, "查询成功");
+		
+		AttachmentParamDto attachmentParamDto = new AttachmentParamDto();
+		attachmentParamDto.setApp(BaseConstants.App.CRM.getId());
+		attachmentParamDto.setCategory(BaseConstants.AttachmentCategory.CRM_CUSTOMER.getId());
+		attachmentParamDto.setBusinessId(Base.generatePk(CrmCustomer.class));
+		
+		res.setResult(attachmentParamDto);
+		return res;
+	}
+	
+	/**
+	 * 新建客户
+	 * @return
+	 */
+	@PostMapping("/save")
+	public ApiResponse<Void> save(@RequestBody CustomerParam customersParam) {
+		ApiResponse<Void> res = new ApiResponse<>(200, "保存成功");
+		crmCustomerService.saveCustomer(customersParam);
+		return res;
+	}
+	
+	/**
+	 * 查询客户
+	 * @param id
+	 * @return
+	 */
+	@PostMapping("/get/{id}")
+	public ApiResponse<CustomerParam> get(@PathVariable("id") String id) {
+		ApiResponse<CustomerParam> res = new ApiResponse<>(200, "查询成功");
+		String uid = getUserIdOA();
+		CustomerParam customersParam = crmCustomerService.selectCustomer(id);
+		if (!isRolePermission(BaseConstants.MYSQL_MENU_CODE_CRM_MANAGE)) {
+			if (!customersParam.getOwnerPersonId().equals(uid)) {
+				res.setMessage("您没有该客户权限");
+				res.setStatus(101);
+				return res;
+			}
+		}
+		
+		res.setResult(customersParam);
+		return res;
+	}
+	
+	/**
+	 * 查询客户
+	 * @param id
+	 * @return
+	 */
+	@PostMapping("/getForMobile/{id}")
+	public ApiResponse<CustomerParam> getFor(@PathVariable("id") String id) {
+		ApiResponse<CustomerParam> res = new ApiResponse<>(200, "查询成功");
+
+		String uid = getUserIdOA();
+		CustomerParam customersParam = crmCustomerService.queryCustomerForMobile(id);
+		if (!isRolePermission(BaseConstants.MYSQL_MENU_CODE_CRM_MANAGE)) {
+			if (!customersParam.getOwnerPersonId().equals(uid)) {
+				res.setMessage("您没有该客户权限");
+				res.setStatus(101);
+				return res;
+			}
+		}
+		res.setResult(customersParam);
+		
+		return res;
+	}
+	
+	/**
+	 * 查询客户名称列表
+	 * @param name
+	 * @return
+	 */
+	@PostMapping("/searchNames")
+	public ApiResponse<List<CustomerNamesDto>> selectCustNames(@RequestParam(required = false, value = "name") String name){
+		ApiResponse<List<CustomerNamesDto>> res = new ApiResponse<>(200, "查询成功");
+		
+		String uid = getUserIdOA();
+        if (isRolePermission(BaseConstants.MYSQL_MENU_CODE_CRM_MANAGE)) {
+        	uid = null;
+		}
+        if (name != null) {
+        	name = name.trim(); 
+		}
+		
+		List<CustomerNamesDto> list = crmCustomerService.selectCustNames(uid, name);
+		res.setResult(list);
+		
+		return res;
+	}
+	
+	/**
+	 * 查询各个状态数量
+	 * @return List
+	 */
+	@PostMapping("/statusCount")
+	public ApiResponse<List<CrmStatusCountDto>> statusCount(){
+		String uid = getUserIdOA();
+        if (isRolePermission(BaseConstants.MYSQL_MENU_CODE_CRM_MANAGE)) {
+        	uid = null;
+		}
+        
+		ApiResponse<List<CrmStatusCountDto>> res = new ApiResponse<>(200, "查询成功");
+		List<CrmStatusCountDto> statusCountDtoList = crmCustomerService.selectCustStatusCount(uid);
+		res.setResult(statusCountDtoList);
+		return res;
+	}
+	
+	/**
+	 * 客户作废
+	 * @param id
+	 * @return
+	 */
+	@PostMapping("/repealed/{id}")
+	public ApiResponse<Void> repealed(@PathVariable("id") String id){
+		ApiResponse<Void> res = new ApiResponse<>(200, "操作成功");
+		String uid = getUserIdOA();
+		crmCustomerService.saveRepealed(id, uid);
+		return res;
+	}
+	
+	/**
+	 * 客户分页
+	 * @param customerSearchParam
+	 * @return
+	 */
+	@PostMapping("/page")
+	public ApiResponse<PageResult> page(@RequestBody CrmCustomerSearchParam customerSearchParam) {
+		ApiResponse<PageResult> res = new ApiResponse<>(200, "查询成功");
+		
+		String uid = getUserIdOA();
+        if (!isRolePermission(BaseConstants.MYSQL_MENU_CODE_CRM_MANAGE)) {
+        	customerSearchParam.setUid(uid);
+		}
+		
+		PageResult page = crmCustomerService.queryPageCustomers(customerSearchParam);
+		res.setResult(page);
+		return res;
+	}
+	
+    /**
+     * 下载邀请客户模板
+     *
+     * @param response
+     * @param request
+     */
+    @GetMapping("/download/template")
+    public void downloadTemplate(HttpServletResponse response, HttpServletRequest request) {
+        excelUtils.downLoadResource(response, request, CrmConstant.CUSTOMER_IMPORT_TEMPLATE_NAME, CrmConstant.CUSTOMER_IMPORT_TEMPLATE_PATH);
+    }
+
+    /**
+     * 客户导入预览
+     * @param file
+     * @return
+     */
+    @PostMapping("/excel/preview")
+    public List<CrmCustomerImportDto> previewExcel(FileImportParam file) {
+        Workbook wb = null;
+        List<CrmCustomerImportDto> custList = new ArrayList<>();
+        try {
+            if (excelUtils.isExcel2007(file.getResource().getOriginalFilename())) {
+                wb = new XSSFWorkbook(file.getResource().getInputStream());
+            } else {
+                wb = new HSSFWorkbook(file.getResource().getInputStream());
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+
+            return null;
+        }
+        // 获取第一张表
+        Sheet sheet = wb.getSheetAt(0);
+        // 获取实际的行数，去除空行了
+        // columns读取数据条数存在问题， 如果是拖动的表格，清除完还是认为有数据，拉高了单元格也认为有数据
+//        int columns = sheet.getPhysicalNumberOfRows();
+        // 得到总行数编号（从0开始）
+        String[] excelHeader = {"客户名称", "联系电话", "电子邮件","客户来源", "客户类型",
+        		"联系地址","企业网站", "客户负责人", "联系人姓名","联系人职务",
+        		"联系人手机","联系人邮箱", "决策关系"};
+        int[] titlesIndex = {-1,-1,-1,-1,-1,
+        		-1,-1,-1,-1,-1,
+        		-1,-1,-1};
+        
+        Row rowTitle = sheet.getRow(0);
+        if (rowTitle == null) {
+            throw new HioMybatisInsertException("没有发现导入的标题");
+        }
+
+        boolean notfind = true;
+        for (int i = 0; i < excelHeader.length; i++) {
+        	for (int j = 0; j < excelHeader.length; j++) {
+        		if (excelHeader[i].equals(excelUtils.getCellValue(rowTitle, j))) {
+        			titlesIndex[i] = j;
+					notfind = false;
+        			break;
+				}
+        	}
+        	
+        }
+
+		if (notfind) {
+			throw new HioMybatisInsertException("请使用正确的模板导入数据");
+		}
+        
+        int rows = sheet.getLastRowNum();
+        int realColumn = 0;
+        for (int i = 1; i <= rows; i++) {
+            // 获取索引为i的行，以0开始
+            Row row = sheet.getRow(i);
+            if (row == null) {
+				continue;
+			}
+            
+            String custName = excelUtils.getCellValue(sheet, i, titlesIndex[0]);
+            String phone = excelUtils.getCellValue(sheet, i, titlesIndex[1]);
+            String email = excelUtils.getCellValue(sheet, i, titlesIndex[2]);
+            String sourceName = excelUtils.getCellValue(sheet, i, titlesIndex[3]);
+            String typeName = excelUtils.getCellValue(sheet, i, titlesIndex[4]);
+            String address = excelUtils.getCellValue(sheet, i, titlesIndex[5]);
+            String webSite = excelUtils.getCellValue(sheet, i, titlesIndex[6]);
+            String salesName = excelUtils.getCellValue(sheet, i, titlesIndex[7]);
+            String contactName = excelUtils.getCellValue(sheet, i, titlesIndex[8]);
+            String title = excelUtils.getCellValue(sheet, i, titlesIndex[9]);
+            String contactPhone = excelUtils.getCellValue(sheet, i, titlesIndex[10]);
+            String contactEmail = excelUtils.getCellValue(sheet, i, titlesIndex[11]);
+            String decisionRoleName = excelUtils.getCellValue(sheet, i, titlesIndex[12]);
+            
+            if (StringUtils.isBlank(custName) 
+            		&& StringUtils.isBlank(phone)
+            		&& StringUtils.isBlank(email)
+            		&& StringUtils.isBlank(sourceName)
+            		&& StringUtils.isBlank(typeName)
+            		&& StringUtils.isBlank(address)
+            		&& StringUtils.isBlank(webSite)
+            		&& StringUtils.isBlank(salesName)
+            		&& StringUtils.isBlank(contactName)
+            		&& StringUtils.isBlank(title)
+            		&& StringUtils.isBlank(contactPhone)
+            		&& StringUtils.isBlank(contactEmail)
+            		&& StringUtils.isBlank(decisionRoleName)) {
+                continue;
+            }
+            
+            realColumn ++;
+            if (realColumn > 500) {
+                throw new HioMybatisInsertException("当前数据已超过500条，请导入小于等于500条数据");
+            }
+            
+            CrmCustomerImportDto importDto = new CrmCustomerImportDto();
+            importDto.setCustName(custName);
+            importDto.setPhone(phone);
+            importDto.setEmail(email);
+            importDto.setSourceName(sourceName);
+            importDto.setTypeName(typeName);
+            importDto.setAddress(address);
+            importDto.setWebSite(webSite);
+            importDto.setSalesName(salesName);
+            
+            importDto.setContactName(contactName);
+            importDto.setTitle(title);
+            importDto.setContactPhone(contactPhone);
+            importDto.setContactEmail(contactEmail);
+            importDto.setDecisionRoleName(decisionRoleName);
+            custList.add(importDto);
+          
+        }
+        
+        if (realColumn < 1) {
+            throw new HioMybatisInsertException("请导入大于1条数据");
+        }
+        
+        return custList;
+    }
+    
+    /**
+     * 保存导入信息
+     * @param custList
+     */
+    @PostMapping("/saveImportData")
+    public CrmImportResultDto saveImportData(@RequestBody List<CrmCustomerImportDto> custList) {
+    	List<CrmCustomerImportDto> sucessDataList = new ArrayList<>();
+    	List<CrmCustomerImportDto> failedDataList = new ArrayList<>();
+
+    	List<String> uNames = new ArrayList<>();
+    	for (CrmCustomerImportDto customerImportDto : custList) {
+    		if (StringUtils.isNotBlank(customerImportDto.getSalesName())) {
+				uNames.add(customerImportDto.getSalesName().trim());
+			}
+    	}
+    	
+    	Map<String,FlowUserDto> uidMap = crmCommonInvokeUtil.getUidByNames(uNames);
+        String uid = getUserIdOA();
+        String uName = getUserNameOA();
+        List<CrmAssignedMsgParam> assignedMsgList = new ArrayList<>();
+    	for (CrmCustomerImportDto customerImportDto : custList) {
+			try {
+				boolean saveOk = crmCustomerService.saveImportCust(customerImportDto, uidMap, uid, uName, assignedMsgList);
+				if (saveOk) {
+					sucessDataList.add(customerImportDto);
+				} else {
+					failedDataList.add(customerImportDto);
+				}
+			} catch (Exception e) {
+				logger.error("导入数据出错:{}", e);
+				customerImportDto.setErrMsg("保存失败出现异常");
+				failedDataList.add(customerImportDto);
+			}
+		}
+    	
+    	int sucssSize = sucessDataList.size();
+    	int failSize = failedDataList.size();
+    	CrmImportResultDto importResult = new CrmImportResultDto();
+    	int size = custList.size();
+    	if (sucssSize == size) {
+    		importResult.setImportStatus(CrmConstant.IMPORT_SUCCESS);
+    	} else if (failSize == size) {
+			importResult.setImportStatus(CrmConstant.IMPORT_FAIL);
+		} else {
+			importResult.setImportStatus(CrmConstant.IMPORT_PART);
+		}
+    	importResult.setTotalCnt(size);
+    	importResult.setSuccessCnt(sucssSize);
+    	importResult.setFailCnt(failSize);
+    	importResult.setFailDataList(failedDataList);
+//    	try {
+//    		crmCommonInvokeUtil.sendAssignMessage(assignedMsgList);
+//		} catch (Exception e) {
+//			logger.error("导入客户发消息异常：{}", e);
+//		}
+    	return importResult;
+    }
+    
+    /**
+     * 下载错误数据
+     * @param response
+     * @param request
+     * @param failData
+     */
+    @PostMapping("/download/errorData")
+    public void downLoadErrorData(HttpServletResponse response, HttpServletRequest request,@RequestParam("failData") String failData) {
+        try {
+        	List<CrmCustomerImportDto> custList = json2list(failData, CrmCustomerImportDto.class);
+            String[] excelHeader = {"客户名称", "联系电话", "电子邮件","客户来源", "客户类型",
+            		"联系地址","企业网站", "客户负责人", "联系人姓名","联系人职务",
+            		"联系人手机","联系人邮箱", "决策关系", "失败原因"};
+            XSSFWorkbook wb = new XSSFWorkbook();
+            XSSFSheet sheet = wb.createSheet();
+            XSSFRow row = sheet.createRow(0);
+            XSSFCellStyle style = wb.createCellStyle();
+            style.setAlignment(HSSFCellStyle.ALIGN_CENTER);
+
+            for (int i = 0; i < excelHeader.length; i++) {
+                XSSFCell cell = row.createCell(i);
+                cell.setCellValue(excelHeader[i]);
+                cell.setCellStyle(style);
+                sheet.autoSizeColumn(i);
+                sheet.setColumnWidth(i, 28 * 256);
+            }
+            CrmCustomerImportDto importDto = null;
+            for (int i = 0; i < custList.size(); i++) {
+            	importDto = custList.get(i);
+                row = sheet.createRow(i + 1);
+                row.createCell(0).setCellValue(importDto.getCustName() == null ? "" : importDto.getCustName());
+                row.createCell(1).setCellValue(importDto.getPhone() == null ? "" : importDto.getPhone());
+                row.createCell(2).setCellValue(importDto.getEmail() == null ? "" : importDto.getEmail());
+                row.createCell(3).setCellValue(importDto.getSourceName() == null ? "" : importDto.getSourceName());
+                row.createCell(4).setCellValue(importDto.getTypeName() == null ? "" : importDto.getTypeName());
+                row.createCell(5).setCellValue(importDto.getAddress() == null ? "" : importDto.getAddress());
+                row.createCell(6).setCellValue(importDto.getWebSite() == null ? "" : importDto.getWebSite());
+                row.createCell(7).setCellValue(importDto.getSalesName() == null ? "" : importDto.getSalesName());
+                row.createCell(8).setCellValue(importDto.getContactName() == null ? "" : importDto.getContactName());
+                row.createCell(9).setCellValue(importDto.getTitle() == null ? "" : importDto.getTitle());
+                row.createCell(10).setCellValue(importDto.getContactPhone() == null ? "" : importDto.getContactPhone());
+                row.createCell(11).setCellValue(importDto.getContactEmail() == null ? "" : importDto.getContactEmail());
+                row.createCell(12).setCellValue(importDto.getDecisionRoleName() == null ? "" : importDto.getDecisionRoleName());
+                row.createCell(13).setCellValue(importDto.getErrMsg());
+            }
+            excelUtils.downLoadExcel(request, response, wb);
+        } catch (Exception e) {
+        	logger.error("客户导入下载错误数据出错:{}", e);
+        }
+    }
+    
+    /**
+     * 验证客户名称
+     * @param param
+     * @return
+     */
+    @PostMapping("/valName")
+	public ApiResponse<Boolean> valName(@RequestBody CrmValNameParam param) {
+		ApiResponse<Boolean> res = new ApiResponse<>(200, "可以使用");
+		String id = param.getSid();
+		String name = param.getName();
+		boolean canUse = crmCustomerService.queryCustNameCanUse(id, name);
+		if (!canUse) {
+			res.setStatus(101);
+			res.setMessage("客户名称已存在！");
+		}
+		res.setResult(canUse);
+		return res;
+	}
+    
+	/**
+	 * 查询（商机，客户）动态
+	 * @param crmCustomerparam
+	 * @return
+	 */
+	@RequestMapping("/getAll")
+	public PageResult getAll(@RequestBody CrmCustomerparam crmCustomerparam) {
+		if (null == crmCustomerparam.getCustomerId()) {
+            throw new HioException("数据查询有误！");
+        }
+
+		String uid = getUserIdOA();
+		if (!isRolePermission(BaseConstants.MYSQL_MENU_CODE_CRM_MANAGE)) {
+			crmCustomerparam.setUid(uid);
+		}
+
+		return crmCustomerService.getAll(crmCustomerparam);
+	}
+	
+	/**
+	 * 标记为重点切换
+	 * @param param
+	 * @return
+	 */
+	@RequestMapping("/signImport")
+	public ApiResponse<Boolean> signImport(@RequestBody CrmCommonParam param) {
+		ApiResponse<Boolean> res = new ApiResponse<>(200, "切换成功");
+		boolean reslut = crmCustomerService.saveSignImport(param);
+		res.setResult(reslut);
+		return res;
+	}
+	
+	/**
+	 * 标记为失败切换
+	 * @param param
+	 * @return
+	 */
+	@RequestMapping("/signFail")
+	public ApiResponse<Boolean> signFail(@RequestBody CrmCommonParam param) {
+		ApiResponse<Boolean> res = new ApiResponse<>(200, "切换成功");
+		boolean reslut = crmCustomerService.saveSignFail(param);
+		res.setResult(reslut);
+		return res;
+	}
+	
+	/**
+	 * 客户分配
+	 * @param param
+	 * @return
+	 */
+	@RequestMapping("/assignedCust")
+	public ApiResponse<Boolean> assignedCust(@RequestBody CrmAssignedCustParam param) {
+		ApiResponse<Boolean> res = new ApiResponse<>(200, "分配完成");
+		boolean result = crmCustomerService.saveAssignedCust(param);
+		res.setResult(result);
+		return res;
+	}
+	
+	/**
+	 * 客户详情数量查询
+	 * @param param
+	 * @return
+	 */
+	@RequestMapping("/statistical")
+	public CrmStatisticalCountDto statistical(@RequestBody CrmCommonParam param) {
+		String customerId = param.getCustomerId();
+		if (param == null || StringUtils.isBlank(customerId)) {
+			throw new HioException("参数有误");
+		}
+		return crmCustomerService.queryStatistical(customerId);
+	}
+	
+	
+}

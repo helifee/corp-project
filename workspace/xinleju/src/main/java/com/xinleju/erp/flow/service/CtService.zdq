@@ -1,0 +1,158 @@
+package com.xinleju.erp.flow.service;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.base.utils.StringHelper;
+import com.xinleju.erp.flow.flowutils.bean.CategoryDTO;
+import com.xinleju.erp.flow.models.Ct;
+import com.xinleju.erp.flow.models.FlGraph;
+
+/**
+ * 
+ * 版权：(C) 版权所有 2000-2014 上海天好电子商务有限公司苏州分公司
+ * ct接口
+ * @author   jun
+ * @version  $Id$
+ * @since
+ * @see
+ */
+@Service
+public class CtService extends BaseService {
+    /**
+     * 得到ct Map
+     * @author jun
+     * @param pId
+     * @return
+     */
+    public  List<Ct> getCtList(Long pId, String isDisabled){
+        return getDao().findByHQL(Ct.class, "from Ct c where 1=1 " + (!StringHelper.parseBoolean(isDisabled) ? " and (c.isDisabled is null or c.isDisabled = 0) " : " and (c.isDisabled is not null and c.isDisabled = 1) ") + " and " + (null == pId ? " c.parentId is null" : " c.parentId = " + pId) + " order by c.position asc, c.id asc");
+    }
+    
+    /**
+     * 得到ids
+     * @author jun
+     * @param ctId
+     * @param isDisabled
+     * @return
+     */
+    public List<Long> getSubCtIdList(Long ctId, String isDisabled){
+        List<Long> allSubCtIdList = new ArrayList<Long>();
+        if (null != ctId && ctId > 0){
+            String sql = "select id from tf_ct where parent_id = ?";
+            if (isDisabled == null || !StringHelper.parseBoolean(isDisabled)) {
+                sql += " and (is_disabled is null or is_disabled = 0)";
+            } else {
+                sql += " and (is_disabled is not null and is_disabled = 1)";
+            }
+            List<Long> ctIdList = App.getBean(JdbcTemplate.class).queryForList(sql, new Object[]{ctId}, Long.class);
+            if (null != ctIdList && ctIdList.size() > 0){
+                for (Long id : ctIdList){
+                    allSubCtIdList.add(id);
+                    allSubCtIdList.addAll(this.getSubCtIdList(id, isDisabled));
+                }
+            }
+        }
+        return allSubCtIdList;
+    }
+    /**
+     * 得到目录列表
+     * @param pCtId
+     * @param isDisabled
+     * @return
+     */
+    public List<CategoryDTO> getCategoryDTOList(Long pCtId, String isDisabled){
+    	List<CategoryDTO> categoryDTOList = new ArrayList<CategoryDTO>();
+		List<Ct> ctList = this.getCtList(pCtId, isDisabled);
+		if (null != ctList && ctList.size() > 0){
+			CategoryDTO categoryDTO = null;
+			for (Ct ct : ctList){
+				categoryDTO = new CategoryDTO();
+				categoryDTO.setId(ct.getId());
+				categoryDTO.setName(ct.getName());
+				categoryDTOList.add(categoryDTO);
+			}
+		}
+    	return categoryDTOList;
+    }
+    
+    /**
+     * 得到ids
+     * @author jun
+     * @param ctId
+     * @param isDisabled
+     * @return
+     */
+    @SuppressWarnings("deprecation")
+    public String getCtIdPath(Long parentCtId){
+        String ctIdPath = "";
+        if (null != parentCtId && parentCtId > 0){
+            ctIdPath = "Cate_" + parentCtId + "/";
+            String sql = "select parent_id from tf_ct where id = ?";
+            Long pId = App.getBean(JdbcTemplate.class).queryForLong(sql, parentCtId);
+            if (null != pId && pId > 0){
+                ctIdPath = this.getCtIdPath(pId) + ctIdPath;
+            }
+        }
+        return ctIdPath;
+    }
+    /**
+     * 
+     * @author jun
+     * @param id
+     * @return
+     */
+    public static String getCtNamePath(Long id){
+        String namePath = "";
+        if (null != id && id > 0){
+            String sql = "select parent_id pId,name name from tf_ct where id = ?";
+            Map<String, Object> idNameMap = App.getBean(JdbcTemplate.class).queryForMap(sql, id);
+            if (null != idNameMap && idNameMap.size() > 0){
+                if (null != idNameMap.get("name") && StringUtils.isNotBlank(idNameMap.get("name").toString())){
+                    namePath = idNameMap.get("name").toString();
+                }
+                if (null != idNameMap.get("pId") && StringUtils.isNotBlank(idNameMap.get("pId").toString())){
+                    namePath = getCtNamePath(Long.valueOf(idNameMap.get("pId").toString())) + "/" + namePath;
+                }
+            }
+        }
+        return namePath;
+    }
+
+	public void changeParticipant(String source,String target, Long ctId,boolean ifIncludeChild) {
+		String hql = "";
+    	List<FlGraph> flList = null;
+    	if(ifIncludeChild){
+    		Ct ct = getDao().getById(Ct.class, ctId);
+    		if(ct == null){
+    			return;
+    		}
+    		hql = "from FlGraph f where exists(select 'X' from Ct c where c.code like ? and c.id = f.ctId)";
+    		flList = getDao().findByHQL(FlGraph.class, hql, ct.getCode()+"%");
+    	}else{
+    		hql = "from FlGraph f where f.ctId = ?";
+    		flList = getDao().findByHQL(FlGraph.class, hql, ctId);
+    	}
+    	
+    	if(flList != null && !flList.isEmpty()) {
+    		String xml;
+    		for(FlGraph fl : flList) {
+    			xml = fl.getXml();
+    			if(StringUtils.isNotBlank(xml)) {
+    				xml = xml.replaceAll(source, target);
+    				getDao().execute("update FlGraph f set f.xml = ? where f.id = ?", xml,fl.getId());
+    			}
+    		}
+    	}
+		
+	}
+    
+    
+}

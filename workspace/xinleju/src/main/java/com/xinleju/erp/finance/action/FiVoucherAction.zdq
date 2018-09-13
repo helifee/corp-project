@@ -1,0 +1,1720 @@
+package com.xinleju.erp.finance.action;
+
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import javax.servlet.ServletOutputStream;
+
+import net.sf.json.JSONArray;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.apache.tools.ant.util.DateUtils;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.ibm.icu.text.SimpleDateFormat;
+import com.opensymphony.xwork2.ModelDriven;
+import com.xinleju.erp.base.app.action.BaseAction;
+import com.xinleju.erp.base.app.bean.Page;
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.utils.JsonUtils;
+import com.xinleju.erp.co.voucher.service.SyncFinaCoData;
+import com.xinleju.erp.data.cache.api.MDFinanceCacheService;
+import com.xinleju.erp.data.cache.api.MDSupplierCacheService;
+import com.xinleju.erp.data.cache.dto.FinancePaymentTypeDTO;
+import com.xinleju.erp.data.cache.dto.SupplierCategoryDTO;
+import com.xinleju.erp.data.cache.dto.SupplierInfoDTO;
+import com.xinleju.erp.ex.service.SyncFinaExData;
+import com.xinleju.erp.finance.models.FiAccountSet;
+import com.xinleju.erp.finance.models.FiAccountSetData;
+import com.xinleju.erp.finance.models.FiAssDetailMapping;
+import com.xinleju.erp.finance.models.FiBusinessobject;
+import com.xinleju.erp.finance.models.FiEntryData;
+import com.xinleju.erp.finance.models.FiSysinfo;
+import com.xinleju.erp.finance.models.FiVoucher;
+import com.xinleju.erp.finance.models.FiVoucherData;
+import com.xinleju.erp.finance.models.FiVoucherExBill;
+import com.xinleju.erp.finance.models.FiVoucherTempType;
+import com.xinleju.erp.finance.models.FiVoucherTemplate;
+import com.xinleju.erp.finance.service.FiAccountCaptionService;
+import com.xinleju.erp.finance.service.FiAccountSetDataService;
+import com.xinleju.erp.finance.service.FiAccountSetService;
+import com.xinleju.erp.finance.service.FiAssMappingService;
+import com.xinleju.erp.finance.service.FiBizObjectService;
+import com.xinleju.erp.finance.service.FiCashFlowCaseService;
+import com.xinleju.erp.finance.service.FiSysInfoService;
+import com.xinleju.erp.finance.service.FiVoucherCreateService;
+import com.xinleju.erp.finance.service.FiVoucherService;
+import com.xinleju.erp.finance.service.FiVoucherTempTypeService;
+import com.xinleju.erp.finance.service.FiVoucherTemplateService;
+import com.xinleju.erp.finance.service.SyncFinaDataService;
+import com.xinleju.erp.finance.utils.NCSendData;
+import com.xinleju.erp.finance.utils.NCXMlParse;
+import com.xinleju.erp.finance.utils.QMap;
+import com.xinleju.erp.flow.bean.LoginInfo;
+import com.xinleju.erp.flow.flowutils.bean.FlowResult;
+import com.xinleju.erp.flow.flowutils.bean.PageBean;
+import com.xinleju.erp.flow.utils.LoginInfoUtils;
+import com.xinleju.erp.frame.dto.FiAccountSubjectDTO;
+import com.xinleju.erp.frame.dto.FiCashFlowCaseDTO;
+import com.xinleju.erp.frame.dto.JsonTreeTableTemplete;
+import com.xinleju.erp.frame.models.extender.FiAccountSubjectExtender;
+import com.xinleju.erp.frame.models.extender.FiCashFlowCaseComboTreeExtender;
+import com.xinleju.erp.frame.utils.CommonUtil;
+import com.xinleju.erp.frame.utils.DataGridJson;
+import com.xinleju.erp.sa.service.SyncFinaSaData;
+import com.xinleju.erp.sm.extend.dto.FinaData;
+import com.xinleju.erp.sm.extend.dto.FinaQueryParams;
+import com.xinleju.erp.sm.extend.dto.FinaResult;
+
+/**
+ * 凭证生成与输出
+ * 
+ * @author songjunjie ztl
+ */
+public class FiVoucherAction extends BaseAction implements
+		ModelDriven<FinaQueryParams> {
+	private static final Log log = LogFactory.getLog(FiVoucherAction.class);
+	@Autowired
+	private FiSysInfoService fiSysInfoService;
+	@Autowired
+	private FiAccountSetService fiAccountSetService;
+	@Autowired
+	private FiAccountSetDataService fiAccountSetDateService;
+	@Autowired
+	private SyncFinaDataService syncFinaDataService;
+	@Autowired
+	private FiVoucherCreateService fiVoucherCreateService;
+	@Autowired
+	private FiVoucherService fiVoucherService;
+	@Autowired
+	private FiVoucherTempTypeService fiVoucherTempTypeService;
+	@Autowired
+	private FiVoucherTemplateService fiVoucherTemplateService;
+	@Autowired
+	private FiAccountCaptionService fiAccountCaptionService;
+	@Autowired
+	private FiBizObjectService fiBizObjectService;
+	@Autowired
+	private FiAssMappingService fiAssMappingService;
+	@Autowired
+	private FiCashFlowCaseService fiCashFlowCaseService;
+
+	/*@Autowired
+	private SyncFinaExData syncFinaExData;*/
+
+	private FinaQueryParams finaQueryParams = new FinaQueryParams();
+
+	/** 凭证分录概要模板 变量表达式 */
+	private static final String VOUCHER_ENTRY_SUMMARY_VAR_EXPR = "\\{!(.+?):(.+?);\\}";
+	/** 费用系统 */
+	private static final Long EX_ASS_MAP_ID = 13L;
+	/** 销售系统 */
+	private static final Long SA_ASS_MAP_ID = 13L;
+	/** 成本系统 */
+	private static final Long CO_ASS_MAP_ID = 13L;
+
+	private static final String ALL = "全部";
+	private static final Long ALL_ID = 999999l;
+	
+	private static final String OUT_SUCCESS = "1";
+	private static final String OUT_FAILUE = "2";
+
+	/**
+	 * 凭证生成和输出框架页面
+	 * 
+	 * @return
+	 */
+	public String index() {
+		List<FiSysinfo> fisysList = this.fiSysInfoService.getAllFiSysinfo();
+
+		try {
+			Long sysId = getParameterLong("sysId");
+			FinaQueryParams params = new FinaQueryParams();
+			List<FinaData> list = syncFinaDataService.getCompany(params)
+					.getResult().getItems();
+			String companyListJson = JsonUtils.toJSONString(list);
+			request.setAttribute("companyList", companyListJson);
+			request.setAttribute("fisysList", fisysList);
+			request.setAttribute("sysId", sysId);
+
+		} catch (Exception e) {
+			log.error("", e);
+		}
+		return "index";
+	}
+
+	/**
+	 * 凭证生成页面
+	 * 
+	 * @return
+	 * @throws UnsupportedEncodingException
+	 */
+	public String generate() throws UnsupportedEncodingException {
+		String accountSetCode = request.getParameter("accountSetCode");
+
+		Long accountSetId = getParameterLong("accountSetId");
+		Long sysId = getParameterLong("sysId");
+
+		List<FiAccountSetData> fasds = fiAccountSetDateService
+				.getFiAccountSetsDataByAccountId(accountSetId, sysId);
+		if (fasds != null && fasds.size() > 0) {
+			List<Long> ids = new ArrayList<Long>();
+			List<FiAccountSetData> companys = new ArrayList<FiAccountSetData>();
+			for (FiAccountSetData f : fasds) {
+				if (!ids.contains(f.getCompanyId())) {
+					ids.add(f.getCompanyId());
+					companys.add(f);
+				}
+			}
+			String accountSetsjson = JsonUtils.toJSONString(companys);
+			request.setAttribute("accountSetsjson", accountSetsjson);
+		}else{
+			request.setAttribute("accountSetsjson", "{}");
+		}
+		if (fasds != null && fasds.size() > 0) {
+			List<FiAccountSetData> projectBranchs = new ArrayList<FiAccountSetData>();
+			FiAccountSetData fsd = new FiAccountSetData();
+			fsd.setProjectBranchId(ALL_ID);
+			fsd.setProjectName(ALL);
+			projectBranchs.add(0, fsd);
+			projectBranchs.addAll(fasds);
+			String projectBranchjson = JsonUtils.toJSONString(projectBranchs);
+			request.setAttribute("projectBranchjson", projectBranchjson);
+		}
+
+		request.setAttribute("param.accountSetId", accountSetId);
+		request.setAttribute("accountSetCode", accountSetCode);
+		request.setAttribute("sysId", sysId);
+
+		return "generate";
+	}
+
+	/**
+	 * 凭证输出页面
+	 * 
+	 * @return
+	 */
+	public String export() {
+		Long accountSetId = getParameterLong("accountSetId");
+		String accountSetCode = request.getParameter("accountSetCode");
+		String companyCode = request.getParameter("companyCode");
+		Long sysId = getParameterLong("sysId");
+		String companyId = "0";
+		/*FiAccountSetData fasd = fiAccountSetDateService
+				.getFiAccountSetDataByAccountId(accountSetId);
+		if(fasd!=null){
+			companyId = String.valueOf(fasd.getCompanyId());
+		}*/
+		
+		List<FiAccountSetData> fasds = fiAccountSetDateService.getFiAccountSetsDataByAccountId(accountSetId, sysId);
+		if (fasds != null && fasds.size() > 0) {
+			List<Long> ids = new ArrayList<Long>();
+			List<FiAccountSetData> companys = new ArrayList<FiAccountSetData>();
+			for (FiAccountSetData f : fasds) {
+				if (!ids.contains(f.getCompanyId())) {
+					ids.add(f.getCompanyId());
+					companys.add(f);
+				}
+			}
+			companyId = String.valueOf(companys.get(0).getCompanyId());
+		}
+
+		List<FiAccountSubjectDTO> accountCaptionList = null;
+		List<FiCashFlowCaseDTO> cashFlowCaseList = null;
+		String status = "1";
+		accountCaptionList = fiAccountCaptionService.getAccountSubjectDTOList(
+				status, accountSetId);
+		cashFlowCaseList = fiCashFlowCaseService.getCashFlowCaseDTOList(status,
+				accountSetId, sysId);
+		// 会计科目
+		JsonTreeTableTemplete jttt = new JsonTreeTableTemplete("id", "pid",
+				FiAccountSubjectDTO.class, FiAccountSubjectExtender.class);
+		JSONArray jsonTree = CommonUtil.transTree(accountCaptionList, jttt);
+		String captionList = jsonTree.toString();
+		if (StringUtils.isBlank(captionList)) {
+			captionList = "[]";
+		}
+		// 现金流量项目
+		JsonTreeTableTemplete cashJtt = new JsonTreeTableTemplete("id", "pid",
+				FiCashFlowCaseDTO.class, FiCashFlowCaseComboTreeExtender.class);
+		JSONArray cashFlowJsonTree = CommonUtil.transTree(cashFlowCaseList,
+				cashJtt);
+		String cashFlowList = cashFlowJsonTree.toString();
+		if (StringUtils.isBlank(cashFlowList)) {
+			cashFlowList = "[]";
+		}
+
+		List<FiVoucherTempType> typeList = this.fiVoucherTempTypeService
+				.fiVoucherTempTypeList(accountSetId, sysId,Long.parseLong(companyId));
+		String typeListJson = "{}";
+		if (typeList != null && typeList.size() > 0) {
+			typeListJson = JsonUtils.toJSONString(typeList);
+		}
+
+		request.setAttribute("companyId", companyId);
+		request.setAttribute("captionList", captionList);
+		request.setAttribute("cashFlowList", cashFlowList);
+		request.setAttribute("param.accountSetId", accountSetId);
+		request.setAttribute("asCode", accountSetCode);
+		request.setAttribute("param.companyCode", companyCode);
+		request.setAttribute("typeListJson", typeListJson);
+		request.setAttribute("syid", sysId);
+
+		return "export";
+	}
+
+	/**
+	 * 加载业务表单
+	 */
+	public void loadBill() {
+
+		String json = "";
+		List<Long> projectIdList = new ArrayList<Long>();
+		Map<String, Object> result = new HashMap<String, Object>();
+		FlowResult<PageBean<FinaData>> flowResult = null;
+		Integer pageNumber = getParameterInt("page");
+		Integer pageSize = getParameterInt("rows");
+		start = (pageNumber - 1) * pageSize;
+
+		String beginDate = request.getParameter("auditDateBegin");
+		String endDate = request.getParameter("auditDateEnd");
+		if (StringUtils.isNotBlank(beginDate)) {
+			finaQueryParams.setBillDateBegin(beginDate);
+		}
+		if (StringUtils.isNotBlank(endDate)) {
+			finaQueryParams.setBillDateEnd(endDate);
+		}
+		finaQueryParams.setCurrentPage(pageNumber);
+		finaQueryParams.setPageSize(pageSize);
+		// 费用系统获取付款单位编码和公司名称
+		Long payUnitId = getParameterLong("paymentOrganId");
+		String conpany = getParameter("compName");
+		String companyId = getParameter("compId");
+		System.out.println("payUnitId=" + payUnitId + "conpany=" + conpany);
+
+		Long sysId = getParameterLong("sysId");
+	//TODO
+		//sysId = 3l;
+
+		// 1:未生成凭证的单据 2：生成凭证成功的单据 3：全部单据
+		Integer type = getParameterInt("type");
+		// 单据类型
+		Long typeId = getParameterLong("typeid");
+		String billType = getParameter("billtype");
+		String bTypeParam = billType;
+        //项目分期
+//		Long proBranchId = getParameterLong("proBranchId");
+//		if(proBranchId == 999999){
+//			Long accountSetId = getParameterLong("accountSetId");
+//			List<FiAccountSetData> fasds = fiAccountSetDateService
+//					.getFiAccountSetsDataByAccountId(accountSetId, sysId);
+//		
+//		    for(FiAccountSetData f:fasds){
+//		    	projectIdList.add(f.getProjectBranchId());
+//		    }
+//		
+//		}else{
+//			projectIdList.add(proBranchId);
+//		}
+//	
+		//chc add 2016.7.4 start
+		Long accountSetId = getParameterLong("accountSetId");
+		List<FiAccountSetData> fiSetDataList = fiAccountSetDateService.getFiAccountSetsDataByAccountId(accountSetId, sysId,conpany);
+
+		finaQueryParams.setCreateVouchStatus(type);
+		finaQueryParams.setCurrentPage(pageNumber);
+		finaQueryParams.setPageSize(pageSize);
+		// 暂时默认为费用系统
+		finaQueryParams.setBillType(bTypeParam);
+
+		FiVoucherTemplate temp = fiVoucherTemplateService
+				.getFiVoucherTemplateByTypeId(typeId);
+		// 获取模板的帅选条件
+		String filter = "";
+		if(temp!=null){
+			filter = temp.getFilter();
+		}
+		// 转换IK表达式
+		Pattern pt = Pattern.compile(VOUCHER_ENTRY_SUMMARY_VAR_EXPR);
+		Matcher mt = pt.matcher(filter);
+		StringBuffer filResult = new StringBuffer();
+		while (mt.find()) {
+			mt.appendReplacement(filResult, mt.group(1));
+		}
+		mt.appendTail(filResult);
+
+		// 将将单引号转换成双引号
+		String condition = filResult.toString();
+		condition = machCodition(condition, fiSetDataList, conpany,sysId);
+		List<Long> projectidList = new ArrayList<Long>();
+		for(FiAccountSetData dto:fiSetDataList){
+			if(dto.getProjectBranchId()!=null && StringUtils.isNotBlank(dto.getProjectBranchId()+"") && !dto.getProjectBranchId().equals("null")){
+				projectidList.add(dto.getProjectBranchId());
+			}
+		}
+		// 调取销售接口
+		if (sysId == 1l) {
+//			List<Long> projects = new ArrayList<Long>();
+//			projects.add(1l);
+//			projects.add(4l);
+//			projects.add(5l);
+//			projects.add(99l);
+			finaQueryParams.setProjectIdList(projectIdList);
+			finaQueryParams.setCorpId(companyId);
+			finaQueryParams.setBillType("");//销售系统：同模板的业务对象筛选条件
+			finaQueryParams.setProjectIdList(projectidList);
+			// condition = "vpaytype='网银' ";
+			// 销售测试
+//			finaQueryParams.setBillType("1");
+			SyncFinaSaData syncFinaSaData = syncFinaDataService
+					.getSyncFinaSaData();
+//			System.out.println("-------syncFinaSaData-------"+syncFinaSaData);
+			flowResult = syncFinaSaData.getFinaData(finaQueryParams, condition);
+
+			PageBean<FinaData> page = flowResult.getResult();
+			Integer total = page.getTotal();
+			List<FinaData> fds = page.getItems();
+			List<FinaData> jsonFds = new ArrayList<FinaData>();
+			//TODO 
+			for (FinaData f : fds) {
+				if (!String.valueOf(f.get("type")).equals("科目分摊")
+						&& !String.valueOf(f.get("type")).equals("冲账明细")) {
+					jsonFds.add(f);
+				}
+			
+			 }
+			json = CommonUtil.transListResult(total, jsonFds).toString();
+
+		}
+		// 调取成本接口
+		if (sysId == 2l) {
+			finaQueryParams.setBillType(bTypeParam);
+			finaQueryParams.setCorpId(companyId); 
+			SyncFinaCoData syncFinaCoData = syncFinaDataService
+					.getSyncFinaCoData();
+			List<FinaData> jsonFds = new ArrayList<FinaData>();
+			if (syncFinaCoData != null) {
+				flowResult = syncFinaCoData.getFinaData(finaQueryParams,
+						condition);
+				PageBean<FinaData> page = flowResult.getResult();
+				Integer total = page.getTotal();
+				List<FinaData> fds = page.getItems();
+				//TODO 
+				for (FinaData f : fds) {
+					if (!String.valueOf(f.get("type")).equals("科目分摊")
+							&& !String.valueOf(f.get("type")).equals("冲账明细")) {
+						jsonFds.add(f);
+					}
+				
+				 }
+				json = CommonUtil.transListResult(total, jsonFds).toString();
+			}
+
+		}
+		if (sysId == 3l) {
+			SyncFinaExData syncFinaExData = syncFinaDataService
+					.getSyncFinaExData();
+			if(condition.contains("nchmny!=0 and npaymny=0")){
+				finaQueryParams.setBillDateBegin(null);
+				finaQueryParams.setBillDateEnd(null);
+			}
+			List<FinaData> jsonFds = new ArrayList<FinaData>();
+			if (syncFinaExData != null) {
+				flowResult = syncFinaExData.getFinaData(finaQueryParams,
+						condition);
+				PageBean<FinaData> page = flowResult.getResult();
+				Integer total = page.getTotal();
+				List<FinaData> fds = page.getItems();
+				for (FinaData f : fds) {
+					if (!String.valueOf(f.get("type")).equals("科目分摊") && !String.valueOf(f.get("type")).equals("冲账明细") 
+							&& !String.valueOf(f.get("type")).equals("手工还款") && !String.valueOf(f.get("type")).equals("发票信息")){
+						jsonFds.add(f);
+					}
+
+				}
+				json = CommonUtil.transListResult(total, jsonFds).toString();
+			}
+		}
+
+		if (flowResult != null && flowResult.isSuccess()) {
+			getSession().setAttribute("pageBean", flowResult.getResult());
+			result.put("page", flowResult.getResult());
+			result.put("success", true);
+			result.put("msg", "操作成功");
+			// String json =
+			// CommonUtil.transListResult(flowResult.getResult().getTotal(),
+			// flowResult.getResult().getItems()).toString();
+			// renderHtml(JsonUtils.toJSONString(flowResult.getResult()));
+			renderHtml(json);
+		} else {
+			result.put("success", false);
+			result.put("msg", "操作失败");
+			renderHtml(JsonUtils.toJSONString(result));
+		}
+	}
+
+	/**
+	 * 根据单据的状态获取PAGE json数据
+	 * 
+	 * @param status
+	 * @return
+	 */
+	public String getCreateFailFinaDates(Integer status) {
+		DetachedCriteria dc = DetachedCriteria.forClass(FiVoucherExBill.class);
+		dc.add(Restrictions.eq("status", status));
+
+		limit = getParameterInt("rows");
+		start = (getParameterInt("page") - 1) * limit;
+		page = getCommonService().findPage(dc, start, limit);
+
+		List<FiVoucherExBill> list = page.getItems();
+
+		String json = new DataGridJson(page).toJsonString();
+
+		return json;
+	}
+
+	@Override
+	public FinaQueryParams getModel() {
+		return finaQueryParams;
+	}
+
+	/**
+	 * 创建凭证
+	 */
+	public void createVoucher() {
+		Map<String, Object> result = new HashMap<String, Object>();
+		@SuppressWarnings("unchecked")
+		PageBean<FinaData> p = (PageBean<FinaData>) getSession().getAttribute(
+				"pageBean");
+		// 单据id
+		String ids = "," + getParameter("ids");
+		//
+		Long sysId = getParameterLong("sysId");
+		//TODO
+		//sysId = 3l;
+
+		// 单据合并号
+		String mergeNums = getParameter("mergeNums");
+		String flag = getParameter("flag");
+		
+		String btype = getParameter("btype");
+		try {
+			btype = URLDecoder.decode(btype, "utf-8");
+		} catch (UnsupportedEncodingException e) {
+			e.printStackTrace();
+		}
+		Long accountSetId = getParameterLong("accountSetId");//账套
+		Long companyId = getParameterLong("companyId");
+		String accountSetCode = request.getParameter("accountSetCode");//账套
+		Long typeId = getParameterLong("typeId");//单据类型
+		finaQueryParams.setBillType(String.valueOf(typeId));
+
+		MDFinanceCacheService syncFinaSaData = (MDFinanceCacheService) App.getBean("mdFinanceCacheService");
+		List<FinancePaymentTypeDTO> fds = syncFinaSaData.getAllFinancePaymentListType().getResult();
+		Map<String,String> idMapName = new HashMap<String,String>();
+		for(FinancePaymentTypeDTO dto:fds){
+//			idMapName.put(dto.getId()+"", dto.getFullCode());
+			idMapName.put(dto.getId()+"", dto.getName());
+		}
+		
+		List<FinaData> selectedList = new ArrayList<FinaData>();
+		if (p.getItems().size() > 0) {
+			for (FinaData f : p.getItems()) {
+				String fId = String.valueOf(f.get("id"));
+				if (String.valueOf(f.get("type")).equals("单据")) {
+					if (ids.contains(String.format(",%s,", fId)))
+						if (!selectedList.contains(f)) {
+							if(sysId == 2L){
+								if(f.get("funds_Type_Id") != null && StringUtils.isNotBlank(f.get("funds_Type_Id").toString())){
+									f.put("funds_Type_Id", idMapName.get(f.get("funds_Type_Id").toString()));
+								}
+								if(f.get("funds_Name_Id") != null && StringUtils.isNotBlank(f.get("funds_Name_Id").toString())){
+									f.put("funds_Name_Id", idMapName.get(f.get("funds_Name_Id").toString()));
+								}
+							}
+							selectedList.add(f);
+						}
+			
+				 }
+				// TODO 成本测试/销售测试
+//				String fId = String.valueOf(f.get("id"));
+//				if (ids.contains(String.format(",%s,", fId)))
+//					if (!selectedList.contains(f)) {
+//						selectedList.add(f);
+//					}
+			}
+
+			List<FinaData> fdList = null;
+			List<FinaData> czList = null;
+			List<FinaData> hkList = null;
+			List<FinaData> fpList = null;
+			for (FinaData fd : selectedList) {
+				String id = String.valueOf(fd.get("id"));
+				fdList = new ArrayList<FinaData>();
+				czList = new ArrayList<FinaData>();
+				hkList = new ArrayList<FinaData>();
+				fpList = new ArrayList<FinaData>();
+				for (FinaData f : p.getItems()) {
+					if (String.valueOf(f.get("type")).equals("科目分摊")) {
+						// 成本主单据的ID 是 id 费用主单据的ID sourceid
+						String sourceId = "";
+						if(sysId == 2){
+							sourceId = String.valueOf(f.get("id"));
+							if(f.get("funds_Type_Id") != null && StringUtils.isNotBlank(f.get("funds_Type_Id").toString())){
+								f.put("funds_Type_Id", idMapName.get(f.get("funds_Type_Id").toString()));
+							}
+							if(f.get("funds_Name_Id") != null && StringUtils.isNotBlank(f.get("funds_Name_Id").toString())){
+								f.put("funds_Name_Id", idMapName.get(f.get("funds_Name_Id").toString()));
+							}
+						}else{
+							sourceId = String.valueOf(f.get("sourceid"));
+						}
+						if (id.equals(sourceId))
+							fdList.add(f);
+					}
+
+					if (String.valueOf(f.get("type")).equals("冲账明细")) {
+						if (id.equals(String.valueOf(f.get("conpaybillid"))))
+							czList.add(f);
+					}
+					
+					if (String.valueOf(f.get("type")).equals("手工还款")) {
+						if (id.equals(String.valueOf(f.get("sourceid"))))
+							hkList.add(f);
+					}
+					
+					if (String.valueOf(f.get("type")).equals("发票信息")) {
+						if (id.equals(String.valueOf(f.get("sourceid"))))
+							fpList.add(f);
+					}
+				}
+
+				fd.put("ft", fdList);
+				fd.put("cz", czList);
+				fd.put("hk", hkList);
+				fd.put("fp", fpList);
+			}
+
+		}
+		// 绑定单据合并号
+		/*if(StringUtils.isNotBlank(mergeNums) && !mergeNums.equals("undefined,")){
+			String[] nums = mergeNums.split(",");
+			for (int i = 0; i < selectedList.size(); i++) {
+				if(!nums[i].equals("undefined")){
+					selectedList.get(i).put("mergeNum", nums[i]);
+				}
+			}
+		}*/
+		
+		//随机数
+		int random = (int)(1+Math.random()*100);
+		if(flag.equals("2")){
+			for (int i = 0; i < selectedList.size(); i++) {
+				selectedList.get(i).put("mergeNum", random+"");
+			}
+		}
+
+		QMap paramMap = new QMap("accountSetId", accountSetId);
+		paramMap.add("btype", btype);
+		LoginInfo loginInfo = LoginInfoUtils.getLoginInfo(request);
+		paramMap.add("loginInfo", loginInfo);
+		paramMap.add("sysId",sysId);
+		paramMap.add("accountSetCode",accountSetCode);
+		FlowResult<String> flowResult = fiVoucherCreateService.createVoucher(
+				selectedList, finaQueryParams, paramMap,companyId);
+		if (flowResult.isSuccess()) {
+			getSession().removeAttribute("pageBean");
+			result.put("page", flowResult.getResult());
+			result.put("success", true);
+			result.put("msg", "操作成功");
+			renderHtml(JsonUtils.toJSONString(result));
+		} else {
+			result.put("success", false);
+			result.put("msg", flowResult.getDebugInfo().getErrDesc());
+			renderHtml(JsonUtils.toJSONString(result));
+		}
+	}
+
+	/**
+	 * 凭证查询
+	 */
+	public void searchVoucher() {
+		// 凭证输出状态 0未输出 1输出成功 2输出失败
+		String status = request.getParameter("status");
+		// 凭证是否完整状态 1：完整凭证 2：不完整凭证
+		Integer isfull = getParameterInt("isFull");
+		Integer pageNumber = getParameterInt("page");
+		Integer pageSize = getParameterInt("rows");
+		if (pageNumber == 1) {
+			start = 0;
+		} else {
+			start = (pageNumber - 1) * pageSize;
+		}
+
+		String beginDate = request.getParameter("beginDate");
+		String endDate = request.getParameter("endDate");
+		Long accountSetId = getParameterLong("accountSetId");
+		Long typeId = getParameterLong("typeId");
+		List<FiVoucherData> datas = new ArrayList<FiVoucherData>();
+		try {
+			List<FiVoucherTempType> subTmps = fiVoucherTempTypeService
+					.getByParentId(typeId);
+			if (subTmps != null && subTmps.size() > 0) {
+				String typeids = "";
+				for (FiVoucherTempType subTmp : subTmps) {
+					Long tempId = subTmp.getId();
+					typeids += tempId + ",";
+					 /*
+					 // 香港置地功能
+					 for(FiVoucherData data:datas){
+						FiVoucher fiVoucher = this.fiVoucherService.getFiVoucherById(data.getId());
+						if(fiVoucher.getVoucherBillList()!=null && fiVoucher.getVoucherBillList().size()>0){
+							FiVoucherExBill ex = fiVoucher.getVoucherBillList().get(0);
+							data.setReserve3(ex.getVapplynum());
+							if(StringUtils.isNotBlank(ex.getBillName()) && !ex.getBillName().equals("null")){
+								data.setReserve4(ex.getBillName());
+							}else{
+								data.setReserve4("");
+							}
+						}
+					}*/
+				}
+				Page pageFi = this.fiVoucherService.searchVoucher(status,
+						beginDate, endDate, accountSetId, typeids.substring(0, typeids.lastIndexOf(",")), isfull,
+						start, pageSize);
+				datas.addAll(pageFi.getItems());
+			} else {
+
+				Page page = this.fiVoucherService.searchVoucher(status,
+						beginDate, endDate, accountSetId, typeId+"", isfull,
+						start, pageSize);
+				datas.addAll(page.getItems());
+				 /*
+				 // 香港置地功能
+				 for(FiVoucherData data:datas){
+					FiVoucher fiVoucher = this.fiVoucherService.getFiVoucherById(data.getId());
+					if(fiVoucher.getVoucherBillList()!=null && fiVoucher.getVoucherBillList().size()>0){
+						FiVoucherExBill ex = fiVoucher.getVoucherBillList().get(0);
+						data.setReserve3(ex.getVapplynum());
+						if(StringUtils.isNotBlank(ex.getBillName()) && !ex.getBillName().equals("null")){
+							data.setReserve4(ex.getBillName());
+						}else{
+							data.setReserve4("");
+						}
+					}
+				}*/
+			}
+
+			String json = JsonUtils.toJSONString(page);
+			Map map = new HashMap();
+			map.put("rows", datas);
+			map.put("total", datas.size());
+			renderJson(map);
+		} catch (Exception e) {
+			log.error("", e);
+			renderJson("{}");
+		}
+	}
+	
+	/**
+	 * 修改凭证
+	 */
+	public void UpdateVoucher() {
+		Map<String, Object> result = new HashMap<String, Object>();
+		try {
+			Long voucherId = getParameterLong("voucherId");
+			String voucherNo = request.getParameter("voucherNo");
+			FiVoucherData fiVoucher = this.fiVoucherService.getVoucherData(voucherId);
+			if(StringUtils.isNotBlank(voucherNo) && !voucherNo.equals("null")){
+				fiVoucher.setVoucherNo(voucherNo);
+			}else{
+				fiVoucher.setVoucherNo("");
+			}
+			fiVoucherService.updateVoucherDate(fiVoucher);
+			result.put("success", true);
+		} catch (Exception e) {
+			result.put("success", false);
+			result.put("msg", e.getMessage());
+			log.error("", e);
+		}
+		renderJson(result);
+	}
+
+	/**
+	 * 根据id查询出凭证相关数据
+	 */
+	public void getVoucherById() {
+		Long voucherId = this.getParameterLong("voucherId");
+		FiVoucher fiVoucher = this.fiVoucherService.getFiVoucherById(voucherId);
+		this.renderJson(fiVoucher);
+	}
+
+	public void getVoucherEntryByVoucherId() {
+		Long voucherId = this.getParameterLong("voucherId");
+		FiVoucher fiVoucher = this.fiVoucherService.getFiVoucherById(voucherId);
+		List<FiEntryData> fiEntryDate = fiVoucher.getFiEntryDataList();
+		this.renderJson(fiEntryDate);
+
+	}
+
+	/**
+	 * 修改凭证
+	 */
+	public void UpdateEntryDate() {
+		Map<String, Object> result = new HashMap<String, Object>();
+		List<FiEntryData> entrys = new ArrayList<FiEntryData>();
+		FiEntryData enty = null;
+		try {
+			Long voucherId = getParameterLong("voucherId");
+			String[] entryDates = request.getParameterValues("voucherEntys[]");
+			for (int i = 0; i < entryDates.length; i++) {
+
+				String ass = entryDates[i];
+				String[] entys = ass.split(",");
+				if (StringUtils.isNotBlank(entys[0])
+						&& !entys[0].equals("null")) {
+					enty = fiVoucherService.getFiEntryDateById(Long
+							.parseLong(entys[0]));
+				} else {
+					enty = new FiEntryData();
+				}
+				enty.setSummary(entys[1]);
+				enty.setCaptionName(entys[2]);
+				enty.setCaptionCode(entys[3]);
+
+				String assCompent = entys[4];
+				enty.setAssCompent(assCompent);
+
+				enty = conertAssStrToAssDetail(assCompent, enty);
+
+				if (StringUtils.isNotBlank(entys[5])) {
+					enty.setDrmny(Double.parseDouble(entys[5]));
+				}
+				if (StringUtils.isNotBlank(entys[6])) {
+					enty.setCrmny(Double.parseDouble(entys[6]));
+				}
+				if (entys.length > 7 && StringUtils.isNotBlank(entys[7])) {
+					enty.setRemarks(entys[7]);
+				}
+
+				if (entys.length > 8 && StringUtils.isNotBlank(entys[8])
+						&& !entys[8].equals("null")) {
+					enty.setVoucherDataId(Long.parseLong(entys[8]));
+				}
+
+				if (entys.length > 9 && StringUtils.isNotBlank(entys[9])
+						&& !entys[9].equals("null") && !entys[9].equals("-")) {
+					String[] cashFlowCodeAndName = entys[9].split("-");
+					enty.setCashFlowCode(cashFlowCodeAndName[0]);
+					enty.setCashFlowName(cashFlowCodeAndName[1]);
+				}else{
+					enty.setCashFlowCode("");
+					enty.setCashFlowName("");
+				}
+
+				entrys.add(enty);
+			}
+
+			fiVoucherCreateService.saveOrUpdateEntryDate(entrys, voucherId);
+			result.put("success", true);
+		} catch (Exception e) {
+			result.put("success", false);
+			result.put("msg", e.getMessage());
+			log.error("", e);
+		}
+		renderJson(result);
+	}
+	
+	/**
+	 * 修改凭证日期
+	 */
+	public void UpdateVoucherDate() {
+		Map<String, Object> result = new HashMap<String, Object>();
+		try {
+			Long voucherId = getParameterLong("voucherId");
+			String voucherNo = request.getParameter("dateNew");
+			if(StringUtils.isNotBlank(voucherNo) && !voucherNo.equals("null")){
+				FiVoucherData fiVoucher = this.fiVoucherService.getVoucherData(voucherId);
+				SimpleDateFormat sf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+				fiVoucher.setCreateDate(sf.parse(voucherNo+" 06:00:00"));
+				fiVoucherService.updateVoucherDate(fiVoucher);
+			}
+			result.put("success", true);
+		} catch (Exception e) {
+			result.put("success", false);
+			result.put("msg", e.getMessage());
+			log.error("", e);
+		}
+		renderJson(result);
+	}
+
+	protected FiEntryData conertAssStrToAssDetail(String assStr,
+			FiEntryData entryDate) {
+
+		// String assStr = "【人员档案：232424/张三】";
+		String gzr = "【";
+		String gzd = "】";
+		String gz = "】【";
+		String mod = "：";
+		String assName = "";
+		String assCode = "";
+		String realAssName = "";
+		if (assStr.startsWith(gzr)) {
+			String[] asses = assStr.split(gz);
+			if (asses != null && asses.length > 0) {
+				for (int i = 0; i < asses.length; i++) {
+					String ss = asses[i];
+					System.out.println(ss);
+					if (ss.startsWith(gzr)) {
+						ss = ss.replace(gzr, "");
+					}
+					if (ss.endsWith(gzd)) {
+						ss = ss.replace(gzd, "");
+					}
+
+					String[] oneAss = ss.split(mod);
+					assName += oneAss[0] + ",";
+					String[] codeAndRealName = oneAss[1].split("/");
+					assCode += codeAndRealName[0] + ",";
+					realAssName += codeAndRealName[1] + ",";
+					System.out.println(assName + "--" + assCode + "--"
+							+ realAssName);
+				}
+
+			} else {
+				assStr = assStr.replace(gzd, "");
+				assStr = assStr.replace(gzr, "");
+				String[] oneAss = assStr.split(mod);
+
+				assName += oneAss[0] + ",";
+				String[] codeAndRealName = oneAss[1].split("/");
+				assCode += codeAndRealName[0] + ",";
+				realAssName += codeAndRealName[1] + ",";
+				System.out.println(assName + "--" + assCode + "--"
+						+ realAssName);
+
+			}
+
+		}
+
+		entryDate.setAssName(assName);
+		entryDate.setAssCode(assCode);
+		entryDate.setRealAssName(realAssName);
+
+		return entryDate;
+	}
+
+	/**
+	 * 输出凭证
+	 * 
+	 * @return
+	 */
+	public void outputVoucher() {
+		int flag = 2;
+		Map<String, Object> result = new HashMap<String, Object>();
+		List<FiVoucherData> voucherDates = new ArrayList<FiVoucherData>();
+		// boolean isSuccess = true;
+		Integer pageNumber = getParameterInt("page");
+		String ids = getParameter("ids");
+		// Integer voucherInitNo = getParameterInt("voucherInitNo");
+
+		// Integer maxVoucherNO = fiVoucherService.getMaxVoucherNo();
+		// 如果是第二页 则需要取到库中最大的编号 然后+1 赋予凭证的初始值
+		// if(pageNumber > 1){
+		// voucherInitNo = maxVoucherNO + 1;
+		// }
+		Integer syid = getParameterInt("syid");
+		String[] vhids = ids.split(",");
+		String xmlFile = "";
+		// NC系统返回的xml字符串
+		String res = null;
+		try {
+			for (int i = 0; i < vhids.length; i++) {
+				String vhid = vhids[i];
+				Long voucherId = Long.parseLong(vhid);
+				
+				FiVoucher fv = fiVoucherService.getFiVoucherById(voucherId);
+				List<FiEntryData> entyDatas = fv.getFiEntryDataList();
+				FiVoucherData fvd = fv.getFiVoucherData();
+				// fvd.setVoucherNo(String.valueOf(voucherInitNo));
+				// 根据设置的初始化的凭证编号 自增来设置凭证号
+				fiVoucherService.updateVoucherDate(fvd);
+				// voucherInitNo++;
+				voucherDates.add(fvd);
+
+				xmlFile = fiVoucherCreateService.createSyncXml2NC(fvd,
+						entyDatas,syid);
+				// 从voucherData中获得accountSetId
+				Long accountSetId = fvd.getAccountSetId();
+				// 查询FiAccountSet实体
+				FiAccountSet fiAccountSet = fiAccountSetService
+						.findFiAccountSetById(accountSetId);
+				String companyCode = fiAccountSet.getCompanyCode();
+				FiSysinfo sysinfo = fiSysInfoService
+						.getFiSysinfoById(fiAccountSet.getFiSysId());
+				FiAccountSetData fasd = fiAccountSetDateService
+						.getFiAccountSetDataByAccountId(accountSetId);
+
+				// NC接口相关
+				String webUrl = sysinfo.getWebUrl();
+				// 获得财务系统url
+				String url = webUrl + "?account=" + fiAccountSet.getCode()
+						+ "&receiver=" + companyCode;
+				// xml推送到url
+				//System.out.println(url);
+				if (xmlFile != null && !xmlFile.trim().equals("")
+						&& !url.trim().equals("") && url != null) {
+					res = NCSendData.getPostResponse(url, xmlFile);
+				}
+				// 获得返回xml 如果成功 设置输出标志 和输出日期
+				if (null != res) {
+					if (NCXMlParse.XmlErrorCode(res) >= 0) {
+						String content = NCXMlParse.XmlContent(res);
+						String[] contents = content.split("-");
+						String voucherNo = contents[contents.length - 1];
+						fvd.setVoucherNo(voucherNo);
+						fvd.setSendStatus(OUT_SUCCESS);// 输出成功
+						fvd.setExportDate(new Date());
+						flag = 1;
+
+						// 调用回写接口
+						// rewrite(voucherDates,result);
+
+					} else {
+						String errorinfo = NCXMlParse.XmlErrorInfo(res);
+						Integer errCode = NCXMlParse.XmlErrorCode(res);
+						String content = NCXMlParse.XmlContent(res);
+						fvd.setSendStatus(OUT_FAILUE);// 输出失败
+						String error = "错误代码：" + errCode.toString() + " 错误内容："
+								+ errorinfo;
+						fvd.setErrorCause(error);
+						flag = 2;
+					}
+					saveFile1(res);
+				} else {
+					flag = 0;
+					fvd.setSendStatus("0");// 未输出
+
+				}
+				fiVoucherService.saveFiVoucherData(fvd);
+
+			}
+		} catch (Exception e) {
+			flag = 2;
+			log.error("", e);
+			e.printStackTrace();
+
+		}
+
+		if (flag == 1) {
+			result.put("success", "1");
+			result.put("msg", "操作成功");
+		} else if (flag == 0) {
+			result.put("success", "0");
+			result.put("msg", "未输出");
+			result.put("xmlFile", xmlFile);
+		} else {
+			result.put("success", "2");
+			result.put("msg", "输出失败");
+			result.put("xmlFile", xmlFile);
+		}
+
+		saveFile(xmlFile);
+		
+		renderHtml(JsonUtils.toJSONString(result));
+	}
+
+	public void saveFile(String xmlFile) {
+
+		FileWriter fw = null;
+		File f = new File("d:/voucher.xml");
+		try {
+			if (!f.exists()) {
+				f.createNewFile();
+			}
+			fw = new FileWriter(f);
+			BufferedWriter out = new BufferedWriter(fw);
+			out.write(xmlFile);
+			out.close();
+
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
+	
+	public void saveFile1(String xmlFile) {
+
+		FileWriter fw = null;
+		File f = new File("d:/ncvoucher.xml");
+		try {
+			if (!f.exists()) {
+				f.createNewFile();
+			}
+			xmlFile = xmlFile.replace("encoding='utf-8'", "encoding='gb2312'").replace("encoding='UTF-8'", "encoding='gb2312'");
+			fw = new FileWriter(f);
+			BufferedWriter out = new BufferedWriter(fw);
+			out.write(xmlFile);
+			out.close();
+
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
+	
+	public void downLoad(){
+	
+		File file = new File("d:/voucher.xml");
+		response.setContentType("multipart/form-data");  
+        //2.设置文件头：最后一个参数是设置下载文件名(假如我们叫a.pdf)  
+        response.setHeader("Content-Disposition", "attachment;fileName="+"voucher.xml");  
+        ServletOutputStream out2;  
+        FileInputStream inputStream;
+		try {
+			inputStream = new FileInputStream(file);
+			 //3.通过response获取ServletOutputStream对象(out)  
+			out2 = response.getOutputStream();
+	        int b = 0;  
+	        byte[] buffer = new byte[512];  
+	        while (b != -1){  
+	            b = inputStream.read(buffer);  
+	            //4.写到输出流(out)中  
+	            if(b != -1)
+	            out2.write(buffer,0,b);  
+	        }  
+	        inputStream.close();  
+	        out2.close();  
+	        out2.flush();  
+		} catch (FileNotFoundException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}  catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}  
+       
+		
+	}
+	
+	public void downLoadnc(){
+		
+		File file = new File("d:/ncvoucher.xml");
+		response.setContentType("multipart/form-data");  
+        //2.设置文件头：最后一个参数是设置下载文件名(假如我们叫a.pdf)  
+        response.setHeader("Content-Disposition", "attachment;fileName="+"ncvoucher.xml");  
+        ServletOutputStream out2;  
+        FileInputStream inputStream;
+		try {
+			inputStream = new FileInputStream(file);
+			 //3.通过response获取ServletOutputStream对象(out)  
+			out2 = response.getOutputStream();
+	        int b = 0;  
+	        byte[] buffer = new byte[512];  
+	        while (b != -1){  
+	            b = inputStream.read(buffer);  
+	            //4.写到输出流(out)中  
+	            if(b != -1)
+	            out2.write(buffer,0,b);  
+	        }  
+	        inputStream.close();  
+	        out2.close();  
+	        out2.flush();  
+		} catch (FileNotFoundException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}  catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}  
+	}
+
+	/**
+	 * 删除凭证
+	 */
+	public void delete() {
+
+		Map<String, Object> result = new HashMap<String, Object>();
+		try {
+			String ids = request.getParameter("id");
+			if (ids != null) {
+				Long[] idAry = CommonUtil.transformIds(ids.split(";"));
+				fiVoucherService.delete(idAry);
+			}
+			result.put("success", true);
+		} catch (Exception e) {
+			result.put("success", false);
+			result.put("msg", e.getMessage());
+			log.error("", e);
+		}
+		renderJson(result);
+
+	}
+	
+	/**
+	 * 删除分录
+	 */
+	public void deleteEntry() {
+
+		Map<String, Object> result = new HashMap<String, Object>();
+		try {
+			String id = request.getParameter("id");
+			if (id != null) {
+				fiVoucherService.deleteVhoucherEntry(Long.valueOf(id));
+			}
+			result.put("success", true);
+		} catch (Exception e) {
+			result.put("success", false);
+			result.put("msg", e.getMessage());
+			log.error("", e);
+		}
+		renderJson(result);
+
+	}
+
+	/**
+	 * 输出凭证
+	 * 
+	 * @return
+	 */
+	public void isSend() {
+		int flag = 0;
+
+		Map<String, Object> result = new HashMap<String, Object>();
+		Long voucherId = getParameterLong("voucherId");
+		try {
+			FiVoucher fv = fiVoucherService.getFiVoucherById(voucherId);
+			FiVoucherData fvd = fv.getFiVoucherData();
+			String sendStatus = fvd.getSendStatus();
+			if (sendStatus.equals("1"))
+				flag = 1;
+		} catch (Exception e) {
+			// isSuccess = false;
+			// e.printStackTrace();
+			flag = 0;
+			log.error("", e);
+			e.printStackTrace();
+
+		}
+		if (flag == 1) {
+			result.put("success", "1");
+			result.put("msg", "凭证以输出，无法修改");
+		} else {
+			result.put("success", "0");
+			result.put("msg", "未输出，可以进行修改");
+		}
+		renderHtml(JsonUtils.toJSONString(result));
+	}
+
+	// protected void rewrite(List<FiVoucherData> vouchers,Map<String, Object>
+	// result){
+	// //生成凭证成功，回写费用
+	// SyncFinaExData syncFinaExData = syncFinaDataService.getSyncFinaExData();
+	// List<String> billIds = new ArrayList<String>();
+	// List<Long> failVoucherIds = new ArrayList<Long>();
+	// for(FiVoucherData voucher:vouchers){
+	// Long voucherId = voucher.getId();
+	// Long typeId = Long.parseLong(voucher.getVoucherType());
+	// FiVoucherTemplate voucherTemplate =
+	// fiVoucherTemplateService.getFiVoucherTemplateByTypeId(typeId);
+	// String bizId = voucherTemplate.getBizObjectId();
+	// FiBusinessobject fb =
+	// fiBizObjectService.getFiBusinessobjectByRegisClass(bizId,);
+	// String btype = fb.getBtype();
+	//
+	// String voucherWord = voucher.getFlag();
+	// String voucherNo = voucher.getVoucherNo();
+	// String createDate =
+	// DateUtils.format(voucher.getCreateDate(),"yyyy-MM-dd");
+	//
+	// List<FiVoucherExBill> bills =
+	// fiVoucherService.getBillsByVoucherIdAndBilltype(voucherId);
+	// for(FiVoucherExBill bill:bills){
+	// String billId = bill.getBillId();
+	// billIds.add(billId);
+	// }
+	//
+	// FinaResult fr = new FinaResult();
+	// fr.setBillIds(billIds);
+	// fr.setBillType(btype);
+	// fr.setVoucherWord(voucherWord);
+	// fr.setVoucherNumber(voucherNo);
+	// fr.setVoucherid(voucherId);
+	// fr.setVoucherDate(createDate);
+	//
+	// if (syncFinaExData == null) {
+	// String msg = "调用费用系统接口【RewriteFinaExResult】，无法从dubbo获得实例！";
+	// log.error(msg);
+	//
+	// } else {
+	// FlowResult<String> flowResultRewrite = syncFinaExData
+	// .rewriteResult(fr);
+	// if (!flowResultRewrite.isSuccess()) {
+	// log.info("凭证号为：" +voucherNo
+	// + "回写失败，因为：" + flowResultRewrite.getResult());
+	// //处理凭证回写失败的凭证
+	// //failVoucherIds.add(voucherId);
+	// //凭证回写状态0:回写成功 1：回写失败
+	// voucher.setRewriteStatus(1);
+	// fiVoucherService.updateVoucherDate(voucher);
+	//
+	// } else {
+	// log.info("凭证号为：" + voucherNo + "回写成功!");
+	// }
+	// }
+	//
+	//
+	// }
+	//
+	// }
+
+	/**
+	 * 处理筛选条件
+	 * 
+	 * @param condition
+	 * @return
+	 */
+	public String machCodition(String condition, Long payUnitId, String conpany) {
+		condition = condition.replace("==", "=");
+		condition = condition.replace("&&", "and");
+		condition = condition.replace("||", "or");
+		condition = condition.replace("<>", "!=");
+		if (condition.equals(" "))
+			condition.trim();
+		// TODO 销售测试
+		 if(StringUtils.isNotBlank(condition) &&
+		 StringUtils.isNotBlank(conpany)){
+		 condition += " and corpname like'%"+conpany+"'";
+		 }
+		 if(StringUtils.isBlank(condition) &&
+		 StringUtils.isNotBlank(conpany)){
+		 condition += " corpname like'%"+conpany+"'";
+		 }
+		 if(StringUtils.isNotBlank(condition) && payUnitId != null){
+		 condition += " and payunitid="+payUnitId;
+		 }
+
+		return condition;
+	}
+	
+	/**
+	 * 处理筛选条件
+	 * 
+	 * @param condition
+	 * @return
+	 */
+	public String machCodition(String condition, List<FiAccountSetData> fiSetDataList, String conpany,Long sysId) {
+		condition = condition.replace("==", "=");
+		condition = condition.replace("&&", "and");
+		condition = condition.replace("||", "or");
+		condition = condition.replace("<>", "!=");
+		if (condition.equals(" "))
+			condition.trim();
+		if(sysId==3l){
+		// TODO 销售测试
+		 if(StringUtils.isNotBlank(condition) &&
+		 StringUtils.isNotBlank(conpany)){
+		 condition += " and corpname like'%"+conpany+"'";
+		 }
+		 if(StringUtils.isBlank(condition) &&
+		 StringUtils.isNotBlank(conpany)){
+		 condition += " corpname like'%"+conpany+"'";
+		 }
+		 if(StringUtils.isNotBlank(condition) && fiSetDataList != null){
+			 String payUnitId = "";
+			 for(FiAccountSetData fd : fiSetDataList){
+				 if(fd.getPaymentOrganId()!=null){
+					 payUnitId += fd.getPaymentOrganId() + "," ;
+				 }
+			 } 
+			 if(StringUtils.isNotBlank(payUnitId)){
+				 payUnitId = payUnitId.substring(0, payUnitId.lastIndexOf(","));
+				 condition += " and payunitid in ("+payUnitId + ")";
+			 }
+		 }
+		}else if(sysId == 2L){
+			MDFinanceCacheService syncFinaSaData = (MDFinanceCacheService) App.getBean("mdFinanceCacheService");
+			List<FinancePaymentTypeDTO> fds = syncFinaSaData.getAllFinancePaymentListType().getResult();
+			Map<String,String> nameMapId = new HashMap<String,String>();
+			for(FinancePaymentTypeDTO data:fds){
+				if(nameMapId.get(data.getName())!= null){
+					nameMapId.put(data.getName(), nameMapId.get(data.getName()) + "," + data.getId());
+				}else{
+					nameMapId.put(data.getName(), data.getId()+"");
+				}
+			}
+			condition = replaceNameToId(condition,nameMapId);
+		}
+		return condition;
+	}
+
+	public String replaceNameToId(String condition,Map<String,String> nameMapId){
+		if(condition.contains("!=\"预付款\"")){
+			condition = condition.replace("!=\"预付款\"", " not in ("+nameMapId.get("预付款")+")");
+		}
+		if(condition.contains("=\"预付款\"")){
+			condition = condition.replace("=\"预付款\"", " in ("+nameMapId.get("预付款")+")");
+		}
+		if(condition.contains("!=\"特殊款\"")){
+			condition = condition.replace("!=\"特殊款\"", " not in ("+nameMapId.get("特殊款")+")");
+		}
+		if(condition.contains("=\"特殊款\"")){
+			condition = condition.replace("=\"特殊款\"", " in ("+nameMapId.get("特殊款")+")");
+		}
+		if(condition.contains("!=\"质保金\"")){
+			condition = condition.replace("!=\"质保金\"", " not in ("+nameMapId.get("质保金")+")");
+		}
+		if(condition.contains("=\"质保金\"")){
+			condition = condition.replace("=\"质保金\"", " in ("+nameMapId.get("质保金")+")");
+		}
+		if(condition.contains("!=\"代付代扣\"")){
+			condition = condition.replace("!=\"代付代扣\"", " not in ("+nameMapId.get("代付代扣")+")");
+		}
+		if(condition.contains("=\"代付代扣\"")){
+			condition = condition.replace("=\"代付代扣\"", " in ("+nameMapId.get("代付代扣")+")");
+		}
+		if(condition.contains("!=\"销售费用\"")){
+			condition = condition.replace("!=\"销售费用\"", " not in ("+nameMapId.get("销售费用")+")");
+		}
+		if(condition.contains("=\"销售费用\"")){
+			condition = condition.replace("=\"销售费用\"", " in ("+nameMapId.get("销售费用")+")");
+		}
+		if(condition.contains("!=\"付款\"")){
+			condition = condition.replace("!=\"付款\"", " not in ("+nameMapId.get("付款")+")");
+		}
+		if(condition.contains("=\"付款\"")){
+			condition = condition.replace("=\"付款\"", " in ("+nameMapId.get("付款")+")");
+		}
+		if(condition.contains("!=\"管理费用\"")){
+			condition = condition.replace("!=\"管理费用\"", " not in ("+nameMapId.get("管理费用")+")");
+		}
+		if(condition.contains("=\"管理费用\"")){
+			condition = condition.replace("=\"管理费用\"", " in ("+nameMapId.get("管理费用")+")");
+		}
+		if(condition.contains("!=\"项目管理费用\"")){
+			condition = condition.replace("!=\"项目管理费用\"", " not in ("+nameMapId.get("项目管理费用")+")");
+		}
+		if(condition.contains("=\"项目管理费用\"")){
+			condition = condition.replace("=\"项目管理费用\"", " in ("+nameMapId.get("项目管理费用")+")");
+		}
+		if(condition.contains("!=\"财务费用\"")){
+			condition = condition.replace("!=\"财务费用\"", " not in ("+nameMapId.get("财务费用")+")");
+		}
+		if(condition.contains("=\"财务费用\"")){
+			condition = condition.replace("=\"财务费用\"", " in ("+nameMapId.get("财务费用")+")");
+		}
+		if(condition.contains("!=\"土地合同款\"")){
+			condition = condition.replace("!=\"土地合同款\"", " not in ("+nameMapId.get("土地合同款")+")");
+		}
+		if(condition.contains("=\"土地合同款\"")){
+			condition = condition.replace("=\"土地合同款\"", " in ("+nameMapId.get("土地合同款")+")");
+		}
+		if(condition.contains("!=\"进度款\"")){
+			condition = condition.replace("!=\"进度款\"", " not in ("+nameMapId.get("进度款")+")");
+		}
+		if(condition.contains("=\"进度款\"")){
+			condition = condition.replace("=\"进度款\"", " in ("+nameMapId.get("进度款")+")");
+		}
+		if(condition.contains("!=\"结算款\"")){
+			condition = condition.replace("!=\"结算款\"", " not in ("+nameMapId.get("结算款")+")");
+		}
+		if(condition.contains("=\"结算款\"")){
+			condition = condition.replace("=\"结算款\"", " in ("+nameMapId.get("结算款")+")");
+		}
+		if(condition.contains("!=\"前期工程款\"")){
+			condition = condition.replace("!=\"前期工程款\"", " not in ("+nameMapId.get("前期工程款")+")");
+		}
+		if(condition.contains("=\"前期工程款\"")){
+			condition = condition.replace("=\"前期工程款\"", " in ("+nameMapId.get("前期工程款")+")");
+		}
+		if(condition.contains("!=\"基础设施及配套设施款\"")){
+			condition = condition.replace("!=\"基础设施及配套设施款\"", " not in ("+nameMapId.get("基础设施及配套设施款")+")");
+		}
+		if(condition.contains("=\"基础设施及配套设施款\"")){
+			condition = condition.replace("=\"基础设施及配套设施款\"", " in ("+nameMapId.get("基础设施及配套设施款")+")");
+		}
+		if(condition.contains("!=\"建安工程类款\"")){
+			condition = condition.replace("!=\"建安工程类款\"", " not in ("+nameMapId.get("建安工程类款")+")");
+		}
+		if(condition.contains("=\"建安工程类款\"")){
+			condition = condition.replace("=\"建安工程类款\"", " in ("+nameMapId.get("建安工程类款")+")");
+		}
+		if(condition.contains("!=\"材料设备款\"")){
+			condition = condition.replace("!=\"材料设备款\"", " not in ("+nameMapId.get("材料设备款")+")");
+		}
+		if(condition.contains("=\"材料设备款\"")){
+			condition = condition.replace("=\"材料设备款\"", " in ("+nameMapId.get("建安工程类款")+")");
+		}
+		if(condition.contains("!=\"代付代扣\"")){
+			condition = condition.replace("!=\"代付代扣\"", " not in ("+nameMapId.get("代付代扣")+")");
+		}
+		if(condition.contains("=\"代付代扣\"")){
+			condition = condition.replace("=\"代付代扣\"", " in ("+nameMapId.get("代付代扣")+")");
+		}
+		if(condition.contains("!=\"代付水费\"")){
+			condition = condition.replace("!=\"代付水费\"", " not in ("+nameMapId.get("代付水费")+")");
+		}
+		if(condition.contains("=\"代付水费\"")){
+			condition = condition.replace("=\"代付水费\"", " in ("+nameMapId.get("代付水费")+")");
+		}
+		if(condition.contains("!=\"代付电费\"")){
+			condition = condition.replace("!=\"代付电费\"", " not in ("+nameMapId.get("代付电费")+")");
+		}
+		if(condition.contains("=\"代付电费\"")){
+			condition = condition.replace("=\"代付电费\"", " in ("+nameMapId.get("代付电费")+")");
+		}
+		if(condition.contains("!=\"代付履约保证金\"")){
+			condition = condition.replace("!=\"代付履约保证金\"", " not in ("+nameMapId.get("代付履约保证金")+")");
+		}
+		if(condition.contains("=\"代付履约保证金\"")){
+			condition = condition.replace("=\"代付履约保证金\"", " in ("+nameMapId.get("代付履约保证金")+")");
+		}
+		if(condition.contains("!=\"其他代付\"")){
+			condition = condition.replace("!=\"其他代付\"", " not in ("+nameMapId.get("其他代付")+")");
+		}
+		if(condition.contains("=\"其他代付\"")){
+			condition = condition.replace("=\"其他代付\"", " in ("+nameMapId.get("其他代付")+")");
+		}
+		if(condition.contains("!=\"无合同付款\"")){
+			condition = condition.replace("!=\"无合同付款\"", " not in ("+nameMapId.get("无合同付款")+")");
+		}
+		if(condition.contains("=\"无合同付款\"")){
+			condition = condition.replace("=\"无合同付款\"", " in ("+nameMapId.get("无合同付款")+")");
+		}
+		if(condition.contains("!=\"其它\"")){
+			condition = condition.replace("!=\"其它\"", " not in ("+nameMapId.get("其它")+")");
+		}
+		if(condition.contains("=\"其它\"")){
+			condition = condition.replace("=\"其它\"", " in ("+nameMapId.get("其它")+")");
+		}
+		if(condition.contains("!=\"代付代扣款\"")){
+			condition = condition.replace("!=\"代付代扣款\"", " not in ("+nameMapId.get("代付代扣款")+")");
+		}
+		if(condition.contains("=\"代付代扣款\"")){
+			condition = condition.replace("=\"代付代扣款\"", " in ("+nameMapId.get("代付代扣款")+")");
+		}
+		
+		return condition;
+	}
+	/**
+	 * 同步供方数据
+	 */
+	public void syncSupls() {
+
+		int flag = 0;
+		String res = null;
+		Long assId = null;
+		Map<String, Object> result = new HashMap<String, Object>();
+		List<Long> assDetailMapps = new ArrayList<Long>();
+		List<SupplierInfoDTO> syncSupuls = new ArrayList<SupplierInfoDTO>();
+
+		Long accountSetId = getParameterLong("accountSetId");
+		Long sysId = getParameterLong("sysId");
+		FiAccountSet fiAccountSet = fiAccountSetService
+				.findFiAccountSetById(accountSetId);
+		FiSysinfo sysinfo = fiSysInfoService.getFiSysinfoById(fiAccountSet
+				.getFiSysId());
+		FiAccountSetData fasd = fiAccountSetDateService
+				.getFiAccountSetDataByAccountId(accountSetId);
+
+		// NC接口相关
+		String webUrl = sysinfo.getWebUrl();
+		Long companyId = fasd.getCompanyId();
+		String companyCode = fiAccountSet.getCompanyCode();
+		String accountCode = fiAccountSet.getCode();
+		String url = webUrl + "?account=" + accountCode + "&receiver="
+				+ companyCode;
+
+		// 查询对照供方档案数据
+		if (sysId == 1) {
+			assId = SA_ASS_MAP_ID;
+		} else if (sysId == 2) {
+			assId = CO_ASS_MAP_ID;
+		} else {
+			assId = EX_ASS_MAP_ID;
+		}
+
+		List<FiAssDetailMapping> assDeailMapings = fiAssMappingService
+				.getFiAssDetailMappingByAssId(assId);
+		for (FiAssDetailMapping detail : assDeailMapings) {
+			assDetailMapps.add(Long.parseLong(detail.getObjectId()));
+		}
+
+		// 调用主数据供方数据
+		MDSupplierCacheService SupplierService = App
+				.getBean(MDSupplierCacheService.class);
+		FlowResult<PageBean<SupplierInfoDTO>> results = SupplierService
+				.getSupplierInfoByCompanyId(companyId, 0, 1000);
+		PageBean<SupplierInfoDTO> pages = results.getResult();
+		List<SupplierInfoDTO> sdtds = pages.getItems();
+
+		for (SupplierInfoDTO sdtd : sdtds) {
+			Long id = sdtd.getId();
+			// 如果对照表中存在该数据，则不需要同步
+			if (!assDetailMapps.contains(id)) {
+				syncSupuls.add(sdtd);
+			}
+		}
+
+		for (SupplierInfoDTO syncSupul : syncSupuls) {
+			Long categoryId = syncSupul.getCategoryId();
+			// 获取供方分类
+			FlowResult<SupplierCategoryDTO> dtosResult = SupplierService
+					.getSupplierCategoryById(categoryId);
+			SupplierCategoryDTO scdto = dtosResult.getResult();
+			String categoryName = scdto.getName();
+
+			String xmlFile = fiVoucherService.createSyncSuplsXml2NC(syncSupul,
+					fiAccountSet, sysinfo, categoryName);
+			if (xmlFile != null && url != null && !xmlFile.trim().equals("")
+					&& !url.trim().equals("")) {
+				res = NCSendData.getPostResponse(url, xmlFile);
+			}
+			// 获得返回xml 如果成功 设置输出标志 和输出日期
+			if (null != res) {
+				if (NCXMlParse.XmlErrorCode(res) >= 0) {
+					flag = 1;
+					saveAssDetailMapping(syncSupul, assId);
+				} else {
+					String errorinfo = NCXMlParse.XmlErrorInfo(res);
+					// 如果重复 但是本地对照又不存在 则生成本地对照
+					if (errorinfo.contains(syncSupul.getCode())
+							&& errorinfo.contains("重复")) {
+						saveAssDetailMapping(syncSupul, assId);
+					}
+					Integer errCode = NCXMlParse.XmlErrorCode(res);
+
+				}
+			} else {
+				// isSuccess = false;
+				flag = 0;
+
+			}
+
+			result.put("success", "1");
+			result.put("msg", "同步成功");
+			renderHtml(JsonUtils.toJSONString(result));
+		}
+	}
+
+	/**
+	 * 保存同步到NC的供应商辅助核算详细
+	 * 
+	 * @param spul
+	 * @param assId
+	 */
+	public void saveAssDetailMapping(SupplierInfoDTO spul, Long assId) {
+
+		FiAssDetailMapping fiAssDetailMapping = new FiAssDetailMapping();
+
+		fiAssDetailMapping.setAssItemCode(spul.getCode());
+		fiAssDetailMapping.setAssItemName(spul.getName());
+		fiAssDetailMapping.setObjectItemCode(spul.getCode());
+		fiAssDetailMapping.setObjectItemName(spul.getName());
+		fiAssDetailMapping.setAssMappingId(assId);
+		fiAssDetailMapping.setObjectId(String.valueOf(spul.getId()));
+		fiAssDetailMapping.setCreateUserId(LoginInfoUtils
+				.getLoginInfoUserDtoId(request));
+		fiAssDetailMapping.setCreateDate(new Date());
+		fiAssDetailMapping.setStatus(0);
+		fiAssDetailMapping.setCreateUserId(LoginInfoUtils
+				.getLoginInfoUserDtoId(request));
+
+		fiAssMappingService.saveFiAssDetailMapping(fiAssDetailMapping);
+
+	}
+	
+	
+	public void getCompanysBySysId(){
+		
+		Long accountSetId = getParameterLong("accountSetId");
+		Long sysId = getParameterLong("sysId");
+		List<FiAccountSetData> fasds = fiAccountSetDateService
+				.getFiAccountSetsDataByAccountId(accountSetId, sysId);
+		if (fasds != null && fasds.size() > 0) {
+			List<Long> ids = new ArrayList<Long>();
+			List<FiAccountSetData> companys = new ArrayList<FiAccountSetData>();
+			for (FiAccountSetData f : fasds) {
+				if (!ids.contains(f.getCompanyId())) {
+					ids.add(f.getCompanyId());
+					companys.add(f);
+				}
+			}
+			String accountSetsjson = JsonUtils.toJSONString(companys);
+			renderJson(accountSetsjson);
+		}
+		
+		
+	}
+	
+	public void getBranchsBySysId(){
+		Long accountSetId = getParameterLong("accountSetId");
+		Long sysId = getParameterLong("sysId");
+		List<FiAccountSetData> fasds = fiAccountSetDateService
+				.getFiAccountSetsDataByAccountId(accountSetId, sysId);
+		
+		if (fasds != null && fasds.size() > 0) {
+			List<FiAccountSetData> projectBranchs = new ArrayList<FiAccountSetData>();
+			FiAccountSetData fsd = new FiAccountSetData();
+			fsd.setProjectBranchId(ALL_ID);
+			fsd.setProjectName(ALL);
+			projectBranchs.add(0, fsd);
+			projectBranchs.addAll(fasds);
+			String projectBranchjson = JsonUtils.toJSONString(projectBranchs);
+			renderJson(projectBranchjson);
+		}
+	
+	}
+	
+	/**
+	 * chc add 2016.7.22
+	 */
+	/**
+	 * 创建凭证
+	 */
+	public void noCreateVoucher() {
+		Map<String, Object> result = new HashMap<String, Object>();
+		
+		// 单据id
+		String ids = "," + getParameter("ids");
+		Long sysId = getParameterLong("sysId");
+		String btype = getParameter("btype");
+		try {
+			btype = URLDecoder.decode(btype, "utf-8");
+		} catch (UnsupportedEncodingException e) {
+			e.printStackTrace();
+		}
+		FlowResult<String> flowResult = fiVoucherCreateService.rewrite(ids,btype,sysId);
+		if (flowResult.isSuccess()) {
+			getSession().removeAttribute("pageBean");
+			result.put("page", flowResult.getResult());
+			result.put("success", true);
+			result.put("msg", "操作成功");
+			renderHtml(JsonUtils.toJSONString(result));
+		} else {
+			result.put("success", false);
+			result.put("msg", flowResult.getDebugInfo().getErrDesc());
+			renderHtml(JsonUtils.toJSONString(result));
+		}
+	}
+}

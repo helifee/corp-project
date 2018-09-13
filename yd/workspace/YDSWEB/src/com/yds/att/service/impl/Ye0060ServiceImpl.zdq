@@ -1,0 +1,1335 @@
+/*
+ * @(#)Ye0060ServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 共通系统
+ */
+package com.yds.att.service.impl;
+
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import net.sf.json.JSONObject;
+
+import org.springframework.stereotype.Service;
+
+import com.yds.att.bean.AttInfo;
+import com.yds.att.bean.AttInfoCondB;
+import com.yds.att.bean.AttOvertime;
+import com.yds.att.bean.Ye0060CondA;
+import com.yds.att.bean.Ye0060Overtime;
+import com.yds.att.bean.Ye0060Statistics;
+import com.yds.att.common.dao.AttInfoDao;
+import com.yds.att.common.service.AttComService;
+import com.yds.att.common.service.AttInfoService;
+import com.yds.att.common.service.DateRelationService;
+import com.yds.att.common.service.OrgRelationService;
+import com.yds.att.dao.Ye0060Dao;
+import com.yds.att.service.AttConstants;
+import com.yds.att.service.Ye0060Service;
+import com.yds.base.service.AbstractBaseService;
+import com.yds.common.bean.UserInfo;
+import com.yds.common.service.SessionService;
+import com.yds.util.service.DateUtil;
+import com.yds.util.service.StringUtil;
+
+/**
+ * @see com.yds.att.service.Ye0060Service
+ */
+@Service("ye0060Service")
+public class Ye0060ServiceImpl extends AbstractBaseService implements Ye0060Service{
+
+	/** 注入Dao. */
+	private Ye0060Dao ye0060Dao;
+	/** 注入Service. */
+	private DateRelationService dateRelationService;
+	private AttInfoService attInfoService;
+	private OrgRelationService orgRelationService;
+	private AttComService attComService;
+	
+	/** 预计时间总计List. */
+	private List<String> appOvertimeListForSum;
+
+	/** 实际时间总计List. */
+	private List<String> actualOvertimeListForSum;
+	
+	/** 画面模式. */
+	Integer operateMode;
+	
+	/** 
+	 *  {@inheritDoc}
+	 */
+	@Override
+	public long getAttOvertimeListCount(Ye0060CondA ye0060CondA) throws Exception {
+		return ye0060Dao.getPrjOvertimeInfoCount(ye0060CondA);
+	}
+	
+	/** 
+	 *  {@inheritDoc}
+	 */
+	@Override
+	public List<Ye0060Statistics> getAttOvertimeList(Ye0060CondA ye0060CondA, Integer mode) throws Exception {
+		// 画面模式
+		operateMode = mode;
+		
+		// 取得全部项目加班信息
+		List<Ye0060Overtime> allPrjOvertimeInfo = ye0060Dao.getPrjOvertimeInfo(ye0060CondA);
+
+		// 整理后项目加班信息
+		List<Ye0060Statistics> editedPrjOvertimeInfo = new ArrayList<Ye0060Statistics>();
+		
+		// 分组加班信息
+		Ye0060Statistics ye0060Statistics = new Ye0060Statistics();
+		List<Ye0060Overtime> groupedPrjOvertimeInfo = new ArrayList<Ye0060Overtime>();
+		// 上一个编辑加班信息
+		Ye0060Overtime ye0060OvertimeBefore = new Ye0060Overtime();
+		
+		// 权限取得
+		Boolean[] ifPermitter = new Boolean[2];
+		ifPermitter[0] = ye0060CondA.getIfPrjLeader();
+		ifPermitter[1] = checkHasConfirm(SessionService.getLoginUserId(), ye0060CondA.getPrjId());
+		
+		// 按日期统计方式
+		if (STATISTIC_MODE_BYDATE.equals(ye0060CondA.getStatisticMode())) {
+			for (Ye0060Overtime ye0060Overtime : allPrjOvertimeInfo) {
+				
+				// 编辑第一条时
+				if (groupedPrjOvertimeInfo.size() == 0) {
+					groupedPrjOvertimeInfo.add(ye0060Overtime);
+					ye0060OvertimeBefore = ye0060Overtime;
+					continue;
+				}
+				// 统计组别发生改变
+				if (ye0060OvertimeBefore.getApplyOvertimeDate().after(ye0060Overtime.getApplyOvertimeDate())) {
+					// 记录上个组别的加班信息
+					ye0060Statistics.setApplyOvertimeDate(ye0060OvertimeBefore.getApplyOvertimeDate());
+					ye0060Statistics.setYe0060OvertimeList(groupedPrjOvertimeInfo);
+					sumOvertimeInfo(ye0060Statistics, ye0060CondA.getStatisticMode(), ifPermitter);
+					editedPrjOvertimeInfo.add(ye0060Statistics);
+					
+
+					// 初期化新组别相关信息
+					ye0060Statistics = new Ye0060Statistics();
+					groupedPrjOvertimeInfo = new ArrayList<Ye0060Overtime>();
+					groupedPrjOvertimeInfo.add(ye0060Overtime);
+					ye0060OvertimeBefore = ye0060Overtime;
+				} else {
+					// 在一个统计组里，记录本条信息
+					groupedPrjOvertimeInfo.add(ye0060Overtime);
+					ye0060OvertimeBefore = ye0060Overtime;
+				}
+			}
+			// 记录最后一个组别信息
+			if (null != groupedPrjOvertimeInfo
+					&& groupedPrjOvertimeInfo.size() > 0) {
+				ye0060Statistics.setApplyOvertimeDate(ye0060OvertimeBefore.getApplyOvertimeDate());
+				ye0060Statistics.setYe0060OvertimeList(groupedPrjOvertimeInfo);
+				sumOvertimeInfo(ye0060Statistics, ye0060CondA.getStatisticMode(), ifPermitter);
+				editedPrjOvertimeInfo.add(ye0060Statistics);
+			}
+			
+		} else if (STATISTIC_MODE_BYEMP.equals(ye0060CondA.getStatisticMode())) {
+			// 按人员统计方式
+			for (Ye0060Overtime ye0060Overtime : allPrjOvertimeInfo) {
+				
+				// 申请加班日期
+				String applyDate = DateUtil.dateToString(ye0060Overtime
+						.getApplyOvertimeDate(), "yyyy-MM-dd");
+				ye0060Overtime.setShowOvertimeDate(new StringBuilder(applyDate)
+						.append("(").append(DateUtil.getWeekDay(applyDate))
+						.append(")").toString());
+				
+				// 编辑第一条时
+				if (groupedPrjOvertimeInfo.size() == 0) {
+					groupedPrjOvertimeInfo.add(ye0060Overtime);
+					ye0060OvertimeBefore = ye0060Overtime;
+					continue;
+				}
+				// 统计组别发生改变
+				if (0 != ye0060OvertimeBefore.getEmpId().compareTo(ye0060Overtime.getEmpId())) {
+					// 记录上个组别的加班信息
+					ye0060Statistics.setApplyOvertimeDate(ye0060OvertimeBefore.getApplyOvertimeDate());
+					ye0060Statistics.setYe0060OvertimeList(groupedPrjOvertimeInfo);
+					sumOvertimeInfo(ye0060Statistics, ye0060CondA.getStatisticMode(), ifPermitter);
+					editedPrjOvertimeInfo.add(ye0060Statistics);
+
+					// 初期化新组别相关信息
+					ye0060Statistics = new Ye0060Statistics();
+					groupedPrjOvertimeInfo = new ArrayList<Ye0060Overtime>();
+					groupedPrjOvertimeInfo.add(ye0060Overtime);
+					ye0060OvertimeBefore = ye0060Overtime;
+				} else {
+					// 在一个统计组里，记录本条信息
+					groupedPrjOvertimeInfo.add(ye0060Overtime);
+					ye0060OvertimeBefore = ye0060Overtime;
+				}
+			}
+			// 记录最后一个组别信息
+			if (null != groupedPrjOvertimeInfo
+					&& groupedPrjOvertimeInfo.size() > 0) {
+				ye0060Statistics.setApplyOvertimeDate(ye0060OvertimeBefore.getApplyOvertimeDate());
+				ye0060Statistics.setYe0060OvertimeList(groupedPrjOvertimeInfo);
+				sumOvertimeInfo(ye0060Statistics, ye0060CondA.getStatisticMode(), ifPermitter);
+				editedPrjOvertimeInfo.add(ye0060Statistics);
+			}
+		}
+		
+		return editedPrjOvertimeInfo;
+	}
+
+	/** 
+	 *  {@inheritDoc}
+	 */
+	@Override
+	public Map<String, Object> insertOvertimeInfo(AttOvertime attOvertime, int tomorrowValue, List<String> empList) {
+		
+		// 检索当日已申请加班员工一览
+		String prjId = attOvertime.getPrjId();
+		attOvertime.setPrjId("");
+		List<UserInfo> appliedEmp = getOvertimeEmpInfo(attOvertime);
+		Map<String, Object> resultMap = new HashMap<String, Object>();
+		resultMap.put("executeResult", true);
+		
+		// 编辑员工加班信息
+		attOvertime.setPrjId(prjId);
+		editOvertimeInfo(attOvertime, tomorrowValue);
+		
+		// 检查加班时间
+		resultMap = checkOvertime(attOvertime, tomorrowValue);
+		if (!(Boolean)resultMap.get("executeResult")) {
+			return resultMap;
+		}
+		
+		// DB中是否包含待申请员工标识
+		boolean containFlg = false;
+		StringBuilder empSb = new StringBuilder();
+		if (appliedEmp != null && appliedEmp.size() != 0) {
+			for (UserInfo userInfo : appliedEmp) {
+				if (empList.contains(userInfo.getUserId())) {
+					containFlg = true;
+					if (!empSb.toString().isEmpty()) {
+						empSb.append(",");
+					}
+					empSb.append(userInfo.getUserName());
+				}
+			}
+		} 
+		// 检查出错时返回
+		if (containFlg) {
+			resultMap.put("resultMessage", propMgr.getMessage(
+					"yds.att.error.0001", attOvertime.getApplyOvertimeDate(),
+					empSb.toString()));
+			resultMap.put("executeResult", false);
+			return resultMap;
+		}
+		
+		// 审批状态
+		attOvertime.setStateFlag(AttConstants.AppStatus.UN_APPLY.toString());
+		
+		// 插入加班申请信息
+		for (String userId : empList) {
+			attOvertime.setEmpId(userId);
+			ye0060Dao.insertApplyEmp(attOvertime);
+		}
+		
+		return resultMap;
+	}
+	
+	/** 
+	 *  {@inheritDoc}
+	 */
+	@Override
+	public AttOvertime getOvertimeInfo(AttOvertime attOvertime) {
+		// 设置加班时间
+		Calendar cl = DateUtil.parseDateTime(attOvertime.getApplyOvertimeDate());
+		attOvertime.setYear(String.valueOf(cl.get(Calendar.YEAR)));
+		attOvertime.setMonth(StringUtil.addZero(cl.get(Calendar.MONTH) + 1, 2));
+		attOvertime.setDay(StringUtil.addZero(cl.get(Calendar.DATE), 2));
+		
+		// 取得员工加班信息
+		AttOvertime newAttOvertime = ye0060Dao.getApplyOvertimeByPk(attOvertime);
+		
+		// 编辑员工加班信息
+		if (newAttOvertime != null) {
+			newAttOvertime.setApplyOvertimeDate(DateUtil.dateToString(cl
+					.getTime(), "yyyy-MM-dd"));
+			Calendar clAppStart = DateUtil.parseDateTime(DateUtil.dateToString(
+					newAttOvertime.getAppStartTime(), "yyyy-MM-dd HH:mm:ss"));
+			newAttOvertime.setApplyStartTime(editDisplayTime(clAppStart,
+					TIME_TYPE_TODAY));
+			Calendar clAppEnd = DateUtil.parseDateTime(DateUtil.dateToString(
+					newAttOvertime.getAppEndTime(), "yyyy-MM-dd HH:mm:ss"));
+			newAttOvertime.setApplyEndTime(editDisplayTime(clAppEnd,
+					TIME_TYPE_TODAY));
+		}
+		
+		return newAttOvertime;
+	}
+	
+	/** 
+	 *  {@inheritDoc}
+	 */
+	@Override
+	public Map<String, Object> updateOvertimeInfo(AttOvertime attOvertime, int tomorrowValue) {
+		// 编辑员工加班信息
+		editOvertimeInfo(attOvertime, tomorrowValue);
+		Map<String, Object> resultMap = checkOvertime(attOvertime, tomorrowValue);
+		// 检查出错时返回
+		if (!(Boolean)resultMap.get("executeResult")) {
+			return resultMap;
+		}
+		
+		// 设置待更新员工加班信息
+		AttOvertime newAttOvertimeInfo = ye0060Dao.getApplyOvertimeByPk(attOvertime);
+		if (newAttOvertimeInfo == null) {
+			resultMap.put("resultMessage", propMgr.getMessage("yds.com.info.0011"));
+			resultMap.put("executeResult", false);
+			return resultMap;
+		}
+		newAttOvertimeInfo.setApplyOvertimeDate(attOvertime.getApplyOvertimeDate());
+		newAttOvertimeInfo.setApplyStartTime(attOvertime.getApplyStartTime());
+		newAttOvertimeInfo.setApplyEndTime(attOvertime.getApplyEndTime());
+		newAttOvertimeInfo.setBenefitFlag(attOvertime.getBenefitFlag());
+		newAttOvertimeInfo.setOvertimeComment(attOvertime.getOvertimeComment());
+		
+		// 编辑员工加班信息
+		editOvertimeInfo(newAttOvertimeInfo, tomorrowValue);
+		
+		// 更新员工加班信息
+		ye0060Dao.updateApplyOvertime(newAttOvertimeInfo);
+		
+		return resultMap;
+	}
+
+	/** 
+	 *  {@inheritDoc}
+	 */
+	@Override
+	public List<UserInfo> getOvertimeEmpInfo(AttOvertime attOvertime) {
+		// 设置加班时间
+		Calendar cl = DateUtil.parseDateTime(attOvertime.getApplyOvertimeDate());
+		attOvertime.setYear(String.valueOf(cl.get(Calendar.YEAR)));
+		attOvertime.setMonth(StringUtil.addZero(cl.get(Calendar.MONTH) + 1, 2));
+		attOvertime.setDay(StringUtil.addZero(cl.get(Calendar.DATE), 2));
+		
+		return ye0060Dao.getAppliedEmp(attOvertime);
+	}
+	
+	
+	/** 
+	 *  {@inheritDoc}
+	 */
+	@Override
+	public Boolean deleteOvertimeInfo(AttOvertime attOvertime) {
+		// 编辑员工加班信息
+		editOvertimeInfo(attOvertime, TIME_TYPE_TODAY);
+		
+		// 存在性检查
+		AttOvertime oldAttOvertime = ye0060Dao.getApplyOvertimeByPk(attOvertime);
+		if (oldAttOvertime == null) {
+			return false;
+		}
+		// 执行删除处理
+		ye0060Dao.deleteApplyOvertime(attOvertime);
+		
+		return true;
+	}
+
+	/** 
+	 *  {@inheritDoc}
+	 */
+	@Override
+	public void deleteALLOvertimeInfoByDate(AttOvertime attOvertime) {
+		// 编辑员工加班信息
+		editOvertimeInfo(attOvertime, TIME_TYPE_TODAY);
+		
+		// 编辑员工加班信息
+		Calendar cl = DateUtil.parseDateTime(attOvertime.getApplyOvertimeDate());
+		// 年
+		attOvertime.setYear(String.valueOf(cl.get(Calendar.YEAR)));
+		// 月
+		attOvertime.setMonth(StringUtil.addZero(cl.get(Calendar.MONTH) + 1, 2));
+		// 日
+		attOvertime.setDay(StringUtil.addZero(cl.get(Calendar.DATE), 2));
+		
+		// 执行删除处理
+		ye0060Dao.deleteApplyOvertime(attOvertime);
+	}
+
+	/** 
+	 *  {@inheritDoc}
+	 */
+	@Override
+	public Map<String, Object> insertOvertimeByRefer(AttOvertime attOvertime, String dateRefered) {
+		// 检查申请当日加班信息是否存在
+		String dateApplying = attOvertime.getApplyOvertimeDate();
+		attOvertime.setYear(String.valueOf(DateUtil.getYear(dateApplying)));
+		attOvertime.setMonth(StringUtil.addZero(DateUtil.getMonth(dateApplying), 2));
+		attOvertime.setDay(StringUtil.addZero(DateUtil.getDay(dateApplying), 2));
+		Map<String, Object> resultMap = new HashMap<String, Object>();
+		resultMap.put("executeResult", true);
+		
+		// 取得参照数据
+		AttOvertime oldParaAttOvertime = new AttOvertime();
+		oldParaAttOvertime.setYear(String.valueOf(DateUtil.getYear(dateRefered)));
+		oldParaAttOvertime.setMonth(StringUtil.addZero(DateUtil.getMonth(dateRefered), 2));
+		oldParaAttOvertime.setDay(StringUtil.addZero(DateUtil.getDay(dateRefered), 2));
+		oldParaAttOvertime.setPrjId(attOvertime.getPrjId());
+		List<AttOvertime> oldAttOvertimes = ye0060Dao.getApplyOvertimes(oldParaAttOvertime);
+		
+		// 取得当日已申请数据
+		attOvertime.setPrjId("");
+		List<AttOvertime> newAttOvertimes = ye0060Dao.getApplyOvertimes(attOvertime);
+		List<String> empList = new ArrayList<String>();
+		for (AttOvertime preApplyOvertimes : newAttOvertimes) {
+			empList.add(preApplyOvertimes.getEmpId());
+		}
+
+		// 数据检查
+		Boolean containFlag = false;
+		StringBuilder empSb = new StringBuilder();
+		for (AttOvertime eachAttOvertime : oldAttOvertimes) {
+			if (empList.contains(eachAttOvertime.getEmpId())) {
+				if (!empSb.toString().isEmpty()) {
+					empSb.append(",");
+				}
+				empSb.append(eachAttOvertime.getEmpName());
+				containFlag = true;
+			}
+		}
+		if (containFlag) {
+			resultMap.put("executeResult", false);
+			resultMap.put("resultMessage", propMgr.getMessage(
+					"yds.att.error.0001", attOvertime.getApplyOvertimeDate(),
+					empSb.toString()));
+			return resultMap;
+		}
+		
+		// 执行更新
+		for (AttOvertime newParaAttOvertime : oldAttOvertimes) {
+			newParaAttOvertime.setYear(attOvertime.getYear());
+			newParaAttOvertime.setMonth(attOvertime.getMonth());
+			newParaAttOvertime.setDay(attOvertime.getDay());
+			newParaAttOvertime.setStateFlag(AttConstants.AppStatus.UN_APPLY.toString());
+			newParaAttOvertime.setUpdateUser(SessionService.getLoginUserId());
+			// 设置计划开始与结束时间
+			setTimesByRefer(newParaAttOvertime);
+			
+			ye0060Dao.insertApplyEmp(newParaAttOvertime);
+		}
+		
+		return resultMap;
+	}
+	
+	/** 
+	 *  {@inheritDoc}
+	 */
+	@SuppressWarnings("unchecked")
+	@Override
+	public Boolean updateapplyChangeStatus(JSONObject attOvertimeJson, Integer changeStatusType) throws Exception{
+		// 取得画面选中加班信息
+		Set<String> jsonSet = attOvertimeJson.keySet();
+		Iterator<String> jsonIterator = jsonSet.iterator();
+		Boolean excuteResult = true;
+		
+		while (jsonIterator.hasNext()) {
+			// 画面选中的加班信息主键
+			String[] keys = jsonIterator.next().split(KEY_DIVIDER);
+			AttOvertime attOvertime = new AttOvertime();
+			attOvertime.setApplyOvertimeDate(keys[0]);
+			attOvertime.setEmpId(keys[1]);
+			// 取得待更新记录的基本信息
+			AttOvertime newAttOvertime = getOvertimeInfo(attOvertime);
+			if (newAttOvertime == null) {
+				excuteResult = false;
+				break;
+			}
+			// 进行加班申请提交审批时
+			if (CSTYPE_APPLY.equals(changeStatusType)) {
+				newAttOvertime.setStateFlag(AttConstants.AppStatus.PENDING.toString());
+				
+				AttInfoCondB attInfoCondB = new AttInfoCondB();
+				// 设置提交申请参数
+				attInfoCondB.setEmpId(newAttOvertime.getEmpId());
+				attInfoCondB.setOverTimeDate(DateUtil.parse(keys[0]));
+				attInfoCondB.setAppStatusOt(newAttOvertime.getStateFlag());
+				attInfoCondB.setOtStTime(newAttOvertime.getAppStartTime());
+				attInfoCondB.setOtEdTime(newAttOvertime.getAppEndTime());
+				attInfoCondB.setOtBenefit(newAttOvertime.getBenefitFlag());
+				
+				// 加班信息提交申请
+				attInfoService.updateAttInfo(attInfoCondB);
+			} else {
+				if (CSTYPE_APPROVED.equals(changeStatusType)) {
+					// 批准时，将加班信息状态更新为已批准
+					newAttOvertime.setStateFlag(AttConstants.AppStatus.APPROVED
+							.toString());
+					ye0060Dao.updateApplyOvertime(newAttOvertime);
+
+				} else if (CSTYPPE_REFUSED.equals(changeStatusType)) {
+					// 否决时，将加班信息状态更新为已否决
+					newAttOvertime.setStateFlag(AttConstants.AppStatus.REJECTED
+							.toString());
+
+				}
+				// 取得最新考勤信息
+				AttInfo attInfo = new AttInfo();
+				attInfo.setYear(newAttOvertime.getYear());
+				attInfo.setMonth(newAttOvertime.getMonth());
+				attInfo.setDay(newAttOvertime.getDay());
+				attInfo.setEmpId(newAttOvertime.getEmpId());
+
+				// 更新考勤信息中审批状态
+				attInfo = ye0060Dao.getAttInfoByPk(attInfo);
+				attInfo.setAttStatusOt(newAttOvertime.getStateFlag());
+				ye0060Dao.updateAttInfoByPk(attInfo);
+			}
+			// 更新员工加班表审批状态
+			ye0060Dao.updateApplyOvertime(newAttOvertime);
+		}
+		return excuteResult;
+	}
+	
+	/** 
+	 *  {@inheritDoc}
+	 */
+	@Override
+	public Boolean checkHasConfirm(String empId, String prjId) {
+		// 权限检查结果
+		Boolean hasRight = false;
+		// 取得项目所属部门
+		String deptId = orgRelationService.getParentOrgBy(prjId).getOrgId();
+		// 取得管辖部门
+		List<String> manageDepts = ye0060Dao.getManageDepts(empId);
+		// 判断权限
+		if (manageDepts.contains(deptId)) {
+			hasRight = true;
+		}
+		
+		return hasRight;
+	}
+	
+	/** 
+	 *  {@inheritDoc}
+	 */
+	@Override
+	public Map<String, Object> checkOvertime(AttOvertime attOvertime, Integer tomorrowValue) {
+		// 检查结果
+		Map<String, Object> resultMap = new HashMap<String, Object>();
+		resultMap.put("executeResult", true);
+		
+		// 日期类型
+		String dateType = dateRelationService.getDateType(
+				DateUtil.parse(attOvertime.getApplyOvertimeDate())).toString();
+		String tomorrowType = dateRelationService.getDateType(
+				DateUtil.parse(DateUtil.dateAdd(attOvertime
+				.getApplyOvertimeDate(), 1, 2))).toString();
+		// 普通工作日默认加班开始时间
+		String defaultOvertimeSt = attComService.getParameter(
+				"com.yds.att.sovertime").substring(0, 4);
+		// 普通工作日打卡开始时间
+		String defaultWorkTimeSt = attComService.getParameter(
+				"com.yds.att.sttime").substring(0, 4);
+		// 休息日打卡开始时间
+		String defaultHolidayTimeSt = attComService.getParameter(
+				"com.yds.att.wesovertime").substring(0, 4);
+		// 午饭开始时间
+		String lunchStartTimepara = attComService.getParameter(
+				"com.yds.att.lunchsttime").substring(0, 4);
+		// 午饭结束时间
+		String lunchEndTimepara = attComService.getParameter(
+				"com.yds.att.lunchedtime").substring(0, 4);
+		// 晚饭开始时间
+		String supperStartTimepara = attComService.getParameter(
+				"com.yds.att.suppersttime").substring(0, 4);
+		// 晚饭结束时间
+		String supperEndTimepara = attComService.getParameter(
+				"com.yds.att.supperedtime").substring(0, 4);
+		// 申请开始时间
+		String applyStartTime = attOvertime.getApplyStartTime().replaceAll(":", "");
+		// 申请结束时间
+		String applyEndTime = attOvertime.getApplyEndTime().replaceAll(":", "");
+		
+		// 申请日为普通工作日
+		if (AttConstants.DateTypeEnum.WORK.toString().equals(dateType)) {
+			// 申请加班开始时间早于默认加班开始时间时出错
+			if (applyStartTime.compareTo(defaultOvertimeSt) < 0) {
+				resultMap.put("executeResult", false);
+				resultMap.put("resultMessage", propMgr
+						.getMessage("yds.att.error.0002", new StringBuilder(defaultOvertimeSt
+						.substring(0, 2)).append(":").append("00").toString()));
+				return resultMap;
+			}
+			// 申请日为休息日
+		} else {
+			// 申请时间早于默认打卡开始时间时出错
+			if (applyStartTime.compareTo(defaultHolidayTimeSt) < 0) {
+				resultMap.put("executeResult", false);
+				resultMap.put("resultMessage", propMgr
+						.getMessage("yds.att.error.0002", new StringBuilder(defaultHolidayTimeSt
+						.substring(0, 2)).append(":").append("00").toString()));
+				return resultMap;
+			}
+			// 申请加班开始时间不能为午休时间
+			if (applyStartTime.compareTo(lunchStartTimepara) >= 0 && applyStartTime.compareTo(lunchEndTimepara) < 0) {
+				resultMap.put("executeResult", false);
+				resultMap.put("resultMessage", propMgr
+						.getMessage("yds.att.error.0006", "开始", "午休"));
+				return resultMap;
+			}
+			// 申请加班开始时间不能为晚休时间
+			if (applyStartTime.compareTo(supperStartTimepara) >= 0 && applyStartTime.compareTo(supperEndTimepara) < 0) {
+				resultMap.put("executeResult", false);
+				resultMap.put("resultMessage", propMgr
+						.getMessage("yds.att.error.0006", "开始", "晚休"));
+				return resultMap;
+			}
+			// 申请加班结束时间不能为午休时间
+			if (applyEndTime.compareTo(lunchStartTimepara) > 0 && applyEndTime.compareTo(lunchEndTimepara) <= 0) {
+				resultMap.put("executeResult", false);
+				resultMap.put("resultMessage", propMgr
+						.getMessage("yds.att.error.0006", "结束", "午休"));
+				return resultMap;
+			}
+			// 申请加班结束时间不能为晚休时间
+			if (applyEndTime.compareTo(supperStartTimepara) > 0 && applyEndTime.compareTo(supperEndTimepara) <= 0) {
+				resultMap.put("executeResult", false);
+				resultMap.put("resultMessage", propMgr
+						.getMessage("yds.att.error.0006", "结束", "晚休"));
+				return resultMap;
+			}
+		}
+		// 加班至翌日时
+		if (TIME_TYPE_TOMORROW == tomorrowValue) {
+			int compareResult = 1;
+			String errorMessage = "";
+			// 第二天是普通工作日
+			if (AttConstants.DateTypeEnum.WORK.toString().equals(tomorrowType)) {
+				compareResult = applyEndTime.compareTo(defaultWorkTimeSt);
+				errorMessage = propMgr.getMessage("yds.att.error.0003",
+						new StringBuilder(defaultWorkTimeSt.substring(0, 2))
+						.append(":").append("00").toString());
+			} else {
+				compareResult = applyEndTime.compareTo(defaultHolidayTimeSt);
+				errorMessage = propMgr.getMessage("yds.att.error.0003",
+						new StringBuilder(defaultHolidayTimeSt.substring(0, 2))
+						.append(":").append("00").toString());
+			}
+			// 加班结束时间晚于翌日打卡开始时间时出错
+			if (compareResult > 0) {
+				resultMap.put("executeResult", false);
+				resultMap.put("resultMessage", errorMessage);
+				return resultMap;
+			}
+		} else {
+			// 加班开始时间要小于结束时间
+			if (applyEndTime.compareTo(applyStartTime) <= 0) {
+				resultMap.put("executeResult", false);
+				resultMap.put("resultMessage", propMgr.getMessage("yds.att.error.0004"));
+				return resultMap;
+			}
+		}
+		
+		return resultMap;
+	}
+	
+	/**
+	 * 编辑合计表示时间
+	 * 
+	 * @param timeList 待编辑时间
+	 * @return String 编辑后表示时间
+	 */
+	private String editSumTime(List<String> timeList) {
+		String dedaultTime = "0:00";
+		if (null == timeList || timeList.size() == 0) {
+			return dedaultTime;
+		}
+		// 计算加班合计时分
+		int sumHours = 0;
+		int sumMinutes = 0;
+		for (String overTime : timeList) {
+			String[] overTimeArray = overTime.split(":");
+			sumHours += new Integer(overTimeArray[0]);
+			sumMinutes += new Integer(overTimeArray[1]);
+		}
+		sumHours += sumMinutes / 60;
+		sumMinutes = sumMinutes % 60;
+		
+		dedaultTime = new StringBuilder(String.valueOf(sumHours)).append(":").append(StringUtil.addZero(sumMinutes, 2)).toString();
+		
+		return dedaultTime;
+	}
+	
+	/**
+	 * 项目加班一览信息统计
+	 * 
+	 * @param statisticInfo 单条统计信息
+	 * @param statisticMode 统计方式
+	 * @param ifPermitter 是否具有权限
+	 * 
+	 * @return SUCCESS
+	 */
+	private void sumOvertimeInfo(Ye0060Statistics statisticInfo, String statisticMode, Boolean... ifPermitter) throws Exception{
+		List<Ye0060Overtime> ye0060OvertimeList = statisticInfo
+				.getYe0060OvertimeList();
+		if (null == ye0060OvertimeList || ye0060OvertimeList.size() == 0) {
+			return;
+		}
+		
+		// 加班时间合计
+		List<String> appOvertimeList = new ArrayList<String>();
+		List<String> actualOvertimeList = new ArrayList<String>();
+		String applyDate = DateUtil.dateToString(statisticInfo
+				.getApplyOvertimeDate(), "yyyy-MM-dd");
+		// 批量删除操作标识
+		Boolean deleteAll = true;
+		if (!MODE_NEW.equals(operateMode) || !ifPermitter[0]) {
+			deleteAll = false;
+		}
+		Boolean minusRestTime = false;
+		for (Ye0060Overtime ye0060Overtime : ye0060OvertimeList) {
+			// 依据日期类型设置实际加班开始时间
+			if (AttConstants.DateTypeEnum.WORK.equals(dateRelationService.getDateType(ye0060Overtime.getApplyOvertimeDate()))) {
+				// 平日加班开始时间为晚饭结束时间
+				if (ye0060Overtime.getDinnerTimeEnd() != null
+						&& !ye0060Overtime.getDinnerTimeEnd().toString()
+								.isEmpty()
+						&& !ye0060Overtime.getDinnerTimeEnd().toString()
+								.equals("0000-00-00 00:00:00")) {
+					ye0060Overtime.setActualStartTime(ye0060Overtime
+							.getDinnerTimeEnd());
+				}
+			} else {
+				// 休息日加班开始时间为实际出勤时间
+				if (ye0060Overtime.getRstartTime() != null
+						&& !ye0060Overtime.getRstartTime().toString().isEmpty()
+						&& !ye0060Overtime.getRstartTime().toString().equals(
+								"0000-00-00 00:00:00")) {
+					ye0060Overtime.setActualStartTime(ye0060Overtime
+							.getRstartTime());
+					// 如果加班开始时间早于申请时间，按申请时间算
+					if (ye0060Overtime.getAppStartTime().after(ye0060Overtime.getActualStartTime())) {
+						ye0060Overtime.setActualStartTime(ye0060Overtime
+								.getAppStartTime());
+					}
+				}
+				minusRestTime = true;
+			}
+			// 加班退勤时间如果晚于申请时间，按申请时间算
+			if (ye0060Overtime.getAppEndTime() != null && !ye0060Overtime.getAppEndTime().toString().isEmpty()) {
+				if (ye0060Overtime.getAppEndTime().after(ye0060Overtime.getAppEndTime())) {
+					ye0060Overtime.setAppEndTime(ye0060Overtime.getAppEndTime());
+				}
+			}
+			
+			// 休息日加班需扣除午休和晚休时间
+			long minusTime[] = {0, 0};
+			if (minusRestTime) {
+				// 是否计算实际时间
+				boolean ifCalculateActual = false;
+				if (null != ye0060Overtime.getActualStartTime()
+						&& !ye0060Overtime.getActualStartTime().toString()
+								.isEmpty()
+						&& null != ye0060Overtime.getActualEndTime()
+						&& !ye0060Overtime.getActualEndTime().toString().isEmpty()) {
+					ifCalculateActual = true;
+				}
+				minusTime = getInvalidOvertime(ye0060Overtime, ifCalculateActual);
+			}
+			
+			// 设置画面表示时间
+			convertTimes(ye0060Overtime);
+			
+			// 取得加班秒数
+			long applySecond = DateUtil.dateDiff(ye0060Overtime
+					.getAppStartTime(), ye0060Overtime.getAppEndTime());
+			applySecond = applySecond - minusTime[0];
+			long actualSecond = 0;
+			if (null != ye0060Overtime.getActualStartTime()
+					&& !ye0060Overtime.getActualStartTime().toString()
+							.isEmpty()
+					&& null != ye0060Overtime.getActualEndTime()
+					&& !ye0060Overtime.getActualEndTime().toString().isEmpty()) {
+				actualSecond = DateUtil.dateDiff(ye0060Overtime
+						.getActualStartTime(), ye0060Overtime.getActualEndTime());
+				actualSecond = actualSecond - minusTime[1];
+				if (ye0060Overtime.getActualEndTime().before(
+						ye0060Overtime.getActualStartTime())) {
+					actualSecond = 0;
+				}
+			}
+			
+			// 计算时间
+			int applyMinutes = (int) (applySecond / 60 % 60);
+			int applyHours = (int) (applySecond / 60 / 60 % 24);
+			int actualMinutes = (int) (actualSecond / 60 % 60);
+			int actualHours = (int) (actualSecond / 60 / 60 % 24);
+			
+			// 设置单条记录加班时间
+			ye0060Overtime.setAppOvertime(new StringBuilder(String.valueOf(applyHours)).append(":")
+						.append(StringUtil.addZero(applyMinutes, 2)).toString());
+			appOvertimeList.add(ye0060Overtime.getAppOvertime());
+			ye0060Overtime.setActualOvertime(new StringBuilder(String.valueOf(actualHours))
+					.append(":").append(StringUtil.addZero(actualMinutes, 2)).toString());
+			
+			// 判断是否加班
+			String[] timeArray = ye0060Overtime.getActualOvertime().split(":");
+			if (new Integer(timeArray[0]) != 0 || new Integer(timeArray[1]) != 0) {
+				actualOvertimeList.add(ye0060Overtime.getActualOvertime());
+			} else {
+				ye0060Overtime.setActualStartMinute("");
+				ye0060Overtime.setActualEndMinute("");
+				ye0060Overtime.setActualOvertime("");
+			}
+			
+			// 画面表示checkBox标识
+			if (checkOperateRight(operateMode, 2, ye0060Overtime, ifPermitter)) {
+				// 按统计方式设置checkBox的name
+				if (STATISTIC_MODE_BYDATE.equals(statisticMode)) {
+					ye0060Overtime.setCheckBoxDetail(new StringBuilder(
+							"<input name='overtimeCheck").append(applyDate).append(
+							"' type='checkbox' onClick='selectOneItem(this)' style='margin-top:4px;' />")
+							.toString());
+				} else {
+					ye0060Overtime.setCheckBoxDetail(new StringBuilder(
+							"<input name='overtimeCheck").append(ye0060Overtime.getEmpId()).append(
+							"' type='checkbox' onClick='selectOneItem(this)' style='margin-top:4px;' />")
+							.toString());
+					
+				}
+			}
+
+			// 设置本条记录的key值
+			ye0060Overtime.setAnotherKey(new StringBuilder(applyDate).append(
+					KEY_DIVIDER).append(ye0060Overtime.getEmpId()).toString());
+
+			// 统计方式是按人员时，重设日期
+			if (STATISTIC_MODE_BYEMP.equals(statisticMode)) {
+				applyDate = DateUtil.dateToString(ye0060Overtime
+						.getApplyOvertimeDate(), "yyyy-MM-dd");
+			}
+			
+			// 画面详细记录链接
+			StringBuilder linkSb = new StringBuilder();
+			linkSb.append("<a href='#' onclick='showOvertime(\"").append(
+					applyDate).append("\",\"").append(ye0060Overtime.getEmpId())
+					.append("\")'>查看</a>");
+			if (checkOperateRight(operateMode, 3, ye0060Overtime, ifPermitter)) {
+				String updateOperate = new StringBuilder("&nbsp;&nbsp;<a href='#' onclick='modifyOvertime(\"").append(
+						applyDate).append("\",\"").append(
+						ye0060Overtime.getEmpId()).append(
+						"\")'>修改</a>&nbsp;&nbsp;").append(
+						"<a href='#' onclick='deleteOvertime(\"").append(
+						applyDate).append("\",\"").append(
+						ye0060Overtime.getEmpId()).append("\")'>删除</a>").toString();
+				linkSb.append(updateOperate);
+			}
+			// 当日全部删除链接
+			if (deleteAll) {
+				if (!AttConstants.AppStatus.UN_APPLY.toString().equals(ye0060Overtime
+						.getStateFlag()) && !AttConstants.AppStatus.REJECTED.toString()
+						.equals(ye0060Overtime.getStateFlag())) {
+					deleteAll = false;
+				}
+			}
+			
+			ye0060Overtime.setLinkObject(linkSb.toString());
+		}
+		
+		// 画面表示checkBox标识
+		Boolean checkBoxFlag = checkOperateRight(operateMode, 1, new Ye0060Overtime(), ifPermitter);
+
+		// 设置合计信息
+		if (STATISTIC_MODE_BYDATE.equals(statisticMode)) {
+			// 小计列的文字设置
+			statisticInfo.setAppEndRow(new StringBuilder("预计小计").append("(")
+					.append(String.valueOf(appOvertimeList.size()))
+					.append("人)").toString());
+			statisticInfo.setActualEndRow(new StringBuilder("实际小计").append("(")
+					.append(String.valueOf(actualOvertimeList.size())).append(
+							"人)").toString());
+			// 统计标题（日期+星期）
+			statisticInfo.setShowOvertimeDate(new StringBuilder(applyDate)
+					.append("(").append(DateUtil.getWeekDay(applyDate)).append(
+							")").toString());
+			// 统计行checkbox
+			if (checkBoxFlag) {
+				statisticInfo.setCheckBoxItem(new StringBuilder(
+				"<input name='groupCheck").append(applyDate).append(
+				"' type='checkbox' onclick='selectAllByGroup(this)' style='margin-top:4px;'/>")
+				.toString());
+			}
+
+			// 统计行链接
+			StringBuilder linkSb = new StringBuilder();
+			if (checkBoxFlag && MODE_NEW.equals(operateMode)) {
+				linkSb.append("&nbsp;&nbsp;<a href='#' onclick='newByReference(\"")
+						.append(applyDate).append("\")'>参照登记</a>");
+			}
+			String deleteLink = new StringBuilder("&nbsp;&nbsp;<a href='#' onclick='deleteAllByDate(\"").append(
+					applyDate).append("\")'>删除</a>").toString();
+			// 可以全部删除时
+			if (deleteAll) {
+				linkSb.append(deleteLink);
+			}
+			
+			statisticInfo.setLinkObject(linkSb.toString());
+		} else {
+			// 小计列的文字设置
+			statisticInfo.setAppEndRow(new StringBuilder("预计小计").append("(")
+					.append(String.valueOf(appOvertimeList.size()))
+					.append("次)").toString());
+			statisticInfo.setActualEndRow(new StringBuilder("实际小计").append("(")
+					.append(String.valueOf(actualOvertimeList.size())).append(
+							"次)").toString());
+			// 统计行显示标题的设置（员工名）
+			statisticInfo.setEmpName(statisticInfo.getYe0060OvertimeList().get(0).getEmpName());
+			statisticInfo.setEmpId(statisticInfo.getYe0060OvertimeList().get(0).getEmpId());
+			// 统计行checkbox
+			if (checkBoxFlag) {
+				statisticInfo.setCheckBoxItem(new StringBuilder(
+				"<input name='groupCheck").append(
+				statisticInfo.getEmpId()).append(
+				"' type='checkbox' onclick='selectAllByGroup(this)' style='margin-top:4px;'/>")
+				.toString());
+			}
+		}
+		// 设置统计行的合计时间
+		statisticInfo.setAppOvertiomeSum(editSumTime(appOvertimeList));
+		statisticInfo.setActualOvertiomeSum(editSumTime(actualOvertimeList));
+
+	}
+
+	/**
+	 * 设置画面表示时间
+	 * @return SUCCESS
+	 */
+	private void convertTimes(Ye0060Overtime ye0060Overtime) {
+
+		// 设置申请表示时间
+		Calendar appStartCl = DateUtil.parseDateTime(DateUtil.dateToString(ye0060Overtime
+				.getAppStartTime(), "yyyy-MM-dd HH:mm:ss"));
+		Calendar appEndCl = DateUtil.parseDateTime(DateUtil.dateToString(ye0060Overtime
+				.getAppEndTime(), "yyyy-MM-dd HH:mm:ss"));
+		
+		// 设置申请开始时间
+		ye0060Overtime.setAppStartMinute(editDisplayTime(appStartCl,
+				TIME_TYPE_TODAY));
+		// 设置申请结束时间
+		if (appEndCl.get(Calendar.DATE) > appStartCl.get(Calendar.DATE)) {
+			ye0060Overtime.setAppEndMinute(editDisplayTime(appEndCl,
+					TIME_TYPE_TOMORROW));
+		} else {
+			ye0060Overtime.setAppEndMinute(editDisplayTime(appEndCl,
+					TIME_TYPE_TODAY));
+		}
+
+		// 设置实际表示时间
+		if (null != ye0060Overtime.getActualStartTime()
+				&& !ye0060Overtime.getActualStartTime().toString().isEmpty()
+				&& !ye0060Overtime.getActualStartTime().toString().equals(
+						"0000-00-00 00:00:00")) {
+			Calendar actStartCl = DateUtil
+					.parseDateTime(DateUtil.dateToString(ye0060Overtime
+							.getActualStartTime(), "yyyy-MM-dd HH:mm:ss"));
+			// 设置实际开始时间
+			ye0060Overtime.setActualStartMinute(editDisplayTime(actStartCl,
+					TIME_TYPE_TODAY));
+		}
+		if (null != ye0060Overtime.getActualEndTime()
+				&& !ye0060Overtime.getActualEndTime().toString().isEmpty()
+				&& !ye0060Overtime.getActualEndTime().toString().equals(
+						"0000-00-00 00:00:00")) {
+			Calendar actEndCl = DateUtil.parseDateTime(DateUtil.dateToString(
+					ye0060Overtime.getActualEndTime(), "yyyy-MM-dd HH:mm:ss"));
+			// 设置实际结束时间
+			if (actEndCl.get(Calendar.DATE) > appStartCl.get(Calendar.DATE)) {
+				ye0060Overtime.setActualEndMinute(editDisplayTime(actEndCl,
+						TIME_TYPE_TOMORROW));
+			} else {
+				ye0060Overtime.setActualEndMinute(editDisplayTime(actEndCl,
+						TIME_TYPE_TODAY));
+			}
+		}
+	}
+	
+	/**
+	 * 编辑画面表示时间
+	 * 
+	 * @param cl 待编辑时间
+	 * @param editType 编辑种别（1：今日；2：翌日）
+	 * @return String 编辑后表示时间
+	 */
+	private String editDisplayTime(Calendar cl, int editType) {
+		StringBuilder sb = new StringBuilder();
+		// 编辑翌日
+		if (TIME_TYPE_TOMORROW == editType) {
+			sb.append("*");
+		}
+		// 编辑时间
+		sb.append(StringUtil.addZero(cl.get(Calendar.HOUR_OF_DAY), 2)).append(":").append(
+				StringUtil.addZero(cl.get(Calendar.MINUTE), 2));
+		
+		return sb.toString();
+	}
+	
+	/**
+	 * 编辑加班信息
+	 * 
+	 * @param ye0060Overtime 待编辑加班信息
+	 */
+	private void editOvertimeInfo (AttOvertime attOvertime, int tomorrowValue) {
+		
+		// 编辑员工加班信息
+		Calendar cl = DateUtil.parseDateTime(attOvertime.getApplyOvertimeDate());
+		// 年
+		attOvertime.setYear(String.valueOf(cl.get(Calendar.YEAR)));
+		// 月
+		attOvertime.setMonth(StringUtil.addZero(cl.get(Calendar.MONTH) + 1, 2));
+		// 日
+		attOvertime.setDay(StringUtil.addZero(cl.get(Calendar.DATE), 2));
+		// 开始日时
+		attOvertime.setAppStartTime(DateUtil.parse(new StringBuilder(
+				attOvertime.getApplyOvertimeDate()).append(" ").append(
+				attOvertime.getApplyStartTime()).append(":00").toString()));
+		// 结束日时
+		String appEndOvertime = attOvertime.getApplyOvertimeDate();
+		// 加班结束时间是翌日
+		if (TIME_TYPE_TOMORROW == tomorrowValue) {
+			appEndOvertime = DateUtil.dateAdd(appEndOvertime, 1, 2);
+		}
+		appEndOvertime = new StringBuilder(appEndOvertime).append(" ").append(
+				attOvertime.getApplyEndTime()).append(":00").toString();
+		attOvertime.setAppEndTime(DateUtil.parse(appEndOvertime));
+
+		// 更新者Id
+		attOvertime.setUpdateUser(SessionService.getLoginUserId());
+	}
+	
+	/**
+	 * 判断有无画面操作权限
+	 * 
+	 * @param mode 画面模式
+	 * @param rightType 权限种别
+	 * @param ye0060Overtime 目标数据加班信息
+	 * @param ifPermitter 是否具有权限
+	 * 
+	 * @return 检查结果 true:有；false：无
+	 */
+	private Boolean checkOperateRight(Integer mode, int rightType, Ye0060Overtime ye0060Overtime, Boolean[] ifPermitter) {
+		// 统计记录checkBox显示与否
+		if (rightType == 1) {
+			// 追加申请模式
+			if (MODE_NEW.equals(mode)) {
+				if (ifPermitter[0]) {
+					return true;
+				}
+			} else if (MODE_APPROVE.equals(mode)) {
+				if (ifPermitter[1]) {
+					return true;
+				}
+			}
+			// 详细记录checkBox显示与否
+		} else if (rightType == 2) {
+			// 追加申请模式
+			if (MODE_NEW.equals(mode)) {
+				if (!ifPermitter[0]) {
+					return false;
+				}
+				if (AttConstants.AppStatus.UN_APPLY.toString().equals(ye0060Overtime.getStateFlag())
+					|| AttConstants.AppStatus.REJECTED.toString().equals(ye0060Overtime.getStateFlag())) {
+					if (ye0060Overtime.getActualOvertime().equals("")) {
+						return false;
+					}
+					return true;
+				}
+			} else if (MODE_APPROVE.equals(mode)) {
+				if (!ifPermitter[1]) {
+					return false;
+				}
+				if (AttConstants.AppStatus.PENDING.toString().equals(
+						ye0060Overtime.getStateFlag())) {
+					return true;
+				}
+			}
+			// 详细记录链接显示与否
+		} else if (rightType == 3) {
+			if (MODE_NEW.equals(mode)) {
+				if (!AttConstants.AppStatus.UN_APPLY.toString().equals(
+						ye0060Overtime.getStateFlag())
+						&& !AttConstants.AppStatus.REJECTED.toString().equals(
+								ye0060Overtime.getStateFlag())) {
+					return false;
+				}
+				if (ifPermitter[0]) {
+					return true;
+				}
+				if (SessionService.getLoginUserId().equals(ye0060Overtime.getEmpId())) {
+					return true;
+				}
+			} else if (MODE_APPROVE.equals(mode)) {
+				return false;
+			}
+		}
+		
+		return false;
+	}
+	
+	/**
+	 * 依据参照时间设置加班时间
+	 * 
+	 * @param attOvertime 员工加班信息
+	 * 
+	 * @return 无
+	 */
+	private void setTimesByRefer(AttOvertime attOvertime) {
+		// 计划加班时间
+		Calendar applyStartTimeCl = Calendar.getInstance();
+		applyStartTimeCl.setTime(attOvertime.getAppStartTime());
+		Calendar applyEndTimeCl = Calendar.getInstance();
+		applyEndTimeCl.setTime(attOvertime.getAppEndTime());
+		
+		// 设置结束时间
+		if (applyStartTimeCl.get(Calendar.DAY_OF_MONTH) == applyEndTimeCl
+				.get(Calendar.DAY_OF_MONTH)) {
+			applyEndTimeCl.set(Calendar.DAY_OF_MONTH, new Integer(attOvertime.getDay()));
+		} else {
+			applyEndTimeCl.set(Calendar.DAY_OF_MONTH, new Integer(attOvertime.getDay()) + 1);
+		}
+		applyEndTimeCl.set(Calendar.YEAR, new Integer(attOvertime.getYear()));
+		applyEndTimeCl.set(Calendar.MONTH, new Integer(attOvertime.getMonth()));
+		
+		// 设置开始时间
+		applyStartTimeCl.set(Calendar.YEAR, new Integer(attOvertime.getYear()));
+		applyStartTimeCl.set(Calendar.MONTH, new Integer(attOvertime.getMonth()));
+		applyStartTimeCl.set(Calendar.DAY_OF_MONTH, new Integer(attOvertime.getDay()));
+		
+		attOvertime.setAppStartTime(applyStartTimeCl.getTime());
+		attOvertime.setAppEndTime(applyEndTimeCl.getTime());
+	}
+	
+	/**
+	 * 依据参照时间设置加班时间
+	 * 
+	 * @param attOvertime 员工加班信息
+	 * @param ifCalculateActual 是否计算实际时间
+	 * @return long[] 当日无效的出勤时间
+	 */
+	private long[] getInvalidOvertime(Ye0060Overtime ye0060Overtime, boolean ifCalculateActual) {
+		long[] minusTime = {0, 0};
+		// 午饭开始时间
+		String lunchStartTimepara = attComService.getParameter(
+				"com.yds.att.lunchsttime").substring(0, 4);
+		Calendar lunchStartTimeCl = editParaTime(ye0060Overtime
+				.getApplyOvertimeDate(), lunchStartTimepara);
+		// 午饭结束时间
+		String lunchEndTimepara = attComService.getParameter(
+				"com.yds.att.lunchedtime").substring(0, 4);
+		Calendar lunchEndTimeCl = editParaTime(ye0060Overtime
+				.getApplyOvertimeDate(), lunchEndTimepara);
+		// 晚饭开始时间
+		String supperStartTimepara = attComService.getParameter(
+				"com.yds.att.suppersttime").substring(0, 4);
+		Calendar supperStartTimeCl = editParaTime(ye0060Overtime
+				.getApplyOvertimeDate(), supperStartTimepara);
+		// 晚饭结束时间
+		String supperEndTimepara = attComService.getParameter(
+				"com.yds.att.supperedtime").substring(0, 4);
+		Calendar supperEndTimeCl = editParaTime(ye0060Overtime
+				.getApplyOvertimeDate(), supperEndTimepara);
+		
+		// 申请时间差值计算
+		if (ye0060Overtime.getAppStartTime().before(lunchStartTimeCl.getTime())) {
+			if (ye0060Overtime.getAppEndTime().after(supperEndTimeCl.getTime())) {
+				minusTime[0] = DateUtil.dateDiff(lunchStartTimeCl.getTime(), lunchEndTimeCl.getTime())
+						+ DateUtil.dateDiff(supperStartTimeCl.getTime(), supperEndTimeCl.getTime());
+			} else if (ye0060Overtime.getAppEndTime().after(lunchEndTimeCl.getTime())) {
+				minusTime[0] = DateUtil.dateDiff(lunchStartTimeCl.getTime(), lunchEndTimeCl.getTime());
+			} else {
+				minusTime[0] = 0;
+			}
+		} else if (ye0060Overtime.getAppStartTime().before(supperStartTimeCl.getTime())) {
+			if (ye0060Overtime.getAppEndTime().after(supperEndTimeCl.getTime())) {
+				minusTime[0] = DateUtil.dateDiff(supperStartTimeCl.getTime(), supperEndTimeCl.getTime());
+			} else {
+				minusTime[0] = 0;
+			}
+		} else {
+			minusTime[0] = 0;
+		}
+		
+		// 无需计算实际时间时
+		if (!ifCalculateActual) {
+			return minusTime;
+		}
+		
+		// 加班开始时间早于午饭开始时间
+		if (ye0060Overtime.getActualStartTime().before(lunchStartTimeCl.getTime())) {
+			// 加班结束时间早于午饭开始时间
+			if (ye0060Overtime.getActualEndTime().before(
+					lunchStartTimeCl.getTime())) {
+				minusTime[1] = 0;
+				// 加班结束时间早于午饭结束时间
+			} else if (ye0060Overtime.getActualEndTime().before(
+					lunchEndTimeCl.getTime())) {
+				ye0060Overtime.setActualEndTime(lunchStartTimeCl.getTime());
+				minusTime[1] = 0;
+				// 加班结束时间早于晚饭开始时间
+			} else if (ye0060Overtime.getActualEndTime().before(
+					supperStartTimeCl.getTime())) {
+				minusTime[1] = DateUtil.dateDiff(lunchStartTimeCl.getTime(),
+						lunchEndTimeCl.getTime());
+				// 加班结束时间早于晚饭结束时间
+			} else if (ye0060Overtime.getActualEndTime().before(
+					supperEndTimeCl.getTime())) {
+				ye0060Overtime.setActualEndTime(supperStartTimeCl.getTime());
+				minusTime[1] = DateUtil.dateDiff(lunchStartTimeCl.getTime(), lunchEndTimeCl.getTime());
+				// 加班结束时间晚于晚饭结束时间
+			} else if (ye0060Overtime.getActualEndTime().after(
+					supperEndTimeCl.getTime())) {
+				minusTime[1] = DateUtil.dateDiff(lunchStartTimeCl.getTime(), lunchEndTimeCl.getTime())
+						+ DateUtil.dateDiff(supperStartTimeCl.getTime(), supperEndTimeCl.getTime());
+			}
+			// 加班开始时间早于午饭结束时间
+		} else if (ye0060Overtime.getActualStartTime().before(lunchEndTimeCl.getTime())) {
+			ye0060Overtime.setActualStartTime(lunchEndTimeCl.getTime());
+			// 加班结束时间早于晚饭开始时间
+			if (ye0060Overtime.getActualEndTime().before(
+					supperStartTimeCl.getTime())) {
+				minusTime[1] = 0;
+				// 加班结束时间早于晚饭结束时间
+			} else if (ye0060Overtime.getActualEndTime().before(
+					supperEndTimeCl.getTime())) {
+				ye0060Overtime.setActualEndTime(supperStartTimeCl.getTime());
+				minusTime[1] = 0;
+				// 加班结束时间晚于晚饭结束时间
+			} else if (ye0060Overtime.getActualEndTime().after(
+					supperEndTimeCl.getTime())) {
+				minusTime[1] = DateUtil.dateDiff(supperStartTimeCl.getTime(), supperEndTimeCl.getTime());
+			}
+			// 加班开始时间在晚饭开始之前
+		} else if (ye0060Overtime.getActualStartTime().before(supperStartTimeCl.getTime())) {
+			// 加班结束时间早于晚饭结束时间
+			if (ye0060Overtime.getActualEndTime().before(
+					supperEndTimeCl.getTime())) {
+				ye0060Overtime.setActualEndTime(supperStartTimeCl.getTime());
+				minusTime[1] = 0;
+				// 加班结束时间晚于晚饭结束时间
+			} else if (ye0060Overtime.getActualEndTime().after(
+					supperEndTimeCl.getTime())) {
+				minusTime[1] = DateUtil.dateDiff(supperStartTimeCl.getTime(),
+						supperEndTimeCl.getTime());
+			}
+			// 加班开始时间在晚饭结束之前
+		} else if (ye0060Overtime.getActualStartTime().before(supperEndTimeCl.getTime())) {
+			ye0060Overtime.setActualStartTime(supperEndTimeCl.getTime());
+			minusTime[1] = 0;
+		}
+		
+		return minusTime;
+	}
+	
+	/**
+	 * 依据参照时间设置加班时间
+	 * 
+	 * @param baseDate 待编辑日期
+	 * @param paraTime 编辑参数
+	 * 
+	 * @return Calendar 编辑后日历对象
+	 */
+	private Calendar editParaTime(Date baseDate, String paraTime) {
+		String editTimeStr = new StringBuilder(DateUtil.dateToString(
+				baseDate, "yyyy-MM-dd")).append(
+				" ").append(paraTime.substring(0, 2)).append(":")
+				.append(paraTime.substring(2, 4)).append(":00")
+				.toString();
+		Calendar paraTimeCl = Calendar.getInstance();
+		paraTimeCl.setTime(DateUtil.parse(editTimeStr));
+		
+		return paraTimeCl;
+	}
+	
+	/**
+	 * @return the ye0060Dao
+	 */
+	public Ye0060Dao getYe0060Dao() {
+		return ye0060Dao;
+	}
+
+	/**
+	 * @param ye0060Dao the ye0060Dao to set
+	 */
+	public void setYe0060Dao(Ye0060Dao ye0060Dao) {
+		this.ye0060Dao = ye0060Dao;
+	}
+
+	/**
+	 * @param appOvertimeListForSum the appOvertimeListForSum to set
+	 */
+	public void setAppOvertimeListForSum(List<String> appOvertimeListForSum) {
+		this.appOvertimeListForSum = appOvertimeListForSum;
+	}
+
+	/**
+	 * @return the appOvertimeListForSum
+	 */
+	public List<String> getAppOvertimeListForSum() {
+		return appOvertimeListForSum;
+	}
+
+	/**
+	 * @param actualOvertimeListForSum the actualOvertimeListForSum to set
+	 */
+	public void setActualOvertimeListForSum(List<String> actualOvertimeListForSum) {
+		this.actualOvertimeListForSum = actualOvertimeListForSum;
+	}
+
+	/**
+	 * @return the actualOvertimeListForSum
+	 */
+	public List<String> getActualOvertimeListForSum() {
+		return actualOvertimeListForSum;
+	}
+
+	/**
+	 * @param dateRelationService the dateRelationService to set
+	 */
+	public void setDateRelationService(DateRelationService dateRelationService) {
+		this.dateRelationService = dateRelationService;
+	}
+
+	/**
+	 * @param attInfoService the attInfoService to set
+	 */
+	public void setAttInfoService(AttInfoService attInfoService) {
+		this.attInfoService = attInfoService;
+	}
+
+	/**
+	 * @param attInfoDao the attInfoDao to set
+	 */
+	public void setAttInfoDao(AttInfoDao attInfoDao) {
+	}
+
+	/**
+	 * @param orgRelationService the orgRelationService to set
+	 */
+	public void setOrgRelationService(OrgRelationService orgRelationService) {
+		this.orgRelationService = orgRelationService;
+	}
+
+	/**
+	 * @param attComService the attComService to set
+	 */
+	public void setAttComService(AttComService attComService) {
+		this.attComService = attComService;
+	}
+
+}

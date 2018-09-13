@@ -1,0 +1,16 @@
+package com.xinleju.platform.flow.service;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.flow.entity.InstanceCs;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface InstanceCsService extends  BaseService <String,InstanceCs>{
+
+	int updateAcId(String oldAcId, String newAcId);
+	
+}

@@ -1,0 +1,165 @@
+/*
+ * @(#)UserPermitServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 共通系统
+ */
+
+package com.yds.common.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Stack;
+
+import org.springframework.stereotype.Service;
+
+import com.yds.base.service.AbstractBaseService;
+import com.yds.common.bean.MenuInfo;
+import com.yds.common.bean.UserPerm;
+import com.yds.common.dao.UserPermitDao;
+import com.yds.common.service.CommonConstants;
+import com.yds.common.service.SessionConstants;
+import com.yds.common.service.SessionService;
+import com.yds.common.service.UserPermitService;
+
+/**
+ * @see UserPermitService
+ */
+@Service("userPermitService")
+public class UserPermitServiceImpl extends AbstractBaseService implements UserPermitService {
+
+	private UserPermitDao userPermitDao;
+
+	/**
+	 * @param userPermitDao
+	 *            the userPermitDao to set
+	 */
+	public void setUserPermitDao(UserPermitDao userPermitDao) {
+		this.userPermitDao = userPermitDao;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 * @return 
+	 */
+	@Override
+	public void getUserMenu(String userId) {
+		// 用户菜单取得
+		List<UserPerm> permits = userPermitDao.getUserMenu(userId);
+		
+		// 提取DB中需要的数据转化成MenuInfo型list数据
+		List<MenuInfo> userMenu = new ArrayList<MenuInfo>();
+		MenuInfo info;
+		String menuURL;
+		
+		for (UserPerm userPermit : permits){
+			
+			info = new MenuInfo();
+			
+			// 菜单打开目标
+			info.setTarge(userPermit.getIsMenu().equals("1")?"main":"_blank");
+
+			// 菜单文字
+			info.setText(userPermit.getMenuName());
+			
+			// 菜单URL链接
+			if (userPermit.getSiteURL() == null || "".equals(userPermit.getSiteURL())) {
+				if ("".equals(userPermit.getNameSpace()) && "".equals(userPermit.getActionName())){
+					menuURL = "";
+				} else {
+					menuURL = userPermit.getNameSpace() + "/" + userPermit.getActionName();
+				}
+			} else {
+				StringBuffer sb = new StringBuffer(userPermit.getSiteURL());
+				sb.append("/").append(userPermit.getNameSpace()).append("/").append(userPermit.getActionName());
+				menuURL = sb.toString();
+			}
+			info.setHref(menuURL);
+			
+			// 显示顺序
+			info.setDispSeq(userPermit.getDispSeq());
+			
+			info.setImgPath(userPermit.getImgPath());
+			
+			userMenu.add(info);
+		}
+		
+		// 转化成树
+		userMenu = sortMenu(userMenu);
+		
+		// 将用户菜单写入session
+		SessionService.set(SessionConstants.USERMENU, userMenu);
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public void getUserPerm(String userId) {
+		// 用户权限取得
+		List<UserPerm> userPermList = userPermitDao.getUserPerm(userId);
+		
+		HashMap<String, HashMap<String, Boolean>> userPermMap = new HashMap<String, HashMap<String, Boolean>>();
+
+		if (null != userPermList) {
+			for (UserPerm userPerm : userPermList) {
+				HashMap<String, Boolean> actionMap;
+				
+				if (userPermMap.containsKey(userPerm.getNameSpace())) {
+					actionMap = userPermMap.get(userPerm.getNameSpace());
+				} else {
+					actionMap = new HashMap<String, Boolean>();
+				}
+				
+				String actionName = userPerm.getActionName();;
+				if (actionName.endsWith("." + CommonConstants.ACTIONNAME)) {
+					actionMap.put(actionName.substring(0, actionName.indexOf("." + CommonConstants.ACTIONNAME)), true);
+				} else {
+					actionMap.put(actionName, true);
+				}
+				
+				userPermMap.put(userPerm.getNameSpace(), actionMap);
+			}
+		}
+
+		// 将用户权限写入session
+		SessionService.set(SessionConstants.USERPERM, userPermMap);
+	}
+	
+	private List<MenuInfo> sortMenu(List<MenuInfo> list) {
+		MenuInfo temp = new MenuInfo();
+		temp.setDispSeq("");
+		list.add(0, temp);
+		Stack<MenuInfo> stack = new Stack<MenuInfo>();
+		for (MenuInfo node : list) {
+			node.setSubMenu(new ArrayList<MenuInfo>());
+			node.setDispSeq(trimZero(node.getDispSeq()));
+			while (true) {
+				if (stack.empty()) {
+					stack.push(node);
+					break;
+				} else {
+					if (node.getDispSeq().startsWith(stack.peek().getDispSeq())) {
+						stack.peek().getSubMenu().add(node);
+						stack.push(node);
+						break;
+					} else {
+						stack.pop();
+					}
+				}
+			}
+		}
+		
+		return list.get(0).getSubMenu();
+	}
+
+	private String trimZero(String key) {
+		while (key.endsWith("00")) {
+			key = key.substring(0, key.length() - 2);
+		}
+		return key;
+	}
+
+}

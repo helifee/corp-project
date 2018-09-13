@@ -1,0 +1,141 @@
+/*
+ * @(#)IoDataSyncServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: WebService
+ */
+
+package com.yds.ws.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.yds.base.service.AbstractBaseService;
+import com.yds.common.bean.ComIoData;
+import com.yds.util.service.ApplicationContextHolder;
+import com.yds.util.service.StringUtil;
+import com.yds.ws.dao.IoDataSyncDao;
+import com.yds.ws.service.HandleService;
+import com.yds.ws.service.IoDataSyncService;
+
+/**
+ * 
+ * @see com.yds.ws.service.IoDataSyncService
+ *
+ */
+@Service("ioDataSyncService")
+public class IoDataSyncServiceImpl extends AbstractBaseService implements
+		IoDataSyncService {
+	
+	private IoDataSyncDao ioDataSyncDao;
+	private static int EMP = 138800;
+
+	/**
+	 * {@inheritDoc}
+	 * @throws Exception 
+	 */
+	@Override
+	public void saveIoData(List<ComIoData> ioDataList) throws Exception {
+		
+		Iterator<ComIoData> iter = ioDataList.iterator();
+		while(iter.hasNext()) {
+			
+			ComIoData ioData = iter.next();
+			
+			//检查key
+			long count = ioDataSyncDao.getCount(ioData);
+			if(count != 0) {
+				
+				//删除重复数据
+				iter.remove();
+				
+				continue;
+			}
+			
+			//准备数据
+			String attendanceId = ioData.getAttendanceId();
+			
+			if(null != attendanceId && !"".equals(attendanceId)) {	//处理Guest卡没有考勤号
+				
+				int id = 0;
+				try {	//无效考勤号
+					id = Integer.parseInt(attendanceId) + EMP;
+				} catch (NumberFormatException e) {
+					continue;
+				}
+				String empId = StringUtil.leftPadYd(Integer.toString(id));
+				ioData.setEmpId(empId);
+				
+				//保存
+				ioDataSyncDao.saveIoData(ioData);
+			}
+
+		}
+	}
+
+	/**
+	 * {@inheritDoc}
+	 * @throws Exception 
+	 */
+	@Transactional(propagation = Propagation.REQUIRES_NEW, timeout = 60)
+	@Override
+	public void updateIoData(List<ComIoData> ioDataList) throws Exception {
+			
+		Map<String, List<ComIoData>> map = sort(ioDataList);
+		
+		Iterator<Entry<String, List<ComIoData>>> iter = map.entrySet().iterator();
+		while(iter.hasNext()) {
+			Map.Entry<String, List<ComIoData>> entry = (Entry<String, List<ComIoData>>) iter.next();
+			String serviceName = entry.getKey();
+			List<ComIoData> ioDatas = entry.getValue();
+			
+			if(null != serviceName) {
+				HandleService service = (HandleService)ApplicationContextHolder.getBean(serviceName);
+				service.handle(ioDatas);
+			}
+		}
+	}
+	
+	public void setIoDataSyncDao(IoDataSyncDao ioDataSyncDao) {
+		this.ioDataSyncDao = ioDataSyncDao;
+	}
+	
+	/**
+	 * 对打卡数据以service name进行分类
+	 * @param ioDataList ：打卡数据
+	 * @return　Map<serviceName, 对应的打卡数据>
+	 */
+	private Map<String, List<ComIoData>> sort(List<ComIoData> ioDataList) {
+
+		Map<String, List<ComIoData>> map = new HashMap<String, List<ComIoData>>();		
+		
+		for(int i=0; i<ioDataList.size(); i++) {
+			ComIoData ioData = ioDataList.get(i);
+			
+			String serviceName = ioDataSyncDao.getServiceName(ioData.getGateNo());
+			if(null == serviceName || "".equals(serviceName)) {
+				continue;
+			}
+			
+			List<ComIoData> item = map.get(serviceName);
+			
+			if(null == item) {
+				item = new ArrayList<ComIoData>();
+				map.put(serviceName, item);
+			}
+			item.add(ioData);
+			
+		}
+		return map;
+	}
+
+}

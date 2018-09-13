@@ -1,0 +1,15 @@
+package com.xinleju.platform.flow.service;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.flow.entity.MonitorPerson;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface MonitorPersonService extends  BaseService <String,MonitorPerson>{
+
+	
+}

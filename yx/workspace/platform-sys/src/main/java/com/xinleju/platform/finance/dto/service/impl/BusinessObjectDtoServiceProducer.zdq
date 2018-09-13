@@ -1,0 +1,296 @@
+package com.xinleju.platform.finance.dto.service.impl;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.base.utils.ErrorInfoCode;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.finance.dto.BusinessObjectDto;
+import com.xinleju.platform.finance.dto.service.BusinessObjectDtoServiceCustomer;
+import com.xinleju.platform.finance.entity.BusinessObject;
+import com.xinleju.platform.finance.service.BusinessObjectService;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+/**
+ * @author admin
+ * 
+ *
+ */
+ 
+public class BusinessObjectDtoServiceProducer implements BusinessObjectDtoServiceCustomer{
+	private static Logger log = Logger.getLogger(BusinessObjectDtoServiceProducer.class);
+	@Autowired
+	private BusinessObjectService businessObjectService;
+
+	public String save(String userInfo, String saveJson){
+		// TODO Auto-generated method stub
+	   DubboServiceResultInfo info=new DubboServiceResultInfo();
+	   try {
+		   BusinessObject businessObject=JacksonUtils.fromJson(saveJson, BusinessObject.class);
+		   businessObjectService.save(businessObject);
+		   info.setResult(JacksonUtils.toJson(businessObject));
+		   info.setSucess(true);
+		   info.setMsg("保存对象成功!");
+		} catch (Exception e) {
+		 log.error("保存对象失败!"+e.getMessage());
+		 info.setSucess(false);
+		 info.setMsg("保存对象失败!");
+		 info.setExceptionMsg(e.getMessage());
+		}
+	   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String saveBatch(String userInfo, String saveJsonList)
+			 {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public String updateBatch(String userInfo, String updateJsonList)
+			 {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public String update(String userInfo, String updateJson)  {
+		// TODO Auto-generated method stub
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   BusinessObject businessObject=JacksonUtils.fromJson(updateJson, BusinessObject.class);
+			   int result=   businessObjectService.update(businessObject);
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("更新对象成功!");
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deleteObjectById(String userInfo, String deleteJson)
+	{
+		// TODO Auto-generated method stub
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   BusinessObject businessObject=JacksonUtils.fromJson(deleteJson, BusinessObject.class);
+			   int result= businessObjectService.deleteObjectById(businessObject.getId());
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("删除对象成功!");
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deleteAllObjectByIds(String userInfo, String deleteJsonList)
+   {
+		// TODO Auto-generated method stub
+		 DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   if (StringUtils.isNotBlank(deleteJsonList)) {
+				   @SuppressWarnings("unchecked")
+				   Map<String,Object> map=JacksonUtils.fromJson(deleteJsonList, HashMap.class);
+				   List<String> list=Arrays.asList(map.get("id").toString().split(","));
+				   int result= businessObjectService.deleteAllObjectByIds(list);
+				   info.setResult(JacksonUtils.toJson(result));
+				   info.setSucess(true);
+				   info.setMsg("删除对象成功!");
+				}
+			} catch (Exception e) {
+			 log.error("删除对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getObjectById(String userInfo, String getJson)
+	 {
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			BusinessObject businessObject=JacksonUtils.fromJson(getJson, BusinessObject.class);
+			BusinessObject	result = businessObjectService.getObjectById(businessObject.getId());
+			info.setResult(JacksonUtils.toJson(result));
+		    info.setSucess(true);
+		    info.setMsg("获取对象成功!");
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getPage(String userInfo, String paramater) {
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				@SuppressWarnings("unchecked")
+				Map<String,Object> map=JacksonUtils.fromJson(paramater, HashMap.class);
+				Page page=businessObjectService.getGridList(map);
+				info.setResult(JacksonUtils.toJson(page));
+			    info.setSucess(true);
+			    info.setMsg("获取分页对象成功!");
+			}else{
+				Page page=businessObjectService.getPage(new HashMap<String,Object>(), null, null);
+				info.setResult(JacksonUtils.toJson(page));
+			    info.setSucess(true);
+			    info.setMsg("获取分页对象成功!");
+			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取分页对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取分页对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String queryList(String userInfo, String paramater){
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			List<BusinessObject> list = new ArrayList<BusinessObject>();
+			if(StringUtils.isNotBlank(paramater)){
+				@SuppressWarnings("unchecked")
+				Map<String,Object> map=JacksonUtils.fromJson(paramater, HashMap.class);
+				list=businessObjectService.queryList(map);
+			}else{
+				list=businessObjectService.queryList(null);
+			}
+			if(list!=null&&!list.isEmpty()){
+				info.setResult(JacksonUtils.toJson(list));
+				info.setSucess(true);
+				info.setMsg("获取列表对象成功!");
+			}else{
+				info.setResult(ErrorInfoCode.NULL_ERROR.getValue());
+				info.setSucess(false);
+				info.setMsg("列表对象为空!");
+			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取列表对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取列表对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getCount(String userInfo, String paramater)  {
+		// TODO Auto-generated method stub
+		return null;
+	}
+	
+	@Override
+	public String deletePseudoObjectById(String userInfo, String deleteJson)
+	{
+		// TODO Auto-generated method stub
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   BusinessObject businessObject=JacksonUtils.fromJson(deleteJson, BusinessObject.class);
+			   int result= businessObjectService.deletePseudoObjectById(businessObject.getId());
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("删除对象成功!");
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deletePseudoAllObjectByIds(String userInfo, String deleteJsonList)
+   {
+		// TODO Auto-generated method stub
+		 DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   if (StringUtils.isNotBlank(deleteJsonList)) {
+				   @SuppressWarnings("unchecked")
+				   Map<String,Object> map=JacksonUtils.fromJson(deleteJsonList, HashMap.class);
+				   List<String> list=Arrays.asList(map.get("id").toString().split(","));
+				   int result= businessObjectService.deletePseudoAllObjectByIds(list);
+				   info.setResult(JacksonUtils.toJson(result));
+				   info.setSucess(true);
+				   info.setMsg("删除对象成功!");
+				}
+			} catch (Exception e) {
+			 log.error("删除对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String updateStatus(String userJson, String id) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   BusinessObjectDto businessObjectDto=JacksonUtils.fromJson(id, BusinessObjectDto.class);
+			   BusinessObject	billBean = businessObjectService.getObjectById(businessObjectDto.getId());
+			   int result=   businessObjectService.updateStatus(billBean);
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("更新状态成功!");
+			} catch (Exception e) {
+			 log.error("更新状态失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("更新状态失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String saveMasterTable(String userJson, String saveJson) {
+		 DubboServiceResultInfo info=new DubboServiceResultInfo();
+		    try {
+			   int result=   businessObjectService.saveMasterTable(saveJson);
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("更新对象成功!");
+			 } catch (Exception e) {
+			   log.error("更新对象失败!"+e.getMessage());
+			   info.setSucess(false);
+			   info.setMsg("更新对象失败!");
+			   info.setExceptionMsg("更新对象失败!"+e.getMessage());
+			}
+		    return JacksonUtils.toJson(info);
+	}
+
+
+}

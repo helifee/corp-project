@@ -1,0 +1,223 @@
+package com.xinleju.erp.flow.service;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.erp.base.app.bean.Page;
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.base.utils.StringHelper;
+import com.xinleju.erp.flow.flowutils.utils.WsConstant;
+import com.xinleju.erp.flow.models.Wi;
+import com.xinleju.erp.flow.service.extend.dto.TodoFiDto;
+import com.xinleju.erp.form.utils.DbType;
+import com.xinleju.erp.frame.models.ServiceObjectDefine;
+
+/**
+ * 
+ * 版权：(C) 版权所有 2000-2014 上海天好电子商务有限公司苏州分公司
+ * 流程操作接口
+ * @author   zhongjun
+ * @version  $Id$
+ * @since
+ * @see
+ */
+@Service
+public class TodoFiService extends BaseService {
+
+    /**
+     * JdbcTemplate
+     */
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+    
+    @Autowired
+    private CtService ctService;
+    
+    public Page getTodoFiPageBySql(TodoFiDto todoFiDto, String startUserIdLimitSql, Long userId, int start, int limit){
+        List<Object> parameList = new ArrayList<Object>();
+//		List<String> strList = App.getBean(JdbcTemplate.class).queryForList(
+//				"select distinct w.participant_user_name from tf_wi w where w. status = 1 and w.wi_type in('" + WsConstant.WiType.ZC.getCode() + "', '" + WsConstant.WiType.CS.getCode() + "', '"
+//						+ WsConstant.WiType.CY.getCode() + "', '" + WsConstant.WiType.CB.getCode() + "')  group by participant_user_name", new Object[] {}, String.class);
+//		StringBuffer stringBuffer = new StringBuffer();
+//		if (!strList.isEmpty()) {
+//			for (String str : strList) {
+//				stringBuffer.append(str + ",");
+//			}
+//		}
+//		if(!StringUtils.isEmpty(stringBuffer)){
+//			stringBuffer=stringBuffer.deleteCharAt(stringBuffer.length()-1);
+//		}
+        String sql = "select selSql";
+        String selSql = " fi.id as id,"//0：流程id
+        + " fi.fi_code as fiCode,"//1：流程编码
+        + " fi.fi_code_num as fiCodeNum,"//2：流程编码-编号
+        + " fi.fi_name as fiName,"//3：流程名称
+        + " fi.fl_id as flId,"//4：流程模板id
+        + " fi.start_user_name as startUserName,"//5：流程发起人名称
+        + " fi.start_time as startTime,"//6：流程启动时间
+        + " fi.status as status,"//7：流程状态
+        // del by zhouxg 2016/2/23 start 追加流程参与人筛选条件
+        + " tmp.participant_user_name AS curUserNames,"//8：流程当前参与人
+        /*+ " ("
+        + "     select"
+        + "         group_"DbType.getType()+"concat(distinct w.participant_user_name)"
+        + "     from"
+        + "         tf_wi w"
+        + "     where"
+        + "         w.fi_id = fi.id"
+        + "     and w. status = 1"
+        + "     and w.wi_type in('" + WsConstant.WiType.ZC.getCode() + "', '" + WsConstant.WiType.CS.getCode() + "', '" + WsConstant.WiType.CY.getCode() + "', '" + WsConstant.WiType.CB.getCode() + "')"
+        + " ) as curUserNames,"//8：流程当前参与人
+        */        
+        // del by zhouxg 2016/2/23 end
+        + " cp.name as companayName,"//9：流程所在公司名称
+        + " cp.short_name as companayShortName,"//10：流程所在公司简称
+        + " fl.app_code as appCode,"//11：流程系统编码
+        + " fl.ct_id as ctId";//12：流程所在目录id
+        sql += " from tf_fi fi"
+        + " left outer join sm_company cp on fi.company_id = cp.id"
+        + " inner join tf_fl fl on fi.fl_id = fl.id"
+        // add by zhouxg 2016/2/23 start 追加流程参与人筛选条件
+		+ " inner join ("
+		+ "     select"
+		+ "         distinct w.participant_user_name,w.fi_id"
+		+ "     from"
+		+ "         tf_wi w"
+		+ "     where"
+		+ "     	(w. status = 1 or w. status = 2 )"
+		+ "     and w.wi_type in('" + WsConstant.WiType.ZC.getCode() + "', '" + WsConstant.WiType.CS.getCode() + "', '" + WsConstant.WiType.CY.getCode() + "', '" + WsConstant.WiType.CB.getCode() + "')"
+		+ "     group by fi_id, participant_user_name"
+		+ ") tmp on tmp.fi_id = fi.id"
+		// add by zhouxg 2016/2/23 end
+        + " where 1 = 1";
+        if (StringUtils.isNotBlank(startUserIdLimitSql)){
+            sql += " and " + startUserIdLimitSql;
+        }
+        String fiStatusLimitSql = "";
+        if (null != todoFiDto){
+        	// 申请人过滤条件
+        	if (StringUtils.isNotBlank(todoFiDto.getStartUserName())){
+                sql += " and (fi.start_user_name like ? )";
+                parameList.add("%" + todoFiDto.getStartUserName().trim() + "%");
+            }
+        	
+        	// 当前处理人过滤条件
+        	if (StringUtils.isNotBlank(todoFiDto.getCurUserNames())){
+                sql += " and (tmp.participant_user_name like ? )";
+                parameList.add("%" + todoFiDto.getCurUserNames().trim() + "%");
+            }
+        	
+            if (StringUtils.isNotBlank(todoFiDto.getFiNameOrCode())){
+                sql += " and (fi.fi_name like ? or "+DbType.getType()+"concat("+DbType.getType()+"ifnull(fi.fi_code,''),"+DbType.getType()+"ifnull(fi.fi_code_num,'')) like ?)";
+                parameList.add("%" + todoFiDto.getFiNameOrCode().trim() + "%");
+                parameList.add("%" + todoFiDto.getFiNameOrCode().trim() + "%");
+            }
+            if (StringUtils.isNotBlank(todoFiDto.getSqrIds())){
+                sql += " and fi.start_user_id = ?";
+                parameList.add(Long.valueOf(todoFiDto.getSqrIds().trim()));
+            }
+            if (null != todoFiDto.getDepIds()){
+                sql += " and fi.company_id = ?";
+                parameList.add(todoFiDto.getDepIds());
+            }
+            if (StringUtils.isNotBlank(todoFiDto.getStartDate())){
+                sql += " and fi.start_time >= ?";
+                parameList.add(todoFiDto.getStartDate().trim());
+            }
+            if (StringUtils.isNotBlank(todoFiDto.getEndDate())){
+                sql += " and fi.start_time <= ?";
+                parameList.add(todoFiDto.getEndDate().trim());
+            }
+            List<Long> ctIdList = new ArrayList<Long>();
+            if (null != todoFiDto.getCctId()){
+                ctIdList.add(todoFiDto.getCctId());
+            } else if (null != todoFiDto.getCtId()){
+                ctIdList = ctService.getSubCtIdList(todoFiDto.getCtId(), null);
+                if (null == ctIdList || 1 > ctIdList.size()){
+                    ctIdList = new ArrayList<Long>();
+                }
+                ctIdList.add(todoFiDto.getCtId());
+            } else if (null != todoFiDto.getPctId()){
+                ctIdList = ctService.getSubCtIdList(todoFiDto.getPctId(), null);
+                if (null == ctIdList || 1 > ctIdList.size()){
+                    ctIdList = new ArrayList<Long>();
+                }
+                ctIdList.add(todoFiDto.getPctId());
+            }
+            if (null != ctIdList && ctIdList.size() > 0){
+                sql += " and fl.ct_id in(" + StringHelper.join(ctIdList, ",") + ")";
+            }
+            List<Long> objIdList = new ArrayList<Long>();
+            if (StringUtils.isNotBlank(todoFiDto.getObjIds())){
+                if (StringUtils.isNotBlank(todoFiDto.getAppCodes()) && getDao().isExist(ServiceObjectDefine.class, " id = ? and moduleCode = ? ", Long.valueOf(todoFiDto.getObjIds().trim()), todoFiDto.getAppCodes().trim())){
+                    objIdList.add(Long.valueOf(todoFiDto.getObjIds().trim()));
+                } else {
+                    todoFiDto.setObjIds("");
+                }
+            } else if (StringUtils.isNotBlank(todoFiDto.getAppCodes())){
+                objIdList = jdbcTemplate.queryForList("select distinct d.id from sm_service_object_define d where d.module_code = ?", Long.class, todoFiDto.getAppCodes().trim());
+            }
+            if (null != objIdList && objIdList.size() > 0){
+                sql += " and fl.service_object_define_id in(" + StringHelper.join(objIdList, ",") + ")";
+            }
+            if (StringUtils.isNotBlank(todoFiDto.getClStartDate())){
+                sql += " and fi.complete_time >= ?";
+                parameList.add(todoFiDto.getClStartDate().trim());
+            }
+            if (StringUtils.isNotBlank(todoFiDto.getClEndDate())){
+                sql += " and fi.complete_time <= ?";
+                parameList.add(todoFiDto.getClEndDate().trim());
+            }
+            if (StringUtils.isNotBlank(todoFiDto.getFiStatus())){
+                if (TodoFiDto.FI_STATUS_DS.equals(todoFiDto.getFiStatus())){
+                    fiStatusLimitSql = " fi.status = " + Wi.STATUS_RUNNING ;
+                } else if (TodoFiDto.FI_STATUS_BH.equals(todoFiDto.getFiStatus())) {
+                    fiStatusLimitSql = " fi.is_backed_fi = 1 ";
+                } else if (TodoFiDto.FI_STATUS_CH.equals(todoFiDto.getFiStatus())) {
+                    fiStatusLimitSql = " exists(select 'y' from tf_ai ai2 inner join tf_ac ac2 on ai2.ac_id = ac2.id where ai2.fi_id = fi.id and ai2.status = " + WsConstant.STATUS_RUNNING + ")"
+                        + " and exists(select 'y' from tf_fi fi2 where "+DbType.getType()+"find_in_set(fi2.id,"+DbType.getType()+"concat("+DbType.getType()+"ifnull(fi.related_fi_ids,''),',',fi.id)) > 0 and fi2.terminate_code = '" + WsConstant.FLOW_TERMINATE_CODE_CH + "')";
+                } else if (TodoFiDto.FI_STATUS_FQ.equals(todoFiDto.getFiStatus())) {
+                    fiStatusLimitSql = " fi.terminate_code = '" + WsConstant.FLOW_TERMINATE_CODE_ZF + "' ";
+                } else if (TodoFiDto.FI_STATUS_JS.equals(todoFiDto.getFiStatus())) {
+                    fiStatusLimitSql = " fi.status = " + Wi.STATUS_COMPLETE ;
+                }
+            }
+        }
+        if (StringUtils.isNotBlank(fiStatusLimitSql)){
+            sql += " and " + fiStatusLimitSql;
+        }
+        
+        if ( userId > 0 ) {
+        	sql += " and "+DbType.getType()+"find_in_set(?,"+DbType.getType()+"ifnull(fi.history_wi_user_ids,''))>1";
+        	parameList.add(userId);
+        }
+
+        sql += " and("
+        + " fi.terminate_code is null"
+        + " or ((fi.terminate_code = '" + WsConstant.FLOW_TERMINATE_CODE_BH + "'"
+        + " or fi.terminate_code = '" + WsConstant.FLOW_TERMINATE_CODE_CH + "'"
+        + " or fi.terminate_code = '" + WsConstant.FLOW_TERMINATE_CODE_ZF + "') and not exists(select 'y' from tf_fi fitmp where "+DbType.getType()+"find_in_set(fi.id,"+DbType.getType()+"concat("+DbType.getType()+"concat("+DbType.getType()+"ifnull(fitmp.related_fi_ids,''),','),fitmp.id)) > 0))"
+        + " )"
+        + "";
+        
+        String sqlStr=sql.replace("selSql", selSql);
+        String sqlCountStr=sql.replace("selSql", " count(*) ");
+        
+        
+        
+        Page page = null;
+		try {
+			page = getDao().findPageBySQL(sqlStr,sqlCountStr , parameList.toArray(), start, limit);
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+        return page;
+    }
+}

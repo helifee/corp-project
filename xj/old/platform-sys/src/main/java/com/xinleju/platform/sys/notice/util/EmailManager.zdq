@@ -1,0 +1,164 @@
+package com.xinleju.platform.sys.notice.util;
+
+import java.io.UnsupportedEncodingException;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Properties;
+
+import javax.mail.Address;
+import javax.mail.BodyPart;
+import javax.mail.Message;
+import javax.mail.MessagingException;
+import javax.mail.Multipart;
+import javax.mail.Session;
+import javax.mail.Transport;
+import javax.mail.internet.InternetAddress;
+import javax.mail.internet.MimeBodyPart;
+import javax.mail.internet.MimeMessage;
+import javax.mail.internet.MimeMultipart;
+
+import org.apache.commons.lang.StringUtils;
+
+import com.xinleju.platform.sys.notice.entity.MailMsg;
+import com.xinleju.platform.sys.notice.entity.MailServer;
+
+/**
+ * 邮件管理器
+ * 
+ */
+public class EmailManager {
+
+
+    /**
+     * 发送邮件
+     * @param server 邮件服务器信息
+     * @param mailMsg 发送邮件信息
+     * @param fileList 附件列表
+     * @return
+     */
+    public static Map<String,Object> sendMail(MailServer server,MailMsg mailMsg) {
+    	Map<String,Object> res=new HashMap<String, Object>();
+        try {
+        	Properties props = new Properties();
+            props.put("mail.smtp.auth", "true");
+            props.put("mail.transport.protocol", "smtp");
+            props.put("mail.smtp.host", server.getHost());
+            //props.put("mail.smtp.port", "25");
+            props.put("username", server.getUsername());
+            props.put("password", server.getPassword());
+            // 建立会话
+            Session session = Session.getDefaultInstance(props);
+            session.setDebug(false);
+            MimeMessage mimeMsg = new MimeMessage(session);
+            Multipart mp = new MimeMultipart(); 
+
+            // 自定义发件人昵称
+            String nick = "";
+            try {
+                nick = javax.mail.internet.MimeUtility.encodeText(server.getDisplayName());
+            } catch (UnsupportedEncodingException e) {
+            	//e.printStackTrace();
+                res.put("flag", false);
+                res.put("resMsg", e.getMessage());
+            }
+            // 设置发件人
+//          mimeMsg.setFrom(new InternetAddress(from));
+            mimeMsg.setFrom(new InternetAddress(server.getUsername(), nick));
+            // 设置收件人
+            mimeMsg.setRecipients(Message.RecipientType.TO, InternetAddress.parse(mailMsg.getSendAddress()));
+//            mimeMsg.setRecipients(Message.RecipientType.TO, InternetAddress.parse("1041954045@qq.com,416204871@qq.com"));
+            if(StringUtils.isNotBlank(mailMsg.getCopyAddress())){
+            	// 设置抄送人
+            	mimeMsg.setRecipients(Message.RecipientType.CC, InternetAddress.parse(mailMsg.getCopyAddress())); 
+            }
+            // 设置主题
+            mimeMsg.setSubject(mailMsg.getTitle());
+            // 设置正文
+            BodyPart bp = new MimeBodyPart(); 
+            bp.setContent(mailMsg.getContext(), "text/html;charset=utf-8");
+            mp.addBodyPart(bp);
+            // 设置附件
+            /*if (fileList != null && fileList.length > 0) {
+                for (int i = 0; i < fileList.length; i++) {
+                    bp = new MimeBodyPart();
+                    FileDataSource fds = new FileDataSource(fileList[i]); 
+                    bp.setDataHandler(new DataHandler(fds)); 
+                    bp.setFileName(MimeUtility.encodeText(fds.getName(), "UTF-8", "B"));
+                    mp.addBodyPart(bp); 
+                }
+            }*/
+            mimeMsg.setContent(mp); 
+            mimeMsg.saveChanges(); 
+            // 发送邮件
+            if (props.get("mail.smtp.auth").equals("true")) {
+                Transport transport = session.getTransport("smtp"); 
+                transport.connect((String)props.get("mail.smtp.host"), (String)props.get("username"), (String)props.get("password")); 
+                transport.sendMessage(mimeMsg, mimeMsg.getAllRecipients());
+                transport.close(); 
+            } else {
+                Transport.send(mimeMsg);
+            }
+            res.put("flag", true);
+            res.put("resMsg", "发送成功");
+            //System.out.println("邮件发送成功");
+        } catch (MessagingException e) {
+            //e.printStackTrace();
+            res.put("flag", false);
+            res.put("resMsg", e.getMessage());
+        } catch (UnsupportedEncodingException e) {
+            //e.printStackTrace();
+            res.put("flag", false);
+            res.put("resMsg", e.getMessage());
+        }
+        return res;
+    }
+    
+	/**
+	 * @return 六位随机数
+	 */
+	public static String sixCode() {
+		String ret = "";
+		int randomNum = (int) (Math.random() * 900000 + 100000);
+		ret = String.valueOf(randomNum);
+		return ret;
+	}
+	
+	/**
+	 * @return 4位随机数
+	 */
+	public static String fourCode() {
+		String ret = "";
+		int randomNum = (int) (Math.random() * 9000 + 1000);
+		ret = String.valueOf(randomNum);
+		return ret;
+	}
+	
+	/**
+	 * @return 六位随机数
+	 */
+	public static String toStar(String email) {
+		String rep=email.substring(4, email.indexOf("@"));
+		StringBuffer star=new StringBuffer();
+		for (int i = 0; i < rep.length(); i++) {
+			star.append("*");
+		}
+		email=email.replace(rep, star.toString());
+		return email;
+	}
+    public static void main(String[] args) {
+    	/*MailServer server=new MailServer();
+    	server.setHost("smtp.126.com");
+    	server.setUsername("gyh_03@126.com");
+    	server.setPassword("guoyanhong03");
+    	server.setDisplayName("gyh");
+    	MailMsg mailMsg=new MailMsg();
+    	mailMsg.setSendAddress("1041954045@qq.com");
+    	mailMsg.setCopyAddress("1041954045@qq.com,416204871@qq.com");
+    	mailMsg.setTitle("验证码");
+    	mailMsg.setContext("验证码为123");
+			sendMail(server,mailMsg);*/
+    	/*String mail[]={"1041954045@qq.com","416204871@qq.com"};
+    	System.out.println(getMailList(mail));*/
+    	System.out.println(fourCode());
+    }
+}

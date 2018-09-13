@@ -1,0 +1,272 @@
+package com.xinleju.platform.flow.entity;
+
+import java.sql.Timestamp;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Table(value="PT_FLOW_FL",desc="流程模板")
+public class Fl extends BaseEntity{
+	
+		
+	@Column(value="code",desc="编号")
+	private String code;
+    
+  		
+	@Column(value="post_is_null",desc="岗位为空策略")
+	private String postIsNull;
+    
+  		
+	@Column(value="approval_person_is_null",desc="审批人为空策略")
+	private String approvalPersonIsNull;
+    
+  		
+	@Column(value="post_multi_person",desc="同岗多人审批策略")
+	private String postMultiPerson;
+    
+  		
+	@Column(value="retract",desc="发起人是否可撤回")
+	private Boolean retract;
+    
+  		
+	@Column(value="use_status",desc="流程状态: true:启用，false:禁用")
+	private Boolean useStatus;
+    
+  		
+	@Column(value="remark",desc="流程描述")
+	private String remark;
+    
+  		
+	@Column(value="status",desc="发布状态: 0:草稿，1:发布")
+	private String status;
+    
+  		
+	@Column(value="name",desc="名称")
+	private String name;
+    
+  		
+	@Column(value="flow_title",desc="默认标题规则")
+	private String flowTitle;
+    
+  		
+	@Column(value="title_update",desc="是否修改标题")
+	private Boolean titleUpdate;
+	
+	@Column(value="do_archive",desc="流程完成后是否归档 1-归档  0-不归档")
+	private Boolean doArchive;
+
+	@Column(value="app_id",desc="系统id")
+	private String appId;	
+  		
+	@Column(value="business_object_id",desc="业务对象id")
+	private String businessObjectId;
+    
+  		
+	@Column(value="is_defualt",desc="是否默认")
+	private Boolean isDefualt;
+
+
+	@Column(value="version",desc="版本")
+	private Long version;
+   	@Column(value="source_version",desc="来源版本")
+	private Long sourceVersion;
+ 	@Column(value="version_remark",desc="版本说明")
+	private String versionRemark;
+
+
+	@Column(value="sort",desc="序号")
+	private Long sort;
+    
+  		
+	@Column(value="approval_repeat",desc="审批人重复策略")
+	private String approvalRepeat;
+    
+	@Column(value="disable_date",desc="禁用时间")
+	private Timestamp disableDate; 
+
+	@Column(value="disable_person_id",desc="禁用人Id")
+	private String disablePersonId;
+
+	@Column(value="disable_person_name",desc="禁用人名称")
+	private String disablePersonName;  		
+		
+	public String getCode() {
+		return code;
+	}
+	public void setCode(String code) {
+		this.code = code;
+	}
+    
+  		
+	public String getPostIsNull() {
+		return postIsNull;
+	}
+	public void setPostIsNull(String postIsNull) {
+		this.postIsNull = postIsNull;
+	}
+    
+  		
+	public String getApprovalPersonIsNull() {
+		return approvalPersonIsNull;
+	}
+	public void setApprovalPersonIsNull(String approvalPersonIsNull) {
+		this.approvalPersonIsNull = approvalPersonIsNull;
+	}
+    
+  		
+	public String getPostMultiPerson() {
+		return postMultiPerson;
+	}
+	public void setPostMultiPerson(String postMultiPerson) {
+		this.postMultiPerson = postMultiPerson;
+	}
+    
+  		
+	public Boolean getRetract() {
+		return retract;
+	}
+	public void setRetract(Boolean retract) {
+		this.retract = retract;
+	}
+    
+  		
+	public Boolean getUseStatus() {
+		return useStatus;
+	}
+	public void setUseStatus(Boolean useStatus) {
+		this.useStatus = useStatus;
+	}
+    
+  		
+	public String getRemark() {
+		return remark;
+	}
+	public void setRemark(String remark) {
+		this.remark = remark;
+	}
+    
+  		
+	public String getStatus() {
+		return status;
+	}
+	public void setStatus(String status) {
+		this.status = status;
+	}
+    
+  		
+	public String getName() {
+		return name;
+	}
+	public void setName(String name) {
+		this.name = name;
+	}
+    
+  		
+	public String getFlowTitle() {
+		return flowTitle;
+	}
+	public void setFlowTitle(String flowTitle) {
+		this.flowTitle = flowTitle;
+	}
+    
+  		
+	public Boolean getTitleUpdate() {
+		return titleUpdate;
+	}
+	public void setTitleUpdate(Boolean titleUpdate) {
+		this.titleUpdate = titleUpdate;
+	}
+  		
+	public String getAppId() {
+		return appId;
+	}
+	public void setAppId(String appId) {
+		this.appId = appId;
+	}
+	
+	public String getBusinessObjectId() {
+		return businessObjectId;
+	}
+	public void setBusinessObjectId(String businessObjectId) {
+		this.businessObjectId = businessObjectId;
+	}
+    
+  		
+	public Boolean getIsDefualt() {
+		return isDefualt;
+	}
+	public void setIsDefualt(Boolean isDefualt) {
+		this.isDefualt = isDefualt;
+	}
+    
+  		
+	public Long getVersion() {
+		return version;
+	}
+	public void setVersion(Long version) {
+		this.version = version;
+	}
+
+	public Long getSourceVersion() {
+		return sourceVersion;
+	}
+
+	public void setSourceVersion(Long sourceVersion) {
+		this.sourceVersion = sourceVersion;
+	}
+
+	public String getVersionRemark() {
+		return versionRemark;
+	}
+
+	public void setVersionRemark(String versionRemark) {
+		this.versionRemark = versionRemark;
+	}
+
+	public Long getSort() {
+		return sort;
+	}
+	public void setSort(Long sort) {
+		this.sort = sort;
+	}
+    
+  		
+	public String getApprovalRepeat() {
+		return approvalRepeat;
+	}
+	public void setApprovalRepeat(String approvalRepeat) {
+		this.approvalRepeat = approvalRepeat;
+	}
+	public Timestamp getDisableDate() {
+		return disableDate;
+	}
+	public void setDisableDate(Timestamp disableDate) {
+		this.disableDate = disableDate;
+	}
+	public String getDisablePersonId() {
+		return disablePersonId;
+	}
+	public void setDisablePersonId(String disablePersonId) {
+		this.disablePersonId = disablePersonId;
+	}
+	public String getDisablePersonName() {
+		return disablePersonName;
+	}
+	public void setDisablePersonName(String disablePersonName) {
+		this.disablePersonName = disablePersonName;
+	}
+	public Boolean getDoArchive() {
+		return doArchive;
+	}
+	public void setDoArchive(Boolean doArchive) {
+		this.doArchive = doArchive;
+	}
+}

@@ -1,0 +1,13 @@
+function save() {
+	if (true){
+		$('body').mask("数据保存中...");
+
+		$.post('BizParticipant!save.do', $('#frm').serialize(), function(data) {
+			$('body').unmask();
+			window.opener.queryBizParticipant(0);
+			window.close();
+		});
+	}else{
+		alert("请正确填写信息");
+	}
+}

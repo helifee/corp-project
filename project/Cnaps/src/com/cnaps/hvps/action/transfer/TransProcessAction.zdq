@@ -1,0 +1,1485 @@
+package com.cnaps.hvps.action.transfer;
+
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashSet;
+import java.util.List;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.struts.action.ActionForm;
+import org.apache.struts.action.ActionForward;
+import org.apache.struts.action.ActionMapping;
+
+import com.bancstone.action.BaseAction;
+import com.bancstone.common.exception.PicpMessageException;
+import com.bancstone.constants.SystemConstants;
+import com.bancstone.hibernate.systemManage.Systemusersmanage;
+import com.bancstone.service.systemManage.impl.CommonServices;
+import com.cnaps.coreservices.CommonXMLEntity;
+import com.cnaps.coreservices.ReportManagService;
+import com.cnaps.coreservices.TransCodeEntity;
+import com.cnaps.coreservices.TransServices;
+import com.cnaps.hvps.form.transfer.TransProcessForm;
+import com.cnaps.hvps.persistence.messages.CcmsFreeMsg;
+import com.cnaps.hvps.persistence.messages.CcmsQueryReplyInfo;
+import com.cnaps.hvps.persistence.transfer.AddtnlData;
+import com.cnaps.hvps.persistence.transfer.ExchargeEntity;
+import com.cnaps.hvps.persistence.transfer.TransProcessEntity;
+
+/**
+ * 支付交易查询
+ * 
+ * @author Administrator
+ * 
+ */
+public class TransProcessAction extends BaseAction<Object> {
+	
+	@SuppressWarnings("unused")
+	private boolean add;
+	/**
+	 * 支付交易往报查询
+	 * 
+	 * @param mapping
+	 * @param form
+	 * @param request
+	 * @param response
+	 * @return
+	 */
+	@SuppressWarnings("static-access")
+	public ActionForward querySendxml(ActionMapping mapping, ActionForm form,
+			HttpServletRequest request, HttpServletResponse response) {
+
+		try {
+			
+//			CommonServices commonService = (CommonServices) this
+//					.getBean("CommonServices");
+//			String workdate = request.getSession().getAttribute("workDate")
+//					.toString();// 工作日期
+//			String msgId = commonService.getSEQMsgId(workdate);
+
+			// 界面查询条件
+			TransProcessForm voform = (TransProcessForm) form;
+			TransProcessEntity po = voform.getPo();
+			
+			String transactionid = TransCodeEntity.QUERYCD;//功能代码
+			commSetToXML(voform,request,transactionid);
+			voform.setQueryCd(TransCodeEntity.SENDMSG_QUERYCD);//查询码
+			this.setFenYe(voform);
+
+			TransServices transServices = (TransServices) this
+					.getBean("transServices");
+			String direction=request.getParameter("direction");//来往标识
+			String operway = request.getParameter("operway");// 得到参数 操作类型（复核 审核 审批）
+			if("I".equals(direction)) commSetConditionsListLai(voform, po);
+			else {
+				if("00".equals(operway)){
+					commSetConditionsList00(voform, po);
+				}else{
+					commSetConditionsList(voform, po);
+				}
+				
+			}
+			CommonXMLEntity commonXMLEntity = transServices.transProcess(
+					voform, voform.getTransactionId(), "transaction", voform
+							.getQueryCd());
+			if (!commonXMLEntity.getProcessCode().equals("000000")) {
+				throw new PicpMessageException("错误码：["
+						+ commonXMLEntity.getProcessCode() + "] 错误信息：["
+						+ commonXMLEntity.getProcessDes() + "]");
+			}
+			voform.setTotalSize(Integer.parseInt(commonXMLEntity.getRecordcount()));
+			BaseAction.setQueryPageValue(voform, true);
+			List<?> List = commonXMLEntity.getResults();
+			
+			
+			this.setPageInfo(request, voform);
+			this.setObjectToRequest(request, "queryList", List);
+			request.setAttribute("condition", po);
+			request.setAttribute("direction", po.getDirection());
+			if (operway.equals("00")) { // 复核
+				return mapping.findForward("checkquery");// 待复核的页面
+			} else if (operway.equals("01")) { // 审核
+				return mapping.findForward("transauditing");
+
+			} else if (operway.equals("02")) { // 审批
+				return mapping.findForward("assessment");
+			} else if (operway.equals("03")) { // 查询所有需要维护的交易
+				return mapping.findForward("tranUpdate");
+			} else if (operway.equals("04")) { // 查询所有需要维护的交易
+				return mapping.findForward("tranStatusUpdate");
+			} else if (operway.equals("05")) { // 往账凭证打印
+				return mapping.findForward("sendTransPZQuery");
+			} else if (operway.equals("06")) { // 来账凭证打印
+				return mapping.findForward("recvTransPZQuery");
+			} else if (operway.equals("07")) { // 往账支付交易查询
+				return mapping.findForward("sendqueryList");
+			}
+			else if (operway.equals("08")) { // 收到委托收款交易查询
+				return mapping.findForward("paymentComissionList");
+			}
+			else if (operway.equals("09")) { // 发出委托收款交易查询
+				return mapping.findForward("sendPaymentComissionList");
+			}
+			else if (operway.equals("10")) { // 发出委托收款交易复核
+				return mapping.findForward("paymentComissionConfirmList");
+			}
+			else { // 来账支付交易查询
+				return mapping.findForward("recvqueryList");
+			}
+
+		} catch (Exception e) {
+			e.printStackTrace();
+			return toFailedPage(mapping, request, e.getMessage());
+		}
+	}
+	
+	
+	@SuppressWarnings("unchecked")
+	private void commSetConditionsListLai(TransProcessForm voform,
+			TransProcessEntity hpo) {
+
+		// 支付交易序号起始值
+		if (!StringUtils.isEmpty(hpo.getStartid())) {
+			voform.getFieldStart().add("starttxid:" + hpo.getStartid());
+		}
+		// 支付交易序号结束值
+		if (!StringUtils.isEmpty(hpo.getEndid())) {
+			voform.getFieldEnd().add("endtxid:" + hpo.getEndid());
+		}
+
+		// 签发日期起始值
+		if (!StringUtils.isEmpty(hpo.getStartdate())) {
+			voform.getFieldStart().add("startdate:" + hpo.getStartdate());
+		}
+		// 签发日期结束值
+		if (!StringUtils.isEmpty(hpo.getStartdate())) {
+			voform.getFieldEnd().add("enddate:" + hpo.getEnddate());
+		}
+
+		// 汇款金额起始值
+		if (!StringUtils.isEmpty(hpo.getStartamount())) {
+			voform.getFieldStart().add("startamount:" + hpo.getStartamount());
+		}
+		// 汇款金额结束值
+		if (!StringUtils.isEmpty(hpo.getStartamount())) {
+			voform.getFieldEnd().add("endamount:" + hpo.getEndamount());
+		}
+
+		// 交易状态
+		if (!StringUtils.isEmpty(hpo.getStatus())) {
+			voform.getConditions().add("status:" + hpo.getStatus());
+		}
+		// 业务类型
+		if (!StringUtils.isEmpty(hpo.getPmttp())) {
+			voform.getConditions().add("pmttp:" + hpo.getPmttp());
+		}
+		// 客户号
+		if (!StringUtils.isEmpty(hpo.getProposercstmrid())) {
+			voform.getConditions().add(
+					"PROPOSERCSTMRID:" + hpo.getProposercstmrid());
+		}
+		// 申请人账号
+		if (!StringUtils.isEmpty(hpo.getApplicantacct())) {
+			voform.getConditions()
+					.add("PROPOSERACCT:" + hpo.getApplicantacct());
+		}
+		// 来往标识
+		if (!StringUtils.isEmpty(hpo.getDirection())) {
+			voform.getConditions().add("direction:" + hpo.getDirection());
+		}
+		// 系统类型
+		if (!StringUtils.isEmpty(hpo.getSystemcd())) {
+			voform.getConditions().add("SystemCd:" + hpo.getSystemcd());
+		}
+		// 系统类型
+		if (!StringUtils.isEmpty(hpo.getMsgtpid())) {
+			voform.getConditions().add("msgtpid:" + hpo.getMsgtpid());
+		}
+		//报文标识号
+		if(!StringUtils.isEmpty(hpo.getMsgid())){
+			voform.getConditions().add("MSGID:" + hpo.getMsgid());
+		}
+		//报文发送时间
+		if(!StringUtils.isEmpty(hpo.getStartdate())){
+		//	voform.getConditions().add("CREDTTM:"+hpo.getStartdate());
+		}
+		//处理状态
+		if(!StringUtils.isEmpty(hpo.getPrcsts())){
+			voform.getConditions().add("prcsts:"+hpo.getPrcsts());
+		}
+		//支付交易组号
+		if(!StringUtils.isEmpty(hpo.getPmtgrpid())){
+			voform.getConditions().add("pmtgrpid:"+hpo.getPmtgrpid());
+		}
+		//签发金额
+		if(!StringUtils.isEmpty(hpo.getAmount())){
+			voform.getConditions().add("amount:"+hpo.getAmount());
+		}
+		//签发日期
+		if(!StringUtils.isEmpty(hpo.getWorkdt())){
+			voform.getConditions().add("workdt:"+hpo.getWorkdt());
+		}
+	}
+
+	/**
+	 * 设置 传送到后台的XML 的条件List到FORM里
+	 * 
+	 * @param voform
+	 * @param hpo
+	 */
+
+	@SuppressWarnings("unchecked")
+	private void commSetConditionsList(TransProcessForm voform,
+			TransProcessEntity hpo) {
+
+
+		
+		// 支付交易组号起始值
+		if (!StringUtils.isEmpty(hpo.getStartid())) {
+			voform.getFieldStart().add("startid:" + hpo.getStartid());
+		}
+		// 支付交易组号结束值
+		if (!StringUtils.isEmpty(hpo.getEndid())) {
+			voform.getFieldEnd().add("endid:" + hpo.getEndid());
+		}
+
+		// 签发日期起始值
+		if (!StringUtils.isEmpty(hpo.getStartdate())) {
+			voform.getFieldStart().add("STARTDATE:" + hpo.getStartdate());
+		}
+		// 签发日期结束值
+		if (!StringUtils.isEmpty(hpo.getEnddate())) {
+			voform.getFieldEnd().add("ENDDATE:" + hpo.getEnddate());
+		}
+
+		// 汇款金额起始值
+		if (!StringUtils.isEmpty(hpo.getStartamount())) {
+			voform.getFieldStart().add("STARTAMOUNT:" + hpo.getStartamount());
+		}
+		// 汇款金额结束值
+		if (!StringUtils.isEmpty(hpo.getEndamount())) {
+			voform.getFieldEnd().add("ENDAMOUNT:" + hpo.getEndamount());
+		}
+
+		// 交易状态
+		if (!StringUtils.isEmpty(hpo.getStatus())) {
+			voform.getConditions().add("STATUS:" + hpo.getStatus());
+		}
+		// 业务类型
+		if (!StringUtils.isEmpty(hpo.getPmttp())) {
+			voform.getConditions().add("PMTTP:" + hpo.getPmttp());
+		}
+		// 客户号
+		if (!StringUtils.isEmpty(hpo.getProposercstmrid())) {
+			voform.getConditions().add(
+					"PROPOSERCSTMRID:" + hpo.getProposercstmrid());
+		}
+		// 申请人账号
+		if (!StringUtils.isEmpty(hpo.getApplicantacct())) {
+			voform.getConditions()
+					.add("PROPOSERACCT:" + hpo.getApplicantacct());
+		}
+		// 来往标识
+		if (!StringUtils.isEmpty(hpo.getDirection())) {
+			voform.getConditions().add("Direction:" + hpo.getDirection());
+		}
+		// 系统类型
+		if (!StringUtils.isEmpty(hpo.getSystemcd())) {
+			voform.getConditions().add("SystemCd:" + hpo.getSystemcd());
+		}
+		// 报文编号
+		if (!StringUtils.isEmpty(hpo.getMsgtpid())) {
+			voform.getConditions().add("msgtpid:" + hpo.getMsgtpid());
+		}
+		
+		
+		//报文序号 小额为明细标识号 大额为报文标识号
+		if(!StringUtils.isEmpty(hpo.getTxid())){
+			voform.getConditions().add("txid:" + hpo.getTxid());
+		}
+		//报文发送时间
+		if(!StringUtils.isEmpty(hpo.getStartdate())){
+		//	voform.getConditions().add("CREDTTM:"+hpo.getStartdate());
+		}
+		//处理状态
+		if(!StringUtils.isEmpty(hpo.getPrcsts())){
+			voform.getConditions().add("prcsts:"+hpo.getPrcsts());
+		}
+		//支付交易组号
+		if(!StringUtils.isEmpty(hpo.getPmtgrpid())){
+			voform.getConditions().add("pmtgrpid:"+hpo.getPmtgrpid());
+		}
+	}
+	
+	
+	/**
+	 * 复核节目查询条件设置
+	 * @param voform
+	 * @param hpo
+	 */
+	@SuppressWarnings("unchecked")
+	private void commSetConditionsList00(TransProcessForm voform,
+			TransProcessEntity hpo) {
+		
+		//支付交易组号
+		if(!StringUtils.isEmpty(hpo.getStartid())){
+			voform.getConditions().add("pmtgrpid:"+hpo.getStartid());
+		}
+		// 签发日期起始值
+		if (!StringUtils.isEmpty(hpo.getStartdate())) {
+			voform.getFieldStart().add("STARTDATE:" + hpo.getStartdate());
+		}
+		// 签发日期结束值
+		if (!StringUtils.isEmpty(hpo.getEnddate())) {
+			voform.getFieldEnd().add("ENDDATE:" + hpo.getEnddate());
+		}
+
+		// 汇款金额起始值
+		if (!StringUtils.isEmpty(hpo.getStartamount())) {
+			voform.getFieldStart().add("STARTAMOUNT:" + hpo.getStartamount());
+		}
+		// 汇款金额结束值
+		if (!StringUtils.isEmpty(hpo.getEndamount())) {
+			voform.getFieldEnd().add("ENDAMOUNT:" + hpo.getEndamount());
+		}
+
+		// 交易状态
+		if (!StringUtils.isEmpty(hpo.getStatus())) {
+			voform.getConditions().add("STATUS:" + hpo.getStatus());
+		}
+		// 业务类型
+		if (!StringUtils.isEmpty(hpo.getPmttp())) {
+			voform.getConditions().add("PMTTP:" + hpo.getPmttp());
+		}
+		// 客户号
+		if (!StringUtils.isEmpty(hpo.getProposercstmrid())) {
+			voform.getConditions().add(
+					"PROPOSERCSTMRID:" + hpo.getProposercstmrid());
+		}
+		// 申请人账号
+		if (!StringUtils.isEmpty(hpo.getApplicantacct())) {
+			voform.getConditions()
+					.add("PROPOSERACCT:" + hpo.getApplicantacct());
+		}
+		// 来往标识
+		if (!StringUtils.isEmpty(hpo.getDirection())) {
+			voform.getConditions().add("Direction:" + hpo.getDirection());
+		}
+		// 系统类型
+		if (!StringUtils.isEmpty(hpo.getSystemcd())) {
+			voform.getConditions().add("SystemCd:" + hpo.getSystemcd());
+		}
+		// 报文编号
+		if (!StringUtils.isEmpty(hpo.getMsgtpid())) {
+			voform.getConditions().add("msgtpid:" + hpo.getMsgtpid());
+		}
+		
+		
+		//报文标识号
+		if(!StringUtils.isEmpty(hpo.getMsgid())){
+			voform.getConditions().add("MSGID:" + hpo.getMsgid());
+		}
+		//报文发送时间
+		if(!StringUtils.isEmpty(hpo.getStartdate())){
+		//	voform.getConditions().add("CREDTTM:"+hpo.getStartdate());
+		}
+		//处理状态
+		if(!StringUtils.isEmpty(hpo.getPrcsts())){
+			voform.getConditions().add("prcsts:"+hpo.getPrcsts());
+		}
+		
+	}
+	/**
+	 * 查询业务的明细 复核 维护
+	 * 
+	 * @param mapping
+	 * @param form
+	 * @param request
+	 * @param response
+	 * @return
+	 * @throws Exception
+	 */
+	@SuppressWarnings("unchecked")
+	public ActionForward sendDetailMessage(ActionMapping mapping,
+			ActionForm form, HttpServletRequest request,
+			HttpServletResponse response) throws Exception {
+		try {
+			//报文头设置
+			TransProcessForm voform = new TransProcessForm();
+			String id=request.getParameter("id");//主键ID
+			String pmtgrpid = request.getParameter("pmtgrpid");// 得到交易支付组号
+			String operway = request.getParameter("operway");// 得到查询明细的类型
+			String pmttpbgclsotid = request.getParameter("pmttpbgclsotid");// 大类标识
+			String systemcd = request.getParameter("systemcd");
+           String PID=request.getParameter("PID");
+           String viewcheck=request.getParameter("viewcheck");  
+           String comeORgo= TransCodeEntity.SENDRECVMSG_COMMON_QUERYCD;
+       	String transactionid = TransCodeEntity.SENDCHECK_MODIFY_QUERYCD;//功能代码
+		commSetToXML(voform,request,transactionid);
+           if("viewcheck".equals(viewcheck)){
+        	   voform.getConditions().add("PID:"+PID);
+        	   comeORgo= TransCodeEntity.pushbackcheck;//来报的退汇复核
+        	   commSetToXML(voform,request,TransCodeEntity.pushbackcheck); 
+           }
+			
+			
+		
+			add = voform.getConditions().add("id:"+id);//主键标识
+			voform.setPmtgrpid(pmtgrpid);//支付交易组号
+			
+			
+			TransServices transServices = (TransServices) this
+					.getBean("transServices");
+			CommonXMLEntity commonXMLEntity = transServices.transQuery(voform,
+					voform.getTransactionId(), "transaction",
+					TransCodeEntity.SENDCHECK_MODIFY_QUERYCD,comeORgo);
+			if (!commonXMLEntity.getProcessCode().equals("000000")) {
+				throw new PicpMessageException("错误码：["
+						+ commonXMLEntity.getProcessCode() + "] 错误信息：["
+						+ commonXMLEntity.getProcessDes() + "]");
+			}
+			//主表信息
+			List list = commonXMLEntity.getResults();
+			ExchargeEntity po = new ExchargeEntity();
+			if (list.size() > 0) {
+				po = (ExchargeEntity) list.get(0);
+				
+			}
+			System.out.println(" ------------------------------------------"+po.getRjctinf());
+			//明细表信息
+			List list2 = commonXMLEntity.getAddInfo();
+			AddtnlData ad =new AddtnlData();
+			if (list2.size() > 0) {
+				ad = (AddtnlData) list2.get(0);
+			}
+			List TreasuryTransferList = commonXMLEntity.getAddInfoDetails();
+			if ("OE".equals(pmttpbgclsotid)) {
+				po.setSystemcd("BEPS");
+				
+			}
+			po.setSystemcd(systemcd);//设置系统编号
+			po.setPmttpbgclsotid(pmttpbgclsotid);//设置大类标识
+			request.setAttribute("entity", po);//主表信息
+			request.setAttribute("addentity", ad);//明细域信息
+			request.setAttribute("TreasuryTransferList", TreasuryTransferList);
+			//返回的路径
+			String forwardPath = returnForwardPath(operway, pmttpbgclsotid);
+			return mapping.findForward(forwardPath);
+		} catch (Exception e) {
+			e.printStackTrace();
+			return toFailedPage(mapping, request, e.getMessage());
+		}
+	}
+	/**
+	 * 查询业务来报复核
+	 * 
+	 * @param mapping
+	 * @param form
+	 * @param request
+	 * @param response
+	 * @return
+	 * @throws Exception
+	 */
+	@SuppressWarnings("unchecked")
+	public ActionForward comcheck(ActionMapping mapping,
+			ActionForm form, HttpServletRequest request,
+			HttpServletResponse response) throws Exception {
+		try {
+			//报文头设置
+			TransProcessForm voform = new TransProcessForm();
+			 
+			String pmtgrpid = request.getParameter("pmtgrpid");// 得到交易支付组号
+			String operway = request.getParameter("operway");// 得到查询明细的类型
+			String pmttpbgclsotid = request.getParameter("pmttpbgclsotid");// 大类标识
+			String systemcd = request.getParameter("systemcd");
+           String PID=request.getParameter("PID");
+           String viewcheck=request.getParameter("viewcheck");  
+           String comeORgo= TransCodeEntity.SENDRECVMSG_COMMON_QUERYCD;
+       	String transactionid = TransCodeEntity.SENDCHECK_MODIFY_QUERYCD;//功能代码
+		commSetToXML(voform,request,transactionid);
+           if("viewcheck".equals(viewcheck)){
+        	     comeORgo= TransCodeEntity.pushbackcheck;//来报的退汇复核
+        	   commSetToXML(voform,request,TransCodeEntity.pushbackcheck); 
+           }
+			
+           voform.setId(PID);
+		
+			 
+			voform.setPmtgrpid(pmtgrpid);//支付交易组号
+			
+			
+			TransServices transServices = (TransServices) this
+					.getBean("transServices");
+			 
+			CommonXMLEntity commonXMLEntity = transServices
+			.transProcess(voform, comeORgo,
+					"transaction", comeORgo); 
+			if (!commonXMLEntity.getProcessCode().equals("000000")) {
+				throw new PicpMessageException("错误码：["
+						+ commonXMLEntity.getProcessCode() + "] 错误信息：["
+						+ commonXMLEntity.getProcessDes() + "]");
+			}
+			//主表信息
+			List list = commonXMLEntity.getResults();
+			ExchargeEntity po = new ExchargeEntity();
+			if (list.size() > 0) {
+				po = (ExchargeEntity) list.get(0);
+				
+			}
+			//明细表信息
+			List list2 = commonXMLEntity.getAddInfo();
+			AddtnlData ad =new AddtnlData();
+			if (list2.size() > 0) {
+				ad = (AddtnlData) list2.get(0);
+			}
+			List TreasuryTransferList = commonXMLEntity.getAddInfoDetails();
+			if ("OE".equals(pmttpbgclsotid)) {
+				po.setSystemcd("BEPS");
+				
+			}
+			po.setSystemcd(systemcd);//设置系统编号
+			po.setPmttpbgclsotid(pmttpbgclsotid);//设置大类标识
+			request.setAttribute("entity", po);//主表信息
+			request.setAttribute("addentity", ad);//明细域信息
+			request.setAttribute("TreasuryTransferList", TreasuryTransferList);
+			//返回的路径
+			String forwardPath = comCheckForwardPath(operway, pmttpbgclsotid);
+			return mapping.findForward(forwardPath);
+		} catch (Exception e) {
+			e.printStackTrace();
+			return toFailedPage(mapping, request, e.getMessage());
+		}
+	}
+	private String comCheckForwardPath(String operway, String pmttpbgclsotid) {
+		String forwardPath = "";
+		if (operway.equals("00")) { // 复核明细
+			
+			
+			if("OA".equals(pmttpbgclsotid)||"OC".equals(pmttpbgclsotid)||"OE".equals(pmttpbgclsotid)){
+				forwardPath = "gotoComCheck";
+			}
+//			else if ("OE".equals(pmttpbgclsotid)) {
+//				forwardPath = "gotoCheckRegularCreditPage";
+//			}
+			else{
+				forwardPath ="gotoComCdtrCheckPage";
+			}
+		}else if (operway.equals("001")) { // 复核页面中 取消审核的明细页面
+			
+			
+			if("OA".equals(pmttpbgclsotid)||"OC".equals(pmttpbgclsotid)){
+				forwardPath = "gotoCheckbackPage";
+			}
+			else if ("OE".equals(pmttpbgclsotid)) {
+				forwardPath = "gotoCheckRegularCreditbackPage";
+			}else{
+				forwardPath ="gotoCdtrCheckbackPage";
+			}
+		}else if (operway.equals("01")) { // 审核明细
+				forwardPath = "gotoauditing";//贷记
+		
+			
+		}else if(operway.equals("011")){//取消审批 跳转明细页面
+			if("OA".equals(pmttpbgclsotid)||"OC".equals(pmttpbgclsotid)||"OE".equals(pmttpbgclsotid)){
+				forwardPath = "gotobackauditing";
+			}else{
+				forwardPath="gotobackCdtrauditing";
+			}
+		}
+		
+		
+		else if (operway.equals("02")) { // 审批明细
+			
+				forwardPath = "gotoassessment";
+		} else if (operway.equals("03")) { // 维护
+			if (((pmttpbgclsotid.equals("OA")) || (pmttpbgclsotid.equals("OC")) || (pmttpbgclsotid
+					.equals("OE")))) {
+				forwardPath = "gotoupdatedbtr";// 贷记维护
+			} else if ((pmttpbgclsotid.equals("OB"))
+					|| (pmttpbgclsotid.equals("OD"))
+					|| (pmttpbgclsotid.equals("OF"))) {
+				forwardPath = "gotoupdatecdtr";// 借记维护
+			} else {
+
+			}
+		} else if (operway.equals("05")) {
+			forwardPath = "gotoStatusUpdate";// 状态维护
+
+		} else if (operway.equals("06")) {
+			forwardPath = "gotoStatusDelete";// 状态维护 作废
+
+		} else {
+			forwardPath = "gotoauditing";//
+		}
+		return forwardPath;
+	}
+
+	private String returnForwardPath(String operway, String pmttpbgclsotid) {
+		String forwardPath = "";
+		if (operway.equals("00")) { // 复核明细
+			
+			
+			if("OA".equals(pmttpbgclsotid)||"OC".equals(pmttpbgclsotid)||"OE".equals(pmttpbgclsotid)){
+				forwardPath = "gotoCheckPage";
+			}
+//			else if ("OE".equals(pmttpbgclsotid)) {
+//				forwardPath = "gotoCheckRegularCreditPage";
+//			}
+			else{
+				forwardPath ="gotoCdtrCheckPage";
+			}
+		}else if (operway.equals("001")) { // 复核页面中 取消审核的明细页面
+			
+			
+			if("OA".equals(pmttpbgclsotid)||"OC".equals(pmttpbgclsotid)){
+				forwardPath = "gotoCheckbackPage";
+			}
+			else if ("OE".equals(pmttpbgclsotid)) {
+				forwardPath = "gotoCheckRegularCreditbackPage";
+			}else{
+				forwardPath ="gotoCdtrCheckbackPage";
+			}
+		}else if (operway.equals("01")) { // 审核明细
+				forwardPath = "gotoauditing";//贷记
+		
+			
+		}else if(operway.equals("011")){//取消审批 跳转明细页面
+			if("OA".equals(pmttpbgclsotid)||"OC".equals(pmttpbgclsotid)||"OE".equals(pmttpbgclsotid)){
+				forwardPath = "gotobackauditing";
+			}else{
+				forwardPath="gotobackCdtrauditing";
+			}
+		}
+		
+		
+		else if (operway.equals("02")) { // 审批明细
+			
+				forwardPath = "gotoassessment";
+		} else if (operway.equals("03")) { // 维护
+			if (((pmttpbgclsotid.equals("OA")) || (pmttpbgclsotid.equals("OC")) || (pmttpbgclsotid
+					.equals("OE")))) {
+				forwardPath = "gotoupdatedbtr";// 贷记维护
+			} else if ((pmttpbgclsotid.equals("OB"))
+					|| (pmttpbgclsotid.equals("OD"))
+					|| (pmttpbgclsotid.equals("OF"))) {
+				forwardPath = "gotoupdatecdtr";// 借记维护
+			} else {
+
+			}
+		} else if (operway.equals("05")) {
+			forwardPath = "gotoStatusUpdate";// 状态维护
+
+		} else if (operway.equals("06")) {
+			forwardPath = "gotoStatusDelete";// 状态维护 作废
+
+		} else {
+			forwardPath = "gotoauditing";//
+		}
+		return forwardPath;
+	}
+
+	/**
+	 * 复核 审核 审批报文发送
+	 * 
+	 * @param mapping
+	 * @param form
+	 * @param request
+	 * @param response
+	 * @return
+	 * @throws Exception
+	 */
+	public ActionForward sendCheckMessage(ActionMapping mapping,
+			ActionForm form, HttpServletRequest request,
+			HttpServletResponse response) throws Exception {
+		try {
+
+			String operway = request.getParameter("operway");// 得到类型 复核审核审批
+			String pmttp = request.getParameter("pmttp");
+			// 界面查询条件
+			TransProcessForm voform = (TransProcessForm) form;
+			voform.setSource("QDEB");// 发起服务名
+			//this.commSetToXML(voform, request, transactionId)
+			SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+			voform.setSendDateTime(sdf.format(new Date()));// 报文发送时间
+
+			voform.setTermId("01");// 终端号
+			voform.setBusinesscode("1510610002");// 交易码
+
+			voform.setBrnchCd(request.getSession().getAttribute("bankCode")
+					.toString());// 网点号
+			Systemusersmanage user = (Systemusersmanage) request.getSession()
+					.getAttribute("userentity");
+			voform.setOperTeller(user.getUsername());// 操作柜员
+            voform.setPmttp(pmttp);
+			voform.setOperway(operway);
+			// 发送交易报文 并解析得到回应的信息
+			TransServices transServices = (TransServices) this
+					.getBean("transServices");
+			CommonXMLEntity commonXMLEntity = transServices.transProcess(
+					voform, TransCodeEntity.SENDMSG_CHECK, "transaction", "");
+			commonXMLEntity.getProcessCode();
+			String reslutmessage = "";
+			if (!commonXMLEntity.getProcessCode().equals("000000")) {
+				throw new PicpMessageException("错误码："
+						+ commonXMLEntity.getProcessCode() + "错误信息："
+						+ commonXMLEntity.getProcessDes());
+			} else {
+				if (operway.equals("00")) {
+					reslutmessage = "处理成功码：" + commonXMLEntity.getProcessCode()
+							+ "业务复核发送成功！";
+				} else if (operway.equals("01")) {
+					reslutmessage = "处理成功码：" + commonXMLEntity.getProcessCode()
+							+ "业务审核发送成功！";
+				} else {
+					reslutmessage = "处理成功码：" + commonXMLEntity.getProcessCode()
+							+ "业务审批发送成功！";
+				}
+			}
+			return toSuccessPage(mapping, request, reslutmessage);
+
+		} catch (Exception e) {
+			e.printStackTrace();
+			return toFailedPage(mapping, request, e.getMessage());
+		}
+	}
+	/**
+	 * 来报复核发送
+	 * 
+	 * @param mapping
+	 * @param form
+	 * @param request
+	 * @param response
+	 * @return
+	 * @throws Exception
+	 */
+	public ActionForward sendComCheck(ActionMapping mapping,
+			ActionForm form, HttpServletRequest request,
+			HttpServletResponse response) throws Exception {
+		try {
+
+			String operway = request.getParameter("operway");// 得到类型 复核审核审批
+			String pmttp = request.getParameter("pmttp");
+			// 界面查询条件
+			TransProcessForm voform = (TransProcessForm) form;
+			voform.setSource("QDEB");// 发起服务名
+
+			SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+			voform.setSendDateTime(sdf.format(new Date()));// 报文发送时间
+
+			voform.setTermId("01");// 终端号
+ 
+			voform.setBrnchCd(request.getSession().getAttribute("bankCode")
+					.toString());// 网点号
+			Systemusersmanage user = (Systemusersmanage) request.getSession()
+					.getAttribute("userentity");
+			voform.setOperTeller(user.getUsername());// 操作柜员
+            voform.setPmttp(pmttp);
+			voform.setOperway(operway);
+			String ID = request.getParameter("ID");// 得到类型 复核审核审批
+			String tableNm = request.getParameter("tableNm");
+			
+			voform.getEe().setId(ID);
+			voform.getEe().setTableNm(tableNm);
+			CommonServices commonService = (CommonServices) this
+			.getBean("CommonServices");
+	String workdate = request.getSession().getAttribute("workDate")
+			.toString();// 工作日期
+	String paymentGroupNum = commonService.getSEQTransId(workdate); //支付组号
+	   voform.setPmtGrpId(paymentGroupNum);
+			// 发送交易报文 并解析得到回应的信息
+			TransServices transServices = (TransServices) this
+					.getBean("transServices");
+			CommonXMLEntity commonXMLEntity = transServices.transProcess(
+					voform, TransCodeEntity.sendComCheck, "transaction", "");
+			commonXMLEntity.getProcessCode();
+			String reslutmessage = "";
+			if (!commonXMLEntity.getProcessCode().equals("000000")) {
+				throw new PicpMessageException("错误码："
+						+ commonXMLEntity.getProcessCode() + "错误信息："
+						+ commonXMLEntity.getProcessDes());
+			} else {
+				if (operway.equals("00")) {
+					reslutmessage = "处理成功码：" + commonXMLEntity.getProcessCode()
+							+ "业务复核发送成功！";
+				} else if (operway.equals("01")) {
+					reslutmessage = "处理成功码：" + commonXMLEntity.getProcessCode()
+							+ "业务审核发送成功！";
+				} else {
+					reslutmessage = "处理成功码：" + commonXMLEntity.getProcessCode()
+							+ "业务审批发送成功！";
+				}
+			}
+			return toSuccessPage(mapping, request, reslutmessage);
+
+		} catch (Exception e) {
+			e.printStackTrace();
+			return toFailedPage(mapping, request, e.getMessage());
+		}
+	}
+	/**
+	 * 查询业务的明细 来往帐共用
+	 * 往账唯一标示：支付交易组号
+	 * 来帐唯一标示：来帐唯一标识号
+	 * 
+	 * @param mapping
+	 * @param form
+	 * @param request
+	 * @param response
+	 * @return
+	 * @throws Exception
+	 */
+	public ActionForward gotoTransDetails(ActionMapping mapping,
+			ActionForm form, HttpServletRequest request,
+			HttpServletResponse response) throws Exception {
+		String forwardPath="";
+		try {
+			//sCommonServices commonService = (CommonServices) this.getBean("CommonServices");
+			//String workdate = request.getSession().getAttribute("workDate").toString();// 工作日期
+			//String msgId = commonService.getSEQMsgId(workdate);
+			String pmtgrpid = request.getParameter("pmtgrpid");// 得到交易支付组号
+			//String operway = request.getParameter("operway");// 得到查询明细的类型
+			String pmttpbgclsotid = request.getParameter("pmttpbgclsotid");// 业务类型大类标识
+			String systemcd = request.getParameter("systemcd");
+			String id = request.getParameter("id");// 往账查询 主键ID 
+			String txid = request.getParameter("txid"); //支付交易序号
+			String direction = request.getParameter("direction");//来往标识
+			//报文头设置
+			TransProcessForm voform = new TransProcessForm();
+			String transactionid = TransCodeEntity.SENDCHECK_MODIFY_QUERYCD;//功能代码
+			
+			commSetToXML(voform,request,transactionid);
+			voform.setPmtgrpid(pmtgrpid);//支付交易组号
+			voform.setQueryCd(TransCodeEntity.SENDRECVMSG_COMMON_QUERYCD);
+			//voform.setMsgIdUnq(request.getParameter("msgidunq"));//来帐唯一标识号
+			voform.setId(id);//主键ID
+			voform.setTxid(txid);//来帐使用支付交易序号
+			//voform.setDestination("HVPS/BEPS");
+			voform.setPmtgrpid(pmtgrpid);//往账使用支付交易组号
+			voform.setDirection(direction);//来往标识
+			TransServices transServices = (TransServices) this.getBean("transServices");
+			CommonXMLEntity commonXMLEntity = transServices.transQuery(voform,
+					voform.getTransactionId(), "transaction",TransCodeEntity.SENDCHECK_MODIFY_QUERYCD,TransCodeEntity.SENDRECVMSG_COMMON_QUERYCD);
+			if (!commonXMLEntity.getProcessCode().equals("000000")) {
+				throw new PicpMessageException("错误码：["+ commonXMLEntity.getProcessCode() + "] 错误信息：["
+						+ commonXMLEntity.getProcessDes() + "]");
+			}
+			//显示主信息
+			List<?> list = commonXMLEntity.getResults();
+			ExchargeEntity po = new ExchargeEntity();
+			po.setPmttpbgclsotid(pmttpbgclsotid);
+			if (list.size() > 0) {
+				po = (ExchargeEntity) list.get(0);
+			}
+			po.setSystemcd(systemcd);//设置系统号
+			 
+			if (pmttpbgclsotid.equals("o")) {
+				forwardPath = "gotoTransDetailsO"+po.getPmttp().trim().substring(0, 1) ;// zcx业务明细界面
+			
+			} 
+		 
+			po.setPmttpbgclsotid(pmttpbgclsotid);
+			//po.setTxid(txid);
+			request.setAttribute("entity", po);
+			//显示附加域
+			List<?> list2 = commonXMLEntity.getAddInfo();
+			AddtnlData ad =new AddtnlData();
+			List<?> TreasuryTransferList = commonXMLEntity.getAddInfoDetails();
+			if (list2.size() > 0) {
+				ad = (AddtnlData) list2.get(0);
+				
+			}
+			request.setAttribute("addentity", ad);
+			request.setAttribute("txid", txid);
+			request.setAttribute("TreasuryTransferList", TreasuryTransferList);
+			
+			 
+			 //oa ob oc 与业务类型没有关系,不要被这里给误导了,严重误导
+			if("I".equals(direction)){//来往标识为I 来帐
+				forwardPath = "gotoReveTransDetails";// 来帐明细界面
+			}
+			else{//往账明细界面
+
+				if (pmttpbgclsotid.equals("OA")) {
+					forwardPath = "gotoTransDetailsOA";// 普通贷记业务明细界面
+				} else if (pmttpbgclsotid.equals("OB")) {
+					forwardPath = "gotoTransDetailsOB";// 普通借记业务明细界面
+				} else if (pmttpbgclsotid.equals("OC")) {
+					forwardPath = "gotoTransDetailsOC";// 实时贷记业务明细界面
+				} else if (pmttpbgclsotid.equals("OD")) {
+					forwardPath = "gotoTransDetailsOD";// 实时借记业务明细界面
+				} else if (pmttpbgclsotid.equals("OE")) {
+					forwardPath = "gotoTransDetailsOE";// 定期贷记业务明细界面
+				} else if (pmttpbgclsotid.equals("OF")) {
+					forwardPath = "gotoTransDetailsOF";// 定期借记业务明细界面
+				} else {
+					forwardPath = "gotoTransDetails";// 往报通用明细界面
+				}
+			}
+		
+			return mapping.findForward(forwardPath);
+		} catch (Exception e) {
+			e.printStackTrace();
+			return toFailedPage(mapping, request, e.getMessage());
+		}
+	}
+
+	/**
+	 * 往帐维护 发送维护报文给后台
+	 * 
+	 * @param mapping
+	 * @param form
+	 * @param request
+	 * @param response
+	 * @return
+	 * @throws Exception
+	 */
+	public ActionForward tranUpdate(ActionMapping mapping, ActionForm form,
+			HttpServletRequest request, HttpServletResponse response)
+			throws Exception {
+
+		try {
+			TransProcessForm voform = (TransProcessForm) form;
+			voform.setSource("QDEB");// 发起服务名
+
+			SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+			voform.setSendDateTime(sdf.format(new Date()));// 报文发送时间
+
+			voform.setTermId("01");// 终端号
+			voform.setBusinesscode("1510610004");// 交易码
+
+			voform.setBrnchCd(request.getSession().getAttribute("bankCode")
+					.toString());// 网点号
+			Systemusersmanage user = (Systemusersmanage) request.getSession()
+					.getAttribute("userentity");
+			voform.setOperTeller(user.getUsername());// 操作柜员
+
+			String pmttpbgclsotid = request.getParameter("pmttpbgclsotid");
+			System.out.println(pmttpbgclsotid + "~~~~pmttpbgclsotid");
+
+			// 发送交易报文 并解析得到回应的信息
+			TransServices transServices = (TransServices) this
+					.getBean("transServices");
+			CommonXMLEntity commonXMLEntity = transServices.transProcess(
+					voform, "1510610004", "transaction", "");
+			commonXMLEntity.getProcessCode();
+			String reslutmessage = "";
+			if (!commonXMLEntity.getProcessCode().equals("000000")) {
+				throw new PicpMessageException("错误码："
+						+ commonXMLEntity.getProcessCode() + "错误信息："
+						+ commonXMLEntity.getProcessDes());
+			} else {
+
+				reslutmessage = "处理成功码：" + commonXMLEntity.getProcessCode()
+						+ "业务维护发送成功！";
+
+			}
+
+			return toSuccessPage(mapping, request, reslutmessage);
+
+		} catch (Exception e) {
+			e.printStackTrace();
+			return toFailedPage(mapping, request, e.getMessage());
+		}
+	}
+
+	public ActionForward tranStatusUpdate(ActionMapping mapping,
+			ActionForm form, HttpServletRequest request,
+			HttpServletResponse response) throws Exception {
+		try {
+			String operway = request.getParameter("operway");// 得到类型 修改状态
+			// 05-维护 06-作废
+
+			System.out.println(operway + "@@@@");
+			// 界面查询条件
+			TransProcessForm voform = (TransProcessForm) form;
+			voform.setSource("QDEB");// 发起服务名
+
+			SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+			voform.setSendDateTime(sdf.format(new Date()));// 报文发送时间
+
+			voform.setTermId("01");// 终端号
+			voform.setBusinesscode("1510811103");// 交易码
+
+			if (voform.getSystemcd().equals("HVPS")) {
+				voform.setMsgcode("hvps.111.001.01");// 报文编号
+			} else {
+				voform.setMsgcode("beps.111.001.01");
+			}
+			voform.setBrnchCd(request.getSession().getAttribute("bankCode")
+					.toString());// 网点号
+			Systemusersmanage user = (Systemusersmanage) request.getSession()
+					.getAttribute("userentity");
+			voform.setOperTeller(user.getUsername());// 操作柜员
+
+			voform.setOperway(operway);
+			// 发送交易报文 并解析得到回应的信息
+			TransServices transServices = (TransServices) this
+					.getBean("transServices");
+			CommonXMLEntity commonXMLEntity = transServices.transProcess(
+					voform, "1510811103", "transaction", "");
+			commonXMLEntity.getProcessCode();
+			String reslutmessage = "";
+			if (!commonXMLEntity.getProcessCode().equals("000000")) {
+				throw new PicpMessageException("错误码："
+						+ commonXMLEntity.getProcessCode() + "错误信息："
+						+ commonXMLEntity.getProcessDes());
+			} else {
+
+				if (operway.equals("05")) {
+					reslutmessage = "处理成功码：" + commonXMLEntity.getProcessCode()
+							+ "业务状态维护为--待复核";
+				} else {
+					reslutmessage = "处理成功码：" + commonXMLEntity.getProcessCode()
+							+ "业务状态维护为--已作废！";
+				}
+
+			}
+
+			return toSuccessPage(mapping, request, reslutmessage);
+
+		} catch (Exception e) {
+			e.printStackTrace();
+			return toFailedPage(mapping, request, e.getMessage());
+		}
+
+	}
+
+	/**
+	 * 查询小额批量包信息
+	 * 
+	 * @param mapping
+	 * @param form
+	 * @param request
+	 * @param response
+	 * @return
+	 * @throws Exception
+	 */
+	@SuppressWarnings({ "unchecked", "static-access" })
+	public ActionForward queryPKGInfo(ActionMapping mapping, ActionForm form,
+			HttpServletRequest request, HttpServletResponse response)
+			throws Exception {
+		try {
+			//CommonServices commonService = (CommonServices) this
+			//		.getBean("CommonServices");
+			// 界面查询条件
+			TransProcessForm voform = (TransProcessForm) form;
+			 
+			TransProcessEntity po = voform.getPo();
+			//po.setDirection("O");//往账
+			//String workdate = request.getSession().getAttribute("workDate")
+			//.toString();//工作日期
+	         //  String  msgId = commonService.getSEQMsgId(workdate);
+			// 查询条件
+			if (!StringUtils.isEmpty(voform.getPo().getMsgid())) {
+				voform.getConditions().add("msgid:" + voform.getPo().getMsgid());
+			}
+			if (!StringUtils.isEmpty(voform.getPo().getMsgid())) {
+				voform.getConditions().add("startdate:" + voform.getPo().getStartdate());
+			}
+			
+			 
+				
+			 String laibao=request.getParameter("flag");
+			if("laibao".equals(laibao)){
+				voform.getConditions().add("DIRECTION:" +"I");//来报
+			 
+			}else{
+				voform.getConditions().add("DIRECTION:" +"O");//往报
+			}
+			String transactionid = TransCodeEntity.QUERYCD;//功能代码
+			commSetToXML(voform,request,transactionid);
+			//commSetToXML(voform, TransCodeEntity.QUERYCD, "CMCS");
+			//voform.setMsgId(msgId);// 报文标识号
+			
+			voform.setQueryCd(TransCodeEntity.BEPSPKGINFO_QUERY);
+			this.setFenYe(voform);
+			TransServices transServices = (TransServices) this
+					.getBean("transServices");
+			commSetConditionsList(voform, po);
+			CommonXMLEntity commonXMLEntity = transServices.transProcess(
+					voform, voform.getTransactionId(), "transaction", voform
+							.getQueryCd());
+			if (!commonXMLEntity.getProcessCode().equals("000000")) {
+				throw new PicpMessageException("错误码：["
+						+ commonXMLEntity.getProcessCode() + "] 错误信息：["
+						+ commonXMLEntity.getProcessDes() + "]");
+			}
+			voform.setTotalSize(Integer.parseInt(commonXMLEntity
+					.getRecordcount()));
+			this.setQueryPageValue(voform, true);
+			List List = commonXMLEntity.getResults();
+			this.setPageInfo(request, voform);
+			this.setObjectToRequest(request, "queryList", List);
+			request.setAttribute("condition", po);
+			
+			if("laibao".equals(laibao)){
+			 
+				return mapping.findForward("queryPKGInfolaibao");
+			}else{
+				return mapping.findForward("queryPKGInfo");
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+			return toFailedPage(mapping, request, e.getMessage());
+		}
+
+	}
+	/**
+	 * 查询小额汇总包重发业务
+	 * @param mapping
+	 * @param form
+	 * @param request
+	 * @param response
+	 * @return
+	 * @throws Exception
+	 */
+	public ActionForward queryPKGInfoAgain(ActionMapping mapping, ActionForm form,
+			HttpServletRequest request, HttpServletResponse response)
+	throws Exception {
+		try {
+			CommonServices commonService = (CommonServices) this
+			.getBean("CommonServices");
+			// 界面查询条件
+			TransProcessForm voform = (TransProcessForm) form;
+			String msgId=voform.getPo().getMsgid();
+			TransProcessEntity po = voform.getPo();
+			po.setDirection("O");//往账
+			//commSetToXML(voform, TransCodeEntity.QUERYCD, "CMCS");
+			String transactionid = TransCodeEntity.QUERYCD;//功能代码
+			commSetToXML(voform,request,transactionid);
+			voform.setOrgCode(request.getSession().getAttribute("orgcode")+"");// 机构号
+			voform.setMsgId(msgId);// 报文标识号
+			
+			voform.setQueryCd(TransCodeEntity.BEPSPKGINFOAGAIN_QUERY);
+			this.setFenYe(voform);
+			TransServices transServices = (TransServices) this
+			.getBean("transServices");
+			commSetConditionsList(voform, po);
+			CommonXMLEntity commonXMLEntity = transServices.transProcess(
+					voform, voform.getTransactionId(), "transaction", voform
+					.getQueryCd());
+			if (!commonXMLEntity.getProcessCode().equals("000000")) {
+				throw new PicpMessageException("错误码：["
+						+ commonXMLEntity.getProcessCode() + "] 错误信息：["
+						+ commonXMLEntity.getProcessDes() + "]");
+			}
+			voform.setTotalSize(Integer.parseInt(commonXMLEntity
+					.getRecordcount()));
+			this.setQueryPageValue(voform, true);
+			List List = commonXMLEntity.getResults();
+			this.setPageInfo(request, voform);
+			this.setObjectToRequest(request, "queryList", List);
+			request.setAttribute("condition", po);
+			return mapping.findForward("queryPKGInfoAgain");
+			
+		} catch (Exception e) {
+			e.printStackTrace();
+			return toFailedPage(mapping, request, e.getMessage());
+		}
+		
+	}
+	/**
+	 * 小额往报批量包明细
+	 * @param mapping
+	 * @param form
+	 * @param request
+	 * @param response
+	 * @return
+	 * @throws Exception
+	 */
+	@SuppressWarnings({ "unchecked", "static-access" })
+	public ActionForward queryPKGInfoDetail(ActionMapping mapping, ActionForm form,
+			HttpServletRequest request, HttpServletResponse response)
+			throws Exception {
+		try {
+			 String laibao=request.getParameter("flag");
+			@SuppressWarnings("unused")
+			CommonServices commonService = (CommonServices) this
+					.getBean("CommonServices");
+			// 界面查询条件
+			TransProcessForm voform = (TransProcessForm) form;
+//			//来报查询 发起清算行 避免对手行之间的报文标识号重复导致查询出多条数据.
+//			String instgdrctpty=request.getParameter("instgdrctpty");
+//			if (!StringUtils.isEmpty(instgdrctpty)) {
+//				voform.getConditions().add("INSTGDRCTPTY:" + instgdrctpty);
+//			}
+//			//往报查询 接收清算行 
+//			String instddrctpty=request.getParameter("instddrctpty");
+//			if (!StringUtils.isEmpty(instddrctpty)) {
+//				voform.getConditions().add("INSTDDRCTPTY:" + instddrctpty);
+//			}
+			String pmtgrpid = request.getParameter("pmtgrpid");//实际为报文标识号
+			//判断如果报文为回执报文的话，查询条件前缀为：RECPTMSGID
+			boolean recvFlag=false;//回执报文标识
+			String msgtpid=request.getParameter("msgtpid");
+			HashSet<String> hs=new HashSet<String>();
+			hs.add("beps.124.001.01");
+			hs.add("beps.128.001.01");
+			hs.add("beps.132.001.01");
+			hs.add("beps.134.001.01");
+			if(null!=msgtpid){
+				if(hs.contains(msgtpid)){
+					recvFlag=true;
+					if (!StringUtils.isEmpty(pmtgrpid)) {
+						voform.getConditions().add("recptmsgid:" + pmtgrpid);
+					}
+				}else{
+					recvFlag=false;
+					if (!StringUtils.isEmpty(pmtgrpid)) {
+						voform.getConditions().add("msgid:" + pmtgrpid);
+					}
+				}
+			}
+			if("laibao".equals(laibao)){//来报查询
+				voform.getPo().setTxid(pmtgrpid);
+				voform.getPo().setPmtgrpid(pmtgrpid);
+				if(true==recvFlag) voform.getConditions().add("DIRECTION:" +"O") ;//往报
+				else voform.getConditions().add("DIRECTION:" +"I");//来报
+			}else{
+				voform.getPo().setPmtgrpid(pmtgrpid);
+				if(true==recvFlag) voform.getConditions().add("DIRECTION:" +"I");//来报
+				else voform.getConditions().add("DIRECTION:" +"O");//往报
+			}
+			TransProcessEntity po = voform.getPo();
+			//commSetToXML(voform, TransCodeEntity.QUERYCD, "CMCS");
+			String transactionid = TransCodeEntity.QUERYCD;//功能代码
+			commSetToXML(voform,request,transactionid);
+			voform.setQueryCd(TransCodeEntity.BEPSPKGDETAILINFO_QUERY);
+			this.setFenYe(voform);
+			TransServices transServices = (TransServices) this.getBean("transServices");
+			request.setAttribute("msgid", pmtgrpid);
+			CommonXMLEntity commonXMLEntity = transServices.transProcess(
+					voform, voform.getTransactionId(), "transaction", voform
+							.getQueryCd());
+			if (!commonXMLEntity.getProcessCode().equals("000000")) {
+				throw new PicpMessageException("错误码：["
+						+ commonXMLEntity.getProcessCode() + "] 错误信息：["
+						+ commonXMLEntity.getProcessDes() + "]");
+			}
+			voform.setTotalSize(Integer.parseInt(commonXMLEntity
+					.getRecordcount()));
+			this.setQueryPageValue(voform, true);
+			List List = commonXMLEntity.getResults();
+			this.setPageInfo(request, voform);
+			this.setObjectToRequest(request, "queryList", List);
+			request.setAttribute("condition", po);
+		 
+			if("laibao".equals(laibao)){
+				if(recvFlag==true){
+					return mapping.findForward("queryPKGInfoDetail");
+				}
+				else{
+					request.setAttribute("msgid", pmtgrpid);
+					return mapping.findForward("recvTransQueryBatchDetail");
+				}
+			}else{
+				if(recvFlag==true){
+					request.setAttribute("msgid", pmtgrpid);
+					return mapping.findForward("recvTransQueryBatchDetail");
+				}
+				else{
+					return mapping.findForward("queryPKGInfoDetail");
+				}
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+			return toFailedPage(mapping, request, e.getMessage());
+		}
+
+	}
+	/**
+	 * 小额往报批量包明细之后的业务明细
+	 * @param mapping
+	 * @param form
+	 * @param request
+	 * @param response
+	 * @return
+	 * @throws Exception
+	 */
+	public ActionForward queryPKGInfoBusinessDetail(ActionMapping mapping, ActionForm form,
+			HttpServletRequest request, HttpServletResponse response)
+			throws Exception {
+		try {
+			CommonServices commonService = (CommonServices) this
+					.getBean("CommonServices");
+			// 界面查询条件
+			TransProcessForm voform = (TransProcessForm) form;
+			String pmtgrpid = request.getParameter("pmtgrpid");
+			voform.getPo().setPmtgrpid(pmtgrpid);
+			TransProcessEntity po = voform.getPo();
+			//commSetToXML(voform, TransCodeEntity.QUERYCD, "CMCS");
+			String transactionid = TransCodeEntity.QUERYCD;//功能代码
+			commSetToXML(voform,request,transactionid);
+			voform.setOrgCode(request.getSession().getAttribute("orgcode")+"");// 机构号
+			voform.setQueryCd(TransCodeEntity.BEPSPKGDETAILINFO_QUERY);
+			this.setFenYe(voform);
+			TransServices transServices = (TransServices) this
+					.getBean("transServices");
+			//commSetConditionsList(voform, po);
+			
+			// 查询条件
+			if (!StringUtils.isEmpty(pmtgrpid)) {
+				voform.getConditions().add("msgid:" + pmtgrpid);
+			}
+			 
+			CommonXMLEntity commonXMLEntity = transServices.transProcess(
+					voform, voform.getTransactionId(), "transaction", voform
+							.getQueryCd());
+			if (!commonXMLEntity.getProcessCode().equals("000000")) {
+				throw new PicpMessageException("错误码：["
+						+ commonXMLEntity.getProcessCode() + "] 错误信息：["
+						+ commonXMLEntity.getProcessDes() + "]");
+			}
+			voform.setTotalSize(Integer.parseInt(commonXMLEntity
+					.getRecordcount()));
+			this.setQueryPageValue(voform, true);
+			List List = commonXMLEntity.getResults();
+			this.setPageInfo(request, voform);
+			this.setObjectToRequest(request, "queryList", List);
+			request.setAttribute("condition", po);
+			return mapping.findForward("queryPKGInfoDetail");
+
+		} catch (Exception e) {
+			e.printStackTrace();
+			return toFailedPage(mapping, request, e.getMessage());
+		}
+
+	}
+	/**
+	 * 查询查复列表及凭证打印
+	 * @param mapping
+	 * @param form
+	 * @param request
+	 * @param response
+	 * @return
+	 */
+	public ActionForward queryReplyInfo(ActionMapping mapping, ActionForm form,
+			HttpServletRequest request, HttpServletResponse response) {
+		try {
+			ReportManagService reportManagService = (ReportManagService) this
+					.getBean("ReportManagService");
+			TransProcessForm voform = (TransProcessForm) form;
+			List replyInfoList = new ArrayList();// 查询查复列表
+			List replyInfoTempList = new ArrayList();
+			CcmsQueryReplyInfo entity = null;
+			if (voform.getPo().getWorkdt() != null
+					&& !voform.getPo().getWorkdt().trim().equals("")) {
+				this.setPageValue(voform,true);
+				/**
+				 * Id,WorkDt,Direction,PmtGrpId,MsgId,CreDtTm,RecptMsgId," +
+				"RecptDtTm,InstgPty,InstgIndrctPty,InstdPty,InstdIndrctPty,OrnglMsgId," +
+				"OrnglInstgPty,OrnglMsgTp,OrnglTxId," +
+				"OrnglPmtTp,QueryType,CurrencyCd,Amount,QueryContent,ReplyContent,Status,PrcCd," +
+				"RjctInf,SttlmDt,SystemCd,Ustrd
+				 */
+				// 根据FORM查询符合条件的数据
+				replyInfoTempList = reportManagService.getReplyInfoList(voform);
+				Object obj[] = null;
+				for(int i=0;i<replyInfoTempList.size();i++){
+					obj = (Object[]) replyInfoTempList.get(i);;
+					int a=obj.length;
+					entity = new CcmsQueryReplyInfo();
+					entity.setId(obj[0]==null?"":obj[0].toString());//主键
+					entity.setWorkDt(obj[1]==null?"":obj[1].toString());//工作日期
+					entity.setDirection(SystemConstants.getDirectionNameByDirectionCode(obj[2]==null?"":obj[2].toString()));//来往标识
+					entity.setPmtGrpId(obj[3]==null?"":obj[3].toString());//支付交易组号
+					entity.setMsgId(obj[4]==null?"":obj[4].toString());//报文标识号
+					entity.setCreDtTm(obj[5]==null?"":obj[5].toString());//报文发送时间
+					entity.setRecptMsgId(obj[6]==null?"":obj[6].toString());//回执报文标识号
+					entity.setRecptDtTm(obj[7]==null?"":obj[7].toString());//回执报文时间
+					entity.setInstgPty(obj[8]==null?"":obj[8].toString());//发送参与机构
+					entity.setInstgIndrctPty(obj[9]==null?"":obj[9].toString());//发送直接参与机构
+					entity.setInstdPty(obj[10]==null?"":obj[10].toString());//接收参与机构
+					entity.setInstdIndrctPty(obj[11]==null?"":obj[11].toString());//接收直接参与机构
+					entity.setOrnglMsgId(obj[12]==null?"":obj[12].toString());//原报文标识号
+					entity.setOrnglInstgPty(obj[13]==null?"":obj[13].toString());//原发起参与机构
+					entity.setOrnglMsgTp(obj[14]==null?"":obj[14].toString());//原报文类型编码
+					entity.setOrnglTxId(obj[15]==null?"":obj[15].toString());//原明细标识号
+					entity.setOrnglPmtTp(obj[16]==null?"":obj[16].toString());//原业务类型编码
+					entity.setQueryType(obj[17]==null?"":obj[17].toString());//查询类型
+					entity.setCurrencyCd(obj[18]==null?"":obj[18].toString());//货币符号
+					entity.setAmount(obj[19]==null?"":obj[19].toString());//金额
+					entity.setQueryContent(obj[20]==null?"":obj[20].toString());//查询内容
+					entity.setReplyContent(obj[21]==null?"":obj[21].toString());//查复内容
+					entity.setStatus(SystemConstants.getPrcStsNameByPrcStsCode(obj[22]==null?"":obj[22].toString()));//业务状态
+					entity.setPrcCd(SystemConstants.getPrcStsNameByPrcStsCode(obj[23]==null?"":obj[23].toString()));//处理状态
+					entity.setRjctInf(obj[24]==null?"":obj[24].toString());//业务拒绝信息
+					entity.setSttlmDt(obj[25]==null?"":obj[25].toString());//终态日期
+					entity.setSystemCd(obj[26]==null?"":obj[26].toString());//系统编号
+					entity.setUstrd(obj[27]==null?"":obj[27].toString());//备注
+					replyInfoList.add(entity);
+				}
+			}
+			request.setAttribute("replyInfoList", replyInfoList);
+			this.setPageInfo(request, voform);
+			return mapping.findForward("replyInfoList");// 查询查复列表
+		} catch (Exception e) {
+			e.printStackTrace();
+			return toFailedPage(mapping, request, e.getMessage());
+		}
+	}
+	/**
+	 * 自由格式查询列表
+	 * @param mapping
+	 * @param form
+	 * @param request
+	 * @param response
+	 * @return
+	 */
+	@SuppressWarnings("unchecked")
+	public ActionForward queryFreeMsg(ActionMapping mapping, ActionForm form,
+			HttpServletRequest request, HttpServletResponse response) {
+		try {
+			ReportManagService reportManagService = (ReportManagService) this
+			.getBean("ReportManagService");
+			TransProcessForm voform = (TransProcessForm) form;
+			List freeMsgList = new ArrayList();//自由格式查询列表
+			List freeMsgTempList = new ArrayList();
+			CcmsFreeMsg entity = null;
+			if (voform.getPo().getWorkdt() != null
+					&& !voform.getPo().getWorkdt().trim().equals("")) {
+				this.setPageValue(voform,true);
+				/**
+				 * Id,MsgId,CreDtTm,InstgPty,InstdPty,InstgDrctPty,InstdDrctPty,MsgCnt,Status,WorkDt," +
+				"SttlmDt,PrcCd,TxRjctInf,TxRjctCd,Direction,SystemCd,Ustrd 
+				 */
+				// 根据FORM查询符合条件的数据
+				freeMsgTempList = reportManagService.getFreeMsgList(voform);
+				Object obj[] = null;
+				for(int i=0;i<freeMsgTempList.size();i++){
+					obj = (Object[]) freeMsgTempList.get(i);;
+					entity = new CcmsFreeMsg();
+					entity.setId(obj[0]==null?"":obj[0].toString());//主键
+					entity.setMsgId(obj[1]==null?"":obj[1].toString());//报文标识号
+					entity.setCreDtTm(obj[2]==null?"":obj[2].toString());//报文发送时间
+					entity.setInstgPty(obj[3]==null?"":obj[3].toString());//发起参与机构
+					entity.setInstdPty(obj[4]==null?"":obj[4].toString());//接收参与机构
+					entity.setInstgDrctPty(obj[5]==null?"":obj[5].toString());//接收参与机构
+					entity.setInstdDrctPty(obj[6]==null?"":obj[6].toString());//接收直接参与机构
+					entity.setMsgCnt(obj[7]==null?"":obj[7].toString());//信息内容
+					entity.setStatus(SystemConstants.getPrcStsNameByPrcStsCode(obj[8]==null?"":obj[8].toString()));//业务状态
+					entity.setWorkDt(obj[9]==null?"":obj[9].toString());//工作日期
+					entity.setSttlmDt(obj[10]==null?"":obj[10].toString());//终态日期
+					entity.setPrcCd(obj[11]==null?"":obj[11].toString());//处理状态
+					entity.setTxRjctInf(obj[12]==null?"":obj[12].toString());//业务拒绝原因
+					entity.setTxRjctCd(obj[13]==null?"":obj[13].toString());//业务拒绝码
+					entity.setDirection(SystemConstants.getDirectionNameByDirectionCode(obj[14]==null?"":obj[14].toString()));//来往标识
+					entity.setSystemCd(obj[15]==null?"":obj[15].toString());//系统编号
+					entity.setUstrd(obj[16]==null?"":obj[16].toString());//备注
+					freeMsgList.add(entity);
+				}
+			}
+			request.setAttribute("freeMsgList", freeMsgList);
+			this.setPageInfo(request, voform);
+			return mapping.findForward("freeMsgList");// 自由格式查询列表
+		} catch (Exception e) {
+			e.printStackTrace();
+			return toFailedPage(mapping, request, e.getMessage());
+		}
+	}
+	
+}

@@ -1,0 +1,413 @@
+package com.creditease.b2bsettle.basedata.external.controller;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+
+import org.apache.commons.codec.digest.DigestUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.joda.time.DateTime;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.MessageSource;
+import org.springframework.stereotype.Controller;
+import org.springframework.util.CollectionUtils;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseBody;
+
+import com.creditease.b2bsettle.basedata.constant.CommonConstants;
+import com.creditease.b2bsettle.basedata.constant.RaResponse;
+import com.creditease.b2bsettle.basedata.constant.ResultStatus;
+import com.creditease.b2bsettle.basedata.external.model.ChangePwdParam;
+import com.creditease.b2bsettle.basedata.external.model.CorpInfo;
+import com.creditease.b2bsettle.basedata.external.model.CorpInfoForPortal;
+import com.creditease.b2bsettle.basedata.external.model.LoginParam;
+import com.creditease.b2bsettle.basedata.external.model.MenuNode;
+import com.creditease.b2bsettle.basedata.external.model.ParamBean;
+import com.creditease.b2bsettle.basedata.external.model.RAQueryUserRetVo;
+import com.creditease.b2bsettle.basedata.external.model.RaUpdateDnRetVo;
+import com.creditease.b2bsettle.basedata.external.model.ResultInfo;
+import com.creditease.b2bsettle.basedata.external.model.UserAuthorityReturnVo;
+import com.creditease.b2bsettle.basedata.external.model.UserInfo;
+import com.creditease.b2bsettle.basedata.external.model.UserLoginReturnVo;
+import com.creditease.b2bsettle.basedata.model.MenuCorpBean;
+import com.creditease.b2bsettle.basedata.model.User;
+import com.creditease.b2bsettle.basedata.service.AuthorizationService;
+import com.creditease.b2bsettle.basedata.service.UserService;
+
+/**
+ * 用户对外接口
+ * 
+ * @author daoqiangzhang
+ *
+ */
+@Controller
+@RequestMapping("/external/user")
+public class ExternalUserController {
+
+	private static final Logger logger = LoggerFactory
+			.getLogger(ExternalUserController.class);
+
+	@Autowired
+	private MessageSource messageSource;
+
+	@Autowired
+	private UserService userService;
+
+	@Autowired
+	private AuthorizationService authorizationService;
+
+	/**
+	 * 用户登陆,返回权限数据（门户调用）
+	 * 
+	 * @param loginBean
+	 * @return
+	 */
+	@RequestMapping(value = "/login", method = RequestMethod.POST)
+	@ResponseBody
+	public ResultInfo login(@RequestBody LoginParam param) {
+		UserLoginReturnVo retVo = new UserLoginReturnVo();
+		String userName = param.getUserId();
+		String password = param.getPassword();
+		String keyInfo = param.getKeyInfo();
+		String sysId = param.getMerchId();
+		User user = userService.login(userName, password);
+		
+		//校验用户名密码
+		if(user == null) {
+			retVo.setRetCode(ResultStatus.FAIL.value());
+			retVo.setRetMessage(messageSource.getMessage("login.error", null,
+					Locale.CHINA));
+			return retVo;
+		}
+
+		// 校验DN码
+		String dn = user.getDn();
+		if (StringUtils.isEmpty(dn) || !dn.equals(keyInfo)) {
+			retVo.setRetCode(ResultStatus.FAIL.value());
+			retVo.setRetMessage(messageSource.getMessage("dn.error", null,
+					Locale.CHINA));
+			return retVo;
+		}
+
+		//查询权限
+		List<MenuCorpBean> menuList = authorizationService.findAllMenu(
+				userName, sysId);
+		retVo.setCheckData(convertCorpForPortal(menuList));
+		retVo.setMenuList(convertMenu(menuList));
+		Date lastLoginTime = user.getLastLoginTime();
+		retVo.setLastLoginTime(new DateTime(lastLoginTime)
+				.toString(CommonConstants.SYSTEM_TIME_FORMAT));
+		retVo.setRetCode(ResultStatus.SUCCESS.value());
+
+		// 更新登陆时间
+		userService.setLoginTime(userName, new Date());
+
+		return retVo;
+	}
+
+	/**
+	 * 用户登陆（单点登陆）
+	 * 
+	 * @param loginBean
+	 * @return
+	 */
+	@RequestMapping(value = "/ssologin", method = RequestMethod.POST)
+	@ResponseBody
+	public ResultInfo ssoLogin(@RequestBody LoginParam loginBean) {
+		ResultInfo retVo = new ResultInfo();
+		String userName = loginBean.getUserId();
+		String password = loginBean.getPassword();
+		User user = userService.login(userName, password);
+		
+		//校验用户名密码
+		if(user == null) {
+			retVo.setRetCode(ResultStatus.FAIL.value());
+			retVo.setRetMessage(messageSource.getMessage("login.error", null,
+					Locale.CHINA));
+			return retVo;
+		}
+		retVo.setRetCode(ResultStatus.SUCCESS.value());
+		return retVo;
+	}
+	
+	/**
+	 * 用户有效性验证
+	 * 1、门户请求业务系统
+	 * 2、业务系统请求单点登陆
+	 * 3、单点登陆请求基础数据
+	 * 
+	 * @param loginBean
+	 * @return
+	 */
+	@RequestMapping(value = "/validateUser", method = RequestMethod.POST)
+	@ResponseBody
+	public ResultInfo validateUser(@RequestBody LoginParam param) {
+		ResultInfo retVo = new ResultInfo();
+		String userName = param.getUserId();
+		String keyInfo = param.getKeyInfo();
+		boolean validate = userService.validate(userName, keyInfo);
+		if(validate) {
+			retVo.setRetCode(ResultStatus.SUCCESS.value());
+		} else {
+			retVo.setRetCode(ResultStatus.FAIL.value());
+			retVo.setRetMessage(messageSource.getMessage("user.invalid", null,
+					Locale.CHINA));
+		}
+		return retVo;
+	}
+
+	/**
+	 * 业务系统根据登陆名查询用户ID及真实改名
+	 * 
+	 * @param userName
+	 * @return
+	 */
+	@RequestMapping(value = "/getUserInfo", method = RequestMethod.POST)
+	@ResponseBody
+	public UserInfo getUserInfo(@RequestBody ParamBean param) {
+		UserInfo userInfo = new UserInfo();
+		User findByName = userService.findByName(param.getUserId());
+		if (findByName == null) {
+			userInfo.setRetCode(ResultStatus.FAIL.value());
+		} else {
+			userInfo.setRetCode(ResultStatus.SUCCESS.value());
+			userInfo.setUserId(findByName.getId());
+			userInfo.setUserName(param.getUserId());
+			userInfo.setRealName(findByName.getRealName());
+		}
+		return userInfo;
+	}
+
+	/**
+	 * 根据用户Id查询权限,用户已登陆验证（业务系统调用）
+	 * 
+	 * @param loginBean
+	 * @return
+	 */
+	@RequestMapping(value = "/getUserAuthority", method = RequestMethod.POST)
+	@ResponseBody
+	public ResultInfo getUserAuthority(@RequestBody ParamBean param) {
+		UserAuthorityReturnVo retVo = new UserAuthorityReturnVo();
+		String userName = param.getUserId();
+		String sysId = param.getMerchId();
+		User user = userService.findByName(userName);
+		List<MenuCorpBean> menuList = authorizationService.findAllMenu(
+				userName, sysId);
+		retVo.setUserId(user.getId());
+		retVo.setMenu(convertMenu(menuList));
+		retVo.seteList(convertCorp(menuList));
+		retVo.setRetCode(ResultStatus.SUCCESS.value());
+		return retVo;
+	}
+
+	/**
+	 * 修改密码（门户调用）
+	 * 
+	 * @param requestBean
+	 * @return
+	 */
+	@RequestMapping(value = "/changepwd", method = RequestMethod.POST)
+	@ResponseBody
+	public ResultInfo changPwd(@RequestBody ChangePwdParam param) {
+
+		// 请求合法性检查
+		ResultInfo retInfo = new ResultInfo();
+		if (!validate(param)) {
+			retInfo.setRetCode(ResultStatus.FAIL.value());
+			retInfo.setRetMessage(messageSource.getMessage("request.illegal",
+					null, Locale.CHINA));
+			return retInfo;
+		}
+
+		String userName = param.getUserId();
+		String orgPwd = param.getOrgPwd();
+		String newPwd = param.getNewPwd();
+		boolean success = userService.changePwd(userName, orgPwd, newPwd);
+		if (success) {
+			retInfo.setRetCode(ResultStatus.SUCCESS.value());
+		} else {
+			retInfo.setRetCode(ResultStatus.FAIL.value());
+			retInfo.setRetMessage(messageSource.getMessage("modify.pwd.error",
+					null, Locale.CHINA));
+		}
+		return retInfo;
+	}
+
+	/**
+	 * 根据用户ID查询用户信息(RA系统调用)
+	 * 
+	 * @param userId
+	 * @param signInfo
+	 * @return
+	 */
+	@RequestMapping(value = "/finduser", method = RequestMethod.POST)
+	@ResponseBody
+	public RAQueryUserRetVo findUserBy(@RequestParam("userId") String userId,
+			@RequestParam("signInfo") String signInfo) {
+		RAQueryUserRetVo retInfo = new RAQueryUserRetVo();
+		User user = userService.findByName(userId);
+		if (user == null) {
+			retInfo.setIsSuccess(RaResponse.FAIL.value());
+			retInfo.setUserId(userId);
+			retInfo.setUsername(userId);
+		} else {
+			retInfo.setIsSuccess(RaResponse.SUCCESS.value());
+			retInfo.setUserId(user.getName());
+			retInfo.setUsername(user.getName());
+			retInfo.setIdentType(user.getCardType());
+			retInfo.setIdentNo(user.getCardNumber());
+			retInfo.setEmail(user.getEmail());
+			retInfo.setPhoneNo(user.getTel());
+			retInfo.setAddress(user.getAddress());
+			retInfo.setSignInfo(signInfo);
+		}
+		String retSignInfo = retInfo.getIsSuccess() + retInfo.getUserId()
+				+ retInfo.getUsername();
+		retInfo.setSignInfo(DigestUtils.md5Hex(retSignInfo));
+		return retInfo;
+	}
+
+	/**
+	 * 更新用户DN码(RA系统调用)
+	 * 
+	 * @param userId
+	 *            ： 用户ID即用户登陆名
+	 * @param dn
+	 *            ： DN码
+	 * @param seriesNum
+	 *            ：证书序列号
+	 * @return
+	 */
+	@RequestMapping(value = "/updatedn", method = RequestMethod.POST)
+	@ResponseBody
+	public RaUpdateDnRetVo updateDN(@RequestParam("userId") String userId,
+			@RequestParam("certSubject") String certSubject,
+			@RequestParam("seriesNum") String seriesNum,
+			@RequestParam("signInfo") String signInfo) {
+		RaUpdateDnRetVo retVo = new RaUpdateDnRetVo();
+		boolean success = userService.updateDN(userId, certSubject);
+		if (success) {
+			retVo.setIsSuccess(RaResponse.SUCCESS.value());
+		} else {
+			retVo.setIsSuccess(RaResponse.FAIL.value());
+		}
+		retVo.setUserId(userId);
+		String signInfoRet = DigestUtils.md5Hex(retVo.getIsSuccess()
+				+ retVo.getUserId());
+		retVo.setSignInfo(signInfoRet);
+		return retVo;
+	}
+
+	/**
+	 * 检查请求的用户及系统编码的合法法性
+	 * 
+	 * @param requestBean
+	 */
+	private boolean validate(ParamBean requestBean) {
+		if (StringUtils.isEmpty(requestBean.getMerchId())
+				|| StringUtils.isEmpty(requestBean.getUserId())) {
+			return false;
+		}
+		return true;
+	}
+
+	private Collection<CorpInfoForPortal> convertCorpForPortal(
+			List<MenuCorpBean> menuList) {
+		if (CollectionUtils.isEmpty(menuList)) {
+			return null;
+		}
+		Map<String, CorpInfoForPortal> corpMap = new HashMap<String, CorpInfoForPortal>();
+		for (MenuCorpBean menu : menuList) {
+			String corpId = menu.geteId();
+			CorpInfoForPortal corpInfo = corpMap.get(corpId);
+			if (corpInfo == null) {
+				corpInfo = new CorpInfoForPortal();
+				corpInfo.seteId(corpId);
+				corpInfo.seteName(menu.geteName());
+				corpMap.put(corpId, corpInfo);
+			}
+		}
+		return corpMap.values();
+	}
+
+	/**
+	 * List<Menu> -> MenuBean List<Menu>已按ID排序
+	 * 
+	 * @param menuList
+	 * @return
+	 */
+	private MenuNode convertMenu(List<MenuCorpBean> menuList) {
+		if (CollectionUtils.isEmpty(menuList)) {
+			return null;
+		}
+
+		Map<String, MenuNode> map = new HashMap<String, MenuNode>();
+		MenuNode root = null;
+		for (MenuCorpBean menu : menuList) {
+
+			MenuNode node = new MenuNode(menu.getCode(), menu.getName(),
+					menu.getUrl());
+
+			MenuNode nodeInMap = map.get(menu.getCode());
+			if (nodeInMap != null) {
+				continue;
+			} else {
+				map.put(menu.getCode(), node);
+			}
+			String parent = menu.getParent();
+			if (CommonConstants.ROOT_VAL.equals(parent)) {
+				root = node;
+			} else {
+				MenuNode parentMenu = map.get(parent);
+				if (parentMenu != null) {
+					List<MenuNode> children = parentMenu.getChildren();
+					if (children == null) {
+						children = new ArrayList<MenuNode>();
+						parentMenu.setChildren(children);
+					}
+					children.add(node);
+				}
+			}
+		}
+		return root;
+	}
+
+	private Collection<CorpInfo> convertCorp(List<MenuCorpBean> menuList) {
+		if (CollectionUtils.isEmpty(menuList)) {
+			return null;
+		}
+		Map<String, CorpInfo> corpMap = new HashMap<String, CorpInfo>();
+		for (MenuCorpBean menu : menuList) {
+			String corpId = menu.geteId();
+			String functionCode = menu.getFunctionCode();
+			CorpInfo corpInfo = corpMap.get(corpId);
+			if (corpInfo == null) {
+				corpInfo = new CorpInfo();
+				corpInfo.seteId(corpId);
+				corpInfo.seteName(menu.geteName());
+				List<String> funCodeList = new ArrayList<String>();
+				if (!StringUtils.isEmpty(functionCode)) {
+					funCodeList.add(menu.getFunctionCode());
+				}
+				corpInfo.setFunCodeList(funCodeList);
+				corpMap.put(corpId, corpInfo);
+			} else {
+				corpInfo.seteId(corpId);
+				corpInfo.seteName(menu.geteName());
+				if (!StringUtils.isEmpty(functionCode)) {
+					corpInfo.getFunCodeList().add(menu.getFunctionCode());
+				}
+			}
+		}
+		return corpMap.values();
+	}
+}

@@ -1,0 +1,145 @@
+package com.xinleju.platform.sys.base.service;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.sys.base.entity.CustomForm;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface CustomFormService extends  BaseService <String,CustomForm>{
+
+	/**
+	  * @Description:获取最大序号
+	  * @author:zhangfangzhi
+	  * @date 2017年3月9日 下午2:08:29
+	  * @version V1.0
+	 */
+	Integer queryMaxSort(String parentId);
+
+	/**
+	  * @Description:校验是否重复
+	  * @author:zhangfangzhi
+	  * @date 2017年3月13日 上午9:54:25
+	  * @version V1.0
+	 * @param customForm 
+	 */
+	Integer validateIsExist(CustomForm customForm, String type);
+
+	/**
+	  * @Description:表单保存并且校验
+	  * @author:zhangfangzhi
+	  * @date 2017年3月23日 下午4:59:00
+	  * @version V1.0
+	 */
+	String validateBeforeSave(String userInfo, String saveJson);
+
+	/**
+	  * @Description:表单更新并且校验
+	  * @author:zhangfangzhi
+	  * @date 2017年3月23日 下午5:07:41
+	  * @version V1.0
+	 */
+	String validateBeforeUpdate(String userInfo, String updateJson);
+
+	/**
+	  * @Description:获取流程模板列表
+	  * @author:zhangfangzhi
+	  * @date 2017年3月25日 上午10:48:07
+	  * @version V1.0
+	 */
+	String getTemplateTree(String userInfo, String paramaterJson);
+
+	/**
+	  * @Description:关联查询并且排序
+	  * @author:zhangfangzhi
+	  * @date 2017年3月29日 上午11:34:55
+	  * @version V1.0
+	 */
+	Page getPageSort(Map map);
+
+	/**
+	  * @Description:删除自定义表单同时删除快速入口表单
+	  * @author:zhangfangzhi
+	  * @date 2017年4月11日 下午1:49:41
+	  * @version V1.0
+	 */
+	int deleteCustomFormById(String userInfo, String id);
+
+	/**
+	  * @Description:表单复制并且校验
+	  * @author:zhangfangzhi
+	  * @date 2017年4月19日 下午4:34:05
+	  * @version V1.0
+	 */
+	String validateBeforeCopy(String userInfo, String copyJson);
+
+	/**
+	  * @Description:获取模板并且判断是否有实例生成
+	  * @author:zhangfangzhi
+	  * @date 2017年4月26日 上午10:48:55
+	  * @version V1.0
+	 */
+	String getTemplateById(String userInfo, String idJson);
+
+	/**
+	  * @Description:查询模板下是否有实例生成
+	  * @author:zhangfangzhi
+	  * @date 2017年5月25日 上午9:10:27
+	  * @version V1.0
+	 */
+	Integer isHasInstanceByFormId(String customFormId);
+
+	/**
+	  * @Description:表单数据生成
+	  * @author:zhangfangzhi
+	  * @date 2017年6月14日 下午7:53:20
+	  * @version V1.0
+	 */
+	String saveGenerateData(String userInfo, String saveJson);
+
+	/**
+	  * @Description:获取单据编号
+	  * @author:zhangfangzhi
+	  * @date 2017年6月16日 上午10:35:01
+	  * @version V1.0
+	 */
+	String getFormNumber(String userInfo, String saveJson);
+
+	/**
+	  * @Description:快速入口查询接口
+	  * @author:zhangfangzhi
+	  * @date 2017年7月13日 下午7:40:55
+	  * @version V1.0
+	 */
+	List queryListForQuickEntry(Map map);
+
+	/**
+	  * @Description:上移下移
+	  * @author:zhangfangzhi
+	  * @date 2017年7月14日 上午11:35:19
+	  * @version V1.0
+	 */
+	int updateSort(CustomForm customForm, Map<String, Object> map);
+
+	/**
+	  * @Description:表单设计发布
+	  * @author:zhangfangzhi
+	  * @date 2017年11月22日 下午4:13:41
+	  * @version V1.0
+	 * @param isTemplateChange 
+	 */
+	int updateForPublish(CustomForm customForm, String isTemplateChange);
+
+	String saveGenerateDataEx(String userInfo, String saveJson);
+
+	String saveGenerateDataExInstance(String userInfo, String saveJson);
+
+	
+}

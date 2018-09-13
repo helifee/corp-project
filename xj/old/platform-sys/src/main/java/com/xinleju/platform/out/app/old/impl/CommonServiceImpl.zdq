@@ -1,0 +1,290 @@
+package com.xinleju.platform.out.app.old.impl;
+
+import java.util.HashMap;
+import java.util.Map;
+
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.BeanPropertyRowMapper;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+
+import com.xinleju.erp.flow.flowutils.bean.FlowResult;
+import com.xinleju.erp.flow.service.api.extend.CommonService;
+import com.xinleju.erp.flow.service.api.extend.dto.UserDTO;
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.base.utils.LoginUtils;
+import com.xinleju.platform.base.utils.SecurityUserBeanInfo;
+import com.xinleju.platform.flow.utils.DateUtils;
+import com.xinleju.platform.sys.num.dto.service.RulerSubDtoServiceCustomer;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+public class CommonServiceImpl implements CommonService {
+	
+	private static Logger log = Logger.getLogger(CommonServiceImpl.class);
+	
+	//@Autowired
+	//private SysNoticeMsgService_backup sysNoticeMsgService;
+	
+	@Autowired
+	private JdbcTemplate jdbcTemplate;
+
+	@Autowired
+	private RulerSubDtoServiceCustomer rulerSubDtoServiceCustomer;
+	 /**
+     * 发送消息接口 (必须实现)
+     * 
+     * @param module
+     *            模块编码
+     * @param msgId
+     *            消息ID,模块内自行维护，且模块内唯一
+     * @param title
+     *            消息标题
+     * @param url
+     *            访问链接 (相对地址)
+     * @param typedDate
+     *            消息操作时间，对应为 待办发送时间，已办发送时间，阅读时间，格式为 yyyy-MM-dd HH:mm:ss
+     * @param opType
+     *            消息类别，取值为: DB(待办) WD(未读) YB(已办) YD(已读) RM(删除)，一个需要人工处理的消息，发DB消息；只读不需处理的消息，发 DY消息            
+     * @param msgType
+     *            消息类型,取值为 1 :通知、0 :待办
+     * @param loginName
+     *            登录名，发送目标用户
+     * @param extParm
+     *            预留字段
+     * @return
+     */
+	@Override
+	public FlowResult<Boolean> sendMsg(String module, String msgId, String title, String url, String typedDate,
+			String opType, String msgType, String loginName, Map<String, Object> extParm) {
+		FlowResult<Boolean> result=new FlowResult<>();
+		
+		String business_id = "N/A";
+		String mobibleParam = "mobible_param";
+		String mobibleUrl = "mobile/common/common.html";
+		String firstType = "common";
+		if(extParm==null){
+			extParm = new HashMap<String, Object>();
+		}
+		String extParmText = "";
+		if(extParm!=null && extParm.get("fi_id")!=null){
+			extParmText = extParm.get("fi_id").toString();
+		}
+		if(msgId == null){
+			msgId = "N/A";
+		}
+		if(title == null){
+			title = "N/A";
+		}
+		if(loginName == null){
+			loginName = "N/A";
+		}
+		
+		if(msgType == null){
+			msgType = "N/A";
+		}
+		
+		if(opType == null){
+			opType = "N/A";
+		}
+		
+		if(module == null){
+			module = "N/A";
+		}
+		
+		if(business_id == null) {
+			business_id = "N/A";
+		}
+		
+		typedDate = DateUtils.getDate("yyyy-MM-dd HH:mm:ss");
+		log.info("sendMsg() 001 typedDate="+typedDate);
+		
+		if(url == null){
+			url = "N/A";
+		}
+		int resultSum = 0;
+		//001-处理发起  和 待办待阅未读的情况
+		if("LC".equals(opType) || "FQ".equals(opType) 
+			|| "DB".equals(opType) || "DY".equals(opType)  || "WD".equals(opType)){
+			
+			if("LC".equals(opType)){//为了统一起见, 把LC'发起'转为FQ
+				opType = "FQ";
+			}
+			
+			if("FQ".equals(opType)){
+				String querySql = " select count(id) from pt_flow_sys_notice_msg "
+				+ " where app_code='"+module+"' and id='"+msgId+"' and op_type='"+opType+"' ";
+				log.info("000 sendMsg() 查询是否存在相同的发起消息  querySql = "+querySql);
+				int sum = jdbcTemplate.queryForObject(querySql, Integer.class);
+				if(sum>0){//如果已经存在相同的发起的消息了
+					result.setResult(true);
+					result.setSuccess(true);
+					return result;
+				}
+			}
+			
+			if("WD".equals(opType)){//为了统一起见, 把WD'未读'转为DY
+				opType = "DY";
+			}
+			
+			log.info("sendMsg() 001 loginName="+loginName);
+			String sql="select u.id id,u.login_name loginName,u.real_name realName,u.mobile mobile,u.`status` status,u.email email,pu.post_id mainRoleId ,r.`name` position"
+					+" from pt_sys_org_user u "
+					+" LEFT JOIN pt_sys_org_post_user pu on pu.user_id = u.id and pu.is_default = 1"
+					+" LEFT JOIN pt_sys_org_post p on pu.post_id = p.id"
+					+" LEFT JOIN pt_sys_org_standard_role r on p.role_id = r.id"
+					+" where u.login_name = '"+loginName+"'";
+			log.info("001 sendMsg() 查询用户信息 sql = "+sql);
+			
+			RowMapper<UserDTO> rowMapper=new BeanPropertyRowMapper<UserDTO>(UserDTO.class);
+			UserDTO userDto = jdbcTemplate.queryForObject(sql,rowMapper);
+			String userId = userDto.getId();
+			String realName = userDto.getRealName();
+			//String userId = "user_2041865";
+			//String realName = "司卫军";
+			
+			log.info("sendMsg() 002 userId="+userId+"; realName="+realName);
+			
+			StringBuilder builder  = new StringBuilder("INSERT INTO pt_flow_sys_notice_msg(");
+			builder.append(" id,  title, login_name, user_id, user_name,") //5
+			.append(" msg_type, op_type, source, app_code, business_id, ") //5
+			.append(" send_date, extend_info, url, mobible_param, mobible_url, ")//5
+			.append(" is_open, is_locked, first_type, delflag) values(");//3
+			builder.append(" '"+msgId+"','"+title+"','"+loginName+"','"+userId+"','"+realName+"', ")
+			.append(" '"+msgType+"','"+opType+"','"+module+"', '"+module+"','"+business_id+"', ")
+			.append(" '"+typedDate+"','"+extParmText+"','"+url+"', '"+mobibleParam+"', '"+mobibleUrl+"', ")
+			.append(" 1, 0, '"+firstType+"', '0' )");
+			log.info("sendMsg() 003 sql="+builder.toString());
+			resultSum = jdbcTemplate.update(builder.toString());
+			
+		}else if("YB".equals(opType) || "YD".equals(opType)  //已办 已读 已阅  删除
+				|| "YY".equals(opType) || "RM".equals(opType) ){
+			if("YD".equals(opType) ){
+				opType = "YY";
+			}
+			
+			String updateSql = "update pt_flow_sys_notice_msg "
+			+ " set op_type='"+opType+"', deal_date=now(), extend_info='"+extParmText+"' "
+			+ " where app_code='"+module+"' and id='"+msgId+"' ";
+			log.info("000 sendMsg() 执行修改消息类型的状态  updateSql = "+updateSql);
+			if("RM".equals(opType)){
+				updateSql = " update pt_flow_sys_notice_msg "
+					+ " set op_type='"+opType+"', deal_date=now(), extend_info='"+extParmText+"', delflag=1 "
+					+ " where app_code='"+module+"' and id='"+msgId+"' ";
+				log.info("000 sendMsg() 执行修改消息类型的状态  updateSql = "+updateSql);
+			}
+			resultSum = jdbcTemplate.update(updateSql);
+		}
+		
+		Boolean resultBool = true;
+		if(resultSum==0){
+			resultBool = false;
+		}
+		result.setResult(resultBool);
+		result.setSuccess(true);
+		return result;
+	}
+
+	/**
+     * 收藏
+     * 
+     * @param module
+     *            模块编码
+     * @param storeType
+     *            取值为：F: 快捷功能、D：数据文档
+     * @param contentType
+     *            业务系统自行定义,当storeType为数据文档时有效，表示收藏的数据文档的类别,譬如"流程"、"消息"
+     * @param contentId
+     *            收藏内容的ID,在 "module"和"contentType"中唯一
+     * @param title
+     *            标题
+     * @param URL
+     *            URL
+     * @return
+     */
+	@Override
+	public FlowResult<Boolean> store(String module, String storeType, String contentType, String contentId,
+			String title, String url) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	/**
+     * 删除收藏
+     * 
+     * @param module
+     *            模块编码
+     * @param storeType
+     *            取值为：F: 快捷功能、D：数据文档
+     * @param contentType
+     *            业务系统自行定义,当storeType为数据文档时有效，表示收藏的数据文档的类别,譬如"流程"、"消息"
+     * @param contentId
+     *            收藏内容的ID,在 "module"和"contentType"中唯一
+     * @return
+     */
+	@Override
+	public FlowResult<Boolean> unstore(String module, String storeType, String contentType, String contentId) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	/**
+     * 
+     * @param module
+     *            模块编码
+     * @param contentType
+     *            收藏类别
+     * @param contentId
+     *            收藏内容的ID,在 "module"和"contentType"中唯一
+     * @return 是否收藏 1:是 0:否
+     */
+	@Override
+	public FlowResult<Boolean> isStored(String module, String storeType, String contentType, String contentId) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	/**
+     * 获取下一个编码
+     * 
+     * @param defineCode
+     *            规则定义编码
+     * @return
+     */
+	@Override
+	public FlowResult<String> getMaxBizCode(String defineCode) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	/**
+     * 获取下一个编码(取流水号--必须实现)
+     * 
+     * @param defineId
+     *            规则定义ID
+     * @return
+     */
+	@Override
+	public FlowResult<String> getNextBizCode(String defineCode) {
+		log.debug("\n\n 001 getNextBizCode() is caled, defineCode="+defineCode);
+		String resultInfo = "";
+		SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+		String userJson = JacksonUtils.toJson(userBeanInfo);
+		Map<String, Object> paramMap = new HashMap<String, Object>();
+		paramMap.put("code", defineCode);
+		paramMap.put("status", "1");
+		paramMap.put("delflag", 0);
+		log.debug("002 getNextBizCode() paramMap="+JacksonUtils.toJson(paramMap));
+		String dubboResultInfo = rulerSubDtoServiceCustomer.getBillNumber(userJson, paramMap);
+		DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+		if(dubboServiceResultInfo.isSucess()){
+			resultInfo = dubboServiceResultInfo.getResult();
+		}
+		log.debug("003 getNextBizCode() resultInfo="+resultInfo);
+		FlowResult<String> flowResult = new FlowResult<String>();
+		flowResult.setResult(resultInfo);
+		flowResult.setSuccess(true);
+		return flowResult;
+	}
+
+}

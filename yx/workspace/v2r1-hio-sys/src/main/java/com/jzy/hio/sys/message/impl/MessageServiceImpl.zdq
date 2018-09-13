@@ -1,0 +1,129 @@
+package com.jzy.hio.sys.message.impl;
+
+import java.text.MessageFormat;
+import java.util.ArrayList;
+import java.util.List;
+
+import com.jzy.hio.annotation.DataSource;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.config.SysConfig;
+import com.jzy.hio.entity.OaSysRoleUser;
+import com.jzy.hio.entity.OaSysUser;
+import com.jzy.hio.platform.dto.tenantcompanyinfo.TenantCompanyInfoDto;
+import com.jzy.hio.platform.message.MessageFeignService;
+import com.jzy.hio.platform.message.param.IMToUserParam;
+import com.jzy.hio.platform.message.param.ImNoticeMsgSendParam;
+import com.jzy.hio.platform.message.param.ImNoticeMsgsParam;
+import com.jzy.hio.platform.message.param.MessageEnum;
+import com.jzy.hio.platform.message.param.SendMsgTypeEnum;
+import com.jzy.hio.platform.redis.PlatformRedis;
+import com.jzy.hio.sys.message.MessageService;
+import com.jzy.hio.sys.user.service.UserService;
+
+/**
+ * 消息通知
+ * 
+ * @author wt.coffee
+ * @date 2018年6月13日上午9:44:15
+ */
+@Service
+public class MessageServiceImpl extends Base implements MessageService {
+
+	@Autowired
+	private UserService userService;
+	@Autowired
+	private PlatformRedis platformRedis;
+	@Autowired
+	private SysConfig.Role roleConfig;
+	@Autowired
+	private MessageFeignService messageFeignService;
+
+	/**
+	 * 发送消息封装
+	 * 
+	 * @param msgType
+	 * @param msgCode
+	 * @param tendId
+	 * @param toOaUsers
+	 * @param title
+	 * @param content
+	 */
+	private void notice(SendMsgTypeEnum msgType, MessageEnum msgCode, //
+			String tendId, List<OaSysUser> toOaUsers, //
+			String title, String content) {
+		logger.info("推送消息{} {} {} {} {} {}", msgType, msgCode, tendId, toOaUsers, title, content);
+
+		ImNoticeMsgSendParam imNoticeMsgSendParam = new ImNoticeMsgSendParam();
+		List<ImNoticeMsgsParam> msgs = new ArrayList<>();
+		// 创建消息体-Start
+		ImNoticeMsgsParam message = new ImNoticeMsgsParam();
+		// 发送人信息
+		message.setFromUserId(getUserIdIM());
+		message.setFromUserName(getUserNameIM());
+		// 接收人信息
+		List<IMToUserParam> toUsers = new ArrayList<>();
+		for (OaSysUser user : toOaUsers) {
+			if (user == null) {
+				continue;
+			}
+			IMToUserParam userParam = new IMToUserParam();
+			userParam.setToUserId(user.getImUserId());
+			userParam.setToUserPhone(user.getMobile());
+			toUsers.add(userParam);
+		}
+		message.setToUsers(toUsers);
+		message.setTendId(tendId);
+		TenantCompanyInfoDto companyInfo = platformRedis.queryByTendId(tendId);
+		if (companyInfo == null) {
+			logger.error("platformRedis.queryByTendId -- tendId {}失败", tendId);
+			message.setTendName("unknown");
+		} else {
+			message.setTendName(companyInfo.getName());
+		}
+		// 消息体
+		message.setMsg(content);
+		message.setMsgType("msg");// msg-租户消息 sys-系统消息
+		message.setSendMsgType(msgType.getValue());
+		message.setModuleName(title);
+		message.setModuleType(msgCode.getValue());
+		// 创建消息体 -- END
+		msgs.add(message);
+		imNoticeMsgSendParam.setMsgs(msgs);
+		ApiFeignResponse<?> resp = messageFeignService.sendMessage(imNoticeMsgSendParam);
+		if (resp.isSuccess() == false) {
+			logger.info("消息发送成功error");
+		} else {
+			logger.info("通知用户设置为管理员 success");
+		}
+	}
+
+	@Override
+	public void noticeSuper(List<OaSysRoleUser> roleUsers) {
+		String tendId = getTendId();
+		String title = "管理员消息";
+		String content = roleConfig.getManagerSetup();
+		content = MessageFormat.format(content, getUserNameOA());
+		List<OaSysUser> toOaUsers = new ArrayList<>();
+		for (OaSysRoleUser roleUser : roleUsers) {
+			OaSysUser user = userService.getObjectById(roleUser.getUserId());
+			toOaUsers.add(user);
+		}
+		notice(SendMsgTypeEnum.TEXT, MessageEnum.MAIL, tendId, toOaUsers, title, content);
+	}
+
+	@Override
+	public void noticeAppChanage(@DataSource String tendId, List<OaSysRoleUser> roleUsers) {
+		String title = "权限变更";
+		List<OaSysUser> toOaUsers = new ArrayList<>();
+		for (OaSysRoleUser roleUser : roleUsers) {
+			OaSysUser user = userService.getObjectById(tendId,roleUser.getUserId());
+			toOaUsers.add(user);
+		}
+		notice(SendMsgTypeEnum.CMD, MessageEnum.ROLE_CHANEG_MSG, tendId, toOaUsers, title, null);
+	}
+
+}

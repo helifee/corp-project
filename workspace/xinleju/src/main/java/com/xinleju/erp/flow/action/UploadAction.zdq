@@ -1,0 +1,818 @@
+package com.xinleju.erp.flow.action;
+
+import java.io.BufferedInputStream;
+import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.PropertySource;
+import org.springframework.web.util.HtmlUtils;
+
+import com.xinleju.erp.base.app.action.BaseAction;
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.app.exception.AppException;
+import com.xinleju.erp.base.utils.FileUtils;
+import com.xinleju.erp.base.utils.StringHelper;
+import com.xinleju.erp.flow.models.Upload;
+import com.xinleju.erp.flow.service.FileService;
+import com.xinleju.erp.flow.utils.FlowConstant;
+import com.xinleju.erp.flow.utils.LoginInfoUtils;
+import com.xinleju.erp.frame.models.Dict;
+
+public class UploadAction extends BaseAction {
+	
+	public File filedata;
+	public String filedataFileName;
+	public String userLabel;
+	public String note;
+	public String filedataContentType;
+	
+	public File[] filedatas;
+	public String[] filedatasFileName;
+	public String[] filedatasContentType;
+	public String[] userLabels;
+	public String[] notes;
+	
+	
+	@Value("#{appProperties['file_disk_path']?:''}")
+    private String file_disk_path;
+	
+	private String ownerId;
+	private String category;
+	private String file_path;
+	private String fileTdId;
+	private String noteTdId;
+	private String fileTrId;
+	private String filedataId;
+	private String operationTdId;
+	private Upload upload;
+	private String isSingle;
+	private List<Upload> uploadList;
+	private String includeType;
+	private String isScan;
+	private String isEncrypt;
+	private String isDoAfter;
+	private String isNeedAlert;
+	private String fileLimit;
+	private String isCheckFileName;
+	private String maskCode;
+	private String wordLimit;
+	private String isAutoNext;
+	private String isParentReHeight;
+	private String source;
+	private String userAlertMess;
+	
+	private Integer corpentryId;
+	private String luckyTime;
+	private Dict dict;
+	
+   
+
+	private Integer attId;
+	
+	@Autowired
+	FileService fileService;
+	
+	private Integer supplierId;
+	
+	protected void processFile(String category, String ownerId, int pathStyle, boolean isSingle,boolean inDb) {
+		String realPath = file_disk_path + File.separator;
+
+		if (filedatas != null){
+			fileService.upload(filedatas, filedatasFileName, realPath, userLabels, notes,category, ownerId, pathStyle, LoginInfoUtils.getLoginInfo(request), inDb);
+		} else if (filedata != null){
+			fileService.upload(filedata, filedataFileName, realPath, userLabel, note,category,ownerId, pathStyle, LoginInfoUtils.getLoginInfo(request), isSingle,inDb);
+		}
+	}
+	
+	public void writeFile(){
+		String path = "/data/test2/test2.txt";
+		System.out.println("[I am in writeFile....filePath:"+path+"]");
+		try {
+			FileUtils.checkDir("/data/test2");
+			File f = new File(path);
+			if (f.exists())f.delete();
+			System.out.println("[I am in writeFile....start writefile!");
+			try {
+				f.createNewFile();
+			} catch (IOException e) {
+				System.out.println(e);
+			}
+			String source = "hello!";
+			byte[] bytes = source.getBytes();// 一定由string得到bytes才能写入到文件里
+			OutputStream os;
+			try {
+				os = new FileOutputStream(path);
+				os.write(bytes);
+				os.close();
+			} catch (FileNotFoundException e) {
+				System.out.println("[I am in writeFile....writefile ERROR!");
+				e.printStackTrace();
+			} catch (IOException e) {
+				System.out.println("[I am in writeFile....writefile ERROR!");
+				e.printStackTrace();
+			}
+			System.out.println("[I am in writeFile....end writefile!");
+		}catch (Exception e) {
+			e.printStackTrace();
+		}
+	}
+	
+	public void checkFile(){
+		if(upload!=null){
+			uploadList = fileService.getUploadList(upload.getCategory(), upload.getOwnerId());
+			if(uploadList.size()==0){
+				renderJson(FlowConstant.STR_FALSE);
+			}else{
+				renderJson(FlowConstant.STR_TRUE);
+			}
+		}
+	}
+	
+	public void checkFile2(){
+		if(!StringUtils.isBlank(category)&&!StringUtils.isBlank(ownerId)){
+			uploadList = fileService.getUploadList(category,ownerId);
+			if(uploadList.size()>0){
+				renderJson("{success:true}");
+			}else{
+				renderJson("{success:false}");
+			}
+		}
+	}
+	
+	public String index() {
+		List<Upload> uploads = getCommonService().findByHQL(Upload.class,
+				"from Upload where ownerId=? and category=?",
+				new Object[] { this.ownerId, this.category });
+		getRequest().setAttribute("uploads", uploads);
+		
+		if(id!=null)
+			upload = getCommonService().getById(Upload.class, id);
+		
+		return "index";
+	}
+	
+	public void upload() {
+		processFile(category, ownerId, 0, false, true);
+		redirect("upload!index.do?ownerId=" + ownerId + "&category=" + category);
+	}
+	
+	public void upload2()  {
+		boolean ifUpload = true;
+		String exceptionDescribe = "";
+		String UVScanInfoStatus = "0";
+		Upload upload = null;
+		File src = null;
+		File dst = null;
+		String useJson = getParameter("useJson");
+		//文件上传
+		//附件大小限制
+		try{
+			if(StringUtils.isBlank(fileLimit) || "".equals(fileLimit.trim())){
+				fileLimit = FlowConstant.FILE_LIMIT;
+			}
+			if((filedata.length()/1024)>(Integer.valueOf(fileLimit)*1024)){
+				ifUpload = false;
+				exceptionDescribe = "请上传"+fileLimit+"兆以内的附件。";
+			}else{
+				//材料价格模板上传(Ext后他乱码)
+				if(filedataFileName.indexOf("&#")!=-1 && StringHelper.parseBoolean(getParameter("isExt"))){
+					filedataFileName = HtmlUtils.htmlUnescape(filedataFileName);
+				}
+				
+				String realPath = file_disk_path+ File.separator;
+				upload = fileService.upload(filedata, filedataFileName, realPath, filedataFileName, note,category,ownerId, FileService.PATH_STYLE_OWNERID, LoginInfoUtils.getLoginInfo(request), StringHelper.parseBoolean(isSingle),false,StringHelper.parseBoolean(isScan));
+				
+				//如果附件带有来源，则进行保存
+				if(!StringUtils.isBlank(source)){
+					getCommonService().execute("update Upload set source = ? where id = ?",new Object[]{source,upload.getId()});
+				}
+				//防止文件名过长(默认长度为31个字符)
+				if(StringUtils.isBlank(wordLimit)){
+					wordLimit = "31";
+				}
+				filedataFileName = StringHelper.truncate(filedataFileName,Integer.valueOf(wordLimit), "...");
+				//文件杀毒扫描
+				if(FlowConstant.STR_TRUE.equals(isScan)){
+					String filePath = file_disk_path+upload.getPath();
+					Map uploadMap = (Map)App.getBean("uploadMap");
+					//正常路径
+					String realConfigPath = null;
+					//若是附件配置的，路径为附件组编码/附件编码/，否则取配置文件中的路径。
+					realConfigPath = realPath + (String)uploadMap.get(upload.getCategory());
+					
+					if (!realConfigPath.endsWith(File.separator)) {
+					    realConfigPath = realConfigPath + File.separator;
+					}
+					String realPath1 = realConfigPath + filePath;
+					
+					//缓冲区路径
+					String bufferConfigPath = FlowConstant.FILE_BUFFER_CONFIG_PATH;
+					if(!bufferConfigPath.endsWith(File.separator))bufferConfigPath = bufferConfigPath + File.separator;
+					String bufferPath = bufferConfigPath + filePath;
+					//正常文件
+					//更新文件的扫描状态
+					getCommonService().execute("update Upload set isSafe = ? where id = ?",new Object[]{String.valueOf(1),upload.getId()});
+					//文件从缓冲文件夹移动至上传文件夹下
+					try{
+						src = new File(bufferPath);
+						dst = new File(realPath1);
+						try {
+							dst.mkdirs();
+							dst.createNewFile();
+						} catch (IOException e) {
+							ifUpload = false;
+							exceptionDescribe = "创建目标目录失败，请您联系管理员！";
+						}
+						FileUtils.copyForChannel(src, dst);
+						//删除缓冲区文件
+						//ADD 删除父空目录
+						String parentDir = "";
+						try{
+							parentDir = src.getParent();
+						}
+						catch(Exception e){
+							
+						}
+						
+						src.delete();
+						//执行删除父空目录
+						try{
+							if(StringUtils.isNotEmpty(parentDir)){
+								File _parentDir = new File(parentDir);
+								if(_parentDir.isDirectory() && parentDir.isEmpty()){
+									_parentDir.delete();
+								}
+							}
+						}
+							
+						catch(Exception e){
+							
+						}
+					}catch (Exception e) {
+						ifUpload = false;
+						exceptionDescribe = "服务器繁忙,请您稍候再试！！";
+						e.printStackTrace();
+					}
+				}else{
+				}
+			}
+		}catch (Exception e) {
+			ifUpload = false;
+			exceptionDescribe = "服务器繁忙，请稍候再试!";
+			e.printStackTrace();
+		}
+		if(ifUpload){
+			if(!StringHelper.parseBoolean(useJson)){
+				if(upload!=null&&upload.getId()!=null){
+					renderHtml("<script>parent.uploadOK("+upload.getId()+",'"+fileTrId+"','"+filedataFileName+"','"+upload.getFileName()+"','"+fileTdId+"','"+noteTdId+"','"+operationTdId+"','"+note+"','"+category+"','"+ownerId+"',"+UVScanInfoStatus+",'"+isEncrypt+"','"+isScan+"','"+isDoAfter+"','"+maskCode+"','"+luckyTime+"');</script>");
+				}else{
+					renderHtml("<script>parent.uploadOK('','"+fileTrId+"','"+filedataFileName+"','','"+fileTdId+"','"+noteTdId+"','"+operationTdId+"','"+note+"','"+category+"','"+ownerId+"',"+UVScanInfoStatus+",'"+isEncrypt+"','"+isScan+"','"+isDoAfter+"','"+maskCode+"','"+luckyTime+"');</script>");
+				}
+			}
+			else{
+				
+				super.renderText("OK");
+			}
+			
+		}else{
+			renderHtml("<script>parent.alertException('"+exceptionDescribe+"');</script>");
+		}
+	}
+	public void delete() {
+
+		getCommonService().delete(Upload.class, id);
+		redirect("upload!index.do?ownerId=" + ownerId + "&category=" + category);
+	}
+	
+	public void delete2() {
+		fileService.rmUpload(id);
+		renderJson("{success:true}");
+	}
+	
+	public void updateNote() throws Exception {
+		String note = getParameter("note");
+		getCommonService().execute("update Upload set note=? where id=?", note,id);
+		renderJson("{success:true}");
+	}
+	
+	public void download() throws Exception {
+		Upload upload = getCommonService().getById(Upload.class, id);
+		//判断文件是否为空
+		if(upload!=null){
+			String fileName = upload.getFileName();
+			if(upload.getFileContent()!=null){
+				BufferedInputStream br = new BufferedInputStream(new ByteArrayInputStream(upload.getFileContent()));
+				byte[] buf = new byte[10240];
+				this.response.reset();
+				this.response.setContentType("application/x-msdownload");
+				this.response.setHeader("Content-Disposition","attachment; filename=\"" + new String(fileName.getBytes(), "ISO8859-1") + "\"");
+				OutputStream out = this.response.getOutputStream();
+				while (br.read(buf) > 0)
+					out.write(buf);
+				br.close();
+				out.close();
+			} else {
+				throw new AppException("该文件不存在！");
+			}
+		}
+		throw new AppException("该文件不存在！");
+	}
+	/**
+	 * 主要用来下载最新的集采模板
+	 * @throws Exception
+	 */
+	public void downloadJcTemplate() throws Exception {
+		Upload upload = getCommonService().getById(Upload.class, id);
+		String fileName = upload.getFileName();
+		if(upload.getFileContent()!=null){
+			BufferedInputStream br = new BufferedInputStream(new ByteArrayInputStream(upload.getFileContent()));
+			byte[] buf = new byte[10240];
+			this.response.reset();
+			this.response.setContentType("application/x-msdownload");
+			this.response.setHeader("Content-Disposition","attachment; filename=\"" + new String(fileName.getBytes(), "ISO8859-1") + "\"");
+			OutputStream out = this.response.getOutputStream();
+			while (br.read(buf) > 0)
+				out.write(buf);
+			br.close();
+			out.close();
+		}
+		else{
+			throw new AppException("该文件不存在！");
+		}
+	}
+	public void doAfterUpload() throws Exception {
+		Map<String,Object> resultMap = new HashMap<String, Object>();
+		resultMap.put("success", true);
+	}
+	
+	public static Sheet getParseSheet(Workbook i_excel) {
+		return i_excel.getSheetAt(i_excel instanceof XSSFWorkbook ? 1 : 1);
+	}
+
+	public String fileUpload(){
+		if(StringUtils.isBlank(includeType)){
+			includeType = FlowConstant.FILE_INCLUDE_TYPE;
+		}
+		if(StringUtils.isBlank(fileLimit)){
+			fileLimit = FlowConstant.FILE_LIMIT;
+		}
+		//默认显示为31个字符
+		if(StringUtils.isBlank(wordLimit)){
+			wordLimit = "31";
+		}
+		if(StringUtils.isEmpty(luckyTime)){
+			CheckNotNull(category,ownerId);
+			CheckInValidChars(category,ownerId);
+			//如果指定来源，则按照来源查找
+			if(!StringUtils.isBlank(source)){
+				uploadList = fileService.getUploadList(category, ownerId,source);
+			}else{
+				uploadList = fileService.getUploadList(category, ownerId);
+			}
+		}
+		
+		setParameterAttribute("projectId");
+		setParameterAttribute("staId");
+		return "fileUpload";
+	}
+	/**
+	 * 审批附件
+	 * @author jun
+	 * @return
+	 */
+	public String fiFileUpload(){
+        this.fileUpload();
+        return "fiFileUpload";
+    }
+	public String fileView(){
+		if(StringUtils.isBlank(includeType)){
+			includeType = FlowConstant.FILE_INCLUDE_TYPE;
+		}
+		if(StringUtils.isBlank(fileLimit)){
+			fileLimit = FlowConstant.FILE_LIMIT;
+		}
+		//默认显示为31个字符
+		if(StringUtils.isBlank(wordLimit)){
+			wordLimit = "31";
+		}
+		if(StringUtils.isEmpty(luckyTime)){
+			CheckNotNull(category,ownerId);
+			CheckInValidChars(category,ownerId);
+			//如果指定来源，则按照来源查找
+			if(!StringUtils.isBlank(source)){
+				uploadList = fileService.getUploadList(category, ownerId,source);
+			}else{
+				uploadList = fileService.getUploadList(category, ownerId);
+			}
+		}
+		
+		setParameterAttribute("projectId");
+		setParameterAttribute("staId");
+		return "fileView";
+	}
+	/**
+	 * 
+	 *〈简述〉
+	 *〈详细描述〉
+	 * @author jun
+	 * @return
+	 */
+	public String fileView2(){
+        if(StringUtils.isEmpty(luckyTime)){
+            CheckNotNull(category,ownerId);
+            CheckInValidChars(category,ownerId);
+            //如果指定来源，则按照来源查找
+            if(!StringUtils.isBlank(source)){
+                uploadList = fileService.getUploadList(category, ownerId,source);
+            }else{
+                uploadList = fileService.getUploadList(category, ownerId);
+            }
+        }
+        return "fileView2";
+    }
+	public String singleFileUpload(){
+		if(StringUtils.isBlank(includeType)){
+			includeType = FlowConstant.FILE_INCLUDE_TYPE;
+		}
+		if(StringUtils.isBlank(fileLimit)){
+			fileLimit = FlowConstant.FILE_LIMIT;
+		}
+		upload = fileService.getFirstUploadList(category, ownerId);
+		return "singleFileUpload";
+	}
+	
+	public void getFileCount(){
+		//获取上传文件list
+		int fileCount = 0;
+		if(!StringUtils.isBlank(category)&&!StringUtils.isBlank(ownerId)){
+			//根据category,ownerId查找uploadList
+			String hql = "category=? and ownerId=?";
+			//若时间限定不为空，则增加时间过滤条件
+			
+			List<Object> paramList = new ArrayList<Object>();
+			paramList.add(category);
+			paramList.add(ownerId);
+			
+			if(!StringUtils.isBlank(luckyTime)){
+				hql += " and uploadTime > ?" ;
+				paramList.add(Long.parseLong(luckyTime));
+			}
+			uploadList = getCommonService().findAll(Upload.class,hql,paramList.toArray());
+			fileCount = uploadList.size();
+			renderJson("{success:true,fileCount:"+fileCount + ",token:"+System.currentTimeMillis()+"}");
+		}else{
+			renderJson("{success:false,fileCount:0,token:"+System.currentTimeMillis()+"}");
+		}
+	}
+	public static void CheckNotNull(Object... objects) {
+		if (objects != null) {
+			for (Object o : objects) {
+				if (o == null) {
+					throw new AppException("你访问的链接不存在或者参数输入错误！");
+
+				}
+			}
+		}
+
+	}
+
+	public static void CheckInValidChars(String... Strings) {
+		if (Strings != null) {
+			for (String o : Strings) {
+				for (String def : FlowConstant.checkHtmlMarkers) {
+					if (o != null && (o.toLowerCase().indexOf(def) != -1)) {
+						throw new AppException("请求中发现非法字符！");
+					}
+				}
+			}
+		}
+
+	}
+	
+	public String getCategory() {
+		return category;
+	}
+
+	public void setCategory(String category) {
+		this.category = category;
+	}
+
+	public String getOwnerId() {
+		return ownerId;
+	}
+
+	public void setOwnerId(String ownerId) {
+		this.ownerId = ownerId;
+	}
+
+	public Upload getUpload() {
+		return upload;
+	}
+
+	public void setUpload(Upload upload) {
+		this.upload = upload;
+	}
+
+	public List<Upload> getUploadList() {
+		return uploadList;
+	}
+
+	public void setUploadList(List<Upload> uploadList) {
+		this.uploadList = uploadList;
+	}
+
+	public String getFile_path() {
+		return file_path;
+	}
+
+	public void setFile_path(String file_path) {
+		this.file_path = file_path;
+	}
+
+	public String getFileTdId() {
+		return fileTdId;
+	}
+
+	public void setFileTdId(String fileTdId) {
+		this.fileTdId = fileTdId;
+	}
+
+	public String getNoteTdId() {
+		return noteTdId;
+	}
+
+	public void setNoteTdId(String noteTdId) {
+		this.noteTdId = noteTdId;
+	}
+
+	public String getOperationTdId() {
+		return operationTdId;
+	}
+
+	public void setOperationTdId(String operationTdId) {
+		this.operationTdId = operationTdId;
+	}
+	
+	public String getFileTrId() {
+		return fileTrId;
+	}
+
+	public void setFileTrId(String fileTrId) {
+		this.fileTrId = fileTrId;
+	}
+
+	public String getFiledataId() {
+		return filedataId;
+	}
+
+	public void setFiledataId(String filedataId) {
+		this.filedataId = filedataId;
+	}
+
+	public String getIsSingle() {
+		return isSingle;
+	}
+
+	public void setIsSingle(String isSingle) {
+		this.isSingle = isSingle;
+	}
+
+	public String getIncludeType() {
+		return includeType;
+	}
+
+	public void setIncludeType(String includeType) {
+		this.includeType = includeType;
+	}
+
+	public String getIsScan() {
+		return isScan;
+	}
+
+	public void setIsScan(String isScan) {
+		this.isScan = isScan;
+	}
+
+	public String getIsEncrypt() {
+		return isEncrypt;
+	}
+
+	public void setIsEncrypt(String isEncrypt) {
+		this.isEncrypt = isEncrypt;
+	}
+
+	public Dict getDict() {
+		return dict;
+	}
+
+	public void setDict(Dict dict) {
+		this.dict = dict;
+	}
+
+	public String getIsDoAfter() {
+		return isDoAfter;
+	}
+
+	public void setIsDoAfter(String isDoAfter) {
+		this.isDoAfter = isDoAfter;
+	}
+
+	public String getMaskCode() {
+		return maskCode;
+	}
+
+	public void setMaskCode(String maskCode) {
+		this.maskCode = maskCode;
+	}
+
+	public String getFileLimit() {
+		return fileLimit;
+	}
+
+	public void setFileLimit(String fileLimit) {
+		this.fileLimit = fileLimit;
+	}
+
+
+	public Integer getCorpentryId() {
+		return corpentryId;
+	}
+
+	public void setCorpentryId(Integer corpentryId) {
+		this.corpentryId = corpentryId;
+	}
+
+	public String getLuckyTime() {
+		return luckyTime;
+	}
+
+	public void setLuckyTime(String luckyTime) {
+		this.luckyTime = luckyTime;
+	}
+
+	public String getIsNeedAlert() {
+		return isNeedAlert;
+	}
+
+	public void setIsNeedAlert(String isNeedAlert) {
+		this.isNeedAlert = isNeedAlert;
+	}
+
+	public String getWordLimit() {
+		return wordLimit;
+	}
+
+	public void setWordLimit(String wordLimit) {
+		this.wordLimit = wordLimit;
+	}
+
+	public String getIsAutoNext() {
+		return isAutoNext;
+	}
+
+	public void setIsAutoNext(String isAutoNext) {
+		this.isAutoNext = isAutoNext;
+	}
+
+	public String getIsParentReHeight() {
+		return isParentReHeight;
+	}
+
+	public void setIsParentReHeight(String isParentReHeight) {
+		this.isParentReHeight = isParentReHeight;
+	}
+
+	public String getSource() {
+		return source;
+	}
+
+	public void setSource(String source) {
+		this.source = source;
+	}
+	public String getIsCheckFileName() {
+		return isCheckFileName;
+	}
+
+	public void setIsCheckFileName(String isCheckFileName) {
+		this.isCheckFileName = isCheckFileName;
+	}
+
+	public String getUserAlertMess() {
+		return userAlertMess;
+	}
+
+	public void setUserAlertMess(String userAlertMess) {
+		this.userAlertMess = userAlertMess;
+	}
+
+    public Integer getSupplierId() {
+        return supplierId;
+    }
+
+    public void setSupplierId(Integer supplierId) {
+        this.supplierId = supplierId;
+    }
+
+    public Integer getAttId() {
+        return attId;
+    }
+
+    public void setAttId(Integer attId) {
+        this.attId = attId;
+    }
+
+	public File getFiledata() {
+		return filedata;
+	}
+
+	public void setFiledata(File filedata) {
+		this.filedata = filedata;
+	}
+
+	public String getFiledataFileName() {
+		return filedataFileName;
+	}
+
+	public void setFiledataFileName(String filedataFileName) {
+		this.filedataFileName = filedataFileName;
+	}
+
+	public String getUserLabel() {
+		return userLabel;
+	}
+
+	public void setUserLabel(String userLabel) {
+		this.userLabel = userLabel;
+	}
+
+	public String getNote() {
+		return note;
+	}
+
+	public void setNote(String note) {
+		this.note = note;
+	}
+
+	public String getFiledataContentType() {
+		return filedataContentType;
+	}
+
+	public void setFiledataContentType(String filedataContentType) {
+		this.filedataContentType = filedataContentType;
+	}
+
+	public File[] getFiledatas() {
+		return filedatas;
+	}
+
+	public void setFiledatas(File[] filedatas) {
+		this.filedatas = filedatas;
+	}
+
+	public String[] getFiledatasFileName() {
+		return filedatasFileName;
+	}
+
+	public void setFiledatasFileName(String[] filedatasFileName) {
+		this.filedatasFileName = filedatasFileName;
+	}
+
+	public String[] getFiledatasContentType() {
+		return filedatasContentType;
+	}
+
+	public void setFiledatasContentType(String[] filedatasContentType) {
+		this.filedatasContentType = filedatasContentType;
+	}
+
+	public String[] getUserLabels() {
+		return userLabels;
+	}
+
+	public void setUserLabels(String[] userLabels) {
+		this.userLabels = userLabels;
+	}
+
+	public String[] getNotes() {
+		return notes;
+	}
+
+	public void setNotes(String[] notes) {
+		this.notes = notes;
+	}
+
+}

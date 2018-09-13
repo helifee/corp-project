@@ -1,0 +1,34 @@
+package com.xinleju.platform.finance.dao.impl;
+
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.platform.base.dao.impl.BaseDaoImpl;
+import com.xinleju.platform.finance.dao.BusinessFieldDao;
+import com.xinleju.platform.finance.entity.BusinessField;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Repository
+public class BusinessFieldDaoImpl extends BaseDaoImpl<String,BusinessField> implements BusinessFieldDao{
+
+	public BusinessFieldDaoImpl() {
+		super();
+	}
+
+	@Override
+	public List<Map<String, Object>> getMapListByBillId(String paramater) {
+		return  getSqlSession().selectList("com.xinleju.platform.finance.entity.BusinessField.queryListByObjId", paramater);
+	}
+
+	@Override
+	public List<Map<String, Object>> queryTreeList(Map<String, Object> map) {
+		return  getSqlSession().selectList("com.xinleju.platform.finance.entity.BusinessField.queryTreeList", map);
+	}
+}

@@ -1,0 +1,201 @@
+
+package com.jzy.hio.oa.meeting.service.impl;
+
+import java.util.Date;
+import java.util.List;
+
+import org.apache.commons.lang.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.entity.MeetingBoardroom;
+import com.jzy.hio.entity.MeetingInfo;
+import com.jzy.hio.entity.MeetingReserveBoardroom;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.exception.HioMybatisInsertException;
+import com.jzy.hio.exception.HioMybatisUpdateException;
+import com.jzy.hio.oa.OaConstant;
+import com.jzy.hio.oa.contract.dto.ResultMsg;
+import com.jzy.hio.oa.meeting.mapper.MeetingBoardroomMapper;
+import com.jzy.hio.oa.meeting.service.MeetingBoardroomService;
+import com.jzy.hio.oa.meeting.service.MeetingInfoService;
+import com.jzy.hio.oa.meeting.service.MeetingReserveBoardroomService;
+import com.jzy.hio.utils.LoginUser;
+
+@Service("meetingBoardroomService")
+public class MeetingBoardroomServiceImpl extends BaseServiceImpl<MeetingBoardroom> implements MeetingBoardroomService {
+
+	private static Logger logger = LoggerFactory.getLogger(MeetingBoardroomServiceImpl.class);
+	
+	@Autowired
+	private MeetingBoardroomMapper meetingBoardroomMapper;
+	
+	@Autowired
+	private MeetingReserveBoardroomService meetingReserveBoardroomService;
+	
+	@Autowired
+	private MeetingInfoService meetingInfoService;
+	
+	/*删除会议室为逻辑删除,会议室里有未开始、会议中的会议时不让删除，草稿和已完成可以删除*/
+	@Override
+	public Object deleteMeetingBoardroom(String id) throws HioException {
+		// 会议室里有未开始、会议中的会议时不让删除，草稿和已完成可以删除，删除会议室为逻辑删除
+		// 会议室预定记录
+		MeetingReserveBoardroom meetingReserveBoardroom = new MeetingReserveBoardroom();
+		meetingReserveBoardroom.setMeetingBoardroomId(id);
+		meetingReserveBoardroom.setDelflag(0);
+		List<MeetingReserveBoardroom> meetingReserveBoardroomList = meetingReserveBoardroomService.queryList(meetingReserveBoardroom);
+		if (meetingReserveBoardroomList != null && meetingReserveBoardroomList.size() > 0) {
+			for (MeetingReserveBoardroom meetingReserveBoardroom2 : meetingReserveBoardroomList) {
+				// 会议ID
+				String meetingId = meetingReserveBoardroom2.getMeetingId(); 
+				if (!StringUtils.isEmpty(meetingId)) {
+					MeetingInfo meetingInfo = meetingInfoService.getObjectById(meetingId);
+					if (meetingInfo != null) {
+						String status = meetingInfoService.selectMeetingStatus(meetingInfo);
+						if (OaConstant.MEETING_STATUS_NOT_BEGIN.equals(status) || OaConstant.MEETING_STATUS_DOING.equals(status)) {
+							//return HioException.meetingBoardroomExistMeetingInfo;
+							throw new HioException(HioException.meetingBoardroomExistMeetingInfo.getMessage());
+						}
+					}
+				}else{
+					//通过预定会议室预订
+					long nowDate = new Date().getTime();// 当前时间
+					long beginDate = meetingReserveBoardroom2.getReserveStartTime().getTime();
+					long endDate = meetingReserveBoardroom2.getReserveEndTime().getTime();					
+					if ((nowDate < beginDate) || ((nowDate >= beginDate) && (nowDate <= endDate))) {
+						
+						throw new HioException(HioException.meetingBoardroomExistMeetingInfo.getMessage());
+					}
+				}
+			}
+		}
+		
+		MeetingBoardroom meetingBoardroom = new MeetingBoardroom();
+		meetingBoardroom.setId(id);
+		meetingBoardroom.setDelflag(1);// 逻辑删除
+		meetingBoardroom.setUpdateDate(new Date());
+		logger.info("删除会议室成功，会议ID:{}",id);
+		return super.update(meetingBoardroom);
+	}
+	
+	
+	/**
+	 * 保存会议室
+	 */
+	public Object saveMeetingBoardroom(MeetingBoardroom meetingBoardroom,LoginUser loginUser) throws HioMybatisInsertException{
+		
+		ResultMsg resultMsg = null;
+		try {
+			//校验
+			resultMsg = this.checkBeforeSaveOrUpdate(meetingBoardroom);
+			
+		} catch (Exception e) {
+			//
+			logger.error(">>>>>>>>>>>>>>>>>>>>>保存会议室信息校验出错!name={}>>>>>>>>>>>>>>>>>>>>>",meetingBoardroom.getName());
+			throw new HioMybatisInsertException(e,"保存会议室信息校验出错!");
+		}
+		
+		//不校验或校验通过
+		if(Base.isEmpty(resultMsg) || resultMsg.isSuccess()){
+			try {
+				//保存
+				save(meetingBoardroom);
+			} catch (Exception e) {
+				//
+				logger.error(">>>>>>>>>>>>>>>>>>>>>保存会议室信息出错!name={}>>>>>>>>>>>>>>>>>>>>>",meetingBoardroom.getName());
+				throw new HioMybatisInsertException(e,"保存会议室信息出错!");
+			}
+			
+		}else{
+			//抛出校验不通过信息
+			throw new HioMybatisInsertException(resultMsg.getMsg());
+		}
+		
+		return meetingBoardroom.getId();		
+	}
+	
+	/**
+	 * 修改会议室
+	 */
+	public Object updateMeetingBoardroom(MeetingBoardroom meetingBoardroom,LoginUser loginUser) throws HioMybatisUpdateException{
+		
+		ResultMsg resultMsg = null;
+		try {
+			//校验
+			resultMsg = this.checkBeforeSaveOrUpdate(meetingBoardroom);
+			
+		} catch (Exception e) {
+			//
+			logger.error(">>>>>>>>>>>>>>>>>>>>>修改会议室信息校验出错!name={}>>>>>>>>>>>>>>>>>>>>>",meetingBoardroom.getName());
+			throw new HioMybatisUpdateException(e,"修改会议室信息校验出错!");
+		}
+		
+		int count = 0;
+		//不校验或校验通过
+		if(Base.isEmpty(resultMsg) || resultMsg.isSuccess()){
+			try {
+				//不传值默认为0
+				if(Base.isEmpty(meetingBoardroom.getMaxPersonNum())){
+					meetingBoardroom.setMaxPersonNum(0);
+				}
+				//修改
+				count = update(meetingBoardroom);
+			} catch (Exception e) {
+				//
+				logger.error(">>>>>>>>>>>>>>>>>>>>>修改会议室信息出错!name={}>>>>>>>>>>>>>>>>>>>>>",meetingBoardroom.getName());
+				throw new HioMybatisUpdateException(e,"修改会议室信息出错!");
+			}
+			
+		}else{
+			//抛出校验不通过信息
+			throw new HioMybatisUpdateException(resultMsg.getMsg());
+		}
+		
+		return count;
+	}
+	
+	
+	
+	/**
+	 * 
+	 * <p>保存或修改前校验<br>
+	 * @author wliang
+	 * @date 2018年6月13日 下午3:41:03 
+	 * @param meetingBoardroom
+	 * @return
+	 */
+	private ResultMsg checkBeforeSaveOrUpdate(MeetingBoardroom meetingBoardroom) throws Exception{
+		
+		ResultMsg resultMsg = new ResultMsg();
+		resultMsg.setSuccess(true);
+		String name = meetingBoardroom.getName().trim();
+		if(Base.isEmpty(name)){
+			resultMsg.setSuccess(false);
+			resultMsg.setMsg("会议室名称不能为空!");
+			return resultMsg;
+		}
+		meetingBoardroom.setName(name);
+		//校验会议室名称是否已被使用
+		List<MeetingBoardroom> boardroomList = meetingBoardroomMapper.getMeetingBoardroomListByTitle(meetingBoardroom);
+		if(Base.isNotEmpty(boardroomList)){
+			for(MeetingBoardroom r:boardroomList){
+				if(Base.isEquals(r.getName(), meetingBoardroom.getName())
+						&& Base.isNotEquals(r.getId(), meetingBoardroom.getId())){
+					//
+					resultMsg.setSuccess(false);
+					resultMsg.setMsg("该会议室名称已存在,请修改!");
+					return resultMsg;
+				}
+			}
+		}
+		
+		return resultMsg;
+	}
+	
+
+}

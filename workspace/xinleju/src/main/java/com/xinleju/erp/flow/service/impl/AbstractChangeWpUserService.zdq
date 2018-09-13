@@ -1,0 +1,369 @@
+package com.xinleju.erp.flow.service.impl;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.base.utils.CollectionUtils;
+import com.xinleju.erp.flow.dao.impl.GvDAO;
+import com.xinleju.erp.flow.dao.impl.ParticipantDAO;
+import com.xinleju.erp.flow.dao.impl.WiDAO;
+import com.xinleju.erp.flow.dao.impl.WpDAO;
+import com.xinleju.erp.flow.flowutils.bean.AssignWi;
+import com.xinleju.erp.flow.flowutils.bean.Gvs;
+import com.xinleju.erp.flow.flowutils.utils.WsConstant;
+import com.xinleju.erp.flow.frameapi.domain.User;
+import com.xinleju.erp.flow.models.Ai;
+import com.xinleju.erp.flow.models.Fi;
+import com.xinleju.erp.flow.models.Wi;
+import com.xinleju.erp.flow.models.Wp;
+import com.xinleju.erp.flow.service.FlowService;
+import com.xinleju.erp.flow.service.IChangeWpUserService;
+import com.xinleju.erp.flow.utils.FlowConstant;
+import com.xinleju.erp.flow.utils.IdNameUtils;
+import com.xinleju.erp.flow.utils.UserPrefixUtils;
+import com.xinleju.erp.flow.utils.WpUsersChangeTypeConstant;
+import com.xinleju.erp.form.utils.DbType;
+
+/**
+ * 版权：(C) 版权所有 2000-2014 上海天好电子商务有限公司苏州分公司
+ * 修改流程参与人AbstractService
+ * @author   zhongjun
+ * @version  $Id: AbstractChangeWpUserService.java 2335 2015-01-22 02:24:17Z zhongjun $
+ * @since
+ * @see
+ */
+public abstract class AbstractChangeWpUserService extends BaseService implements IChangeWpUserService {
+    /**
+     * 任务DAO
+     */
+    @Autowired
+    private WiDAO wiDAO;
+    
+    /**
+     * 工作组DAO
+     */
+    @Autowired
+    private WpDAO wpDAO;
+    
+    /**
+     * 工作组DAO
+     */
+    @Autowired
+    private GvDAO gvDAO;
+    
+    /**
+     * 流程DAO
+     */
+    @Autowired
+    private FlowService flowService;
+    
+    /**
+     * 参与人DAO
+     */
+    @Autowired
+    private ParticipantDAO participantDAO;
+    /**
+     * 得到修改流程参与人的类型
+     * @author jun
+     * @param wpId 需要修改参与人的节点id
+     * @param subWpId 需要修改参与人的子节点id
+     * @param wiId 需要修改参与人的任务id
+     * @param userId 需要修改参与人的用户id
+     * @return 流程参与人的类型
+     */
+    public int fixWpUserChangeType(Long wpId, Long subWpId, Long wiId, Long userId){
+        int xpUserChangeType = 0;
+        if (null != wpId && wpId.intValue() > 0){
+            if (null != subWpId && subWpId.intValue() > 0){
+                xpUserChangeType = WpUsersChangeTypeConstant.CHANGE_WP_USERS_SUBWP;
+            } else{
+                if (null != wiId && wiId.intValue() > 0){
+                    xpUserChangeType = WpUsersChangeTypeConstant.CHANGE_WP_USERS_WP_WI;
+                } else if (null != userId && userId.intValue() > 0){
+                    xpUserChangeType = WpUsersChangeTypeConstant.CHANGE_WP_USERS_WP_USER;
+                } else {
+                    xpUserChangeType = WpUsersChangeTypeConstant.CHANGE_WP_USERS_WP;
+                }
+            }
+        }
+        return xpUserChangeType;
+    }
+    /**
+     * 得到删除流程参与人的类型
+     * @author jun
+     * @param wpId 需要修改参与人的节点id
+     * @param subWpId 需要修改参与人的子节点id
+     * @param wiId 需要修改参与人的任务id
+     * @param userId 需要修改参与人的用户id
+     * @return 流程参与人的类型
+     */
+    public int fixDeleteParticipantType(Long wpId, Long subWpId, Long wiId, Long userId){
+        int xpUserChangeType = 0;
+        if (null != wpId && wpId.intValue() > 0){
+            if (null != subWpId && subWpId.intValue() > 0){
+                xpUserChangeType = WpUsersChangeTypeConstant.CHANGE_WP_USERS_SUBWP;
+            } else{
+                if (null != wiId && wiId.intValue() > 0){
+                    xpUserChangeType = WpUsersChangeTypeConstant.CHANGE_WP_USERS_WP_WI;
+                } else if (null != userId && userId.intValue() > 0){
+                    xpUserChangeType = WpUsersChangeTypeConstant.CHANGE_WP_USERS_WP_USER;
+                } else {
+                    xpUserChangeType = WpUsersChangeTypeConstant.CHANGE_WP_USERS_WP;
+                }
+            }
+        }
+        return xpUserChangeType;
+    }
+    /**
+     * 是否可以修改参与人（只判断流程模板中的设置）
+     * @author jun
+     * @param opWiId 操作时的任务id
+     * @param wpId 需要修改参与人的wpId
+     * @return 是否可以修改参与人
+     */
+    @SuppressWarnings("deprecation")
+    public boolean canChangeWpUsersByAcSet(Long opWiId, Long wpId){
+        boolean canChangeWpUsers = false;
+        if (null != opWiId && opWiId.intValue() > 0 && null != wpId && wpId.intValue() > 0){
+            //是否可以修改所选节点的参与人（流程模板的设置）
+            String isExistSql = "select count(tw.id) from tf_wi tw inner join tf_ac ta on tw.ac_id = ta.id"
+                    + " where tw.id = ? and instr("+DbType.getType()+"ifnull(ta.participants_select_at,'') || ','"
+                    + "     ,(select min(ta2.node_id) || ',' from tf_wp tp2"
+                    + "        inner join tf_ai ti2 on ti2.id = tp2.ai_id"
+                    + "        inner join tf_ac ta2 on ta2.id = ti2.ac_id where tp2.id = ?)) > 0 ";
+            canChangeWpUsers = App.getBean(JdbcTemplate.class).queryForInt(isExistSql, opWiId, wpId) > 0;
+        }
+        return canChangeWpUsers;
+    }
+    /**
+     * 是否可以修改流程参与人(只判断ai的状态)
+     * @author jun
+     * @param wpId 需要修改参与人的节点id
+     * @param subWpId 需要修改参与人的子节点id
+     * @param wiId 需要修改参与人的任务id
+     * @param userId 需要修改参与人的用户id
+     * @return 是否可以修改参与人
+     */
+    public Object[] canChangeWpUserByAiStatus(Long wpId, Long subWpId, Long wiId, Long userId){
+        Object[] canChangeWpUserByAiStatus = new Object[]{true, ""};
+        if (null != wpId && wpId.intValue() > 0){
+            Wp wp = wpDAO.getWpById(wpId);
+            int aiStatus = Ai.STATUS_COMPLETE;
+            if (null != wp.getAi()){
+                aiStatus = wp.getAi().getStatus();
+            }
+            if (Ai.STATUS_COMPLETE == aiStatus){
+                canChangeWpUserByAiStatus[0] = false;
+                canChangeWpUserByAiStatus[1] = WpUsersChangeTypeConstant.CAN_NOT_CHANGE_AI_COMPLETE;
+            } else if (Ai.STATUS_OVERDUE == aiStatus){
+                canChangeWpUserByAiStatus[0] = false;
+                canChangeWpUserByAiStatus[1] = WpUsersChangeTypeConstant.CAN_NOT_CHANGE_AI_OVERDUE;
+            }
+        } else {
+            canChangeWpUserByAiStatus[0] = false;
+            canChangeWpUserByAiStatus[1] = WpUsersChangeTypeConstant.CAN_NOT_CHANGE_NO_WPID;
+        }
+        return canChangeWpUserByAiStatus;
+    }
+    
+    /**
+     * 是否可以修改流程参与人(只判断wp的状态)
+     * @author jun
+     * @param wpId 需要修改参与人的节点id
+     * @param subWpId 需要修改参与人的子节点id
+     * @param wiId 需要修改参与人的任务id
+     * @param userId 需要修改参与人的用户id
+     * @return 是否可以修改参与人
+     */
+    public Object[] canChangeWpUserByWpStatus(Long wpId, Long subWpId, Long wiId, Long userId){
+        Object[] canChangeWpUserByWpStatus = new Object[]{true, ""};
+        if (null != wpId && wpId.intValue() > 0){
+            Wp wp = wpDAO.getWpById(wpId);
+            int aiStatus = Ai.STATUS_COMPLETE;
+            if (null != wp.getAi()){
+                aiStatus = wp.getAi().getStatus();
+            }
+            if (Ai.STATUS_COMPLETE == aiStatus){
+                canChangeWpUserByWpStatus[0] = false;
+                canChangeWpUserByWpStatus[1] = WpUsersChangeTypeConstant.CAN_NOT_CHANGE_AI_COMPLETE;
+            } else if (Ai.STATUS_OVERDUE == aiStatus){
+                canChangeWpUserByWpStatus[0] = false;
+                canChangeWpUserByWpStatus[1] = WpUsersChangeTypeConstant.CAN_NOT_CHANGE_AI_OVERDUE;
+            }
+        } else {
+            canChangeWpUserByWpStatus[0] = false;
+            canChangeWpUserByWpStatus[1] = WpUsersChangeTypeConstant.CAN_NOT_CHANGE_NO_WPID;
+        }
+        return canChangeWpUserByWpStatus;
+    }
+    /**
+     * 修改流程参与人
+     * @author jun
+     * @param opWiId 修改参与人的节点opWiId
+     * @param wpId 需要修改参与人的节点id
+     * @param subWpId 需要修改参与人的子节点id
+     * @param wiId 需要修改参与人的任务id
+     * @param userId 需要修改参与人的用户id
+     * @param paticipantString 选择的paticipantString
+     */
+    public void dealChangeUser(Long opWiId, Long wpId, Long subWpId, Long wiId, Long userId, String paticipantString){
+        int wpUserChangeType = this.fixWpUserChangeType(wpId, subWpId, wiId, userId);
+        Wp wp = wpDAO.getWpById(wpId);
+        Ai ai = wp.getAi();
+        Fi fi = ai.getFi();
+        Long fiId = wp.getFiId();
+        Gvs gvs = gvDAO.getGvs(fiId);
+        String[] paticipantStringList = paticipantString.split(";");
+        switch (wpUserChangeType) {
+            case WpUsersChangeTypeConstant.CHANGE_WP_USERS_WP_WI:{
+                Wi wi = getDao().getById(Wi.class, wiId);
+                AssignWi assignWi = AssignWi.create(WsConstant.STATUS_CREATED, WsConstant.WiType.ZC
+                        , null, null, null, null, null, null);
+                List<User> userList = new ArrayList<User>();
+                for (String onePaticipantString : paticipantStringList){
+                    userList.addAll(participantDAO.getPaticipantUsers(fi.getId(), onePaticipantString, null, gvs));
+                }
+                for (User i: userList){
+                    assignWi.addParticipant(i);
+                }
+                wiDAO.assignWi(false, wp, assignWi, null, wi.getPx());
+                break;
+            }
+            case WpUsersChangeTypeConstant.CHANGE_WP_USERS_WP_USER:{
+            	List<User> userList = new ArrayList<User>();
+                for (String onePaticipantString : paticipantStringList){
+                    userList.addAll(participantDAO.getPaticipantUsers(fi.getId(), onePaticipantString, null, gvs));
+                }
+                String userAsString = IdNameUtils.encode(IdNameUtils.toIdNameList(userList));
+                wp.setParticipants(userAsString);
+                wp.setParticipantsSelected(userAsString);
+                wp.setUsersPrefix(UserPrefixUtils.ecode(userList, ""));
+                getDao().update(wp);
+                break;
+            }
+            case WpUsersChangeTypeConstant.CHANGE_WP_USERS_SUBWP:{
+                Wp subWp = wpDAO.getWpById(subWpId);
+                int subPx = subWp.getSubPx();
+                //节点工作的控制方式
+                //串行
+                boolean isChuanxingAc = ai.getAc().getNodeType() != null && ai.getAc().getNodeType() == 1;
+                //竞争
+                boolean isBingxing = ai.getAc().getNodeType() == null || ai.getAc().getNodeType() == 0;
+                //并行
+                boolean isHuishen = ai.getAc().getNodeType() != null && ai.getAc().getNodeType() == 2;
+                //SubWp结束控制方式
+                String subFinishCtrl = isChuanxingAc ? XorFinishTypeService.class.getName() : (
+                    isBingxing ? XorFinishTypeService.class.getName() : (
+                    isHuishen  ? XorFinishTypeService.class.getName() : ""));
+                //将所有User记录下来，在循环结束后，更新到parentWp.
+                String parentUserAsString = "";
+                getDao().execute("update Wp set sub_px = (sub_px + ?) where parentWpId = ? and sub_px > ?", paticipantStringList.length, wpId, subPx);
+                for (String onePaticipantString : paticipantStringList){
+                    Object[] dealSubWpReturn = flowService.dealSubWp(ai, subPx + 1, wp, fi, onePaticipantString, null, gvs, subFinishCtrl, true, WpUsersChangeTypeConstant.CHANGE_WP_USER_RLOE_PATH);
+                    parentUserAsString += (dealSubWpReturn[1] + ";");
+                }
+                getDao().flush();
+                List<String> participantsList = (List<String>) getDao().findListBySQL("select participants from tf_wp where parent_wp_id = ? and (is_deleted is null or is_deleted = ?) order by sub_px asc", new Object[]{wp.getId(), FlowConstant.INT_FALSE});
+                wp.setParticipants(CollectionUtils.collectAsString(participantsList, ";"));
+                wp.setParticipantsSelected(StringUtils.isNotBlank(parentUserAsString) && parentUserAsString.endsWith(";") ? parentUserAsString.substring(0, parentUserAsString.length()) : parentUserAsString);
+                wp.setMaxPx(wp.getMaxPx() + paticipantStringList.length);
+                List<String> prefixList = (List<String>) getDao().findListBySQL("select users_prefix from tf_wp where parent_wp_id = ?  and (is_deleted is null or is_deleted = ?) order by sub_px asc", new Object[]{wp.getId(), FlowConstant.INT_FALSE});
+                wp.setUsersPrefix(CollectionUtils.collectAsString(prefixList, ";"));
+                getDao().update(wp);
+                break;
+            }
+            case WpUsersChangeTypeConstant.CHANGE_WP_USERS_WP:{
+                int subPx = null != wp.getSubPx() ? wp.getSubPx() : 0;
+                //节点工作的控制方式
+                //串行
+                boolean isChuanxingAc = ai.getAc().getNodeType() != null && ai.getAc().getNodeType() == 1;
+                //竞争
+                boolean isBingxing = ai.getAc().getNodeType() == null || ai.getAc().getNodeType() == 0;
+                //并行
+                boolean isHuishen = ai.getAc().getNodeType() != null && ai.getAc().getNodeType() == 2;
+                //SubWp结束控制方式
+                String subFinishCtrl = isChuanxingAc ? XorFinishTypeService.class.getName() : (
+                    isBingxing ? XorFinishTypeService.class.getName() : (
+                    isHuishen  ? XorFinishTypeService.class.getName() : ""));
+                //将所有User记录下来，在循环结束后，更新到parentWp.
+                String parentUserAsString = "";
+                getDao().execute("update Wp set sub_px = (sub_px + ?) where parentWpId = ? and sub_px > ?", paticipantStringList.length, wpId, subPx);
+                for (String onePaticipantString : paticipantStringList){
+                    Object[] dealSubWpReturn = flowService.dealSubWp(ai, subPx + 1, wp, fi, onePaticipantString, null, gvs, subFinishCtrl, true, WpUsersChangeTypeConstant.CHANGE_WP_USER_RLOE_PATH);
+                    parentUserAsString += (dealSubWpReturn[1] + ";");
+                }
+                getDao().flush();
+                List<String> participantsList = (List<String>) getDao().findListBySQL("select participants from tf_wp"
+                        + " where parent_wp_id = ? and (is_deleted is null or is_deleted = ?) order by sub_px asc", new Object[]{wp.getId(), FlowConstant.INT_FALSE});
+                wp.setParticipants(CollectionUtils.collectAsString(participantsList, ";"));
+                wp.setParticipantsSelected(StringUtils.isNotBlank(parentUserAsString) && parentUserAsString.endsWith(";") ? parentUserAsString.substring(0, parentUserAsString.length()) : parentUserAsString);
+                wp.setMaxPx((null != wp.getMaxPx() ? wp.getMaxPx().intValue() : 0) + paticipantStringList.length);
+                wp.setSubMode(FlowConstant.INT_TRUE);
+                List<String> prefixList = (List<String>) getDao().findListBySQL("select users_prefix from tf_wp where parent_wp_id = ? and (is_deleted is null or is_deleted = ?) order by sub_px asc", new Object[]{wp.getId(), FlowConstant.INT_FALSE});
+                wp.setUsersPrefix(CollectionUtils.collectAsString(prefixList, ";"));
+                getDao().update(wp);
+                break;
+            }
+            default:{
+                break;
+            }
+        }
+        flowService.rebuildParticipant(fi);
+    }
+    /**
+     * 修改流程参与人
+     * @author jun
+     * @param opWiId 修改参与人的节点opWiId
+     * @param wpId 需要修改参与人的节点id
+     * @param subWpId 需要修改参与人的子节点id
+     * @param wiId 需要修改参与人的任务id
+     * @param userId 需要修改参与人的用户id
+     */
+    public void deleteParticipant(Long opWiId, Long wpId, Long subWpId, Long wiId, Long userId){
+        int deleteParticipantType = this.fixDeleteParticipantType(wpId, subWpId, wiId, userId);
+        Wp wp = wpDAO.getWpById(wpId);
+        Ai ai = wp.getAi();
+        Fi fi = ai.getFi();
+        switch (deleteParticipantType) {
+            case WpUsersChangeTypeConstant.CHANGE_WP_USERS_WP_WI:{
+                break;
+            }
+            case WpUsersChangeTypeConstant.CHANGE_WP_USERS_WP_USER:{
+                wp.setParticipants("");
+                wp.setParticipantsSelected("");
+                wp.setParticipantsDefine("");
+                wp.setUsersPrefix("");
+                getDao().update(wp);
+                break;
+            }
+            case WpUsersChangeTypeConstant.CHANGE_WP_USERS_SUBWP:{
+                Wp subWp = wpDAO.getWpById(subWpId);
+                subWp.setIsDeleted(FlowConstant.INT_TRUE);
+                getDao().update(subWp);
+                break;
+            }
+            case WpUsersChangeTypeConstant.CHANGE_WP_USERS_WP:{
+                break;
+            }
+            default:{
+                break;
+            }
+        }
+        wp = wpDAO.getWpById(wpId);
+        if (wp.getSubMode() == FlowConstant.INT_TRUE && (null == wp.getChWps() || 1 > wp.getChWps().size())){
+            wp.setSubMode(FlowConstant.INT_FALSE);
+            wp.setParticipants("");
+            wp.setParticipantsSelected("");
+            wp.setParticipantsDefine("");
+            wp.setUsersPrefix("");
+            getDao().update(wp);
+        }
+        flowService.rebuildParticipant(fi);
+    }
+}

@@ -1,0 +1,259 @@
+package com.xinleju.platform.flow.model;
+
+import java.util.Date;
+import java.util.List;
+
+import org.apache.commons.collections.CollectionUtils;
+
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.xinleju.platform.flow.dto.UserDto;
+import com.xinleju.platform.flow.enumeration.FlAcType;
+
+/**
+ * 流程实例流转处理模型：环节单元
+ * 
+ * 1、环节单元对应数据库中的实例环节表
+ * 2、一个流程实例对应一组环节单元, 有先后顺序
+ * 
+ * @author daoqi
+ *
+ */
+public class ACUnit{
+	private String acId;				//环节实例ID
+	private String acCode;				//环节实例code
+	private String acName;				//环节实例名称
+	private String acType;				//环节类型
+	private String acStatus;			//环节状态
+	private Date acStartTime;			//激活时间
+	private Date acEndTime;				//完成时间
+	
+	private String approvalTypeId;		//审批类型ID
+	private String approvalType;		//审批类型
+	private boolean isAddLabel;			//是否加签
+	private String multiPost;			//多岗策略
+	private String multiPerson;			//同岗多人
+	private String source;				//来源：1：模板，2加签 ，3 前置代理  4后置代理
+	private int acPx;					//环节顺序
+	private String approverNull;		//审批人为空策略
+	private String postNull;			//岗位为空能否提交策略
+	
+	@JsonIgnore
+	private InstanceUnit owner;			//所属的实例
+	private List<PostUnit> posts;		//环节中的审批人，即工作组里的人
+	private List<UserDto> ccPerson;		//抄送人集合
+	
+	@JsonIgnore
+	private List<ACUnit> preAcs;		//前一环节
+	private String preAcIds;
+	@JsonIgnore
+	private List<ACUnit> nextAcs;		//后一环节
+	private String nextAcIds;
+	
+	private int leftPost;				//1环节中剩余责任岗位数：环节对应的初始岗位数据 2join节点时记录已到达分支数，判断是否往下走
+	
+	private boolean change = false;
+	
+	private int dbAction = 0;
+	
+	//此节点是否产生于打回
+	private String fromReturn = "0";
+	
+	//打回时当前节点的px
+	private Integer returnPx;
+
+	public Integer getReturnPx() {
+		return returnPx;
+	}
+
+	public void setReturnPx(Integer returnPx) {
+		this.returnPx = returnPx;
+	}
+
+	public ACUnit nextJoin() {
+		if(CollectionUtils.isNotEmpty(nextAcs) && nextAcs.size() == 1) {
+			ACUnit next = nextAcs.get(0);
+			if(FlAcType.JOIN.getAcType().equals(next.getAcType())){
+				return next;
+			}
+		}
+		return null;
+	}
+	
+	public String getAcId() {
+		return acId;
+	}
+	public void setAcId(String acId) {
+		this.acId = acId;
+	}
+	public String getAcCode() {
+		return acCode;
+	}
+	public void setAcCode(String acCode) {
+		this.acCode = acCode;
+	}
+	public String getAcName() {
+		return acName;
+	}
+	public void setAcName(String acName) {
+		this.acName = acName;
+	}
+	public String getAcType() {
+		return acType;
+	}
+	public void setAcType(String acType) {
+		this.acType = acType;
+	}
+	public String getAcStatus() {
+		return acStatus;
+	}
+	public void setAcStatus(String acStatus) {
+		this.acStatus = acStatus;
+		this.setChange(true);
+	}
+	public Date getAcStartTime() {
+		return acStartTime;
+	}
+	public void setAcStartTime(Date acStartTime) {
+		this.acStartTime = acStartTime;
+	}
+	public Date getAcEndTime() {
+		return acEndTime;
+	}
+	public void setAcEndTime(Date acEndTime) {
+		this.acEndTime = acEndTime;
+		this.setChange(true);
+	}
+	public String getApprovalTypeId() {
+		return approvalTypeId;
+	}
+	public void setApprovalTypeId(String approvalTypeId) {
+		this.approvalTypeId = approvalTypeId;
+	}
+	public String getApprovalType() {
+		return approvalType;
+	}
+	public void setApprovalType(String approvalType) {
+		this.approvalType = approvalType;
+	}
+	public boolean isAddLabel() {
+		return isAddLabel;
+	}
+	public void setAddLabel(boolean isAddLabel) {
+		this.isAddLabel = isAddLabel;
+	}
+	public String getMultiPost() {
+		return multiPost;
+	}
+	public void setMultiPost(String multiPost) {
+		this.multiPost = multiPost;
+	}
+	public String getMultiPerson() {
+		return multiPerson;
+	}
+	public void setMultiPerson(String multiPerson) {
+		this.multiPerson = multiPerson;
+	}
+	public String getSource() {
+		return source;
+	}
+	public void setSource(String source) {
+		this.source = source;
+	}
+	public int getAcPx() {
+		return acPx;
+	}
+	public void setAcPx(int acPx) {
+		this.acPx = acPx;
+		this.setChange(true);
+	}
+	public InstanceUnit getOwner() {
+		return owner;
+	}
+	public void setOwner(InstanceUnit owner) {
+		this.owner = owner;
+	}
+	public List<PostUnit> getPosts() {
+		return posts;
+	}
+	public void setPosts(List<PostUnit> posts) {
+		this.posts = posts;
+	}
+	public int getLeftPost() {
+		return leftPost;
+	}
+	public void setLeftPost(int leftPost) {
+		this.leftPost = leftPost;
+		this.setChange(true);
+	}
+	public boolean isChange() {
+		return change;
+	}
+	public void setChange(boolean change) {
+		this.change = change;
+	}
+	public int getDbAction() {
+		return dbAction;
+	}
+	public void setDbAction(int dbAction) {
+		this.dbAction = dbAction;
+	}
+	public List<UserDto> getCcPerson() {
+		return ccPerson;
+	}
+	public void setCcPerson(List<UserDto> ccPerson) {
+		this.ccPerson = ccPerson;
+	}
+	public List<ACUnit> getPreAcs() {
+		return preAcs;
+	}
+	public void setPreAcs(List<ACUnit> preAcs) {
+		this.preAcs = preAcs;
+	}
+	public List<ACUnit> getNextAcs() {
+		if(CollectionUtils.isNotEmpty(nextAcs) && nextAcs.size() == 1) {
+			if(FlAcType.FORK.getAcType().equals(nextAcs.get(0).getAcType())) {
+				nextAcs = nextAcs.get(0).getNextAcs();
+			}
+		}
+		return nextAcs;
+	}
+	public void setNextAcs(List<ACUnit> nextAcs) {
+		this.nextAcs = nextAcs;
+	}
+	public String getPreAcIds() {
+		return preAcIds;
+	}
+	public void setPreAcIds(String preAcIds) {
+		this.preAcIds = preAcIds;
+	}
+	public String getNextAcIds() {
+		return nextAcIds;
+	}
+	public void setNextAcIds(String nextAcIds) {
+		this.nextAcIds = nextAcIds;
+	}
+
+	public String getFromReturn() {
+		return fromReturn;
+	}
+
+	public void setFromReturn(String fromReturn) {
+		this.fromReturn = fromReturn;
+	}
+
+	public String getApproverNull() {
+		return approverNull;
+	}
+
+	public void setApproverNull(String approverNull) {
+		this.approverNull = approverNull;
+	}
+
+	public String getPostNull() {
+		return postNull;
+	}
+
+	public void setPostNull(String postNull) {
+		this.postNull = postNull;
+	}
+}

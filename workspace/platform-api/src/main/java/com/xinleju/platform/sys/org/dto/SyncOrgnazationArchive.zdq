@@ -1,0 +1,92 @@
+package com.xinleju.platform.sys.org.dto;
+
+/**
+ * @author admin
+ * 
+ *
+ */
+public class SyncOrgnazationArchive{
+
+
+	//主键
+	private String id;
+	
+	
+	//名称
+	private String name;
+
+	//上级
+	private String parentId;
+
+
+	//组织机构代码
+	private String code;
+	
+	//状态
+	private String status;
+	//是否删除
+	private Boolean delflag;
+
+
+	public String getId() {
+		return id;
+	}
+
+
+	public void setId(String id) {
+		this.id = id;
+	}
+
+
+	public String getName() {
+		return name;
+	}
+
+
+	public void setName(String name) {
+		this.name = name;
+	}
+
+
+	public String getParentId() {
+		return parentId;
+	}
+
+
+	public void setParentId(String parentId) {
+		this.parentId = parentId;
+	}
+
+
+	public String getCode() {
+		return code;
+	}
+
+
+	public void setCode(String code) {
+		this.code = code;
+	}
+
+
+	public String getStatus() {
+		return status;
+	}
+
+
+	public void setStatus(String status) {
+		this.status = status;
+	}
+
+
+	public Boolean getDelflag() {
+		return delflag;
+	}
+
+
+	public void setDelflag(Boolean delflag) {
+		this.delflag = delflag;
+	}
+
+
+
+}

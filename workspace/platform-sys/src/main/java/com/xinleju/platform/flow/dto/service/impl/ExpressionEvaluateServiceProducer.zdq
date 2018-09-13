@@ -1,0 +1,31 @@
+package com.xinleju.platform.flow.dto.service.impl;
+
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.flow.dto.service.ExpressionEvaluateServiceCustomer;
+import com.xinleju.platform.flow.exception.FlowException;
+import com.xinleju.platform.flow.service.ExpressionEvaluateService;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+public class ExpressionEvaluateServiceProducer implements ExpressionEvaluateServiceCustomer {
+	
+	@Autowired
+	public ExpressionEvaluateService expressionEvaluateService;
+
+	@Override
+	public String validate(String userInfo, String expression) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		boolean validate = false;
+		try {
+			validate = expressionEvaluateService.validate(expression);
+			info.setSucess(validate);
+			info.setMsg(validate ? "表达式校验成功！" : "表达式校验失败！");
+		} catch (FlowException e) {
+			info.setSucess(validate);
+			info.setMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	
+}

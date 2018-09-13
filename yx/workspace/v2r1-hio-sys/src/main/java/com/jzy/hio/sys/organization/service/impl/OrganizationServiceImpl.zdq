@@ -1,0 +1,1290 @@
+package com.jzy.hio.sys.organization.service.impl;
+
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.annotation.DataSource;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.service.impl.BaseSysServiceImpl;
+import com.jzy.hio.entity.OaSysApp;
+import com.jzy.hio.entity.OaSysOrganization;
+import com.jzy.hio.entity.OaSysUser;
+import com.jzy.hio.entity.OaSysUserPosition;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.exception.HioMybatisDeleteException;
+import com.jzy.hio.exception.HioMybatisInsertException;
+import com.jzy.hio.exception.HioMybatisQueryException;
+import com.jzy.hio.exception.HioMybatisUpdateException;
+import com.jzy.hio.exception.HioPermissionException;
+import com.jzy.hio.feign.PlatformFeignService;
+import com.jzy.hio.init.RedisSyncInit;
+import com.jzy.hio.platform.dto.tenantcompanyinfo.TenantCompanyInfoDto;
+import com.jzy.hio.platform.param.PuCompanyParam;
+import com.jzy.hio.redis.service.RedisSetService;
+import com.jzy.hio.sys.SysConstants;
+import com.jzy.hio.sys.app.service.AppService;
+import com.jzy.hio.sys.organization.dto.GeneralDto;
+import com.jzy.hio.sys.organization.dto.OrgDeleteDto;
+import com.jzy.hio.sys.organization.dto.OrgUserCountDto;
+import com.jzy.hio.sys.organization.dto.OrganizationDetailDto;
+import com.jzy.hio.sys.organization.dto.OrganizationDto;
+import com.jzy.hio.sys.organization.dto.OrganizationUserCountDto;
+import com.jzy.hio.sys.organization.dto.SkyDriveDto;
+import com.jzy.hio.sys.organization.mapper.OrganizationMapper;
+import com.jzy.hio.sys.organization.param.IMOrgCreateParam;
+import com.jzy.hio.sys.organization.param.OrgDragParam;
+import com.jzy.hio.sys.organization.param.OrgSaveParam;
+import com.jzy.hio.sys.organization.param.SkyDriveParam;
+import com.jzy.hio.sys.organization.service.OrganizationService;
+import com.jzy.hio.sys.role.dto.RolePermissionDto;
+import com.jzy.hio.sys.role.service.RoleButtonService;
+import com.jzy.hio.sys.role.service.RolePermissionService;
+import com.jzy.hio.sys.role.service.RoleUserService;
+import com.jzy.hio.sys.user.mapper.UserMapper;
+import com.jzy.hio.sys.user.mapper.UserPositionMapper;
+import com.jzy.hio.sys.user.service.UserPositionService;
+import com.jzy.hio.sys.user.service.UserService;
+import com.jzy.hio.utils.IDGenerator;
+import com.jzy.hio.utils.NumberUtils;
+import com.jzy.hio.utils.Pinyin4jUtils;
+import com.jzy.hio.utils.StringUtil;
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import tk.mybatis.mapper.entity.Example;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * @author kimchou
+ * @create 2018-03-16 14:39
+ * @desc
+ **/
+@Service
+public class OrganizationServiceImpl extends BaseSysServiceImpl<OaSysOrganization> implements OrganizationService {
+
+    @Autowired
+    private OrganizationMapper organizationMapper;
+
+    @Autowired
+    private UserService userService;
+
+    @Autowired
+    private UserMapper userMapper;
+
+    @Autowired
+    private UserPositionMapper userPositionMapper;
+
+    @Autowired
+    private UserPositionService userPositionService;
+
+    @Autowired
+    private PlatformFeignService platformFeignService;
+
+    @Autowired
+    private RedisSyncInit redisSyncInit;
+
+    @Autowired
+    private RedisSetService redisSetService;
+
+    @Autowired
+    private RoleUserService roleUserService;
+
+    @Autowired
+    private RoleButtonService roleButtonService;
+
+    @Autowired
+    private RolePermissionService rolePermissionService;
+
+    @Autowired
+    private AppService appService;
+
+    @Override
+    public int queryUserConut(String orgId, String prefixId) {
+        return organizationMapper.queryUserConut(orgId, prefixId);
+    }
+
+    /**
+     * 查询组织以及子组织下的用户数量
+     *
+     * @param prefixId
+     * @return int
+     * @author kimchou
+     * @date 2018/3/15 下午4:20
+     */
+    @Override
+    public int getUserCountByOrgId(String prefixId) {
+        return organizationMapper.getUserCountByOrgPrefixId(prefixId);
+    }
+
+    /**
+     * 查询某个组织下的所有部门包括
+     *
+     * @param prefixId
+     * @param isIncludeSelf true表示包括当前组织，false反之
+     * @return java.util.List<com.jzy.hio.sys.organization.dto.OrganizationDto>
+     * @author kimchou
+     * @date 2018/3/15 下午6:07
+     */
+    @Override
+    public List<OrganizationDto> queryAllOrgByOrgId(@DataSource String tendId, String prefixId, boolean isIncludeSelf) {
+        return organizationMapper.queryAllOrgByOrgId(prefixId, isIncludeSelf);
+    }
+
+    @Override
+    public int queryOrgChildMaxSort(String parentId) {
+        return organizationMapper.queryOrgChildMaxSort(parentId);
+    }
+
+    /**
+     * 删除组织机构
+     *
+     * @param tendId
+     * @param id
+     * @return java.lang.Object
+     * @author kimchou
+     * @date 2018/3/15 下午4:38
+     */
+    @Override
+    public Object deleteOrgById(@DataSource String tendId,String id) {
+        tendId = isHavePermission(tendId);
+        OaSysOrganization organization = getObjectById(id);
+        if (organization == null || organization.getDelflag().intValue() == SysConstants.MYSQL_DELFLAG_DELETED) {
+            throw new HioMybatisDeleteException("删除失败,当前组织不存在或者已经删除!");
+        }
+        if (organization.getParentId() == null) {
+            throw new HioMybatisDeleteException("删除失败,顶级组织不允许删除!");
+        }
+        int userCount = getUserCountByOrgId(organization.getPrefixId());
+        if (userCount > 0) {
+            if (isNotEmpty(tendId)){
+                Map<Long,OrgUserCountDto> map = getUserCountGroupWorkStatusByOrgPrefixId(organization.getPrefixId());
+                OrgUserCountDto noConfirm = map.get(Integer.valueOf(SysConstants.UserWorkStatus.NO_CONFIRM.getWorkStatus()));
+                if (noConfirm!=null && noConfirm.getCnt()!=null && noConfirm.getCnt()>0){
+                    throw new HioMybatisDeleteException("当前部门下还有相关用户,请清空部门用户后再做此操作!");
+                }
+                OrgUserCountDto job = map.get(Integer.valueOf(SysConstants.UserWorkStatus.JOB.getWorkStatus()));
+                if (job!=null && job.getCnt()!=null && job.getCnt()>0){
+                    throw new HioMybatisDeleteException("当前部门下还有相关用户,请清空部门用户后再做此操作!");
+                }
+                OrgUserCountDto leave = map.get(Integer.valueOf(SysConstants.UserWorkStatus.LEAVE.getWorkStatus()));
+                if (leave!=null && leave.getCnt()!=null && leave.getCnt()>0){
+                    throw new HioMybatisDeleteException("该组织还有未删除的离职人员，请到web端处理!");
+                }
+                OrgUserCountDto invite = map.get(Integer.valueOf(SysConstants.UserWorkStatus.NO_INVITE.getWorkStatus()));
+                if (invite!=null && invite.getCnt()!=null && invite.getCnt()>0){
+                    throw new HioMybatisDeleteException("该组织还有未邀请的人员，请到web端处理!");
+                }
+            }
+            throw new HioMybatisDeleteException("当前部门下还有相关用户,请清空部门用户后再做此操作!");
+        }
+
+        List<OaSysOrganization> oaSysOrganizations = queryChildOrganizationsByPrefixId(organization.getPrefixId());
+
+        List<String> deleteIds = new ArrayList<>();
+        for (int i = 0; i < oaSysOrganizations.size(); i++) {
+            OaSysOrganization sysOrganization = oaSysOrganizations.get(i);
+            int i1 = deletePseudoObjectById(sysOrganization.getId());
+            deleteIds.add(sysOrganization.getId());
+        }
+        OrgDeleteDto orgDeleteDto = new OrgDeleteDto();
+        orgDeleteDto.setDeleteIds(deleteIds);
+
+        // 更新组织时间
+        userService.updateOrganizationUpdateDateByUserPosition(tendId, null, oaSysOrganizations, null, null,null);
+        return orgDeleteDto;
+    }
+
+    private Map<Long,OrgUserCountDto> getUserCountGroupWorkStatusByOrgPrefixId(String prefixId) {
+        return organizationMapper.getUserCountGroupWorkStatusByOrgPrefixId(prefixId);
+    }
+
+    /**
+     * 更新组织机构，需要变更父parentId，preFixName，preFixId
+     *
+     * @param apiParam
+     * @return java.lang.Object
+     * @author kimchou
+     * @date 2018/3/15 下午7:22
+     */
+    @Override
+    public Object updateOrgBelongs(OrgDragParam apiParam) {
+        // 相同的对象不能改变
+        if (apiParam.getDesId().equals(apiParam.getSourceId())) {
+            throw new HioException("相同对象不能进行拖拽");
+        }
+        // 源部门对象
+        OaSysOrganization sourceOrg = getObjectById(apiParam.getSourceId());
+        if (sourceOrg == null || sourceOrg.getDelflag().intValue() == SysConstants.MYSQL_DELFLAG_DELETED) {
+            throw new HioException("sourceId对象不存在");
+        }
+        // 目标部门对象
+        OaSysOrganization desOrg = getObjectById(apiParam.getDesId());
+        if (desOrg == null || desOrg.getDelflag().intValue() == SysConstants.MYSQL_DELFLAG_DELETED) {
+            throw new HioException("desId对象不存在");
+        }
+        // 源部门如果是顶级部门不能推拽
+        if (sourceOrg.getParentId() == null) {
+            throw new HioException("顶级公司不能进行拖拽");
+        }
+        // 目标部门是源部门的子节点，不能推拽
+        if (desOrg.getPrefixId().startsWith(sourceOrg.getPrefixId())) {
+            throw new HioException("拖动部门不能是目标部门的父部门");
+        }
+        boolean b = false;
+        // 根据拖拽类型进行判断
+        if (apiParam.getDragType().equals(SysConstants.DRAG_TYPE_INNER)) {
+            // 拖动到目标内层
+            b = dragToInner(desOrg, sourceOrg);
+        } else if (apiParam.getDragType().equals(SysConstants.DRAG_TYPE_TOP)) {
+            // 拖动到目标上面
+            b = dragToTop(desOrg, sourceOrg);
+        } else if (apiParam.getDragType().equals(SysConstants.DRAG_TYPE_BOTTOM)) {
+            // 拖动到目标下面
+            b = dragToBottom(desOrg, sourceOrg);
+        }
+        return b ? 1 : 0;
+    }
+
+    /**
+     * 拖动组织到下面
+     *
+     * @param desOrg
+     * @param sourceOrg
+     */
+    private boolean dragToBottom(OaSysOrganization desOrg, OaSysOrganization sourceOrg) {
+        if (desOrg.getParentId() == null) {
+            throw new HioMybatisUpdateException("拖动失败,只能拖动到顶级部门里面");
+        }
+        // 判断是否是同一个目录下面
+        if (desOrg.getParentId().equals(sourceOrg.getParentId())) {
+            // 是 ①只需要更新sourceOrg prefixSort,sort；②更新desOrg下面次级目录的sort-
+            // 1,prefixSort，以及更新次级目录下的所有部门prefixSort
+            if (sourceOrg.getSort() > desOrg.getSort()) {
+                throw new HioMybatisUpdateException("type类型错误，拖动部门不在目标部门的上方");
+            }
+            updateSameDir(desOrg, sourceOrg, "bottom");
+        } else {
+            // 非同级目录
+            updateNotSameDir(desOrg, sourceOrg, "bottom");
+        }
+        return true;
+    }
+
+    /**
+     * 拖动组织到上层
+     *
+     * @param desOrg
+     * @param sourceOrg
+     */
+    private boolean dragToTop(OaSysOrganization desOrg, OaSysOrganization sourceOrg) {
+        // 判断是否是同一个目录下面
+        if (desOrg.getParentId() == null) {
+            throw new HioMybatisUpdateException("拖动失败,只能拖动到顶级部门里面");
+        }
+        if (desOrg.getParentId().equals(sourceOrg.getParentId())) {
+            if (sourceOrg.getSort() < desOrg.getSort()) {
+                throw new HioMybatisUpdateException("type类型错误，拖动部门不在目标部门的下方");
+            }
+            updateSameDir(desOrg, sourceOrg, "top");
+        } else {
+            updateNotSameDir(desOrg, sourceOrg, "top");
+        }
+        return true;
+    }
+
+    /**
+     * 更新不同目录
+     *
+     * @param desOrg
+     * @param sourceOrg
+     * @param type
+     */
+    private void updateNotSameDir(OaSysOrganization desOrg, OaSysOrganization sourceOrg, String type) {
+        int result = organizationMapper.checkHasSameNameForCurrentLevel(desOrg.getParentId(), sourceOrg.getName(), null);
+        if (result > 0) {
+            throw new HioMybatisUpdateException("目标部门下已有同名部门名称:" + sourceOrg.getName());
+        }
+
+        OaSysOrganization parentOrganization = getObjectById(desOrg.getParentId());
+        // 先更新sourceOrg的 parentId，prefix_id,prefix_name,prefix_sort,sort
+        String sourceOldPrefixId = sourceOrg.getPrefixId();
+        String sourceOldParentId = sourceOrg.getParentId();
+        String sourceOldPrefixName = sourceOrg.getPrefixName();
+        String sourceOldPrefixSort = sourceOrg.getPrefixSort();
+        int sourceOldSort = sourceOrg.getSort();
+
+        String sourceNewPrefixId = parentOrganization.getPrefixId() + "/" + sourceOrg.getId();
+        String sourceNewParentId = parentOrganization.getId();
+        String sourceNewPrefixName = parentOrganization.getPrefixName() + "/" + sourceOrg.getName();
+        int sourceNewSort = desOrg.getSort();
+        if (type.equals("top")) {
+            // 顶部的时候相同即可 目标以下的全部+1
+            sourceNewSort = desOrg.getSort();
+        } else {
+            // 底部的时候
+            sourceNewSort = desOrg.getSort() + 1;
+        }
+        String sourceNewCode = NumberUtils.getSortCode(sourceNewPrefixId.split("/").length, sourceNewSort);
+        String sourceNewPrefixSort = parentOrganization.getPrefixSort() + "-" + sourceNewCode;
+
+        sourceOrg.setParentId(sourceNewParentId);
+        sourceOrg.setPrefixId(sourceNewPrefixId);
+        sourceOrg.setPrefixSort(sourceNewPrefixSort);
+        sourceOrg.setPrefixName(sourceNewPrefixName);
+        sourceOrg.setSort(sourceNewSort);
+        sourceOrg.setCode(NumberUtils.getOrgCode(sourceOrg.getPrefixSort()));
+        update(sourceOrg);
+
+        // 更新source部门以及子部们
+        updateChildOrg(null, sourceOrg.getId(), sourceOldPrefixId, sourceOldPrefixName, sourceOldPrefixSort, sourceNewPrefixId, sourceNewPrefixName, sourceNewPrefixSort);
+
+        List<OaSysOrganization> allLists = null;
+        if (type.equals("top")) {
+            // 往不同目录移动到顶层，更新des以下的同级部门（包括des）
+            allLists = queryAllOrgByParentIdAndSort(parentOrganization.getId(), null, desOrg.getPrefixSort(), false, true);
+        } else if (type.equals("bottom")) {
+            // 往不同目录移动到底层，更新des以下的同级部门（不包括des）
+            allLists = queryAllOrgByParentIdAndSort(parentOrganization.getId(), null, desOrg.getPrefixSort(), false, false);
+        }
+
+        if (allLists != null && allLists.size() > 0) {
+            for (int i = 0; i < allLists.size(); i++) {
+                OaSysOrganization oaSysOrganization = allLists.get(i);
+                if (oaSysOrganization.getId().equals(sourceOrg.getId())) {
+                    continue;
+                }
+                int level = oaSysOrganization.getPrefixId().split("/").length;
+                int oldSort = oaSysOrganization.getSort();
+                String oldCode = NumberUtils.getSortCode(level, oldSort);
+                String oldPrefixSort = oaSysOrganization.getPrefixSort();
+                String oldPrefixId = oaSysOrganization.getPrefixId();
+                String oldPrefixName = oaSysOrganization.getPrefixName();
+                // 往不同目录移动的时候->sort都+1
+                int newSort = oldSort + 1;
+                String newCode = NumberUtils.getSortCode(level, newSort);
+                String newPrefixId = oaSysOrganization.getPrefixId();
+                String newPrefixName = oaSysOrganization.getPrefixName();
+                String newPrefixSort = parentOrganization.getPrefixSort() + "-" + newCode;
+                oaSysOrganization.setSort(newSort);
+                oaSysOrganization.setPrefixSort(newPrefixSort);
+                oaSysOrganization.setCode(NumberUtils.getOrgCode(oaSysOrganization.getPrefixSort()));
+                oaSysOrganization.setPrefixId(newPrefixId);
+                oaSysOrganization.setPrefixName(newPrefixName);
+                // 更新所有的部门子部们
+                updateChildOrg(null, oaSysOrganization.getId(), oldPrefixId, oldPrefixName, oldPrefixSort, newPrefixId, newPrefixName, newPrefixSort);
+            }
+            int curUpdateCount = updateBatch(allLists);
+        }
+
+        // 更新部门时间ALLList时间修改
+        userService.updateOrganizationUpdateDateByUserPosition(null, null, allLists, allLists, null,null);
+    }
+
+    /**
+     * 同个目录更新
+     *
+     * @param desOrg
+     * @param sourceOrg
+     * @param type      bottom表示下方，top表示上方
+     */
+    private void updateSameDir(OaSysOrganization desOrg, OaSysOrganization sourceOrg, String type) {
+        OaSysOrganization parentOrganization = getObjectById(desOrg.getParentId());
+        List<OaSysOrganization> allLists = null;
+        if (type.equals("top")) {
+            // 往上拖动就是修改des-source这段之间的所有部门数据；sort=sort+1,source.sort=des.sort
+            allLists = queryAllOrgByParentIdAndSort(parentOrganization.getId(), sourceOrg.getPrefixSort(), desOrg.getPrefixSort(), true, true);
+        } else if (type.equals("bottom")) {
+            // 往下拖动就是修改source-des这段之间的所有部门数据;sort=sort-1,source.sort=des.sort
+            allLists = queryAllOrgByParentIdAndSort(parentOrganization.getId(), desOrg.getPrefixSort(), sourceOrg.getPrefixSort(), true, true);
+        }
+        if (allLists != null && allLists.size() > 0) {
+            for (int i = 0; i < allLists.size(); i++) {
+                OaSysOrganization oaSysOrganization = allLists.get(i);
+                int level = oaSysOrganization.getPrefixId().split("/").length;
+                int oldSort = oaSysOrganization.getSort();
+                String oldCode = NumberUtils.getSortCode(level, oldSort);
+                String oldPrefixSort = oaSysOrganization.getPrefixSort();
+                String oldPrefixId = oaSysOrganization.getPrefixId();
+                String oldPrefixName = oaSysOrganization.getPrefixName();
+                int newSort = oldSort;
+                if (type.equals("top")) {
+                    newSort = newSort + 1;
+                } else if (type.equals("bottom")) {
+                    newSort = newSort - 1;
+                }
+                // 如果该部门ID是源部门ID，将源部门的sort等于目标部门的sort
+                if (oaSysOrganization.getId().equals(sourceOrg.getId())) {
+                    newSort = desOrg.getSort();
+                }
+                String newCode = NumberUtils.getSortCode(level, newSort);
+                String newPrefixId = oaSysOrganization.getPrefixId();
+                String newPrefixName = oaSysOrganization.getPrefixName();
+                String newPrefixSort = parentOrganization.getPrefixSort() + "-" + newCode;
+                oaSysOrganization.setSort(newSort);
+                oaSysOrganization.setPrefixSort(newPrefixSort);
+                oaSysOrganization.setCode(NumberUtils.getOrgCode(oaSysOrganization.getPrefixSort()));
+                // 更新所有的部门子部们
+                updateChildOrg(null, oaSysOrganization.getId(), oldPrefixId, oldPrefixName, oldPrefixSort, newPrefixId, newPrefixName, newPrefixSort);
+            }
+            int curUpdateCount = updateBatch(allLists);
+        }
+        // 更新部门时间ALLList时间修改
+        userService.updateOrganizationUpdateDateByUserPosition(null, null, allLists, allLists, null,null);
+    }
+
+    // 更新source部门以及子部们
+    private void updateChildOrg(@DataSource String tendId, String parentId, String parentOldPrefixId, String parentOldPrefixName, String parentOldPrefixSort,
+                                String parentNewPrefixId, String parentNewPrefixName, String parentNewPrefixSort) {
+        List<OaSysOrganization> oaSysOrganizations = queryAllOrgByParentIdAndSort(parentId, null, null, false, false);
+        for (int i = 0; i < oaSysOrganizations.size(); i++) {
+            OaSysOrganization oaSysOrganization = oaSysOrganizations.get(i);
+            String oldPrefixId = oaSysOrganization.getPrefixId();
+            String oldPrefixName = oaSysOrganization.getPrefixName();
+            String oldPrefixSort = oaSysOrganization.getPrefixSort();
+            int sort = oaSysOrganization.getSort();
+            String oldSortCode = NumberUtils.getSortCode(oldPrefixId.split("/").length, sort);
+
+            String newPrefixId = oaSysOrganization.getPrefixId().replaceFirst(parentOldPrefixId, parentNewPrefixId);
+            String newPrefixName = oaSysOrganization.getPrefixName().replaceFirst(parentOldPrefixName, parentNewPrefixName);
+            String newSortCode = NumberUtils.getSortCode(newPrefixId.split("/").length, sort);
+            String newPrefixSort = oldPrefixSort.replaceFirst(oldSortCode, newSortCode).replaceFirst(parentOldPrefixSort, parentNewPrefixSort);
+            String newOrgCode = NumberUtils.getOrgCode(newPrefixSort);
+            int newSort = sort;
+
+            oaSysOrganization.setPrefixName(newPrefixName);
+            oaSysOrganization.setPrefixSort(newPrefixSort);
+            oaSysOrganization.setPrefixId(newPrefixId);
+            oaSysOrganization.setCode(newOrgCode);
+            oaSysOrganization.setSort(newSort);
+
+            updateChildOrg(null, oaSysOrganization.getId(), oldPrefixId, oldPrefixName, oldPrefixSort, newPrefixId, newPrefixName, newPrefixSort);
+        }
+        updateBatch(oaSysOrganizations);
+    }
+
+    /**
+     * 根据prefixId查找所有部门，
+     *
+     * @param prefixId
+     * @param isIncludeSelf 是否包含prfixId部门
+     * @return
+     */
+    private List<OaSysOrganization> queryAllOrgByPrefixId(String prefixId, boolean isIncludeSelf) {
+        Example example = new Example(OaSysOrganization.class);
+        Example.Criteria criteria = example.createCriteria();
+        criteria.andLike("prefixId", prefixId + "%");
+        if (!isIncludeSelf) {
+            criteria.andNotEqualTo("prefixId", prefixId);
+        }
+        List<OaSysOrganization> oaSysOrganizations = organizationMapper.selectByExample(example);
+        return oaSysOrganizations;
+    }
+
+    // 查询所有次级机构部门，排序 prefixSort>target-prefixSort And prefixSort<source-prefixSort
+    @Override
+    public List<OaSysOrganization> queryAllOrgByParentIdAndSort(String parentId, String maxPrefixSort, String minPrefixSort, boolean isContainsMax, boolean isContainsMin) {
+        Example example = new Example(OaSysOrganization.class);
+        Example.Criteria criteria = example.createCriteria();
+        if (minPrefixSort != null) {
+            if (isContainsMin) {
+                criteria.andGreaterThanOrEqualTo("prefixSort", minPrefixSort);
+            } else {
+                criteria.andGreaterThan("prefixSort", minPrefixSort);
+            }
+        }
+        if (maxPrefixSort != null) {
+            if (isContainsMax) {
+                criteria.andLessThanOrEqualTo("prefixSort", maxPrefixSort);
+            } else {
+                criteria.andLessThan("prefixSort", minPrefixSort);
+            }
+        }
+        criteria.andEqualTo("parentId", parentId);
+        criteria.andEqualTo("delflag", BaseConstants.MYSQL_DELFLAG_NORMAL);
+
+        List<OaSysOrganization> oaSysOrganizations = organizationMapper.selectByExample(example);
+        return oaSysOrganizations;
+    }
+
+    /**
+     * 拖动组织到内层,需要更新sourceOrg
+     *
+     * @param desOrg
+     * @param sourceOrg
+     */
+    private boolean dragToInner(OaSysOrganization desOrg, OaSysOrganization sourceOrg) {
+        // 往里拖拽，如果源目标已经在目标部门的里面，无需拖拽
+        if (sourceOrg.getParentId().equals(desOrg.getId())) {
+            throw new HioMybatisInsertException("当前部门-" + sourceOrg.getName() + "-已经在" + desOrg.getName());
+        }
+        //查询部门里面是否有相同名称部门
+        int result = organizationMapper.checkHasSameNameForCurrentLevel(desOrg.getId(), sourceOrg.getName(), null);
+        if (result > 0) {
+            throw new HioMybatisInsertException("当前部门下有相同名称部门");
+        }
+        // 1、需要变更当前部门的sort、prefixId、prefixName,prefixSort,parentId；
+        // 2、需要变更当前部门的子部们的prefixId,prefixName,prefixSort
+        int maxSort = queryOrgChildMaxSort(desOrg.getId());
+        sourceOrg.setSort(maxSort + 1);
+        String oldPrefixId = sourceOrg.getPrefixId();
+        String oldPrefixName = sourceOrg.getPrefixName();
+        String oldPrefixSort = sourceOrg.getPrefixSort();
+        String oldCode = sourceOrg.getCode();
+
+        String newPrefixId = desOrg.getPrefixId() + "/" + sourceOrg.getId();
+        String newPrefixName = desOrg.getPrefixName() + "/" + sourceOrg.getName();
+        String newPrefixSort = desOrg.getPrefixSort() + "-" + NumberUtils.getSortCode(newPrefixId.split("/").length, maxSort + 1);
+        String newOrgCode = NumberUtils.getOrgCode(newPrefixSort);
+
+        sourceOrg.setPrefixId(newPrefixId);
+        sourceOrg.setPrefixName(newPrefixName);
+        sourceOrg.setPrefixSort(newPrefixSort);
+        sourceOrg.setParentId(desOrg.getId());
+        sourceOrg.setCode(newOrgCode);
+        update(sourceOrg);
+
+        updateChildOrg(null, sourceOrg.getId(), oldPrefixId, oldPrefixName, oldPrefixSort, newPrefixId, newPrefixName, newPrefixSort);
+
+        // 仅仅需要更新源部门的父类以及子类
+        List<OaSysOrganization> upAndDownList = new ArrayList<>();
+        upAndDownList.add(sourceOrg);
+        userService.updateOrganizationUpdateDateByUserPosition(null, null, upAndDownList, upAndDownList, null,null);
+        return true;
+    }
+
+    /**
+     * 保存组织机构
+     *
+     * @param apiParam
+     * @return java.lang.Object
+     * @author kimchou
+     * @date 2018/3/16 下午1:33
+     */
+    @Override
+    public Object saveOrganization(@DataSource String tendId, OrgSaveParam apiParam) {
+        //校驗權限
+        tendId = isHavePermission(tendId);
+        // 获取上级部门
+        OaSysOrganization parentOrganization = organizationMapper.selectByPrimaryKey(apiParam.getParentId());
+        if (parentOrganization == null || parentOrganization.getDelflag().intValue() == BaseConstants.MYSQL_DELFLAG_DELETED) {
+            throw new HioMybatisInsertException("parentId无效，请重新选择上级部门");
+        }
+        // 校验leaderId
+        String userId = checkLeaderId(tendId, apiParam);
+        // 校验当前同部门是否有相同名称部门
+        int result = organizationMapper.checkHasSameNameForCurrentLevel(apiParam.getParentId(), apiParam.getName(), null);
+        if (result > 0) {
+            throw new HioMybatisInsertException("当前部门下有相同名称部门");
+        }
+        // 保存组织机构
+        OaSysOrganization sysOrganization = getOaSysOrganization(apiParam, userId, parentOrganization);
+        int saveId = this.save(sysOrganization);
+        // 保存部门负责人
+        Map<String, Object> resultMap = saveUserPosition(apiParam, userId, sysOrganization);
+        // 新增组织 --->更新组织机构时间
+        List<OaSysOrganization> oaSysOrganizationsChangeList = new ArrayList<>();
+        oaSysOrganizationsChangeList.add(sysOrganization);
+        List<OaSysUserPosition> oaSysUserPositionList = new ArrayList<>();
+        boolean isUserChange = false;
+        OaSysUser oaSysUser = null;
+        if (resultMap != null && resultMap.containsKey("user") && resultMap.containsKey("userPosition")) {
+            oaSysUser = (OaSysUser) resultMap.get("user");
+            OaSysUserPosition userPosition = (OaSysUserPosition) resultMap.get("userPosition");
+            if (oaSysUser != null) {
+                isUserChange = true;
+            }
+            if (userPosition != null) {
+                oaSysUserPositionList.add(userPosition);
+            }
+        }
+        // 更新组织时间
+        userService.updateOrganizationUpdateDateByUserPosition(tendId, oaSysUserPositionList, null, oaSysOrganizationsChangeList, isUserChange ? oaSysUser : null,null);
+
+        //如果设置的负责人是邀请的需要发送信息-新用户
+        if(apiParam.getType().equals(SysConstants.ORG_ADD_TYPE_INVITE)){
+            userService.sendIMInvite(isEmpty(tendId)?getTendId():tendId,getUserIdIM(),oaSysUser.getMobile(),oaSysUser.getImUserId(),SysConstants.USER_INVITE_ORGANIZATION);
+        }
+        //返回当前组织信息
+        return sysOrganization;
+    }
+
+    private Map<String, Object> saveUserPosition(OrgSaveParam apiParam, String userId, OaSysOrganization sysOrganization) {
+        Map<String, Object> result = new HashMap<>();
+        // 邀请用户 保存用户 以及保存用户职务表 == IM端设置领导人
+        if (apiParam.getType().equals(SysConstants.ORG_ADD_TYPE_NONE)) {
+            // 不保存用户
+        } else if (apiParam.getType().equals(SysConstants.ORG_ADD_TYPE_ADD)) {
+            // 设置领导人
+            if (apiParam.getTendId() != null) {
+                OaSysUser user = userMapper.selectByPrimaryKey(userId);
+                OaSysUserPosition userPosition = userPositionService.queryPositionByUserIdAndOrganizationId(apiParam.getTendId(), userId, sysOrganization.getId());
+                if (userPosition == null) {
+                    // IM端直接设置用户为领导人
+                    userPosition = getOaSysUserPosition(sysOrganization, user);
+                    userPositionService.save(apiParam.getTendId(), userPosition);
+                }
+                result.put("user", user);
+                result.put("userPosition", userPosition);
+                return result;
+            }
+        } else if (apiParam.getType().equals(SysConstants.ORG_ADD_TYPE_INVITE)) {
+            userService.checkMobileIsExitsDetail(apiParam.getTendId(),apiParam.getUserMobile(),BaseConstants.USER_ORGANIZATION);
+            ApiFeignResponse<String> response = platformFeignService.queryAlreadyOrCreate(apiParam.getUserMobile());
+            if (response == null || response.getStatus() != 200 || StringUtil.isBlank(response.getResult())) {
+                throw new HioException("Platform -创建账号失败");
+            }
+            // 用户新创建
+            OaSysUser user = getOaSysUser(apiParam.getUserEmail(), apiParam.getUserMobile(), apiParam.getUserName(), userId,response.getResult());
+            // 用户职务创建
+            OaSysUserPosition userPosition = getOaSysUserPosition(sysOrganization, user);
+            int save = userService.save(apiParam.getTendId(), user, userPosition);
+            result.put("user", user);
+            result.put("userPosition", userPosition);
+            return result;
+        }
+        return null;
+    }
+
+    private OaSysUserPosition getOaSysUserPosition(OaSysOrganization sysOrganization, OaSysUser user) {
+        OaSysUserPosition userPosition = new OaSysUserPosition();
+        userPosition.setOrganizationId(sysOrganization.getId());
+        // 0 表示兼职，1表示负责人
+        int exists = userPositionMapper.queryPosition(user.getId());
+        if (exists <= 0) {
+            userPosition.setIsDefault(SysConstants.MYSQL_STATUS_USABLE);
+        } else {
+            userPosition.setIsDefault(SysConstants.MYSQL_STATUS_DISABLE);
+        }
+        userPosition.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+        userPosition.setUserId(user.getId());
+        userPosition.setId(Base.generatePk(OaSysUserPosition.class));
+        userPosition.setCreateDate(new Date());
+        return userPosition;
+    }
+
+    private OaSysUser getOaSysUser(String email, String mobile, String name, String userId,String imUserId) {
+        OaSysUser user = new OaSysUser();
+        Date now = new Date();
+        user.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+        user.setWorkStatus(SysConstants.UserWorkStatus.NO_CONFIRM.getWorkStatus());
+        user.setRealName(name);
+        user.setPinyinFirstLetter(Pinyin4jUtils.getShortPinyin(name));
+        user.setPinyinFull(Pinyin4jUtils.getPinYin(name));
+        user.setIsMale(SysConstants.Male.MAN.getStatus());
+        user.setEmail(email);
+        user.setMobile(mobile);
+        user.setId(userId);
+        user.setSort(userMapper.getMaxSort() + 1);
+        user.setCreateDate(new Date());
+        user.setImUserId(imUserId);
+        user.setUid(IDGenerator.getUUID());
+        user.setBirthday(now);
+        user.setRegularTime(now);
+        user.setFirstBeginTime(now);
+        user.setNowEndTime(now);
+        user.setEntryPartyTime(now);
+        user.setFirstEndTime(now);
+        user.setNowBeginTime(now);
+        user.setUserType(BaseConstants.MYSQL_USER_TYPE_COMMON);
+        return user;
+    }
+
+    /**
+     * 保存组织机构
+     *
+     * @param apiParam
+     * @param userId
+     * @param parentOrganization
+     * @return
+     */
+    private OaSysOrganization getOaSysOrganization(OrgSaveParam apiParam, String userId, OaSysOrganization parentOrganization) {
+        OaSysOrganization sysOrganization = new OaSysOrganization();
+        sysOrganization.setId(Base.generatePk(OaSysOrganization.class));
+        sysOrganization.setFullName(apiParam.getName());
+        sysOrganization.setPinyinFirstLetter(Pinyin4jUtils.getShortPinyin(apiParam.getName()));
+        sysOrganization.setPinyinFull(Pinyin4jUtils.getPinYin(apiParam.getName()));
+        sysOrganization.setLeaderId(userId);
+        sysOrganization.setParentId(apiParam.getParentId());
+        sysOrganization.setPrefixId(parentOrganization.getPrefixId() + "/" + sysOrganization.getId());
+        sysOrganization.setUid(IDGenerator.getUUID());
+        sysOrganization.setName(apiParam.getName());
+        sysOrganization.setType(SysConstants.OrganizationType.DEPT.getType());
+        sysOrganization.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+        sysOrganization.setPrefixName(parentOrganization.getPrefixName() + "/" + apiParam.getName());
+        sysOrganization.setCreateDate(new Date());
+        sysOrganization.setRemark(apiParam.getRemark());
+        int maxSort = organizationMapper.queryOrgChildMaxSort(apiParam.getParentId());
+        // 排序设置为当前同级部门的最大值
+        sysOrganization.setSort(maxSort + 1);
+        sysOrganization
+                .setPrefixSort(parentOrganization.getPrefixSort() + "-" + NumberUtils.getSortCode(sysOrganization.getPrefixId().split("/").length, sysOrganization.getSort()));
+        sysOrganization.setCode(NumberUtils.getOrgCode(sysOrganization.getPrefixSort()));
+        sysOrganization.setStatus(SysConstants.ORG_STATUS_ENABLE);
+        return sysOrganization;
+    }
+
+    /**
+     * 更新组织机构
+     *
+     * @param apiParam
+     * @return
+     */
+    @Override
+    @Transactional
+    public Object updateOrganization(@DataSource String tendId, OrgSaveParam apiParam) {
+        //校验权限
+        tendId = isHavePermission(tendId);
+        //获取组织机构
+        OaSysOrganization oaSysOrganization = organizationMapper.selectByPrimaryKey(apiParam.getOrganizationId());
+        if (oaSysOrganization == null || oaSysOrganization.getDelflag().intValue() == SysConstants.MYSQL_DELFLAG_DELETED) {
+            throw new HioMybatisUpdateException("当前组织机构不存在或者删除，请刷新重试");
+        }
+        // 获取领导人userId
+        String userId = checkLeaderId(tendId, apiParam);
+        // 校验组织修改是否变化
+        boolean isChangeOrg = false;
+        // 校验部门是否变化信息--->如果变化才去更新
+        if (!isEquals(oaSysOrganization.getName(), apiParam.getName())) {
+            isChangeOrg = true;
+        } else if (!isEquals(oaSysOrganization.getRemark(), apiParam.getRemark())) {
+            isChangeOrg = true;
+        } else if (!isEquals(oaSysOrganization.getLeaderId(), userId)) {
+            isChangeOrg = true;
+        }
+        // 如果没有更新--->直接返回即可
+        if (!isChangeOrg) {
+            return true;
+        }
+        // 校验是否是编辑公司节点
+        boolean isCompany = oaSysOrganization.getType().equals(SysConstants.OrganizationType.COMPANY.getType()) ? true : false;
+        // 校验该同级部门是否有相同名称部门,公司节点无需校验同级部门是否有相同部门名称、只有一个公司
+        if (!isCompany) {
+            int result = organizationMapper.checkHasSameNameForCurrentLevel(oaSysOrganization.getParentId(), apiParam.getName(), oaSysOrganization.getId());
+            if (result > 0) {
+                throw new HioMybatisInsertException("当前部门下有相同名称部门");
+            }
+        }
+        //
+        String oldPrefixName = oaSysOrganization.getPrefixName();
+        String newPrefixName = apiParam.getName();
+        if (!isCompany) {
+            // 获取父部门
+            OaSysOrganization sysParentOrganization = getObjectById(oaSysOrganization.getParentId());
+            newPrefixName = sysParentOrganization.getPrefixName() + "/" + apiParam.getName();
+        }
+
+        oaSysOrganization.setLeaderId(userId == null ? "" : userId);
+        oaSysOrganization.setRemark(apiParam.getRemark());
+        oaSysOrganization.setPrefixName(newPrefixName);
+        oaSysOrganization.setName(apiParam.getName());
+        oaSysOrganization.setFullName(apiParam.getName());
+        oaSysOrganization.setPinyinFull(Pinyin4jUtils.getPinYin(apiParam.getName()));
+        oaSysOrganization.setPinyinFirstLetter(Pinyin4jUtils.getShortPinyin(apiParam.getName()));
+
+        // 更新部门
+        int update = update(oaSysOrganization);
+        // 保存负责人
+        Map<String, Object> resultMap = saveUserPosition(apiParam, userId, oaSysOrganization);
+        if (!oldPrefixName.equals(newPrefixName)) {
+            // 更新子部门的所有prefix_name
+            updateChildOrg(tendId, oaSysOrganization.getId(), oaSysOrganization.getPrefixId(), oldPrefixName, oaSysOrganization.getPrefixSort(), oaSysOrganization.getPrefixId(),
+                    newPrefixName, oaSysOrganization.getPrefixSort());
+        }
+        // 调用主库修改公司名称<---如果是公司并且修改了名字
+        if (isCompany && !oldPrefixName.equals(newPrefixName)) {
+            TenantCompanyInfoDto dto = new TenantCompanyInfoDto();
+            dto.setTendId(getTendId());
+            ApiFeignResponse<TenantCompanyInfoDto> result = platformFeignService.queryTenantCompanyInfoByTendId(dto);
+            if (result != null && result.getStatus() == 200) {
+                TenantCompanyInfoDto dto1 = result.getResult();
+                dto.setName(apiParam.getName());
+                ApiFeignResponse<String> stringApiFeignResponse = platformFeignService.updateTenantCompanyInfo(dto);
+                if (!(stringApiFeignResponse != null && stringApiFeignResponse.getStatus() == 200)) {
+                    logger.info("调用platform-service->updateTenantCompanyInfo失败，【{}】", result.getStatus() + result.getMessage());
+                }
+            } else {
+                logger.info("调用platform-service->queryTenantCompanyInfoByTendId失败，【{}】", result.getStatus() + result.getMessage());
+                throw new HioMybatisUpdateException("更新失败");
+            }
+
+        }
+
+        // 新增组织 --->更新组织机构时间
+        List<OaSysOrganization> oaSysOrganizationsChangeList = new ArrayList<>();
+        oaSysOrganizationsChangeList.add(oaSysOrganization);
+        List<OaSysUserPosition> oaSysUserPositionList = new ArrayList<>();
+        boolean isUserChange = false;
+        OaSysUser oaSysUser = null;
+        if (resultMap != null && resultMap.containsKey("user") && resultMap.containsKey("userPosition")) {
+            oaSysUser = (OaSysUser) resultMap.get("user");
+            OaSysUserPosition userPosition = (OaSysUserPosition) resultMap.get("userPosition");
+            if (oaSysUser != null) {
+                isUserChange = true;
+            }
+            if (userPosition != null) {
+                oaSysUserPositionList.add(userPosition);
+            }
+        }
+        // 增量更新组织
+        if (!oldPrefixName.equals(newPrefixName)) {
+            // 如果组织变化的是名称--->子部们都需要变化
+            userService.updateOrganizationUpdateDateByUserPosition(tendId, oaSysUserPositionList, null, oaSysOrganizationsChangeList, isUserChange ? oaSysUser : null,null);
+        } else {
+            // 如果组织变化的是领导人、说明--->子部们无需更新
+            userService.updateOrganizationUpdateDateByUserPosition(tendId, oaSysUserPositionList, oaSysOrganizationsChangeList, null, isUserChange ? oaSysUser : null,null);
+        }
+        //如果设置的负责人是邀请的需要发送信息-新用户
+        if(apiParam.getType().equals(SysConstants.ORG_ADD_TYPE_INVITE)){
+            userService.sendIMInvite(isEmpty(tendId)?getTendId():tendId,getUserIdIM(),oaSysUser.getMobile(),oaSysUser.getImUserId(),SysConstants.USER_INVITE_ORGANIZATION);
+        }
+        return update;
+    }
+
+    /**
+     * 判斷是否有權限 【IM-PC】 一個需要手動傳入tendId
+     * @param tendId
+     * @return
+     */
+    @Override
+     public String isHavePermission(@DataSource String tendId) {
+        if (StringUtils.isNotBlank(tendId)) {
+            // IM端调用 传了tendId
+        } else {
+            //PC端操作已经切库
+            tendId = getTendId();
+        }
+        OaSysUser currentUser = userService.getOaSysUserByImId(tendId, getUserIdIM());
+        if (currentUser != null && currentUser.getDelflag().intValue() == BaseConstants.MYSQL_DELFLAG_NORMAL) {
+            boolean isSuper = roleUserService.queryIsSuper(tendId, currentUser.getId());
+            if (isSuper == false) {
+                if (Base.isFeignRequest()){
+                    //是feign请求-则是Feign请求-feign请求就是HR调用的
+                    List<RolePermissionDto> results = rolePermissionService.queryHrRolePermission(tendId, currentUser.getId());
+                    if (isNotEmpty(results)){
+                        return tendId;
+                    }
+                }
+                throw new HioPermissionException("权限不足");
+            }
+        } else {
+            throw new HioPermissionException("权限不足");
+        }
+        return tendId;
+    }
+
+    @Override
+    public OrganizationDto queryUserMainOrgByUserId(@DataSource String tendId,String userId) {
+        return organizationMapper.queryUserMainOrgByUserId(userId);
+    }
+
+    /**
+     * 校验领导人ID
+     *
+     * @param apiParam
+     * @return
+     */
+    private String checkLeaderId(@DataSource String tendId, OrgSaveParam apiParam) {
+        String userId = null;
+        if (apiParam.getType().equals(SysConstants.ORG_ADD_TYPE_NONE)) {
+            // 0表示无需设置领导人，将领导人清空
+            userId = null;
+        } else if (apiParam.getType().equals(SysConstants.ORG_ADD_TYPE_ADD)) {
+            // 1表示更新领导人或者新增
+            if (StringUtils.isBlank(apiParam.getLeaderId())) {
+                throw new HioMybatisUpdateException("leadId为空");
+            }
+            OaSysUser oaSysUser = userMapper.selectByPrimaryKey(apiParam.getLeaderId());
+            if (oaSysUser == null || oaSysUser.getDelflag().intValue() == SysConstants.MYSQL_DELFLAG_DELETED) {
+                throw new HioMybatisUpdateException("当前选择领导人用户不存在");
+            }
+            if (oaSysUser.getWorkStatus().equals(SysConstants.UserWorkStatus.LEAVE.getWorkStatus())) {
+                throw new HioMybatisInsertException("当前选择领导人用户已经离职，请重新选择");
+            }
+            // 当是PC端调用无需传tendId，移动端需要传tendId
+            boolean b = userPositionService.queryPositionIsExits(tendId, apiParam.getOrganizationId(), oaSysUser.getId(), null);
+            if (!b) {
+                if (tendId == null) {
+                    throw new HioMybatisUpdateException("当前设置领导人不在该部门下");
+                }
+            }
+            userId = oaSysUser.getId();
+        } else if (apiParam.getType().equals(SysConstants.ORG_ADD_TYPE_INVITE)) {
+            // 2表示新邀请用户、 校验手机号是否是老用户
+            if (isEmpty(apiParam.getUserMobile())) {
+                throw new HioMybatisInsertException("请输入邀请人手机号");
+            }
+            if (isEmpty(apiParam.getUserName())) {
+                throw new HioMybatisInsertException("请输入邀请人姓名");
+            }
+            int result = userMapper.queryUserByMobile(apiParam.getUserMobile(), false);
+            if (result > 0) {
+                throw new HioMybatisInsertException("您邀请的用户已经存在,请邀请新用户");
+            }
+            userId = Base.generatePk(OaSysUser.class);
+        }
+        return userId;
+    }
+
+    @Override
+    public List<OaSysOrganization> queryAllOrgLeadByUserId(@DataSource String tendId, String userId) {
+        Example example = new Example(OaSysOrganization.class);
+        Example.Criteria criteria = example.createCriteria();
+        criteria.andEqualTo("leaderId", userId);
+        criteria.andEqualTo("delflag", 0);
+        List<OaSysOrganization> oaSysOrganizations = organizationMapper.selectByExample(example);
+        return oaSysOrganizations;
+    }
+
+    @Override
+    public List<SkyDriveDto> queryNameByOrgAndRoleAndUser(@DataSource String tendId,SkyDriveParam apiParam) {
+    	if (isEmpty(apiParam.getRoleIds())&&isEmpty(apiParam.getOrganizationIds())&&isEmpty(apiParam.getUserIds())){
+            return Collections.emptyList();
+        }
+        List<SkyDriveDto> skyDriveDtos = organizationMapper.queryNameByOrgAndRoleAndUser(apiParam);
+        if (skyDriveDtos == null || skyDriveDtos.size() == 0) {
+            return Collections.emptyList();
+        }
+        return skyDriveDtos;
+    }
+
+    @Override
+    @Transactional
+    public Object createTeam(@DataSource String tendId, IMOrgCreateParam apiParam) {
+        // 获取公司
+        OaSysOrganization oaSysOrganization = queryCompanyOrganization(apiParam.getTendId());
+        if (oaSysOrganization == null) {
+            throw new HioMybatisInsertException("公司不存在");
+        }
+        // 更新admin用户
+        OaSysUser oaSysUser = userService.createTeamAdminUser(apiParam.getTendId(), apiParam.getAdminName(), apiParam.getAdminUserId(), apiParam.getAdminMobile(),
+                oaSysOrganization.getId());
+        // 更新公司名称
+        updateCompanyName(apiParam.getTendId(), apiParam.getTeamName(), oaSysOrganization,false);
+        // 邀请新成员
+        userService.saveTeamUsers(apiParam.getTendId(), apiParam.getTeams(), oaSysOrganization.getId());
+        // 全量同步数据库-用户信息(组织、等等)
+        redisSyncInit.syncTendData(tendId);
+        // 同步imUserId-oaUserId对应关系
+        redisSetService.syncTendIdAndUser(tendId,oaSysUser.getImUserId(),oaSysUser.getId(),BaseConstants.REDIS_OPT_ADD);
+        return 1;
+    }
+
+    // 更新公司名称
+    @Override
+    public void updateCompanyName(@DataSource String tendId, String name, OaSysOrganization oaSysOrganization,boolean isPuSystem) {
+        String oldPrefixId = oaSysOrganization.getPrefixId();
+        String oldPrefixName = oaSysOrganization.getPrefixName();
+        String oldPrefixSort = oaSysOrganization.getPrefixSort();
+        // 更新公司名字
+        oaSysOrganization.setName(name);
+        oaSysOrganization.setFullName(name);
+        oaSysOrganization.setPinyinFirstLetter(Pinyin4jUtils.getShortPinyin(name));
+        oaSysOrganization.setPinyinFull(Pinyin4jUtils.getPinYin(name));
+        oaSysOrganization.setPrefixName(name);
+        oaSysOrganization.setUpdateDate(new Date());
+        if (isPuSystem){
+            oaSysOrganization.setCreatePersonId(isEmpty(oaSysOrganization.getCreatePersonId())?1001+"":oaSysOrganization.getCreatePersonId());
+            oaSysOrganization.setUpdatePersonId(isEmpty(oaSysOrganization.getUpdatePersonId())?1001+"":oaSysOrganization.getUpdatePersonId());
+            oaSysOrganization.setCreatePersonName(isEmpty(oaSysOrganization.getCreatePersonName())?"管理员":oaSysOrganization.getCreatePersonName());
+            oaSysOrganization.setUpdatePersonName(isEmpty(oaSysOrganization.getUpdatePersonName())?"管理员":oaSysOrganization.getUpdatePersonName());
+        }
+        int i = update(oaSysOrganization);
+
+        if (isPuSystem){
+            List<OaSysOrganization> oaSysOrganizations = queryListByTendId(tendId, false);
+            oaSysOrganizations.forEach(item ->{
+                item.setCreatePersonId(isEmpty(item.getCreatePersonId())?1001+"":item.getCreatePersonId());
+                item.setUpdatePersonId(isEmpty(item.getUpdatePersonId())?1001+"":item.getUpdatePersonId());
+                item.setCreatePersonName(isEmpty(item.getCreatePersonName())?"管理员":item.getCreatePersonName());
+                item.setUpdatePersonName(isEmpty(item.getUpdatePersonName())?"管理员":item.getUpdatePersonName());
+            });
+            updateBatch(oaSysOrganizations);
+        }
+
+        // 更新子部们的名称前缀
+        updateChildOrg(tendId, oaSysOrganization.getId(), oldPrefixId, oldPrefixName, oldPrefixSort, oaSysOrganization.getPrefixId(), oaSysOrganization.getPrefixName(),
+                oaSysOrganization.getPrefixSort());
+
+       List<OaSysOrganization> organizationsDownList =  new ArrayList<>();
+       organizationsDownList.add(oaSysOrganization);
+       //批量更新
+       userService.updateOrganizationUpdateDateByUserPosition(tendId,null,null,organizationsDownList,null,null);
+    }
+
+    /**
+     * 通过用户ID查询直属的组织机构
+     *
+     * @param userId
+     * @param tendId
+     * @return
+     */
+    @Override
+    public List<OrganizationDto> queryOrganizationsByUserId(@DataSource String tendId, String userId) {
+        return organizationMapper.queryOrganizationsByUserId(userId);
+    }
+
+    @Override
+    public List<OrganizationDto> queryOrganizationsByUserIdIM(@DataSource String tendId, String userIdIM) {
+        return organizationMapper.queryOrganizationsByUserIdIM(userIdIM);
+    }
+
+    @Override
+    public List<OrganizationDto> queryOrganizationTreeByUserIds(@DataSource String tendId, String userIds) {
+        List<String> list = Arrays.asList(userIds.split(","));
+        return organizationMapper.queryOrganizationTreeByUserIds(tendId, list);
+    }
+
+    @Override
+    public boolean updateTenantCompanyInfo(@DataSource String tendId, TenantCompanyInfoDto apiParam) {
+        //校验权限
+        apiParam.setTendId(isHavePermission(tendId));
+        //查询当前公司
+        OaSysOrganization organizationCompany = queryCompanyOrganization(apiParam.getTendId());
+        // 更新主库数据
+        ApiFeignResponse<String> response = platformFeignService.updateTenantCompanyInfo(apiParam);
+        if (response == null || response.getStatus() != 200) {
+            throw new HioException(response.getMessage());
+        } else {
+            //更新成功
+            if (!apiParam.getName().equals(organizationCompany.getName())) {
+                // 需要修改组织名称
+                updateCompanyName(apiParam.getTendId(), apiParam.getName(), organizationCompany,false);
+            }
+        }
+        return true;
+    }
+
+
+    @Override
+    public OaSysOrganization queryCompanyOrganization(@DataSource String tendId) {
+        OaSysOrganization reco = new OaSysOrganization();
+        reco.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+        reco.setType(SysConstants.OrganizationType.COMPANY.getType());
+        OaSysOrganization oaSysOrganization = organizationMapper.selectOne(reco);
+        return oaSysOrganization;
+    }
+
+    @Override
+    public GeneralDto queryOrganizationNameById(@DataSource String tendId, String id) {
+        GeneralDto dto = new GeneralDto();
+        OaSysOrganization oaSysOrganization = organizationMapper.selectByPrimaryKey(id);
+        if (oaSysOrganization != null) {
+            dto.setSid(oaSysOrganization.getId());
+            dto.setName(oaSysOrganization.getName());
+            dto.setType(SysConstants.SYS_TYPE_ORGANIZATION);
+        }
+        return dto;
+    }
+
+    @Override
+    public void updateBatchUpdateTime(@DataSource String tendId, HashSet<String> organizationsSet, Date date) {
+        organizationMapper.updateBatchUpdateTime(organizationsSet, date);
+    }
+
+    @Override
+    public List<String> queryAllOrgIdsByOrgId(String prefixId, boolean b) {
+        return organizationMapper.queryAllOrgIdsByOrgId(prefixId, b);
+    }
+
+    @Override
+    public List<GeneralDto> queryOrgAndPositionByUserId(@DataSource String tendId, String userId) {
+        return organizationMapper.queryOrgAndPositionByUserId(userId);
+    }
+
+    @Override
+    public List<OrganizationUserCountDto> queryUserCountByOrgnizationId(Map<String, String> map) {
+        return organizationMapper.queryUserCountByOrgnizationId(map);
+    }
+
+    @Override
+    @Transactional
+    public Object copyOrganizations(String sourceId, String desId) {
+        OaSysOrganization sourceOrganization = organizationMapper.selectByPrimaryKey(sourceId);
+        OaSysOrganization desOrganization = organizationMapper.selectByPrimaryKey(desId);
+        if (sourceOrganization == null) {
+            throw new HioMybatisInsertException("源组织不存在或者已经删除,请刷新重试");
+        }
+        if (desOrganization == null) {
+            throw new HioMybatisInsertException("目标组织不存在或者已经删除,请刷新重试");
+        }
+        // 当目标部门在源目标下面，不允许 1001/1002 1001
+        if (desOrganization.getPrefixId().startsWith(sourceOrganization.getPrefixId())) {
+            throw new HioMybatisInsertException("不能复制源部门到源部门的子部门");
+        }
+
+        String oldOrgId = sourceOrganization.getId();
+        String oldPrefixId = sourceOrganization.getPrefixId();
+        String oldPrefixSort = sourceOrganization.getPrefixSort();
+        String oldPrefixName = sourceOrganization.getPrefixName();
+
+        sourceOrganization.setId(generatePk());
+        sourceOrganization.setCreateDate(new Date());
+        sourceOrganization.setUid(IDGenerator.getUUID());
+        sourceOrganization.setParentId(desOrganization.getId());
+        sourceOrganization.setName(generateOrganizationNameFromCopy(sourceOrganization.getName() + "_copy", desOrganization.getId()));
+        sourceOrganization.setFullName(sourceOrganization.getName());
+        sourceOrganization.setPrefixId(desOrganization.getPrefixId() + "/" + sourceOrganization.getId());
+        sourceOrganization.setPrefixName(desOrganization.getPrefixName() + "/" + sourceOrganization.getName());
+        sourceOrganization.setSort(queryOrgChildMaxSort(sourceOrganization.getParentId()) + 1);
+        sourceOrganization.setPinyinFirstLetter(Pinyin4jUtils.getShortPinyin(sourceOrganization.getName()));
+        sourceOrganization.setPinyinFull(Pinyin4jUtils.getPinYin(sourceOrganization.getName()));
+        sourceOrganization.setLeaderId(null);
+        int level = sourceOrganization.getPrefixId().split("/").length;
+        sourceOrganization.setPrefixSort(desOrganization.getPrefixSort() + "-" + NumberUtils.getSortCode(level, sourceOrganization.getSort()));
+        sourceOrganization.setCode(NumberUtils.getOrgCode(sourceOrganization.getPrefixSort()));
+
+        String newOrgId = sourceOrganization.getId();
+        String newPrefixId = sourceOrganization.getPrefixId();
+        String newPrefixSort = sourceOrganization.getPrefixSort();
+        String newPrefixName = sourceOrganization.getPrefixName();
+
+        organizationMapper.insert(sourceOrganization);
+        saveCopyOrganizations(oldOrgId, newOrgId, oldPrefixId, newPrefixId, oldPrefixSort, newPrefixSort, oldPrefixName, newPrefixName);
+
+        // 批量更新时间
+        List<OaSysOrganization> oaSysOrganizationList = new ArrayList<>();
+        oaSysOrganizationList.add(sourceOrganization);
+        userService.updateOrganizationUpdateDateByUserPosition(getTendId(), null, oaSysOrganizationList, oaSysOrganizationList, null,null);
+        return null;
+    }
+
+    private String generateOrganizationNameFromCopy(String organizationName, String organizationId) {
+        //校验目标部门下是否有相同名称的部门，有的话继续对名词进行处理
+        int result = organizationMapper.checkHasSameNameForCurrentLevel(organizationId, organizationName, null);
+        if (result > 0) {
+            return generateOrganizationNameFromCopy(organizationName + "_copy", organizationId);
+        }
+        return organizationName;
+    }
+
+    /**
+     * 更新复制的部门(更新父类部门) Id、name、fullName、parentId、prefixId、prefixSort、code
+     */
+    private void saveCopyOrganizations(String oldOrgId, String newOrgId, String oldPrefixId, String newPrefixId, String oldPrefixSort, String newPrefixSort, String oldPrefixName,
+                                       String newPrefixName) {
+        List<OaSysOrganization> oaSysOrganizations = queryAllOrgByParentIdAndSort(oldOrgId, null, null, true, true);
+        for (int i = 0; i < oaSysOrganizations.size(); i++) {
+            OaSysOrganization oaSysOrganization = oaSysOrganizations.get(i);
+
+            String oldChildOrgId = oaSysOrganization.getId();
+            String oldChildPrefixId = oaSysOrganization.getPrefixId();
+            String oldChildPrefixSort = oaSysOrganization.getPrefixSort();
+            String oldChildPrefixName = oaSysOrganization.getPrefixName();
+
+            oaSysOrganization.setId(generatePk());
+            oaSysOrganization.setLeaderId(null);
+            oaSysOrganization.setUid(IDGenerator.getUUID());
+            oaSysOrganization.setParentId(newOrgId);
+            oaSysOrganization.setName(oaSysOrganization.getName() + "_copy");
+            oaSysOrganization.setFullName(oaSysOrganization.getName());
+            oaSysOrganization.setPrefixId(newPrefixId + "/" + oaSysOrganization.getId());
+            oaSysOrganization.setPrefixName(newPrefixName + "/" + oaSysOrganization.getName());
+            oaSysOrganization.setSort(oaSysOrganization.getSort());
+            oaSysOrganization.setPinyinFirstLetter(Pinyin4jUtils.getShortPinyin(oaSysOrganization.getName()));
+            oaSysOrganization.setPinyinFull(Pinyin4jUtils.getPinYin(oaSysOrganization.getName()));
+            oaSysOrganization.setCreateDate(new Date());
+            int level = oaSysOrganization.getPrefixId().split("/").length;
+            oaSysOrganization.setPrefixSort(newPrefixSort + "-" + NumberUtils.getSortCode(level, oaSysOrganization.getSort()));
+            oaSysOrganization.setCode(NumberUtils.getOrgCode(oaSysOrganization.getPrefixSort()));
+
+            String newChildOrgId = oaSysOrganization.getId();
+            String newChildPrefixId = oaSysOrganization.getPrefixId();
+            String newChildPrefixSort = oaSysOrganization.getPrefixSort();
+            String newChildPrefixName = oaSysOrganization.getPrefixName();
+
+            saveCopyOrganizations(oldChildOrgId, newChildOrgId, oldChildPrefixId, newChildPrefixId, oldChildPrefixSort, newChildPrefixSort, oldChildPrefixName, newChildPrefixName);
+        }
+        saveBatch(oaSysOrganizations);
+    }
+
+    /**
+     * 查询子部门
+     *
+     * @param prefixId
+     * @return
+     */
+    private List<OaSysOrganization> queryChildOrganizationsByPrefixId(String prefixId) {
+        Example example = new Example(OaSysOrganization.class);
+        Example.Criteria criteria = example.createCriteria();
+        criteria.andLike("prefixId", prefixId.concat("%"));
+        criteria.andEqualTo("delflag", 0);
+        List<OaSysOrganization> oaSysOrganizations = organizationMapper.selectByExample(example);
+        return oaSysOrganizations;
+    }
+
+    @Override
+    public List<OrganizationDto> queryOrgChildById(@DataSource String tendId, String organizationId, boolean isContainsSelf) {
+        if (Base.isNotEmpty(organizationId)) {
+            OaSysOrganization oaSysOrganization = organizationMapper.selectByPrimaryKey(organizationId);
+            if (oaSysOrganization != null && oaSysOrganization.getDelflag().intValue() == BaseConstants.MYSQL_DELFLAG_NORMAL) {
+                return queryAllOrgByOrgId(tendId, oaSysOrganization.getPrefixId(), isContainsSelf);
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public Object queryOrganizationDetails(@DataSource String tendId, String id) {
+        OaSysOrganization oaSysOrganization = organizationMapper.selectByPrimaryKey(id);
+        if (oaSysOrganization == null || oaSysOrganization.getDelflag().intValue() == BaseConstants.MYSQL_DELFLAG_DELETED) {
+            return new HioMybatisQueryException("查询组织机构失败,组织不存在或者已经删除");
+        }
+        OrganizationDetailDto detailDto = new OrganizationDetailDto();
+        if (isNotEmpty(oaSysOrganization.getLeaderId())) {
+            detailDto.setLeaderId(oaSysOrganization.getLeaderId());
+            OaSysUser oaSysUser = userMapper.selectByPrimaryKey(oaSysOrganization.getLeaderId());
+            OaSysUserPosition oaSysUserPosition = userPositionService.queryPositionByUserIdAndOrganizationId(tendId, oaSysUser.getId(), oaSysOrganization.getId());
+            detailDto.setLeaderName(oaSysUser.getRealName());
+            detailDto.setLeaderImUserId(oaSysUser.getImUserId());
+            if (oaSysUserPosition != null && isNotEmpty(oaSysUserPosition.getPosition())) {
+                detailDto.setLeaderPositionName(oaSysUserPosition.getPosition());
+            }else {
+                detailDto.setLeaderPositionName("");
+            }
+        }
+        if (oaSysOrganization.getParentId() != null) {
+            detailDto.setParentId(oaSysOrganization.getParentId());
+            OaSysOrganization organization = organizationMapper.selectByPrimaryKey(oaSysOrganization.getParentId());
+            detailDto.setParentName(organization.getName());
+        }
+        detailDto.setOrganizationId(oaSysOrganization.getId());
+        detailDto.setName(oaSysOrganization.getName());
+        detailDto.setRemark(oaSysOrganization.getRemark());
+        return detailDto;
+
+
+    }
+
+    @Override
+    public boolean savePuCompany(@DataSource String tendId, PuCompanyParam apiParam) {
+        //保存公司
+        OaSysOrganization organization = queryCompanyOrganization(apiParam.getTendId());
+        if (organization == null){
+            new HioException("公司不存在");
+        }
+        //更新公司名字
+        updateCompanyName(apiParam.getTendId(),apiParam.getCompanyName(),organization,true);
+        //更改应用可用
+        OaSysApp app = appService.getObjectById(BaseConstants.APP_PU_ID);
+        if ( app != null){
+            app.setIsPermission(BaseConstants.APP_PERMISSION_ENABLED);
+            appService.update(app);
+        }
+        // 全量同步数据库-用户信息(组织、等等)
+        redisSyncInit.syncTendData(tendId);
+        return true;
+    }
+
+    @Override
+    public List<OrganizationDto> queryOrganizationByOrgIds(@DataSource String tendId, List<String> orgIds) {
+        return organizationMapper.queryOrganizationByOrgIds(orgIds);
+    }
+}

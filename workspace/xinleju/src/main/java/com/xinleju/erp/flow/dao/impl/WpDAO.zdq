@@ -1,0 +1,604 @@
+package com.xinleju.erp.flow.dao.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.Order;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.utils.StringHelper;
+import com.xinleju.erp.flow.frameapi.domain.User;
+import com.xinleju.erp.flow.models.Ai;
+import com.xinleju.erp.flow.models.Wp;
+import com.xinleju.erp.flow.service.AlService;
+import com.xinleju.erp.flow.utils.FlowConstant;
+import com.xinleju.erp.flow.utils.FlowUtils;
+import com.xinleju.erp.flow.utils.IdNameUtils;
+import com.xinleju.erp.flow.utils.ParticipantUtils;
+
+/**
+ * 
+ * 
+ * <p>
+ * </p>
+ * <p>
+ * </p>
+ * 
+ * @author 孙朝辉
+ * @version $Id: WpDAO.java 2301 2015-01-05 08:25:27Z zhongjun $
+ * @since
+ * 
+ */
+@Repository
+public class WpDAO extends BaseDAO {
+
+    /**
+     * 
+     * <p>
+     * 获取工作组对象
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param wpId
+     *            工作组ID
+     * @return 工作组
+     */
+    public Wp getWpById(Long wpId) {
+        Wp wp = getDao().getById(Wp.class, wpId, "ai", "ai.ac");
+        return wp;
+    }
+
+    /**
+     * 
+     * <p>
+     * 获取指定px的工作组,如果该工作组需要跳过，则递归pop
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param ai
+     *            所在环节实例
+     * @param px
+     *            指定的px
+     * @return 工作组对象
+     */
+    public Wp pop(Ai ai, Integer px) {
+
+        Wp wp = getWpByPx(ai.getId(), px);
+
+        if (wp == null) {
+            return null;
+        } else {
+            // 依据 px > ai.px,更新ai.px
+            if (px.intValue() > ai.getPx().intValue()) {
+                ai.setPx(px);
+                getDao().update(ai);
+            }
+            // 已删除的Wp不能pop出去
+            if (FlowUtils.isDeletedWp(wp)) {
+                return pop(ai, px + 1);
+            }
+            // 查看是否需要跳过本Wp
+            List<User> users = IdNameUtils.toUsers(IdNameUtils.decode(wp.getParticipants()));
+            List<User> defineUsers = IdNameUtils.toUsers(IdNameUtils.decode(wp.getParticipantsDefine()));
+            
+            //允许跳过 && 用户为空  || 不允许跳过 && 重复计算后无人
+            if (FlowUtils.isAutoPassWhenNoParticipants(wp) && users.size() == 0 
+                    || !FlowUtils.isAutoPassWhenNoParticipants(wp) &&  users.size() == 0 && defineUsers.size() > 0) {
+                App.getBean(WiDAO.class).tryLogAutoPassWi(wp);
+                //允许跳过 && 用户为空 && 默认参与人也为空
+                if (FlowUtils.isAutoPassWhenNoParticipants(wp) && users.size() == 0 && 1 > defineUsers.size()){
+                    App.getBean(AlService.class).logWpAutoPassAsNoUsers(wp);
+                }
+                return pop(ai, px + 1);
+            }
+            else {
+                return wp;
+            }
+        }
+    }
+
+    /**
+     * 
+     * <p>
+     * 获取指定px的工作组
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param aiId
+     *            环节实例ID
+     * @param px
+     *            序号ID
+     * @return 工作组
+     */
+    public Wp getWpByPx(Long aiId, int px) {
+        Wp wp = getDao().findFirst(Wp.class, "aiId = ? and px = ? and isDeleted = 0 and parentWpId is null", new Object[] { aiId, px }, new String[] { "ai", "fi", "ai.ac"});
+        return wp;
+    }
+
+    /**
+     * 从 parentWp下pop出指定 subPx值得Wp
+     * @param parentWp
+     * @param subPx
+     * @return
+     */
+    public Wp popSub(Wp parentWp, Integer subPx) {
+        Wp subWp = getWpBySubPx(parentWp.getId(), subPx);
+
+        if (subWp == null) {
+            return null;
+        } else {
+            // 依据 px > ai.px,更新ai.px
+            if (parentWp.getCurrentSubPx() == null || subPx.intValue() > parentWp.getCurrentSubPx().intValue()) {
+                parentWp.setCurrentSubPx(subPx.intValue());
+                getDao().update(parentWp);
+            }
+            // 已删除的Wp不能pop出去
+            if (FlowUtils.isDeletedWp(subWp)) {
+                return popSub(subWp, subPx + 1);
+            }
+            // 查看是否需要跳过本Wp
+            List<User> users = IdNameUtils.toUsers(IdNameUtils.decode(subWp.getParticipants()));
+            List<User> defineUsers = IdNameUtils.toUsers(IdNameUtils.decode(subWp.getParticipantsDefine()));
+            
+            //允许跳过 && 用户为空  || 不允许跳过 && 重复计算后无人
+            if (FlowUtils.isAutoPassWhenNoParticipants(subWp) && users.size() == 0 
+                    || !FlowUtils.isAutoPassWhenNoParticipants(subWp) &&  users.size() == 0 && defineUsers.size() > 0) {
+                
+                App.getBean(WiDAO.class).tryLogAutoPassWi(subWp);
+              //允许跳过 && 用户为空 && 默认参与人也为空
+                if (FlowUtils.isAutoPassWhenNoParticipants(subWp) && users.size() == 0 && 1 > defineUsers.size()){
+                    App.getBean(AlService.class).logWpAutoPassAsNoUsers(subWp);
+                }
+                //subPx = 2,该节点无人参与，需要指向下一个 subPx = 3
+                parentWp.setCurrentSubPx(subPx.intValue() + 1);
+                getDao().update(parentWp);
+                
+                return popSub(parentWp, subPx + 1);
+            }
+            else {
+                return subWp;
+            }
+        }
+        
+    }
+    
+    /**
+     * 获取指定 subPx 的Wp
+     * @param wpId
+     * @param subPx
+     * @return
+     */
+    public Wp getWpBySubPx(Long wpId, int subPx) {
+        Wp wp = getDao().findFirst(Wp.class, "parentWpId = ? and subPx = ? and isDeleted = 0", new Object[] { wpId, subPx }, new String[] { "ai", "fi", "ai.ac"});
+        return wp;
+    }
+    /**
+     * 
+     * <p>
+     * 获取Ai当前的工作组
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param aiId
+     *            环节实例ID
+     * @return 工作组
+     */
+    public Wp getWpOfAi(Long aiId) {
+        Wp wp = getDao().findFirst(Wp.class, " aiId = ? and isAi = 1 and parentWpId is null ", new Object[] { aiId }, new String[] { "ai", "ai.ac" });
+        return wp;
+    }
+    public Wp getWpOfParentWp(Long parentWpId, int subPx) {
+        Wp wp = getDao().findFirst(Wp.class, "parentWpId = ? and subPx = ?", new Object[] { parentWpId, subPx}, new String[] { "ai", "ai.ac" });
+        return wp;
+    }
+    /**
+     * 
+     * <p>
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param ai
+     *            当前Ai
+     * @param pxIfSave
+     *            当需要保存Wp时，使用的px值
+     * @param participantString
+     *            格式化的参与人字符串
+     * @param finishCtrl
+     *            工作组结束控制
+     * @param displayName
+     *            工作组显示名
+     * @param reBuildParticipant
+     *            是否重算实际参与人
+     * @return 工作组
+     */
+    public Wp saveOrUpdateByAi(Ai ai, Integer pxIfSave, String participantString, String finishCtrl, String displayName, boolean reBuildParticipant) {
+        return this.saveOrUpdateByAi(ai, pxIfSave, participantString, finishCtrl, displayName, null, reBuildParticipant);
+    }
+    /**
+     * 更新wp
+     * @author jun
+     * @param ai 当前Ai
+     * @param pxIfSave 当需要保存Wp时，使用的px值
+     * @param participantString 格式化的参与人字符串
+     * @param finishCtrl 工作组结束控制
+     * @param displayName 工作组显示名
+     * @param parentWpId 父wpid
+     * @param reBuildParticipant 是否重算实际参与人
+     * @return subwp
+     */
+    public Wp saveOrUpdateByAi(Ai ai, Integer pxIfSave, String participantString, String finishCtrl
+            , String displayName, Long parentWpId, boolean reBuildParticipant) {
+
+        Wp wp = parentWpId == null ? getWpOfAi(ai.getId()) : getWpOfParentWp(parentWpId, pxIfSave);
+
+        if (wp == null) {
+            wp = new Wp();
+            wp.setOps(ai.getAc().getOps());
+            wp.setPx(pxIfSave);
+            wp.setIsAi(1);
+            wp.setOriginDefine(ai.getAc().getPaticipantList());
+            wp.setFi(ai.getFi());
+            wp.setAiId(ai.getId());
+            wp.setFiId(ai.getFiId());  
+            wp.setIsDeleted(0);
+            wp.setAssignType(ai.getAc().getAssignType() == null ? 0 : ai.getAc().getAssignType());
+            wp.setIgnoreFiOwner(ai.getAc().getIgnoreFiOwner());
+        }
+        wp.setAi(ai);
+        
+       
+        wp.setTp(ai.getAc().getTp());
+        wp.setParticipantsSelectStrategy(ai.getAc().getParticipantsSelectStrategy());
+        wp.setAi(ai);
+        wp.setDisplayName(StringUtils.isEmpty(displayName) ? ai.getDisplayName() : displayName);
+        wp.setFinishCtrl(finishCtrl);
+        //User_12:张三;User_22:李四
+        wp.setParticipantsDefine(participantString);
+        // 当已经有Participants时，保留已有的定义
+        if ((StringUtils.isNotEmpty(participantString) && StringUtils.isEmpty(wp.getParticipants()) || reBuildParticipant)) {
+            wp.setParticipants(participantString);
+            wp.setParticipantsSelected(participantString);
+        }
+        boolean isAutoPassByCfgDoWhenNoUsersAtWp = FlowUtils.isAutoPassByCfgDoWhenNoUsersAtWp(ai.getFl());
+        
+        wp.setIsAutoAsNoParticipants(isAutoPassByCfgDoWhenNoUsersAtWp ? 
+                FlowConstant.WP_IS_AUTO_PASS_WEHN_NO_PARTICIPANTS_YES : FlowConstant.WP_IS_AUTO_PASS_WEHN_NO_PARTICIPANTS_NO);
+        wp.setIsDeleted(FlowConstant.INT_FALSE);
+        getDao().saveOrUpdate(wp);
+        return wp;
+    }
+
+    /**
+     * 
+     * <p>
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param ai
+     *            当前Ai
+     * @param px_if_save
+     *            当需要保存Wp时，使用的px值
+     * @param participantString
+     *            格式化的参与人字符串
+     * @param finishCtrl
+     *            工作组结束控制
+     * @param assignType
+     *            工作分发模式
+     * @param displayName
+     *            工作组显示名
+     * @param opUser
+     *            操作人
+     * @param ops
+     *            操作權限
+     * @return 工作组
+     */
+    public Wp saveOrUpdateByPx(Ai ai, Integer px_if_save, String participantString, String finishCtrl, Integer assignType, String displayName, User opUser, String ops) {
+
+        Wp wp = getWpByPx(ai.getId(), px_if_save);
+        if (wp == null) {
+            wp = new Wp();
+            wp.setOps(ops);
+            wp.setPx(px_if_save);
+            wp.setIsAi(0);
+            wp.setAssignType(assignType);
+            wp.setAiId(ai.getId());
+            wp.setFiId(ai.getFiId());
+            wp.setFi(ai.getFi());
+            wp.setIsDeleted(0);
+
+            if (opUser != null) {
+                wp.setCreatorUserId(opUser.getUserId());
+                wp.setCreatorLoginName(opUser.getLoginName());
+                wp.setCreatorUserName(opUser.getUserName());
+            }
+        }
+
+        if (opUser != null) {
+            wp.setOwnerUserId(opUser.getUserId());
+            wp.setOwnerLoginName(opUser.getLoginName());
+            wp.setOwnerUserName(opUser.getUserName());
+        }
+
+        if (FlowUtils.isAiWp(wp)) {
+            wp.setParticipantsSelectStrategy(ai.getAc().getParticipantsSelectStrategy());
+        } else {
+            wp.setParticipantsSelectStrategy(FlowConstant.PARTICIPANT_SELECT_ALWAYS);
+        }
+        
+        
+        wp.setAi(ai);
+        wp.setTp(ai.getAc().getTp());
+        wp.setDisplayName(StringUtils.isEmpty(displayName) ? ai.getDisplayName() : displayName);
+        wp.setFinishCtrl(finishCtrl);
+        wp.setParticipantsDefine(participantString);
+        wp.setParticipantsSelected(participantString);
+        wp.setParticipants(participantString);
+        boolean isAutoPassByCfgDoWhenNoUsersAtWp = FlowUtils.isAutoPassByCfgDoWhenNoUsersAtWp(ai.getFl());
+        
+        wp.setIsAutoAsNoParticipants(isAutoPassByCfgDoWhenNoUsersAtWp ? 
+                FlowConstant.WP_IS_AUTO_PASS_WEHN_NO_PARTICIPANTS_YES : FlowConstant.WP_IS_AUTO_PASS_WEHN_NO_PARTICIPANTS_NO);
+        getDao().saveOrUpdate(wp);
+
+        return wp;
+    }
+
+    /**
+     * 
+     * <p>
+     * 获取最小的px值
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param aiId
+     *            环节实例ID
+     * @return PX
+     */
+    public int getMinPx(Long aiId) {
+
+        return getDao().findInt("select min(e.px) from Wp e where e.aiId = ? and e.isDeleted = 0", aiId);
+    }
+
+    /**
+     * <p>
+     * 替换用户
+     * </p>
+     * <p>
+     * 老用户
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param wpId
+     *            工作组ID
+     * @param addUsers
+     *            加入的参与人
+     * @param rmUsers
+     *            删除的参与人
+     * @param override
+     *            覆盖
+     */
+    public void replaceParticipants(Long wpId, String addUsers, String rmUsers, boolean override) {
+
+        Wp wp = getWpById(wpId);
+        this.replaceParticipants(wp, addUsers, rmUsers, override);
+    }
+
+    /**
+     * <p>
+     * 替换用户
+     * </p>
+     * <p>
+     * 老用户
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param wp
+     *            工作组ID
+     * @param addUsers
+     *            加入的参与人
+     * @param rmUsers
+     *            删除的参与人
+     * @param override
+     *            覆盖
+     */
+    public void replaceParticipants(Wp wp, String addUsers, String rmUsers, boolean override) {
+        String participants = wp.getParticipants();
+        List<User> addUsersList = ParticipantUtils.toUsers(addUsers);
+        List<User> rmUsersList = ParticipantUtils.toUsers(rmUsers);
+        List<User> dbUsersList = ParticipantUtils.toUsers(participants);
+
+        List<User> resultUsers = new ArrayList<User>();
+        if (!override) {
+            for (User user : dbUsersList) {
+                resultUsers.add(user);
+            }
+        }
+
+        for (User user : dbUsersList) {
+            if (rmUsersList.contains(user)) {
+                resultUsers.remove(user);
+            }
+        }
+        for (User user : addUsersList) {
+            if (!resultUsers.contains(user)) {
+                resultUsers.add(user);
+            }
+        }
+
+        wp.setParticipantsSelected(ParticipantUtils.toParticipants(resultUsers));
+        wp.setParticipants(ParticipantUtils.toParticipants(resultUsers));
+
+        getDao().update(wp);
+        if (null != wp.getSubMode() && wp.getSubMode().intValue() == 1){
+            //TODO
+        }
+    }
+
+
+    /**
+     * 
+     * <p>
+     * 获取活动实例第一个有效的工作组
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param fiId
+     *            流程实例ID
+     * @return 工作组
+     */
+    public Wp getFirstValidWp(Long fiId) {
+
+        List<Wp> wpList = getAllValidWps(fiId);
+        return wpList.size() > 0 ? wpList.get(0) : null;
+    }
+    /**
+     * 
+     * <p>
+     * 获取有效的工作组集合
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param fiId
+     *            流程实例ID
+     * @return 工作组集合
+     */
+    public List<Wp> getAllValidWps(Long fiId,Integer... acTypes) {
+        return this.getAllValidWpsByFiIds(new Long[]{fiId}, acTypes).get(fiId);
+    }
+    /**
+     * 
+     * 获取所有流程WP
+     * @param fiIds
+     * @param acTypes
+     * @return
+     */
+    public Map<Long, List<Wp>> getAllValidWpsByFiIds(Long[] fiIds,Integer... acTypes) {
+    	Map<Long, List<Wp>> allValidWps = new HashMap<Long, List<Wp>>();
+    	if (null != fiIds){
+    		DetachedCriteria dc = DetachedCriteria.forClass(Wp.class);
+        	dc.createCriteria("ai", "ai");
+        	dc.createCriteria("ai.ac", "ac");
+        	dc.add(Restrictions.sqlRestriction("({alias}.fi_id = " + StringHelper.join(fiIds, " or {alias}.fi_id = ") + ")"));
+        	dc.add(Restrictions.eq("isDeleted", 0));
+        	dc.add(Restrictions.isNull("pwpId"));
+        	dc.add(Restrictions.isNull("parentWpId"));
+        	dc.add(Restrictions.ne("ai.status", Ai.STATUS_OVERDUE));
+        	if (acTypes != null && acTypes.length > 0){
+        		//dc.add(Restrictions.in("ac.acType", acTypes));
+        	}
+        	dc.addOrder(Order.asc("ac.sort"));
+        	dc.addOrder(Order.asc("ac.tp"));
+        	dc.addOrder(Order.asc("tp"));
+        	dc.addOrder(Order.asc("px"));
+            List<Wp> wpList = getDao().findByCriteria(dc);
+            List<Wp> wpListTemp = null;
+            for (Wp wp : wpList){
+            	wpListTemp = allValidWps.get(wp.getFiId());
+            	if (null == wpListTemp){
+            		wpListTemp = new ArrayList<Wp>();
+            	}
+            	wpListTemp.add(wp);
+            	allValidWps.put(wp.getFiId(), wpListTemp);
+            }
+    	}
+    	
+        return allValidWps;
+    }
+    /**
+     * 得到正在运行的wp是
+     * @author jun
+     * @param fiId 流程实例id
+     * @return 正在运行的wp是
+     */
+    public List<Wp> getAllRuningWps(Long fiId){
+        DetachedCriteria dc = DetachedCriteria.forClass(Wp.class);
+    	dc.createCriteria("ai", "ai");
+    	dc.createCriteria("ai.ac", "ac");
+    	dc.add(Restrictions.eq("fiId", fiId));
+    	dc.add(Restrictions.eq("isDeleted", 0));
+    	dc.add(Restrictions.isNull("pwpId"));
+    	dc.add(Restrictions.isNull("parentWpId"));
+    	dc.add(Restrictions.eq("ai.status", Ai.STATUS_RUNNING));
+    	dc.addOrder(Order.asc("ac.sort"));
+    	dc.addOrder(Order.asc("ac.tp"));
+    	dc.addOrder(Order.asc("tp"));
+    	dc.addOrder(Order.asc("px"));
+        List<Wp> wpList = getDao().findByCriteria(dc);
+        return wpList;
+    }
+    
+    /**
+     * <p>
+     * 删除工作组
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param wp
+     *            工作组
+     */
+    public void delete(Wp wp) {
+        getDao().delete(wp);
+    }
+
+    /**
+     * <p>
+     * 获取所有运行态的
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param fiId
+     *            流程实例
+     * @return 工作组
+     */
+    public List<Wp> getAllCreatedWps(Long fiId) {
+        DetachedCriteria dc = DetachedCriteria.forClass(Wp.class);
+        dc.createAlias("ai", "ai");
+        dc.add(Restrictions.eq("fiId", fiId));
+        dc.add(Restrictions.eq("isDeleted", 0));
+        dc.add(Restrictions.ne("ai.status", Ai.STATUS_OVERDUE));
+        dc.add(Restrictions.or(Restrictions.and(Restrictions.eq("ai.status", Ai.STATUS_RUNNING), Restrictions.gtProperty("px", "ai.px")),
+                Restrictions.eq("ai.status", Ai.STATUS_CREATED)));
+        
+        //过滤 协办的
+        dc.add(Restrictions.isNull("pwpId"));
+        dc.add(Restrictions.or(Restrictions.ne("subMode", 1),Restrictions.isNull("subMode")));
+        
+        dc.addOrder(Order.asc("tp"));
+        dc.addOrder(Order.asc("px"));
+        dc.addOrder(Order.asc("subPx"));
+        List<Wp> wps = getDao().findByCriteria(dc);
+
+        return wps;
+    }
+
+
+
+
+}

@@ -1,0 +1,189 @@
+package com.xinleju.platform.univ.search.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.LoginUtils;
+import com.xinleju.platform.base.utils.SecurityUserBeanInfo;
+import com.xinleju.platform.univ.search.dao.SearchCategoryDao;
+import com.xinleju.platform.univ.search.dao.SearchCategoryPropertyDao;
+import com.xinleju.platform.univ.search.dto.SearchCategoryPropertyDto;
+import com.xinleju.platform.univ.search.entity.SearchCategory;
+import com.xinleju.platform.univ.search.entity.SearchCategoryProperty;
+import com.xinleju.platform.univ.search.service.SearchCategoryService;
+import com.xinleju.platform.utils.ElasticSearchHelper;
+
+/**
+ * @author haoqp
+ * 
+ * 
+ */
+
+@Transactional
+@Service
+public class SearchCategoryServiceImpl extends  BaseServiceImpl<String,SearchCategory> implements SearchCategoryService{
+	
+
+	@Autowired
+	private SearchCategoryDao searchCategoryDao;
+	@Autowired
+	private SearchCategoryPropertyDao searchCategoryPropertyDao;
+	
+	@Transactional(propagation = Propagation.SUPPORTS)
+	@Override
+	public int save(SearchCategory searchCategory, List<SearchCategoryProperty> searchCategoryPropertyList)
+			throws Exception {
+		int count = searchCategoryDao.save(searchCategory);
+		SearchCategoryProperty scp = new SearchCategoryProperty();
+		scp.setCategoryId(searchCategory.getId());
+		if (StringUtils.isNotEmpty(scp.getCategoryId())) {
+			searchCategoryPropertyDao.delete(SearchCategoryProperty.class.getName() + ".deleteByCategoryId", scp);
+		}
+		searchCategoryPropertyDao.saveBatch(searchCategoryPropertyList);
+		
+		// save为第一次保存，启用状态时，初始化索引映射
+		if (searchCategory.getStatus() == true) {
+			SecurityUserBeanInfo userInfo = LoginUtils.getSecurityUserBeanInfo();
+			String tendId = userInfo.getTendId();
+			List<SearchCategoryPropertyDto> searchCategoryPropertyDtoList = new ArrayList<>();
+			SearchCategoryPropertyDto scpDto;
+			for (SearchCategoryProperty scpt : searchCategoryPropertyList) {
+				scpDto = new SearchCategoryPropertyDto();
+				BeanUtils.copyProperties(scpt, scpDto);
+				scpDto.setSearchIndexCategoryCode(searchCategory.getCode());
+				scpDto.setTendId(tendId);
+				searchCategoryPropertyDtoList.add(scpDto);
+			}
+			ElasticSearchHelper.initMapping(searchCategoryPropertyDtoList);
+		}
+		
+		return count;
+	}
+
+	@Override
+	public int update(SearchCategory searchCategory, List<SearchCategoryProperty> searchCategoryPropertyList)
+			throws Exception {
+		
+		SearchCategory oldSearchCategory = searchCategoryDao.getObjectById(searchCategory.getId());
+		
+		Map<String, Object> parameter = new HashMap<>();
+		parameter.put("categoryId", searchCategory.getId());
+		List<SearchCategoryProperty> oldScpList = searchCategoryPropertyDao.queryList(parameter);
+		List<String> oldScpCodeList = new ArrayList<>();
+		for (SearchCategoryProperty old : oldScpList) {
+			oldScpCodeList.add(old.getCode());
+		}
+		
+		int count = searchCategoryDao.update(searchCategory);
+		SearchCategoryProperty scp = new SearchCategoryProperty();
+		scp.setCategoryId(searchCategory.getId());
+		if (StringUtils.isNotEmpty(scp.getCategoryId())) {
+			searchCategoryPropertyDao.delete(SearchCategoryProperty.class.getName() + ".deleteByCategoryId", scp);
+		}
+		searchCategoryPropertyDao.saveBatch(searchCategoryPropertyList);
+		
+		SecurityUserBeanInfo userInfo = LoginUtils.getSecurityUserBeanInfo();
+		String tendId = userInfo.getTendId();
+		
+		// 添加映射
+		if (oldSearchCategory.getStatus() == false) {
+			if (searchCategory.getStatus() == true) {
+				List<SearchCategoryPropertyDto> searchCategoryPropertyDtoList = new ArrayList<>();
+				SearchCategoryPropertyDto scpDto;
+				for (SearchCategoryProperty scpt : searchCategoryPropertyList) {
+					scpDto = new SearchCategoryPropertyDto();
+					BeanUtils.copyProperties(scpt, scpDto);
+					scpDto.setSearchIndexCategoryCode(searchCategory.getCode());
+					scpDto.setTendId(tendId);
+					searchCategoryPropertyDtoList.add(scpDto);
+				}
+				ElasticSearchHelper.initMapping(searchCategoryPropertyDtoList);
+			}
+			
+		} 
+		// 更新映射
+		else if (oldSearchCategory.getStatus() == true) {
+			if (searchCategory.getStatus() == true) {
+				
+				List<SearchCategoryPropertyDto> searchCategoryPropertyDtoList = new ArrayList<>();
+				SearchCategoryPropertyDto scpDto;
+				for (SearchCategoryProperty scpt : searchCategoryPropertyList) {
+					if (!oldScpCodeList.contains(scpt.getCode())) {
+						scpDto = new SearchCategoryPropertyDto();
+						BeanUtils.copyProperties(scpt, scpDto);
+						scpDto.setSearchIndexCategoryCode(searchCategory.getCode());
+						scpDto.setTendId(tendId);
+						searchCategoryPropertyDtoList.add(scpDto);
+					}
+				}
+				ElasticSearchHelper.initMapping(searchCategoryPropertyDtoList);
+			}
+		}
+		
+		return count;
+	}
+
+	@Override
+	public int deleteObjectById(String id) throws Exception {
+		int count = searchCategoryDao.deleteObjectById(id);
+		SearchCategoryProperty scp = new SearchCategoryProperty();
+		scp.setCategoryId(id);
+		searchCategoryPropertyDao.delete(SearchCategoryProperty.class.getName() + ".deleteByCategoryId", scp);
+		return count;
+	}
+
+	@Override
+	public int deleteAllObjectByIds(List<String> ids) throws Exception {
+		if (null != ids && ids.size() > 0) {
+			int count = searchCategoryDao.deleteAllObjectByIds(ids);
+			searchCategoryPropertyDao.deleteAllObjectByCategoryIds(ids);
+			return count;
+		}
+		return 0;
+	}
+
+	@Override
+	public int getCountForUpdate(Map<String, Object> paramMap) {
+		int count = searchCategoryDao.getCount(SearchCategory.class.getName() + ".getCountForUpdate", paramMap);
+		return count;
+	}
+
+	@Override
+	public int updateStatus(SearchCategory searchCategory) throws Exception {
+		
+		if (searchCategory.getStatus() == false) {
+			searchCategory.setStatus(true);
+			int count = searchCategoryDao.update(searchCategory);
+			Map<String, Object> param = new HashMap<>();
+			param.put("categoryId", searchCategory.getId());
+			searchCategoryPropertyDao.update(SearchCategoryProperty.class.getName() + ".updateStatusToTrue", param);
+			List<SearchCategoryProperty> scpList =  searchCategoryPropertyDao.queryList(param);
+			List<SearchCategoryPropertyDto> searchCategoryPropertyDtoList = new ArrayList<>();
+			SearchCategoryPropertyDto dto;
+			SecurityUserBeanInfo userInfo = LoginUtils.getSecurityUserBeanInfo();
+			String tendId = userInfo.getTendId();
+			for (SearchCategoryProperty scp : scpList) {
+				dto = new SearchCategoryPropertyDto();
+				BeanUtils.copyProperties(scp, dto);
+				dto.setSearchIndexCategoryCode(searchCategory.getCode());
+				dto.setTendId(tendId);
+				searchCategoryPropertyDtoList.add(dto);
+			}
+			ElasticSearchHelper.initMapping(searchCategoryPropertyDtoList);
+			return count;
+		}
+		return 0;
+		
+	}
+	
+}

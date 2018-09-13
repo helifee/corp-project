@@ -1,0 +1,363 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE sqlMap PUBLIC "-//ibatis.apache.org//DTDSQLMap2.0//EN" "http://ibatis.apache.org/dtd/sql-map-2.dtd">
+<sqlMap namespace="K060121Dao">
+	<typeAlias alias="k060121SearchInfo" type="com.yds.tt.testing.bean.K060121SearchInfo"/>
+	<!-- 初期检查处理(考试评分者检查) --> 
+    <select id="checkExamineMarker" parameterClass="java.util.HashMap" resultClass="Integer">
+		SELECT COUNT(*)
+		FROM tt_pingfenrenwu
+		WHERE EXAMINE_ID = #examineId# AND
+		EXAMINE_MARKER_ID = #sessionUserId#
+	</select>
+	<!-- 考试详细信息取得 共通检索项目 -->
+	<sql id="getExamineDetailInfoCommonSLT">
+		 SELECT EXAMINE_NAME AS examineName,
+				EXAMINE_START_TIME AS examineStartTime,
+				EXAMINE_END_TIME AS examineEndTime,
+				EXAMINE_TIME AS examineTime,
+				CONCAT (CASE t1.CATEGORY1_ID WHEN 0 THEN "" ELSE (SELECT CATEGORY_NAME
+						FROM tt_fenlei
+						WHERE CATEGORY1_ID = t1.CATEGORY1_ID
+						AND CATEGORY_LEVEL = 1) END, CASE t1.CATEGORY2_ID WHEN 0 THEN ""
+						ELSE CONCAT("-", (SELECT CATEGORY_NAME
+							FROM tt_fenlei
+							WHERE CATEGORY1_ID = t1.CATEGORY1_ID
+							AND CATEGORY2_ID = t1.CATEGORY2_ID
+							AND CATEGORY_LEVEL = 2)) END , CASE t1.CATEGORY3_ID WHEN 0
+						THEN "" ELSE CONCAT("-", (SELECT CATEGORY_NAME
+							FROM tt_fenlei
+							WHERE CATEGORY1_ID = t1.CATEGORY1_ID
+							AND CATEGORY2_ID = t1.CATEGORY2_ID
+							AND CATEGORY3_ID = t1.CATEGORY3_ID
+							AND CATEGORY_LEVEL = 3)) END) AS categoryName,
+				EXAMINE_COMMENT AS examineComment,
+				(SELECT COM_CODE_MST.DIFF_NAME
+					FROM COM_CODE_MST
+					WHERE COM_CODE_MST.TYPE_ID = 'R12'
+					AND COM_CODE_MST.DIFF_NO = T1.EXAMINE_STATUS) AS examineStatusName,
+				MARKMISSION_FLG AS markmissionFlg,
+	</sql>
+	<!-- 考试详细信息取得 "试卷数"取得子查询 -->
+	<sql id="getTotalPprCnt">
+		(SELECT COUNT(DISTINCT EMPLOYEES_ID) 
+		   FROM tt_ks_yuangong 
+		  WHERE EXAMINE_ID = #examineId# AND
+			    EMP_EXAM_STATUS = '7') AS totalPprCnt,
+	</sql>
+	<!-- 考试详细信息取得 "评分未完成试卷数"取得子查询 -->
+	<sql id="getUnfinishPprCnt">
+		(SELECT COUNT(DISTINCT T2.EMPLOYEES_ID)
+		   FROM tt_ks_yuangong T1,tt_ks_dajuan T2
+		  WHERE T1.EXAMINE_ID = #examineId# AND
+			    T1.EMP_EXAM_STATUS = 7 AND
+				T2.EXAMINE_ID = T1.EXAMINE_ID AND
+				T2.EMPLOYEES_ID = T1.EMPLOYEES_ID AND
+				T2.MARK_FLG = 2) AS unfinishPprCnt,
+	</sql>
+	<!-- 考试详细信息取得 "任务总量"取得子查询（实施者） -->
+	<sql id="getTotalMissionCnt1">
+		(CASE MARKMISSION_FLG
+	      WHEN 1 THEN
+			(SELECT COUNT(DISTINCT EMPLOYEES_ID)
+			   FROM tt_ks_yuangong
+		      WHERE EXAMINE_ID = #examineId# AND 
+					EMP_EXAM_STATUS = 7)
+	      WHEN 2 THEN
+			(SELECT COUNT(DISTINCT EMPLOYEES_ID)
+			   FROM tt_ks_yuangong
+			  WHERE EXAMINE_ID = #examineId# AND 
+					EMP_EXAM_STATUS = 7) * 
+			(SELECT tt_shijuan.BIGQUESTION_NUM
+			   FROM tt_shijuan,tt_ks_yuangong
+			  WHERE tt_ks_yuangong.EXAMINE_ID = #examineId# AND
+					tt_ks_yuangong.EMP_EXAM_STATUS = 7 AND
+					tt_shijuan.PAPER_ID = tt_ks_yuangong.PAPER_ID AND
+					tt_shijuan.PAPER_VERSION_NO = tt_ks_yuangong.PAPER_VERSION_NO
+			LIMIT 1)
+	      ELSE
+			(SELECT COUNT(DISTINCT EMPLOYEES_ID)
+			   FROM tt_ks_yuangong
+			  WHERE EXAMINE_ID = #examineId# AND 
+				    EMP_EXAM_STATUS = 7) END) AS totalMissionCnt,
+	</sql>
+	<!-- 考试详细信息取得 "任务总量"取得子查询（评分者） -->
+	<sql id="getTotalMissionCnt2">
+		(CASE MARKMISSION_FLG
+	      WHEN 1 THEN
+			(SELECT COUNT(DISTINCT tt_ks_yuangong.EMPLOYEES_ID)
+			   FROM tt_pingfenrenwu,tt_ks_yuangong
+		      WHERE tt_pingfenrenwu.EXAMINE_ID = #examineId# AND 
+					tt_pingfenrenwu.EXAMINE_MARKER_ID = #sessionUserId# AND
+					tt_ks_yuangong.EXAMINE_ID = tt_pingfenrenwu.EXAMINE_ID AND
+					tt_ks_yuangong.EMPLOYEES_ID = tt_pingfenrenwu.EMPLOYEES_ID AND
+					tt_ks_yuangong.EMP_EXAM_STATUS = 7)
+	      WHEN 2 THEN
+			(SELECT COUNT(DISTINCT EMPLOYEES_ID)
+			   FROM tt_ks_yuangong
+			  WHERE EXAMINE_ID = #examineId# AND 
+					EMP_EXAM_STATUS = 7) * 
+			(SELECT COUNT(*)
+			   FROM tt_pingfenrenwu
+			  WHERE EXAMINE_ID = #examineId# AND
+					EXAMINE_MARKER_ID = #sessionUserId#)
+		END) AS totalMissionCnt,
+	</sql>
+	<!-- 考试详细信息取得 "剩余任务总量"取得子查询（实施者） -->
+	<sql id="getUnfinishMissionCnt1">
+		(CASE MARKMISSION_FLG
+			  WHEN 1 THEN
+				   (SELECT COUNT(DISTINCT tt_ks_dajuan.EMPLOYEES_ID)
+					  FROM tt_ks_yuangong,
+						   tt_ks_dajuan
+					 WHERE tt_ks_yuangong.EXAMINE_ID = #examineId#                     AND               
+						   tt_ks_yuangong.EMP_EXAM_STATUS = 7                         AND
+						   tt_ks_dajuan.EXAMINE_ID = tt_ks_yuangong.EXAMINE_ID         AND
+						   tt_ks_dajuan.EMPLOYEES_ID = tt_ks_yuangong.EMPLOYEES_ID     AND 
+						   tt_ks_dajuan.MARK_FLG = 2) 
+			  WHEN 2 THEN
+				   (SELECT COUNT(DISTINCT tt_ks_dajuan.EMPLOYEES_ID, tt_ks_dajuan.BIGQUESTION_SERIAL_NO)
+					  FROM tt_ks_yuangong, tt_ks_dajuan
+					 WHERE tt_ks_yuangong.EXAMINE_ID = #examineId#                     AND
+						   tt_ks_yuangong.EMP_EXAM_STATUS = 7                         AND
+						   tt_ks_dajuan.EXAMINE_ID = tt_ks_yuangong.EXAMINE_ID         AND
+						   tt_ks_dajuan.EMPLOYEES_ID = tt_ks_yuangong.EMPLOYEES_ID     AND
+						   tt_ks_dajuan.MARK_FLG = 2)
+			  ELSE
+				   (SELECT COUNT(DISTINCT tt_ks_dajuan.EMPLOYEES_ID)
+					  FROM tt_ks_yuangong,
+						   tt_ks_dajuan
+					 WHERE tt_ks_yuangong.EXAMINE_ID = #examineId#                     AND               
+						   tt_ks_yuangong.EMP_EXAM_STATUS = 7                         AND
+						   tt_ks_dajuan.EXAMINE_ID = tt_ks_yuangong.EXAMINE_ID         AND
+						   tt_ks_dajuan.EMPLOYEES_ID = tt_ks_yuangong.EMPLOYEES_ID     AND 
+						   tt_ks_dajuan.MARK_FLG = 2) 
+		   END) AS unfinishMissionCnt
+	</sql>
+	<!-- 考试详细信息取得 "剩余任务总量"取得子查询（评分者） -->
+	<sql id="getUnfinishMissionCnt2">
+		(CASE MARKMISSION_FLG
+			  WHEN 1 THEN
+				   (SELECT COUNT(DISTINCT tt_ks_dajuan.EMPLOYEES_ID)
+					  FROM tt_pingfenrenwu,
+						   tt_ks_yuangong,
+						   tt_ks_dajuan
+					 WHERE tt_pingfenrenwu.EXAMINE_ID = #examineId#                     AND 
+						   tt_pingfenrenwu.EXAMINE_MARKER_ID = #sessionUserId#		    AND 
+						   tt_ks_yuangong.EXAMINE_ID = tt_pingfenrenwu.EXAMINE_ID      AND
+						   tt_ks_yuangong.EMPLOYEES_ID = tt_pingfenrenwu.EMPLOYEES_ID  AND             
+						   tt_ks_yuangong.EMP_EXAM_STATUS = 7                          AND
+						   tt_ks_dajuan.EXAMINE_ID = tt_ks_yuangong.EXAMINE_ID         AND
+						   tt_ks_dajuan.EMPLOYEES_ID = tt_ks_yuangong.EMPLOYEES_ID     AND 
+						   tt_ks_dajuan.MARK_FLG = 2) 
+			  WHEN 2 THEN
+				   (SELECT COUNT(DISTINCT tt_ks_dajuan.EMPLOYEES_ID, 
+				                          tt_ks_dajuan.BIGQUESTION_SERIAL_NO)
+					  FROM tt_pingfenrenwu,
+					       tt_ks_yuangong, 
+					       tt_ks_dajuan
+					 WHERE tt_pingfenrenwu.EXAMINE_ID = #examineId#                     AND 
+						   tt_pingfenrenwu.EXAMINE_MARKER_ID = #sessionUserId#		  AND 
+						   tt_ks_yuangong.EXAMINE_ID = tt_pingfenrenwu.EXAMINE_ID          AND
+						   tt_ks_yuangong.EMPLOYEES_ID = tt_pingfenrenwu.EMPLOYEES_ID AND
+						   tt_ks_yuangong.EMP_EXAM_STATUS = 7                         AND
+						   tt_ks_dajuan.EXAMINE_ID = tt_ks_yuangong.EXAMINE_ID         AND
+						   tt_ks_dajuan.EMPLOYEES_ID = tt_ks_yuangong.EMPLOYEES_ID     AND
+						   tt_ks_dajuan.MARK_FLG = 2)
+		   END) AS unfinishMissionCnt
+	</sql>
+	<!-- 考试详细信息取得（实施者检索处理） --> 
+    <select id="getExamineDetailInfoExecutor" parameterClass="java.util.HashMap" resultClass="k060121SearchInfo">
+		<include refid="getExamineDetailInfoCommonSLT"/>
+		<include refid="getTotalPprCnt"/>
+		<include refid="getUnfinishPprCnt"/>
+		<include refid="getTotalMissionCnt1"/>
+		<include refid="getUnfinishMissionCnt1"/>
+		 FROM tt_ks_xinxi t1
+		WHERE EXAMINE_ID = #examineId#
+	</select>
+	<!-- 考试详细信息取得（评分者检索处理） --> 
+    <select id="getExamineDetailInfoMarker" parameterClass="java.util.HashMap" resultClass="k060121SearchInfo">
+		<include refid="getExamineDetailInfoCommonSLT"/>
+		<include refid="getTotalPprCnt"/>
+		<include refid="getUnfinishPprCnt"/>
+		<include refid="getTotalMissionCnt2"/>
+		<include refid="getUnfinishMissionCnt2"/>
+		 FROM tt_ks_xinxi t1
+		WHERE EXAMINE_ID = #examineId#
+	</select>
+	<!-- 评分任务信息取得<按试卷分配>（实施者检索处理） --> 
+    <select id="getExamineMarkListExecutor1" parameterClass="String" resultClass="k060121SearchInfo">
+		 SELECT tt_ks_yuangong.EMPLOYEES_ID                                                AS   missionId,
+				(SELECT tt_shijuan.PAPER_TITLE
+					FROM tt_shijuan
+					WHERE tt_shijuan.PAPER_ID = tt_ks_yuangong.PAPER_ID    AND
+						  tt_shijuan.PAPER_VERSION_NO = tt_ks_yuangong.PAPER_VERSION_NO)   AS   missionName,
+				(SELECT v_emp_list_noquit.EMP_CNM
+					FROM v_emp_list_noquit
+					WHERE v_emp_list_noquit.EMP_ID = tt_pingfenrenwu.EXAMINE_MARKER_ID)    AS   examineMarkerName,
+				CASE
+					WHEN (SELECT COUNT(*)
+						FROM tt_ks_dajuan
+						WHERE tt_ks_dajuan.EXAMINE_ID = tt_ks_yuangong.EXAMINE_ID      AND
+							  tt_ks_dajuan.EMPLOYEES_ID = tt_ks_yuangong.EMPLOYEES_ID  AND
+							  tt_ks_dajuan.MARK_FLG = 2) = 0      
+					THEN 1                     
+					ELSE 2
+				END                                                                        AS   finishStatus,  
+				(SELECT com_code_mst.DIFF_NAME
+					FROM com_code_mst
+					WHERE com_code_mst.TYPE_ID = 'C18'    AND
+						  com_code_mst.DIFF_NO = finishStatus)                             AS   finishStatusName
+				   
+		  FROM tt_ks_yuangong
+			LEFT JOIN tt_pingfenrenwu
+			ON tt_pingfenrenwu.EXAMINE_ID = tt_ks_yuangong.EXAMINE_ID           AND
+				   tt_pingfenrenwu.EMPLOYEES_ID = tt_ks_yuangong.EMPLOYEES_ID
+		  WHERE tt_ks_yuangong.EXAMINE_ID = #examineId#     AND               
+			    tt_ks_yuangong.EMP_EXAM_STATUS = 7
+		  ORDER BY finishStatus               DESC   
+	</select>
+	<!-- 评分任务信息取得<按大题分配>（实施者检索处理） --> 
+    <select id="getExamineMarkListExecutor2" parameterClass="String" resultClass="k060121SearchInfo">
+		SELECT DISTINCT tt_sj_datixinxi.BIGQUESTION_SERIAL_NO                            AS   missionId,
+			tt_sj_datixinxi.BIGQUESTION_TITLE                                            AS   missionName,
+			(SELECT v_emp_list_noquit.EMP_CNM
+				FROM v_emp_list_noquit
+				WHERE v_emp_list_noquit.EMP_ID = tt_pingfenrenwu.EXAMINE_MARKER_ID)      AS   examineMarkerName, 
+			CASE
+				WHEN (SELECT COUNT(*)
+					FROM tt_ks_dajuan
+					WHERE tt_ks_dajuan.EXAMINE_ID = tt_ks_yuangong.EXAMINE_ID    AND
+						  tt_ks_dajuan.BIGQUESTION_SERIAL_NO = tt_sj_datixinxi.BIGQUESTION_SERIAL_NO    AND
+						  tt_ks_dajuan.MARK_FLG = 2) = 0                           
+				THEN 1
+				ELSE 2
+			END                                                                         AS   finishStatus,
+			(SELECT com_code_mst.DIFF_NAME
+				FROM com_code_mst
+				WHERE com_code_mst.TYPE_ID = 'C18'    AND
+					  com_code_mst.DIFF_NO = finishStatus)                              AS   finishStatusName
+		 FROM tt_ks_yuangong,
+			   tt_sj_datixinxi
+		       LEFT JOIN tt_pingfenrenwu
+			   ON tt_pingfenrenwu.EXAMINE_ID = #examineId#    AND
+				  tt_pingfenrenwu.BIGQUESTION_SERIAL_NO = tt_sj_datixinxi.BIGQUESTION_SERIAL_NO
+		 WHERE tt_ks_yuangong.EXAMINE_ID = #examineId#    AND               
+			   tt_ks_yuangong.EMP_EXAM_STATUS = 7    AND
+			   tt_sj_datixinxi.PAPER_ID = tt_ks_yuangong.PAPER_ID    AND
+			   tt_sj_datixinxi.PAPER_VERSION_NO = tt_ks_yuangong.PAPER_VERSION_NO
+		 ORDER BY missionId ASC,
+				  finishStatus DESC
+	</select>
+	<!-- 评分任务信息取得<其它>（实施者检索处理） --> 
+    <select id="getExamineMarkListExecutor3" parameterClass="String" resultClass="k060121SearchInfo">
+		SELECT tt_ks_yuangong.EMPLOYEES_ID                                           AS   missionId,
+			(SELECT tt_shijuan.PAPER_TITLE
+				FROM tt_shijuan
+				WHERE tt_shijuan.PAPER_ID = tt_ks_yuangong.PAPER_ID    AND
+					  tt_shijuan.PAPER_VERSION_NO = tt_ks_yuangong.PAPER_VERSION_NO) AS   missionName,
+			   ''                                                                    AS   examineMarkerName,
+			CASE
+				WHEN (SELECT COUNT(*)
+					FROM tt_ks_dajuan
+					WHERE tt_ks_dajuan.EXAMINE_ID = tt_ks_yuangong.EXAMINE_ID    AND
+						  tt_ks_dajuan.EMPLOYEES_ID = tt_ks_yuangong.EMPLOYEES_ID AND
+						  tt_ks_dajuan.MARK_FLG = 2) = 0                            
+				THEN 1
+				ELSE 2
+			END                                                                      AS   finishStatus,
+			(SELECT com_code_mst.DIFF_NAME
+				FROM com_code_mst
+				WHERE com_code_mst.TYPE_ID = 'C18'    AND
+					  com_code_mst.DIFF_NO = finishStatus)                           AS   finishStatusName
+					   
+		  FROM tt_ks_yuangong
+		 WHERE tt_ks_yuangong.EXAMINE_ID = #examineId#    AND               
+			   tt_ks_yuangong.EMP_EXAM_STATUS = 7
+		 ORDER BY finishStatus DESC 
+	</select>
+	<!-- 评分任务信息取得<按试卷分配>（评分者检索处理） --> 
+    <select id="getExamineMarkListMarker1" parameterClass="java.util.HashMap" resultClass="k060121SearchInfo">
+		SELECT tt_ks_yuangong.EMPLOYEES_ID                                              AS   missionId,
+			(SELECT tt_shijuan.PAPER_TITLE
+				FROM tt_shijuan
+				WHERE tt_shijuan.PAPER_ID = tt_ks_yuangong.PAPER_ID    AND
+					  tt_shijuan.PAPER_VERSION_NO = tt_ks_yuangong.PAPER_VERSION_NO)    AS   missionName,
+			(SELECT v_tt_user.USER_CNM
+				FROM v_tt_user
+				WHERE v_tt_user.USER_ID = tt_pingfenrenwu.EXAMINE_MARKER_ID)            AS   examineMarkerName,
+			(SELECT com_code_mst.DIFF_NAME
+				FROM com_code_mst
+				WHERE com_code_mst.TYPE_ID = 'C35'    AND
+					  com_code_mst.DIFF_NO = tt_pingfenrenwu.MARKING_STATUS)            AS   markStatusName,
+			(SELECT v_tt_user.USER_CNM
+				FROM v_tt_user
+				WHERE v_tt_user.USER_ID = tt_pingfenrenwu.MARKING_EMPID)                AS   presentMarker,
+			CASE
+				WHEN (SELECT COUNT(*)
+					FROM tt_ks_dajuan
+					WHERE tt_ks_dajuan.EXAMINE_ID = tt_ks_yuangong.EXAMINE_ID      AND
+						  tt_ks_dajuan.EMPLOYEES_ID = tt_ks_yuangong.EMPLOYEES_ID  AND
+						  tt_ks_dajuan.MARK_FLG = 2) = 0                           
+				THEN 1
+				ELSE 2
+			END                                                                         AS   finishStatus,  
+			(SELECT com_code_mst.DIFF_NAME
+				FROM com_code_mst
+				WHERE com_code_mst.TYPE_ID = 'C18'    AND
+					  com_code_mst.DIFF_NO = finishStatus)                              AS   finishStatusName              
+		  FROM tt_ks_yuangong,
+			   tt_pingfenrenwu
+		 WHERE tt_pingfenrenwu.EXAMINE_ID = #examineId#    AND
+			   tt_pingfenrenwu.EXAMINE_MARKER_ID = #sessionUserId#    AND
+			   tt_ks_yuangong.EXAMINE_ID = tt_pingfenrenwu.EXAMINE_ID    AND
+			   tt_ks_yuangong.EMPLOYEES_ID = tt_pingfenrenwu.EMPLOYEES_ID    AND               
+			   tt_ks_yuangong.EMP_EXAM_STATUS = 7
+		 ORDER BY finishStatus               DESC
+	</select>
+	<!-- 评分任务信息取得<按大题分配>（评分者检索处理） --> 
+    <select id="getExamineMarkListMarker2" parameterClass="java.util.HashMap" resultClass="k060121SearchInfo">
+		SELECT DISTINCT tt_sj_datixinxi.BIGQUESTION_SERIAL_NO                            AS   missionId,
+						tt_sj_datixinxi.BIGQUESTION_TITLE                                AS   missionName,
+			   (SELECT v_tt_user.USER_CNM
+				  FROM v_tt_user
+				 WHERE v_tt_user.USER_ID = tt_pingfenrenwu.EXAMINE_MARKER_ID)            AS   examineMarkerName, 
+				CASE
+				  WHEN (SELECT COUNT(*)
+						  FROM tt_ks_dajuan
+						 WHERE tt_ks_dajuan.EXAMINE_ID = tt_ks_yuangong.EXAMINE_ID                          AND
+							   tt_ks_dajuan.BIGQUESTION_SERIAL_NO = tt_sj_datixinxi.BIGQUESTION_SERIAL_NO   AND
+							   tt_ks_dajuan.MARK_FLG = 2) = 0                            
+				  THEN 1
+				  ELSE 2
+			   END                                                                       AS   finishStatus,
+			   (SELECT com_code_mst.DIFF_NAME
+				  FROM com_code_mst
+				 WHERE com_code_mst.TYPE_ID = 'C18'     AND
+					   com_code_mst.DIFF_NO = finishStatus)                              AS   finishStatusName              
+		  FROM tt_pingfenrenwu,
+			   tt_ks_yuangong,
+			   tt_sj_datixinxi
+		 WHERE tt_pingfenrenwu.EXAMINE_ID = #examineId#    AND
+			   tt_pingfenrenwu.EXAMINE_MARKER_ID = #sessionUserId#    AND
+			   tt_ks_yuangong.EXAMINE_ID = tt_pingfenrenwu.EXAMINE_ID    AND               
+			   tt_ks_yuangong.EMP_EXAM_STATUS = 7    AND
+			   tt_sj_datixinxi.PAPER_ID = tt_ks_yuangong.PAPER_ID    AND
+			   tt_sj_datixinxi.PAPER_VERSION_NO = tt_ks_yuangong.PAPER_VERSION_NO    AND
+			   tt_sj_datixinxi.BIGQUESTION_SERIAL_NO = tt_pingfenrenwu.BIGQUESTION_SERIAL_NO       
+		 ORDER BY missionId ASC,
+				  finishStatus DESC
+	</select>
+	<!-- 评分状态检查 --> 
+    <select id="getMarkStatus" parameterClass="java.util.HashMap" resultClass="String">
+		SELECT MARKING_STATUS 
+		  FROM tt_pingfenrenwu
+		 WHERE EXAMINE_ID =	#examineId#
+			<isEqual property="operatMode" compareValue="1">
+				AND EMPLOYEES_ID = 	#missionId#
+			</isEqual>
+			<isEqual property="operatMode" compareValue="2">
+				AND BIGQUESTION_SERIAL_NO =	#missionId#
+			</isEqual>
+	</select>
+</sqlMap>

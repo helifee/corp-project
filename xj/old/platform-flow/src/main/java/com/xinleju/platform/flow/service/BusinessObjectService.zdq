@@ -1,0 +1,73 @@
+package com.xinleju.platform.flow.service;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.flow.dto.BusinessObjectDto;
+import com.xinleju.platform.flow.entity.BusinessObject;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface BusinessObjectService extends  BaseService <String,BusinessObject>{
+
+	/**
+	 * 获取业务对象树
+	 * @param paramater
+	 * @return
+	 * @throws Exception
+	 */
+	public List<BusinessObjectDto> getTree(Map<String, Object> paramater)  throws Exception;
+
+	public List<BusinessObjectDto> seachKeyword(Map<String, String> paramater);
+
+	public String saveObjectAndVariableData(String userInfo, BusinessObjectDto objectDto) throws Exception;
+
+	public int saveBusiObjectAndDefaultVariables(BusinessObject businessObject) throws Exception;
+
+	/**
+	 * 根据条件查询数据
+	 * @param map
+	 * @return
+	 * @throws Exception
+	 */
+	public List<BusinessObjectDto> queryListByCondition(Map<String, Object> map) throws Exception;
+	
+	/**
+	 * 查询所有父节点
+	 * @param map appId系统ID
+	 * @return
+	 * @throws Exception
+	 */
+	public List<String> selectAllParentId(Map<String, Object> map) throws Exception;
+
+	public List<BusinessObjectDto> getTreeBySystemApp(Map<String, String> map);
+	
+	public BusinessObjectDto getObjectByCode(String businessObjectCode) throws Exception;
+	
+	public BusinessObjectDto getObjectByFlCode(String flCode) throws Exception;
+
+	public int updateObjectByDataType(BusinessObject businessObject) throws Exception;
+
+	public Integer queryCountLikePrefixMap(Map paramMap);
+
+	public List<BusinessObjectDto> getCategoryTreeBySystemApp(Map<String, String> map);
+
+	public Integer queryRelatedCountByPrefixMap(Map paramMap) throws Exception;
+
+	public int deleteObjectAndChileren(Map<String, String> paramMap)  throws Exception;
+
+	public BusinessObject saveBusinessObject(BusinessObject businessObject) throws Exception;
+
+	public int updateSort(BusinessObject object, Map<String, Object> map) throws Exception;
+
+	public int updateBusinessObject(BusinessObject businessObject) throws Exception;
+	/**
+	 * 根据流程实例查询业务对象callbackUrl 
+	 */
+	public String selectCallBackUrlByInstanceId(Map<String, Object> param)throws Exception;
+}

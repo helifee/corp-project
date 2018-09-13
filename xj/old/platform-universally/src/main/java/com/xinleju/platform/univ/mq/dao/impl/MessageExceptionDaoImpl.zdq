@@ -1,0 +1,24 @@
+package com.xinleju.platform.univ.mq.dao.impl;
+
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.platform.base.dao.impl.BaseDaoImpl;
+import com.xinleju.platform.univ.mq.dao.MessageExceptionDao;
+import com.xinleju.platform.univ.mq.entity.MessageException;
+
+/**
+ * @author xubaoyong
+ * 
+ * 
+ */
+
+@Repository
+public class MessageExceptionDaoImpl extends BaseDaoImpl<String,MessageException> implements MessageExceptionDao{
+
+	public MessageExceptionDaoImpl() {
+		super();
+	}
+
+	
+	
+}

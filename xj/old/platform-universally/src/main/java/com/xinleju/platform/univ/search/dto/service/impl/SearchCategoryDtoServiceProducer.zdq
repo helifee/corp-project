@@ -1,0 +1,359 @@
+package com.xinleju.platform.univ.search.dto.service.impl;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.log4j.Logger;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.tools.data.JacksonUtils;
+import com.xinleju.platform.univ.search.dto.SearchCategoryDto;
+import com.xinleju.platform.univ.search.dto.SearchCategoryPropertyDto;
+import com.xinleju.platform.univ.search.dto.service.SearchCategoryDtoServiceCustomer;
+import com.xinleju.platform.univ.search.entity.SearchCategory;
+import com.xinleju.platform.univ.search.entity.SearchCategoryProperty;
+import com.xinleju.platform.univ.search.service.SearchCategoryPropertyService;
+import com.xinleju.platform.univ.search.service.SearchCategoryService;
+
+/**
+ * @author haoqp
+ * 
+ *
+ */
+ 
+public class SearchCategoryDtoServiceProducer implements SearchCategoryDtoServiceCustomer{
+	private static Logger log = Logger.getLogger(SearchCategoryDtoServiceProducer.class);
+	@Autowired
+	private SearchCategoryService searchCategoryService;
+	
+	@Autowired
+	private SearchCategoryPropertyService searchCategoryPropertyService;
+
+	public String save(String userInfo, String saveJson) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+			SearchCategoryDto searchCategoryDto = JacksonUtils.fromJson(saveJson, SearchCategoryDto.class);
+
+			SearchCategory searchCategory = new SearchCategory();
+			BeanUtils.copyProperties(searchCategoryDto, searchCategory, "propertyList");
+			List<SearchCategoryPropertyDto> propertyDtoList = searchCategoryDto.getPropertyList();
+			List<SearchCategoryProperty> propertyList = new ArrayList<>();
+			SearchCategoryProperty scp;
+			for (SearchCategoryPropertyDto scpDto : propertyDtoList) {
+				scp = new SearchCategoryProperty();
+				propertyList.add(scp);
+				BeanUtils.copyProperties(scpDto, scp);
+			}
+			
+			// 编码唯一性验证
+			Map<String, Object> paramMap = new HashMap<>();
+			paramMap.put("code", searchCategory.getCode());
+			int count = searchCategoryService.getCount(paramMap);
+			if (count > 0) {
+				info.setSucess(false);
+				info.setMsg("检索分类的编码重复，请重新输入");
+			} else {
+				paramMap.clear();
+				paramMap.put("name", searchCategory.getName());
+				count = searchCategoryService.getCount(paramMap);
+				// 名称唯一性验证
+				if (count > 0) {
+					info.setSucess(false);
+					info.setMsg("检索分类的名称重复，请重新输入");
+				} else {
+					searchCategoryService.save(searchCategory, propertyList);
+					info.setResult(JacksonUtils.toJson(searchCategoryDto));
+					info.setSucess(true);
+					info.setMsg("保存检索分类对象成功!");
+				}
+			}
+			
+		} catch (Exception e) {
+			log.error("保存对象失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("保存对象失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String saveBatch(String userInfo, String saveJsonList)
+			 {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public String updateBatch(String userInfo, String updateJsonList)
+			 {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public String update(String userInfo, String updateJson) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+			SearchCategoryDto searchCategoryDto = JacksonUtils.fromJson(updateJson, SearchCategoryDto.class);
+
+			SearchCategory searchCategory = new SearchCategory();
+			BeanUtils.copyProperties(searchCategoryDto, searchCategory, "propertyList");
+			List<SearchCategoryPropertyDto> propertyDtoList = searchCategoryDto.getPropertyList();
+			List<SearchCategoryProperty> propertyList = new ArrayList<>();
+			SearchCategoryProperty scp;
+			for (SearchCategoryPropertyDto scpDto : propertyDtoList) {
+				scp = new SearchCategoryProperty();
+				propertyList.add(scp);
+				BeanUtils.copyProperties(scpDto, scp);
+			}
+
+			// 编码唯一性验证
+			Map<String, Object> paramMap = new HashMap<>();
+			paramMap.put("id", searchCategory.getId());
+			paramMap.put("code", searchCategory.getCode());
+			int count = searchCategoryService.getCountForUpdate(paramMap);
+			if (count > 0) {
+				info.setSucess(false);
+				info.setMsg("检索分类的编码重复，请重新输入");
+			} else {
+				paramMap.remove("code");
+				paramMap.put("name", searchCategory.getName());
+				count = searchCategoryService.getCountForUpdate(paramMap);
+				// 名称唯一性验证
+				if (count > 0) {
+					info.setSucess(false);
+					info.setMsg("检索分类的名称重复，请重新输入");
+				} else {
+					int result = searchCategoryService.update(searchCategory, propertyList);
+					info.setResult(JacksonUtils.toJson(result));
+					info.setSucess(true);
+					info.setMsg("更新检索分类对象成功!");
+				}
+			}
+			
+		} catch (Exception e) {
+			log.error("更新对象失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("更新对象失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deleteObjectById(String userInfo, String deleteJson)
+	{
+		// TODO Auto-generated method stub
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   SearchCategory searchCategory=JacksonUtils.fromJson(deleteJson, SearchCategory.class);
+			   int result= searchCategoryService.deleteObjectById(searchCategory.getId());
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("删除对象成功!");
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deleteAllObjectByIds(String userInfo, String deleteJsonList)
+   {
+		// TODO Auto-generated method stub
+		 DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   if (StringUtils.isNotBlank(deleteJsonList)) {
+				   Map map=JacksonUtils.fromJson(deleteJsonList, HashMap.class);
+				   List<String> list=Arrays.asList(map.get("id").toString().split(","));
+				   int result= searchCategoryService.deleteAllObjectByIds(list);
+				   info.setResult(JacksonUtils.toJson(result));
+				   info.setSucess(true);
+				   info.setMsg("删除对象成功!");
+				}
+			} catch (Exception e) {
+			 log.error("删除对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getObjectById(String userInfo, String getJson)
+	 {
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			SearchCategory searchCategory=JacksonUtils.fromJson(getJson, SearchCategory.class);
+			SearchCategory	result = searchCategoryService.getObjectById(searchCategory.getId());
+
+			Map<String, Object> parameter = new HashMap<>();
+			parameter.put("categoryId", searchCategory.getId());
+			
+			List<SearchCategoryProperty> propertyList = searchCategoryPropertyService.queryList(parameter);
+			SearchCategoryPropertyDto scpDto;
+			List<SearchCategoryPropertyDto> propertyDtoList = new ArrayList<>();
+			for(SearchCategoryProperty scp : propertyList) {
+				scpDto = new SearchCategoryPropertyDto();
+				BeanUtils.copyProperties(scp, scpDto);
+				propertyDtoList.add(scpDto);
+			}
+			SearchCategoryDto scDto = new SearchCategoryDto();
+			BeanUtils.copyProperties(result, scDto);
+			scDto.setPropertyList(propertyDtoList);
+			
+			info.setResult(JacksonUtils.toJson(scDto));
+		    info.setSucess(true);
+		    info.setMsg("获取对象成功!");
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getPage(String userInfo, String paramater) {
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map map=JacksonUtils.fromJson(paramater, HashMap.class);
+				Page page=searchCategoryService.getPage(map, (Integer)map.get("start"),  (Integer)map.get("limit"));
+				info.setResult(JacksonUtils.toJson(page));
+			    info.setSucess(true);
+			    info.setMsg("获取分页对象成功!");
+			}else{
+				Page page=searchCategoryService.getPage(new HashMap(), null, null);
+				info.setResult(JacksonUtils.toJson(page));
+			    info.setSucess(true);
+			    info.setMsg("获取分页对象成功!");
+			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取分页对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取分页对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String queryList(String userInfo, String paramater){
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map map=JacksonUtils.fromJson(paramater, HashMap.class);
+				List list=searchCategoryService.queryList(map);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}else{
+				List list=searchCategoryService.queryList(null);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取列表对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取列表对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getCount(String userInfo, String paramater)  {
+		// TODO Auto-generated method stub
+		return null;
+	}
+	
+	@Override
+	public String deletePseudoObjectById(String userInfo, String deleteJson)
+	{
+		// TODO Auto-generated method stub
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   SearchCategory searchCategory=JacksonUtils.fromJson(deleteJson, SearchCategory.class);
+			   int result= searchCategoryService.deletePseudoObjectById(searchCategory.getId());
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("删除对象成功!");
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deletePseudoAllObjectByIds(String userInfo, String deleteJsonList)
+   {
+		// TODO Auto-generated method stub
+		 DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   if (StringUtils.isNotBlank(deleteJsonList)) {
+				   Map map=JacksonUtils.fromJson(deleteJsonList, HashMap.class);
+				   List<String> list=Arrays.asList(map.get("id").toString().split(","));
+				   int result= searchCategoryService.deletePseudoAllObjectByIds(list);
+				   info.setResult(JacksonUtils.toJson(result));
+				   info.setSucess(true);
+				   info.setMsg("删除对象成功!");
+				}
+			} catch (Exception e) {
+			 log.error("删除对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String updateStatus(String userInfo, String updateJson) {
+
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+			SearchCategoryDto searchCategoryDto = JacksonUtils.fromJson(updateJson, SearchCategoryDto.class);
+
+			// 1、检索分类
+			SearchCategory searchCategory = searchCategoryService.getObjectById(searchCategoryDto.getId());
+			if (null != searchCategory) {
+				searchCategoryService.updateStatus(searchCategory);
+			}
+			info.setSucess(true);
+			info.setMsg("更新状态成功!");
+		} catch (Exception e) {
+			log.error("更新对象失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("更新对象失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+
+	}
+
+
+}

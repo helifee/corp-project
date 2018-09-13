@@ -1,0 +1,171 @@
+package com.xinleju.erp.flow.service.impl;
+
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.base.utils.StringHelper;
+import com.xinleju.erp.flow.dao.impl.WpDAO;
+import com.xinleju.erp.flow.models.Ai;
+import com.xinleju.erp.flow.models.Wi;
+import com.xinleju.erp.flow.models.Wp;
+import com.xinleju.erp.flow.service.IConstantVar;
+import com.xinleju.erp.flow.service.IFinishTypeService;
+
+/**
+ * 
+ * 
+ * <p>
+ * </p>
+ * <p>
+ * </p>
+ * 
+ * @author 孙朝辉
+ * @version $Id: AbstractFinishTypeService.java 2252 2014-12-28 12:57:35Z zhongjun $
+ * @since
+ * 
+ */
+public abstract class AbstractFinishTypeService extends BaseService implements IFinishTypeService {
+
+    /**
+     * 工作组DAO
+     */
+    @Autowired
+    private WpDAO wpDAO;
+
+    /**
+     * 
+     * <p>
+     * 获取Ai当前的Wp
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param ai
+     *            活动实例
+     * @param transientVars
+     *            临时变量
+     * @return Wp
+     */
+    public Wp getWp(Ai ai, Map<String, Object> transientVars) {
+        Wp wp = (Wp) transientVars.get(IConstantVar.TVS_WP);
+
+        // 当前没有有效的Wp,则取当前Wp
+        if (wp == null) {
+            wp = wpDAO.getWpByPx(ai.getId(), ai.getPx());
+        }
+        return wp;
+    }
+    public List<Long> getWpIds(Long pWpId){
+        List<Long> idList = new ArrayList<Long>();
+        String ALL_SUB_SQL = "select id from tf_wp where pwp_id = ?";
+        List xList = getDao().findListBySQL(ALL_SUB_SQL, new Object[]{pWpId});
+        if (xList.size() > 0){
+            for (int i = 0; i < xList.size(); i++){
+                Long id = Long.valueOf(xList.get(i).toString());
+                idList.add(id);;
+                idList.addAll(this.getSubWpIds(id));
+            }
+        }
+        if (1 > idList.size()){
+            idList.add(0L);
+        }
+        return idList;
+    }
+    public List<Long> getSubWpIds(Long pWpId){
+        List<Long> idList = new ArrayList<Long>();
+        String ALL_SUB_SQL = "select id from tf_wp where parent_wp_id = ?";
+        List xList = getDao().findListBySQL(ALL_SUB_SQL, new Object[]{pWpId});
+        if (xList.size() > 0){
+            for (int i = 0; i < xList.size(); i++){
+                Long id = Long.valueOf(xList.get(i).toString());
+                idList.add(id);;
+                idList.addAll(this.getSubWpIds(id));
+            }
+        }
+        if (1 > idList.size()){
+            idList.add(0L);
+        }
+        return idList;
+    }
+    
+    public boolean isSubWpsRunning(Long wpId){
+        //该Wp的子流程所有的Wi
+        List xList = this.getWpIds(wpId);
+        if(xList.size() > 0){
+            return getDao().findLong(
+                    "select count(id) from Wi where (status=? or status = ?) and isEffectFlow = 1"
+                    + " and wpId in (" + StringHelper.join(xList, ",") + ")" , Wi.STATUS_RUNNING, Wi.STATUS_CREATED) > 0;
+        }
+        
+        return false;
+    }
+    /**
+     * 	子wp,下面是否有运行的wi
+     * @param wpId
+     * @param tstamp
+     * @return
+     */
+    public boolean isSubModeWpsHaveRunning(Long wpId,String tstamp){
+        boolean isSubModeWpsHaveRunning = false;
+        //该Wp的子流程所有的Wi
+        String ALL_SUB_SQL = "select id,is_suspend from tf_wp where id in (" + StringHelper.join(this.getSubWpIds(wpId), ",") + ")";
+        List xList = getDao().findListBySQL(ALL_SUB_SQL, new Object[]{});
+        if (xList.size() > 0){
+            List<Long> idList = new ArrayList<Long>();
+            boolean hasSuspend = false;
+            for (int i = 0; i < xList.size(); i++){
+                Object[] x = (Object[]) xList.get(i);
+                Long id = Long.valueOf(x[0].toString());
+                BigDecimal is_suspend = ((BigDecimal) x[1]);
+                idList.add(id);
+                if (!hasSuspend && is_suspend != null && is_suspend.intValue() == 1){
+                    hasSuspend = true;
+                }
+            }
+            if (hasSuspend){
+                isSubModeWpsHaveRunning = true;
+            }
+            if (idList.size() > 0){
+                if (!isSubModeWpsHaveRunning){
+                    isSubModeWpsHaveRunning = getDao().findLong(
+                            "select count(id) from Wi where (status=? or status = ?) and isEffectFlow = 1"
+                            + " and wpId in (" + StringHelper.join(idList, ",") + ")", Wi.STATUS_RUNNING, Wi.STATUS_CREATED) > 0;
+                }
+                //判断协办、沟通是否存在待办
+                if (!isSubModeWpsHaveRunning){
+                    for (Long subWpId : idList){
+                        isSubModeWpsHaveRunning = this.isSubWpsRunning(subWpId);
+                        if (isSubModeWpsHaveRunning){
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        
+        return isSubModeWpsHaveRunning;
+    }
+    
+    public boolean isSubModeWpsHaveCompleted(Long wpId,String tstamp){
+        //该Wp的子流程所有的Wi
+        String ALL_SUB_SQL = "select id from tf_wp where id in (" + StringHelper.join(this.getSubWpIds(wpId), ",") + ")";
+        List xList = getDao().findListBySQL(ALL_SUB_SQL, new Object[]{});
+        
+        if(xList.size() > 0){
+            long subCompletedCount = getDao().findLong(
+                    "select count(id) from Wi where (status=?) and isEffectFlow = 1 and wpId in ("+StringHelper.join(xList, ",")+") and tstamp = ?"
+                    ,Wi.STATUS_COMPLETE, tstamp);
+            
+            return subCompletedCount > 0;
+        }
+        
+        return false;
+    }
+    
+}

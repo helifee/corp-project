@@ -1,0 +1,496 @@
+package com.jzy.hio.oa.contract.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.github.pagehelper.PageHelper;
+import com.github.pagehelper.PageInfo;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.oa.OaConstant;
+import com.jzy.hio.entity.ContractType;
+import com.jzy.hio.exception.HioMybatisDeleteException;
+import com.jzy.hio.exception.HioMybatisGetException;
+import com.jzy.hio.exception.HioMybatisInsertException;
+import com.jzy.hio.exception.HioMybatisUpdateException;
+import com.jzy.hio.oa.contract.dto.ContractTypeDto;
+import com.jzy.hio.oa.contract.dto.ResultMsg;
+import com.jzy.hio.oa.contract.mapper.ContractTypeMapper;
+import com.jzy.hio.oa.contract.service.ContractTypeService;
+import com.jzy.hio.utils.DateUtil;
+import com.jzy.hio.utils.LoginUser;
+import com.jzy.hio.utils.Page;
+
+/**
+ * 
+ * <p>合同类型接口实现<br>
+ * @author wliang
+ * @date 2018年4月24日 下午6:52:01
+ */
+@Service("contractTypeService")
+public class ContractTypeServiceImpl extends BaseServiceImpl<ContractType> implements ContractTypeService {
+	
+	private static Logger logger = LoggerFactory.getLogger(ContractTypeServiceImpl.class);
+	
+	@Autowired
+	private ContractTypeMapper contractTypeMapper;
+
+	@Override
+	public ContractTypeDto getContractTypeById(String id,LoginUser loginUser) throws HioMybatisGetException {
+		
+		logger.debug(">>>>>>>>>>>>>>>>getContractTypeById>>>>>>>>>id={}>>>>>>>>>>>>>>>>",id);
+		
+		ContractTypeDto contractTypeDto = null;
+		try {
+			//调用查询
+			contractTypeDto = contractTypeMapper.getContractTypeById(id);
+			
+		} catch (Exception e) {
+			
+			logger.error(">>>>>>>>>>>>>>>>>>>>>获取合同类型出错!id={}>>>>>>>>>>>>>>>>>>>>>",id);
+			throw new HioMybatisGetException(e);
+		}	
+		
+		return contractTypeDto;
+	}
+
+	@Override
+	public int saveContractType(ContractTypeDto contractTypeDto,LoginUser loginUser) throws HioMybatisInsertException {
+		
+		int count = 0;
+		ResultMsg resMsg = this.checkRepeatBeforeSaveOrUpdate(contractTypeDto);
+		if(Base.isNotEmpty(resMsg) && !resMsg.isSuccess()){
+			throw new HioMybatisInsertException(resMsg.getMsg());
+		}
+		
+		ContractType contractType = new ContractType();
+		try {
+			//对象复制方法
+			BeanUtils.copyProperties(contractTypeDto,contractType);
+			
+			contractType.setCreateDate(DateUtil.getDate(DateUtil.getCurDateTime()));
+			if(Base.isEmpty(contractType.getId())){
+				contractType.setId(generatePk());
+			}
+			
+			ContractTypeDto parentTypeDto = contractTypeMapper.getContractTypeById(contractType.getParentId());
+			//全路径
+			contractType.setPrefixId(parentTypeDto.getPrefixId() + "/" + contractType.getId());
+			contractType.setPrefixName(parentTypeDto.getPrefixName() + "/" + contractType.getContractType());			
+			super.save(contractType);
+			
+		} catch (Exception e) {
+			
+			logger.error(">>>>>>>>>>>>>>>>>>>>>保存合同类型出错!id={}>>>>>>>>>>>>>>>>>>>>>",contractType.getId());
+			throw new HioMybatisInsertException("保存合同类型出错!");
+		}
+		
+		
+		return count;
+	}
+	
+	/**
+	 * 删除合同类型
+	 */
+	@Override
+	public int deleteContractTypeById(ContractTypeDto contractTypeDto,LoginUser loginUser) throws HioMybatisDeleteException {
+		
+		ResultMsg resultMsg = null;
+		try {
+			//删除前进行校验
+			resultMsg =	this.checkBeforeDeleteType(contractTypeDto.getId());
+			
+		} catch (Exception e) {
+			
+			logger.error(">>>>>>>>>>>>>>>>>>>>>删除合同类型前进行校验出错!id={}>>>>>>>>>>>>>>>>>>>>>",contractTypeDto.getId());
+			throw new HioMybatisDeleteException("删除合同类型前进行校验出错!");
+		}
+		
+		
+		int count = 0;
+		
+		if(Base.isNotEmpty(resultMsg.getMsg()) && !resultMsg.isSuccess()){
+			//校验不通过的错误信息抛出
+			throw new HioMybatisDeleteException(resultMsg.getMsg());
+			
+		}else if(resultMsg.isSuccess()){
+			
+			try {
+				
+				//获取所有合同类型信息
+				List<ContractTypeDto> allList = contractTypeMapper.getALLContractTypeList();
+				
+				List <ContractTypeDto> subList = new ArrayList<ContractTypeDto>();
+				//校验子类型使用情况
+				this.getSubList(allList, contractTypeDto.getId(), subList);
+				ContractTypeDto currentDto = new ContractTypeDto();
+				currentDto.setId(contractTypeDto.getId());
+				subList.add(currentDto);
+				//父级删除，子集一并删除
+				for(ContractTypeDto dto : subList){
+					Map<String,Object> map = new HashMap<String,Object>();
+					map.put("id", dto.getId());
+					map.put("updateDate",DateUtil.getDate(DateUtil.getCurDateTime()));
+					contractTypeMapper.deleteContractTypeById(map);				
+				}
+				
+			} catch (Exception e) {
+				
+				logger.error(">>>>>>>>>>>>>>>>>>>>>删除合同类型出错!id={}>>>>>>>>>>>>>>>>>>>>>",contractTypeDto.getId());
+				throw new HioMybatisDeleteException("删除合同类型出错!");
+			}		
+			
+			count = 1;
+		}
+		return count;
+	}
+
+	/**
+	 * 修改合同类型信息
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public int updateContractType(ContractTypeDto contractTypeDto,LoginUser loginUser) throws HioMybatisUpdateException {
+		
+		//修改前
+		ContractTypeDto oldDto = contractTypeMapper.getContractTypeById(contractTypeDto.getId());
+		
+		if(Base.isEmpty(oldDto.getParentId()) && Base.isNotEmpty(contractTypeDto.getParentId())){
+			throw new HioMybatisUpdateException("根节点不允许修改上级类型!");
+		}
+		
+		ResultMsg resMsg = this.checkRepeatBeforeSaveOrUpdate(contractTypeDto);
+		if(Base.isNotEmpty(resMsg) && !resMsg.isSuccess()){
+			throw new HioMybatisInsertException(resMsg.getMsg());
+		}
+		
+		//父节点变化
+		if(Base.isNotEquals(oldDto.getParentId(), contractTypeDto.getParentId())){
+			//校验,新的父节点不能是本身及其子节点
+			boolean checkPlag = this.checkParentIdBeforeUpdate(contractTypeDto);
+			
+			if(checkPlag){
+				ContractTypeDto newParentDto = contractTypeMapper.getContractTypeById(contractTypeDto.getParentId());
+				//本节点及其子节点,修改名称全路径、id全路径		
+				contractTypeDto.setPrefixId(newParentDto.getPrefixId() + "/" + contractTypeDto.getId());
+				contractTypeDto.setPrefixName(newParentDto.getPrefixName() + "/" + contractTypeDto.getContractType());
+				Map<String, Object> mapPrefix=new HashMap<String,Object>(); 
+				mapPrefix.put("newPrefixId",contractTypeDto.getPrefixId());
+				mapPrefix.put("newPrefixName",contractTypeDto.getPrefixName());
+				mapPrefix.put("oldPrefixId",oldDto.getPrefixId());
+				mapPrefix.put("oldPrefixName",oldDto.getPrefixName());			
+				contractTypeMapper.updateContractTypePrefix(mapPrefix);
+			}else{
+				//返回错误信息,新的父节点不能是本身及其子节点				
+				throw new HioMybatisUpdateException("新的父节点不能是该节点本身及其子节点！");
+			}
+		}
+		
+		ContractType contractType = new ContractType();
+		int count = 0;
+		try {
+			//对象复制方法
+			BeanUtils.copyProperties(contractTypeDto,contractType);
+			contractType.setUpdateDate(DateUtil.getDate(DateUtil.getCurDateTime()));		
+			count = super.update(contractType);
+			
+		} catch (Exception e) {
+			//
+			logger.error(">>>>>>>>>>>>>>>>>>>>>合同类型更新出错!id={}>>>>>>>>>>>>>>>>>>>>>",contractTypeDto.getId());
+			throw new HioMybatisUpdateException("合同类型更新出错！");
+		}
+		return count;
+	}
+
+	@Override
+	public Page getContractTypePage(ContractTypeDto contractTypeDto,LoginUser loginUser) throws HioMybatisGetException {
+		
+		//分页页码、每页数据量初始化
+		pageStart(contractTypeDto);
+		//查询
+		List<ContractTypeDto> list = contractTypeMapper.getContractTypePage(contractTypeDto);
+		//分页
+		Page page = pageReturn(list);
+
+		return page;
+	}
+	
+	@Override
+	public List<ContractTypeDto> getAllContractTypeList(ContractTypeDto contractTypeDto,LoginUser loginUser) throws HioMybatisGetException{
+		
+		List<ContractTypeDto> dtoList = new ArrayList<ContractTypeDto>();
+		try {
+			//获取所有合同类型信息
+			List<ContractTypeDto> allList = contractTypeMapper.getALLContractTypeList();
+			
+			//组织层级关系
+			if(Base.isNotEmpty(allList)){
+				for(ContractTypeDto t : allList){
+					//从一级节点开始
+					if(Base.isEmpty(t.getParentId())){
+						t.setChildren(this.getLevelSubList(allList, t.getId()));
+						dtoList.add(t);
+					}
+				}
+			}
+		} catch (Exception e) {
+			//
+			logger.error(">>>>>>>>>>>>getAllContractTypeList>>>>>>>>>获取合同类型列表!id={}>>>>>>>>>>>>>>>>>>>>>",
+					contractTypeDto == null ?"":contractTypeDto.getId());
+			throw new HioMybatisGetException(e);
+		}
+		
+		
+		return dtoList;
+	}
+	
+	/**
+	 * 合同类型删除前校验约束
+	 * 1.已经被合同引用的类型不允许删除，提示“XXX已被使用，不允许删除。”
+	 * 2.如果子级被已引用，则提示“XXX已被使用，不允许删除。” 如果是多个，
+	 * 提醒信息格式是“xxxx,xxxx,xxx,xxx,xxx已被使用，不允许删除。”
+	 * @param contractTypeId
+	 * @return
+	 */
+	public ResultMsg checkBeforeDeleteType(String contractTypeId) throws Exception{
+		ResultMsg resultMsg = new ResultMsg();
+		resultMsg.setSuccess(true);
+		StringBuffer msg = new StringBuffer();
+		ContractTypeDto contractTypeDto = contractTypeMapper.getContractTypeById(contractTypeId);
+		if(Base.isEmpty(contractTypeDto)){
+			resultMsg.setSuccess(false);
+			resultMsg.setMsg("删除的当前节点为空,请确认数据!");
+		}else if(Base.isEmpty(contractTypeDto.getParentId())){
+			resultMsg.setSuccess(false);
+			resultMsg.setMsg("根节点不允许删除!");
+		}else{
+			//查询类型被使用
+			List<ContractTypeDto> tList = contractTypeMapper.getContractTypeAndInfo(contractTypeId);
+			if(tList != null && tList.size() >= 1){
+				
+				msg.append("\"").append(tList.get(0).getContractType()).append("\"");
+				msg.append("已被使用，不允许删除。");
+				resultMsg.setSuccess(false);
+				resultMsg.setMsg(msg.toString());
+			}else{
+				//获取所有合同类型信息
+				List<ContractTypeDto> allList = contractTypeMapper.getALLContractTypeList();
+				List <ContractTypeDto> subList = new ArrayList<ContractTypeDto>();
+				//校验子类型使用情况
+				this.getSubList(allList, contractTypeId, subList);
+				if(Base.isNotEmpty(subList)){
+					for(ContractTypeDto dto:subList){
+						List<ContractTypeDto> subUsedList = contractTypeMapper.getContractTypeAndInfo(dto.getId());
+						if(subUsedList != null && subUsedList.size() >= 1){
+							if(Base.isNotEmpty(msg.toString())){
+								//逗号分割
+								msg.append(OaConstant.CONTRACT_COMMA_BREAK);
+							}
+							msg.append(subUsedList.get(0).getContractType());
+						}
+					}
+				}
+				
+				if(Base.isNotEmpty(msg.toString())){
+					//msg.append("已被使用，不允许删除。");
+					resultMsg.setSuccess(false);
+					resultMsg.setMsg("\"" + msg.toString() + "\"" +"已被使用，不允许删除。");
+				}
+			}
+		}
+		
+		return resultMsg;
+	}
+	
+	 /**
+	   * 查找所有子类带层级,递归
+	   * @param allList
+	   * @param parentId
+	   * @return
+	   * @throws Exception
+	   */
+	  public List<ContractTypeDto> getLevelSubList(List<ContractTypeDto> allList,String parentId){
+		  
+		  List<ContractTypeDto> subList = new ArrayList<>();
+		  //当前子集
+		  if(Base.isNotEmpty(allList)){
+			  for(ContractTypeDto dto : allList){
+				  if(Base.isNotEmpty(parentId) && Base.isEquals(parentId,dto.getParentId())){
+					  subList.add(dto);
+				  }
+			  }
+		  }
+		  
+		  for(ContractTypeDto dto : subList){
+			  //有子集再去递归
+			  if(isHaveSubs(dto.getId(), allList)){
+				  dto.setChildren(this.getLevelSubList(allList, dto.getId()));
+			  }
+		  }
+		  if(subList.size() == 0){
+			  return null;
+		  }
+		  
+		  return subList;
+	  }
+	  
+	  /**
+	   * 
+	   * <p>查找所有子类不带层级,递归<br>
+	   * @author wliang
+	   * @date 2018年4月24日 下午6:49:24 
+	   * @param allList
+	   * @param parentId
+	   * @param returnList
+	   * @return
+	   */
+	  public List<ContractTypeDto> getSubList(List<ContractTypeDto> allList,String parentId,
+			  List<ContractTypeDto> returnList){
+		  
+		  List<ContractTypeDto> subList = new ArrayList<>();
+		  if(null == returnList){
+			  returnList = new ArrayList<>();
+		  }
+		  //当前子集
+		  if(Base.isNotEmpty(allList)){
+			  for(ContractTypeDto dto : allList){
+				  if(Base.isNotEmpty(parentId) && Base.isEquals(parentId,dto.getParentId())){
+					  subList.add(dto);
+					  returnList.add(dto);
+				  }
+			  }
+		  }
+		  	  
+		  for(ContractTypeDto dto : subList){
+			  //有子集再去递归
+			  if(isHaveSubs(dto.getId(), allList)){
+				  this.getSubList(allList, dto.getId(),returnList);
+			  }
+		  }
+		  if(returnList.size() == 0){
+			  return null;
+		  }
+		  
+		  return returnList;
+	  }
+	  
+	  /**
+	   * 校验是否有子集
+	   * @param parentId
+	   * @param allList
+	   * @return
+	   */
+	  public boolean isHaveSubs(String parentId,List<ContractTypeDto> allList){
+			boolean flag = false;
+			if(Base.isNotEmpty(allList)){
+				for(ContractTypeDto t : allList) {
+					if(Base.isNotEmpty(parentId) && Base.isEquals(parentId,t.getParentId())){
+						flag = true;
+						break;
+					}
+				}
+			}
+			
+			return flag;
+			
+		}
+	  
+	  /**
+	   * 
+	   * <p>修改时校验,父节点是否变更:若变更,新的父节点不能是本身及其子节点<br>
+	   * @author wliang
+	   * @date 2018年4月24日 下午6:48:26 
+	   * @param contractTypeDto
+	   * @return
+	   */
+	  public boolean checkParentIdBeforeUpdate(ContractTypeDto contractTypeDto){
+		  boolean flag = true;
+		  //获取所有合同类型信息
+		  List<ContractTypeDto> allList = contractTypeMapper.getALLContractTypeList();
+		  List <ContractTypeDto> returnlist = new ArrayList<ContractTypeDto>();
+		  //查询自身及其子节点
+		  List <ContractTypeDto> list = new ArrayList<ContractTypeDto>();
+		  list.add(contractTypeDto);
+		  this.getSubList(allList,contractTypeDto.getId(),returnlist);
+		  if(Base.isNotEmpty(returnlist)){
+			  list.addAll(returnlist);
+		  }		  
+		  //新父节点Id
+		  String newParentId = contractTypeDto.getParentId();
+		  
+		  for(ContractTypeDto ctDto : list){
+			  if(Base.isEquals(ctDto.getId().trim(),newParentId)){
+				  flag = false;
+				  return flag;
+			  }
+		  }
+		  
+		  return flag;
+	  }
+	  
+	  /**
+	   * 
+	   * <p>合同类型名称重复校验<br>
+	   * @author wliang
+	   * @date 2018年4月26日 下午10:44:04 
+	   * @param contractTypeDto
+	   * @return
+	   */
+	  public ResultMsg checkRepeatBeforeSaveOrUpdate(ContractTypeDto contractTypeDto){
+		  //
+		  ResultMsg resMsg = null;
+		  if(Base.isEmpty(contractTypeDto.getParentId())){
+			  resMsg = new ResultMsg();
+				resMsg.setMsg("上级类型不能为空!");
+				resMsg.setSuccess(false);
+				return resMsg;
+		  }
+		  List<ContractTypeDto> oldDtoList = contractTypeMapper.getContractTypeListByName(contractTypeDto.getContractType());
+			if(Base.isNotEmpty(oldDtoList)){
+				for(ContractTypeDto dto : oldDtoList){
+					if(Base.isEquals(dto.getContractType(), contractTypeDto.getContractType())
+							&& Base.isNotEquals(dto.getId(), contractTypeDto.getId())){
+						resMsg = new ResultMsg();
+						resMsg.setMsg("存在相同名称的合同类型,请修改合同类型名称!");
+						resMsg.setSuccess(false);
+						return resMsg;
+					}
+				}
+			}
+			return resMsg;
+	  }
+	  
+	  
+	  private Page pageReturn(List<? extends Object> list){
+		     PageInfo<?> pageInfo = new PageInfo<>(list);
+		     Page resultPage = super.getResultPage(pageInfo);
+		     return resultPage;
+		 }
+		 
+		 /**
+		  * 
+		  * <p>本次翻页起始下标和每页数据量
+		  * @author wliang
+		  * @date 2018年4月18日 下午4:18:56 
+		  * @param contractTypeDto
+		  */
+		 private void pageStart(ContractTypeDto contractTypeDto){
+		     int pageNum = contractTypeDto.getPageNum();
+		     int pageCount = contractTypeDto.getPageCount();
+		    /* int pageStart = (pageNum - 1) * pageCount;
+		     if (pageStart < 0) {
+		         pageStart = 0;
+		     }*/
+		     PageHelper.startPage(pageNum, pageCount, true, false, null);
+		 }
+
+}

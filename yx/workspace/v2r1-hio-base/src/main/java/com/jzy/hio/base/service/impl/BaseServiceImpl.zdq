@@ -1,0 +1,341 @@
+package com.jzy.hio.base.service.impl;
+
+import com.github.pagehelper.PageHelper;
+import com.github.pagehelper.PageInfo;
+import com.github.pagehelper.PageInterceptor;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.entity.BaseEntity;
+import com.jzy.hio.base.mapper.BaseMapper;
+import com.jzy.hio.base.service.BaseService;
+import com.jzy.hio.utils.ClassUtils;
+import com.jzy.hio.utils.Page;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.InitializingBean;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import tk.mybatis.mapper.entity.Example;
+import tk.mybatis.mapper.entity.Example.Criteria;
+
+import java.lang.reflect.ParameterizedType;
+import java.util.Collection;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+@Service
+public abstract class BaseServiceImpl<T extends BaseEntity> extends Base implements BaseService<T>, InitializingBean {
+
+	protected Logger logger = LoggerFactory.getLogger(getClass());
+
+	@Autowired
+	protected BaseMapper<T> baseMapper;
+
+	@Override
+	public void afterPropertiesSet() throws Exception {
+		// Field[] fields = this.getClass().getDeclaredFields();
+		// for (Field field : fields) {
+		// if (field.getName().equals("baseMapper")) {
+		// continue;
+		// }
+		// field.setAccessible(true);
+		// Object mapper = field.get(this);
+		// if (mapper instanceof BaseMapper<?>) {
+		// if (ClassUtils.getGenericClass(field.getType(), 0) == ClassUtils.getGenericClass(getClass(), 0)) {
+		// baseMapper = (BaseMapper<T>) mapper;
+		// }
+		// }
+		// }
+		// if (baseMapper == null) {
+		// logger.error("baseMapper 为空 {}", this.getClass().getName());
+		// }
+	}
+
+	@Override
+	public int save(BaseEntity paramT) {
+		initBaseEntity(paramT, true);
+		return baseMapper.insert((T) paramT);
+	}
+
+	@Override
+	public int saveBatch(List<T> list) {
+		if (list.size() == 0) {
+			return 0;
+		} else {
+			for (T t : list) {
+				initBaseEntity(t, true);
+			}
+			int result = baseMapper.insertList(list);
+			return result;
+		}
+	}
+
+	@Override
+	public int updateBatch(List<T> list) {
+		if (list.size() == 0) {
+			return 0;
+		} else {
+			int result = 0;
+			if (list != null && list.size() > 0) {
+				for (T object : list) {
+					// 初始化共通更新字段 add by haoqipeng
+					initBaseEntityForUpdate(object);
+					result = result + update(object);
+				}
+			}
+			return result;
+		}
+	}
+
+	@Override
+	public int update(BaseEntity object) {
+		// 初始化共通更新字段 add by haoqipeng
+		initBaseEntityForUpdate(object);
+		return baseMapper.updateByPrimaryKeySelective((T) object);
+	}
+
+	@Override
+	public int deleteObjectById(String id) {
+		return baseMapper.deleteByPrimaryKey(id);
+	}
+
+	@Override
+	public int deleteAllObjectByIds(List<String> ids) {
+		int result = 0;
+		if (ids != null && ids.size() > 0) {
+			for (String id : ids) {
+				result = result + baseMapper.deleteByPrimaryKey(id);
+			}
+		}
+		return result;
+	}
+
+	@Override
+	public T getObjectById(String id) {
+		// throw new HioException(SysErrorEnum.parameterError.getErrorCode());
+		return baseMapper.selectByPrimaryKey(id);
+	}
+
+	@Override
+	public T getObjectByExample(Map<String, Object> map) {
+ 		List<T> list = queryListByExample(map);
+		if (list.size() > 0) {
+			return list.get(0);
+		} else {
+			return null;
+		}
+	}
+
+	@Override
+	public List<T> queryList(T paramater) {
+		return baseMapper.select(paramater);
+	}
+
+	/**
+	 * 用法
+	 * 
+	 * <pre>
+	 * 		排序     paramMap.put("orderBy", "sort asc")	//按照sort升序
+	 * 			  paramMap.put("orderBy", "id desc")	//按照id升序
+	 *  	 	  paramMap.put("orderBy", "id asc,sort desc")// 多个字段排序
+	 * 		分页     paramMap.put("pageCount", 20)	//分页大小
+	 * 			  paramMap.put("pageNum", 1)//当前页码、如果只传limit不设置pageNum 默认只查询第一页
+	 *		时间查询：
+	 *			  paramMap.put("date", new String[]{'开始时间','结束时间'})//用于时间查询的字段
+	 *		null查询：
+	 *			  paramMap.put("column", "is null");
+	 *			  paramMap.put("column", "is not null");
+	 *		in :
+	 *			  paramMap.put("column", Set<>||List等集合);//
+	 *		去重: paramMap.put("distinct", true);
+	 * 		模糊查询:
+	 * 			    前端传入的参数默采用精确查询,如果需要模糊查询，需要把相关参数加入到fuzzy中, 用逗号分割
+	 * 			  paramMap.put("fuzzy","name,title");
+	 * </pre>
+	 */
+	@Override
+	public List<T> queryListByExample(Map<String, Object> paramMap) {
+		if (paramMap == null) {
+			paramMap = new HashMap<>();
+			paramMap.put("delflag", 0);
+		}
+		return baseMapper.selectByExample(map2example(paramMap));
+	}
+
+	/**
+	 * 分页查询之前调用<br>
+	 * 该方法中的(PageHelper.startPage())命令执行完 、下一次查询会把sql自动添加limit<br>
+	 * {@link PageInterceptor}
+	 * 
+	 * @param map
+	 */
+	protected void pageStart(Map<String, Object> map) {
+		Object pageNumObj = map.get("pageNum");// 当前页码
+		Object pageCountObj = map.get("pageCount");// 分页大小
+		if (pageNumObj != null && pageCountObj != null) {
+			int pageNum = Integer.valueOf(pageNumObj + "");
+			int pageCount = Integer.valueOf(pageCountObj + "");
+			PageHelper.startPage(pageNum, pageCount, true, false, null);
+		}
+	}
+
+	protected Example map2example(Map<String, Object> paramMap) {
+		pageStart(paramMap);
+		//
+		Class<?> tClass = (Class<?>) ((ParameterizedType) getClass().getGenericSuperclass()).getActualTypeArguments()[0];
+		// 组装查询
+		Example example = new Example(tClass);
+		Criteria criteria = example.createCriteria();
+		String orderBy = null;
+		Object fuzzy = paramMap.get("fuzzy");
+		for (String property : paramMap.keySet()) {
+			Object value = paramMap.get(property);
+			if (value == null) {
+				continue;
+			}
+			// 排序条件
+			if ("orderBy".equalsIgnoreCase(property)) {
+				orderBy = String.valueOf(value);
+			} else if ("distinct".equalsIgnoreCase(property)) {
+				example.setDistinct(Boolean.valueOf(value + ""));
+			} else {
+				// 查询条件
+				if (isField(tClass, property)) {
+					// 第一个参数是 Entity的Field名
+					if (fuzzy != null && String.valueOf(fuzzy).contains(property)) {
+						criteria.andLike(property, "%" + String.valueOf(value) + "%");
+					}
+					// in
+					else if (value instanceof Collection<?>) {
+						Collection<?> coll = (Collection<?>) value;
+						criteria.andIn(property, coll);
+					}
+					// 区间
+					else if (value.getClass().isArray()) {
+						Date[] arr = (Date[]) value;
+						criteria.andBetween(property, arr[0], arr[1]);
+					}
+					// null
+					else if ("is null".equalsIgnoreCase(value + "")) {
+						criteria.andIsNull(property);
+					} else if ("is not null".equalsIgnoreCase(value + "")) {
+						criteria.andIsNotNull(property);
+					}
+					// 精确匹配
+					else {
+						criteria.andEqualTo(property, value);
+					}
+				}
+			}
+		}
+		if (orderBy != null) {
+			example.setOrderByClause(orderBy);
+		}
+		return example;
+	}
+
+	protected boolean isField(Class<?> clazz, String fieldName) {
+		try {
+			clazz.getDeclaredField(fieldName);
+			return true;
+		} catch (NoSuchFieldException | SecurityException e) {
+			try {
+				clazz.getSuperclass().getDeclaredField(fieldName);
+				return true;
+			} catch (NoSuchFieldException | SecurityException e1) {
+				// ignore
+			}
+		}
+		return false;
+	}
+
+	@Override
+	public Page getPage(Map<String, Object> paramMap) {
+		List<T> selectByExample = baseMapper.selectByExample(map2example(paramMap));
+		PageInfo<T> pageInfo = new PageInfo<>(selectByExample);
+		Page resultPage = getResultPage(pageInfo);
+		return resultPage;
+	}
+
+	@Override
+	public int deletePseudoObjectById(String id) {
+		Class<?> beanClass = ClassUtils.getGenericClass(getClass(), 0);
+		try {
+			BaseEntity entity = (BaseEntity) beanClass.newInstance();
+			entity.setId(id);
+			entity.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+			return baseMapper.updateByPrimaryKeySelective((T) entity);
+		} catch (Exception e) {
+			e.printStackTrace();
+			return 0;
+		}
+	}
+
+	@Override
+	public int deletePseudoAllObjectByIds(List<String> ids) {
+		int result = 0;
+		if (ids.size() > 0) {
+			for (String k : ids) {
+				int deletePseudoObjectById = deletePseudoObjectById(k);
+				result += deletePseudoObjectById;
+			}
+		}
+
+		return result;
+	}
+
+	/*
+	 * private BaseMapper<T> mapper;
+	 *
+	 * public BaseMapper<T> baseMapper { return mapper; }
+	 *
+	 * public void setMapper(BaseMapper<T> mapper) { this.mapper = mapper; }
+	 */
+	public Page getResultPage(PageInfo<? extends Object> currentPage) {
+		List<?> list = currentPage.getList();
+		// 共多少条
+		long total = currentPage.getTotal();
+		// 当前页码
+		int pageNum = currentPage.getPageNum();
+		if (pageNum == 0) {
+			pageNum = 1;// 如果没查到数据 、结果为空、此时设置当前页码为1
+		}
+		// 分页大小
+		int pageCount = currentPage.getPageSize();
+		Page resultPage = new Page();
+		resultPage.setPageNum(pageNum);
+		resultPage.setPageCount(pageCount);
+		long totalPage = 0;
+		if (pageCount != 0) {
+			totalPage = total % pageCount == 0 ? (total / pageCount) : (total / pageCount) + 1;
+		}
+		resultPage.setPageTotal((int) totalPage);
+		resultPage.setTotal((int) total);
+		resultPage.setList(list);
+		return resultPage;
+	}
+
+	public List selectAll() {
+		List selectAll = baseMapper.selectAll();
+		return selectAll;
+	}
+
+	/**
+	 * 生成主键
+	 * 
+	 * @return
+	 */
+	@Override
+	public String generatePk() {
+		Class<?> beanClass = ClassUtils.getGenericClass(getClass(), 0);
+		return Base.generatePk(beanClass);
+	}
+
+	public void initBaseEntity(List<? extends BaseEntity> baseEntitys, boolean generatePK) {
+		for (BaseEntity baseEntity : baseEntitys) {
+			initBaseEntity(baseEntity, generatePK);
+		}
+	}
+}

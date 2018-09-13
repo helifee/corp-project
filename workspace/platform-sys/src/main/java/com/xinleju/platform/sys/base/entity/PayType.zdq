@@ -1,0 +1,101 @@
+package com.xinleju.platform.sys.base.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Table(value="PT_SYS_PAY_TYPE",desc="付款类型")
+public class PayType extends BaseEntity{
+	
+		
+	@Column(value="name",desc="付款款项类型名称")
+	private String name;
+    
+  		
+	@Column(value="code",desc="付款款项类型编码")
+	private String code;
+    
+  		
+	@Column(value="status",desc="状态")
+	private String status;
+    
+  		
+	@Column(value="parent_id",desc="父级id")
+	private String parentId;
+    
+  		
+	@Column(value="remark",desc="说明")
+	private String remark;
+    
+  		
+	@Column(value="prefix_id",desc="拼接id")
+	private String prefixId;
+	
+	@Column(value="sort",desc="排序")
+	private String sort;
+    
+  		
+		
+	public String getName() {
+		return name;
+	}
+	public void setName(String name) {
+		this.name = name;
+	}
+    
+  		
+	public String getCode() {
+		return code;
+	}
+	public void setCode(String code) {
+		this.code = code;
+	}
+    
+  		
+	public String getStatus() {
+		return status;
+	}
+	public void setStatus(String status) {
+		this.status = status;
+	}
+    
+  		
+	public String getParentId() {
+		return parentId;
+	}
+	public void setParentId(String parentId) {
+		this.parentId = parentId;
+	}
+    
+  		
+	public String getRemark() {
+		return remark;
+	}
+	public void setRemark(String remark) {
+		this.remark = remark;
+	}
+    
+  		
+	public String getPrefixId() {
+		return prefixId;
+	}
+	public void setPrefixId(String prefixId) {
+		this.prefixId = prefixId;
+	}
+	public String getSort() {
+		return sort;
+	}
+	public void setSort(String sort) {
+		this.sort = sort;
+	}
+    
+  		
+	
+}

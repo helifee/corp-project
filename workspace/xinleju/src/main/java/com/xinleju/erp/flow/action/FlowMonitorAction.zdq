@@ -1,0 +1,546 @@
+package com.xinleju.erp.flow.action;
+
+import java.io.UnsupportedEncodingException;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.hibernate.FetchMode;
+import org.hibernate.criterion.Criterion;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.Order;
+import org.hibernate.criterion.Property;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+
+import com.xinleju.erp.base.app.action.BaseAction;
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.utils.JsonUtils;
+import com.xinleju.erp.base.utils.StringHelper;
+import com.xinleju.erp.data.cache.api.MDProjectCacheService;
+import com.xinleju.erp.flow.bean.IdName;
+import com.xinleju.erp.flow.models.Ct;
+import com.xinleju.erp.flow.models.Fl;
+import com.xinleju.erp.flow.models.FlowMonitor;
+import com.xinleju.erp.flow.service.CtService;
+import com.xinleju.erp.flow.service.IFlowMonitorService;
+import com.xinleju.erp.flow.service.IFlowWarningTaskService;
+import com.xinleju.erp.flow.service.api.ParticipantAPIService;
+import com.xinleju.erp.flow.service.extend.dto.CtDto;
+import com.xinleju.erp.flow.service.extend.dto.FlowMonitorDto;
+import com.xinleju.erp.frame.models.ServiceObjectDefine;
+
+/**
+ * 流程监控
+ * 
+ * @author zhengxj
+ *
+ */
+public class FlowMonitorAction extends BaseAction {
+
+    @Autowired
+    private ParticipantAPIService participantAPIService;
+    
+    @Autowired
+    private IFlowMonitorService flowMonitorService;
+    
+    @Autowired
+    private IFlowWarningTaskService flowWarningTaskService;
+    
+    @Autowired
+    private MDProjectCacheService mdProjectCacheService;
+    
+    @Autowired
+    private CtService ctService;
+
+    private FlowMonitor flowMonitor;
+    
+    private FlowMonitorDto flowMonitorDto;
+    
+    private CtDto ctDto;
+    
+    private Ct ct;
+
+    private ServiceObjectDefine sod;
+    
+    
+    /**
+     * 列表
+     * @return
+     */
+    public String list() {
+        Map<String, String> statusMap = new HashMap<String,String>();
+        statusMap.put(FlowMonitorDto.IS_DISABLED_N, "启用");
+        statusMap.put(FlowMonitorDto.IS_DISABLED_Y, "禁用");
+        request.setAttribute("statusMap", statusMap);
+        DetachedCriteria dc = DetachedCriteria.forClass(FlowMonitor.class);
+        if (null != flowMonitorDto){
+            if (StringUtils.isNotEmpty(flowMonitorDto.getKeyword())) {
+                dc.add(Restrictions.or(Restrictions.ilike("name", "%" + flowMonitorDto.getKeyword().trim() + "%"), Restrictions.ilike("code", "%" + flowMonitorDto.getKeyword().trim() + "%")));
+            }
+            if ("1".equals(flowMonitorDto.getStatus())) {
+                dc.add(Restrictions.eq("useStatus", 1));
+            } else if ("0".equals(flowMonitorDto.getStatus())) {
+                dc.add(Restrictions.or(new Criterion[] { Restrictions.eq("useStatus", 0), Restrictions.isNull("useStatus") }));
+            }
+        }
+        dc.addOrder(Order.desc("createTime"));
+        page = getCommonService().findPage(dc, start, limit);
+        return "list";
+    }
+    
+    /**
+     * 设置
+     * @return
+     */
+    public String setup() {
+        String id = request.getParameter("id");
+        String flowTempId = request.getParameter("flowTempId");
+        if (StringUtils.isNotBlank(id)) {
+            flowMonitor = getCommonService().getById(FlowMonitor.class, Long.parseLong(id));
+        }
+        if (StringUtils.isNotBlank(flowTempId)) {
+            
+            Fl fl = getCommonService().getById(Fl.class, Long.parseLong(flowTempId));
+            String flowTemps = flowTempId + ":" + fl.getFlowName();
+            
+            List<FlowMonitor> list = getCommonService().findByHQL(FlowMonitor.class, "from FlowMonitor where flowTemps = ?", flowTemps);
+            if (list != null && !list.isEmpty()) {
+                flowMonitor = list.get(0);
+            } else {
+                flowMonitor = new FlowMonitor();
+                flowMonitor.setFlowTemps(flowTemps);
+            }
+        }
+        request.setAttribute("flowTempId", flowTempId);
+        return "setup";
+    }
+    
+    /**
+     * 保存或更新
+     */
+    public void save() {
+        if (flowMonitor.getId() == null) {
+            flowMonitor.setCreateTime(new Date());
+        } else {
+            flowMonitor.setUpdateTime(new Date());
+        }
+        String mp = flowMonitor.getMonitorPoint();
+        if (StringUtils.isNotBlank(mp) && !mp.contains(String.valueOf(FlowMonitor.MONITOR_POINT_FLOW_SUSPEND))) {
+            flowMonitor.setSuspend(null);
+        }
+        if (StringUtils.isNotBlank(flowMonitor.getBeMonitored())) {
+            flowMonitor.setRealBeMonitored(flowWarningTaskService.transPEIds(flowMonitor.getBeMonitored()));
+        }
+        getCommonService().saveOrUpdate(flowMonitor);
+        super.renderJson("{}");
+        // redirect("op!list.do", "isDisabled", "name");
+    }
+    
+    public void updateOp(){
+        Map<String,Object> result = new HashMap<String,Object>();
+        try{
+            String ids = getParameter("ids");
+            Integer isdisabled = getParameterInt("isdisabled");
+            if (null == isdisabled){
+                isdisabled = 1;
+            }
+            if(StringUtils.isNotBlank(ids)) {
+                String[] idAry = ids.split(";");
+                for(String id : idAry) {
+                    getCommonService().execute("update FlowMonitor set useStatus = ? where id = ?", isdisabled, Long.valueOf(id));
+                }
+            }
+            result.put("success", true);
+        }catch(Exception e){
+            result.put("success", false);
+            result.put("msg", e.getMessage());
+        }
+        renderJson(result);
+    }
+    
+    /**
+     * 
+     * 操作禁用
+     * 
+     * @author 孙朝辉
+     * @param
+     * 
+     */
+    public void delete() {
+
+        if (ids != null) {
+            for (Long id : ids) {
+                getCommonService().execute("update FlowMonitor set useStatus = 1 where id = ?", id);
+            }
+        }
+        redirect("FlowMonitor!list.do", "isDisabled", "name");
+    }
+
+    /**
+     * 
+     * 操作解禁
+     * 
+     * @author 孙朝辉
+     * @param
+     * 
+     */
+    public void unDelete() {
+
+        if (ids != null) {
+            for (Long id : ids) {
+                getCommonService().execute("update FlowMonitor set useStatus = 2 where id = ?", id);
+            }
+        }
+        redirect("op!list.do", "isDisabled", "name");
+    }
+    
+    /**
+     * 选择人员树
+     */
+    @SuppressWarnings("unchecked")
+    public void getTree() {
+
+        String q = getParameter("q");
+        Long parentId = Long.parseLong(getRequest().getParameter("parentId").substring(IdName.PREFIX_LENGTH));
+
+        String prefix = getRequest().getParameter("prefix");
+
+        List<IdName> returnList = new ArrayList<IdName>();
+        if (prefix.equals(IdName.ROOT_PREFIX)) {
+            returnList.add(new IdName(0L, "标准角色", IdName.ROLE_PREFIX));
+            returnList.add(new IdName(0L, "公司部门/岗位/用户", IdName.PART_PREFIX));
+            if (request.getParameter("opType") != null && "2".equals(request.getParameter("opType"))) {
+                returnList.add(new IdName(-1L, "项目", IdName.PROJECT_PREFIX));
+            }
+        } else if (prefix.equals(IdName.PART_PREFIX)) {
+            returnList.addAll(participantAPIService.findChildEntityAll(parentId, participantAPIService.getZcRootStructTypeIdByStructTypeCode(), q));
+        } else if (prefix.equals(IdName.ROLE_PREFIX)) {
+            returnList.addAll(participantAPIService.getAllRoleList(parentId, q));
+        } else if (prefix.equals(IdName.GENERAL_PREFIX)) { // 通用角色查询
+            returnList.addAll(participantAPIService.getGeneralRoleList());
+        } else if (prefix.equals(IdName.PBIZ_PREFIX)) {
+            returnList.addAll(participantAPIService.getBizParticipantList());
+        } else if (prefix.equals(IdName.XDPA_PREFIX) && parentId.intValue() == 0) {
+            returnList.addAll(participantAPIService.getXiangduiParticipantList());
+        } else if (prefix.equals(IdName.APPS_PREFIX) && parentId.intValue() == 0) {
+            returnList.addAll(participantAPIService.getAllAppList());
+        } else if (prefix.equals(IdName.APPS_PREFIX)) {
+            returnList.addAll(participantAPIService.getSmServiceObjectListByAppId(parentId.longValue()));
+        } else if (prefix.equals(IdName.OBJS_PREFIX)) {
+            returnList.addAll(participantAPIService.getSmServiceObjectFieldListByObjectId(parentId.longValue()));
+        } else if (prefix.equals(IdName.PROJECT_PREFIX)) {
+            returnList.addAll(participantAPIService.getProjectServiceObjectFieldListByObjectId(parentId.longValue()));
+        }
+        List<Map<String, Object>> trees = new ArrayList<Map<String, Object>>();
+        for (IdName idName : returnList) {
+
+            Map<String, Object> tree = new HashMap<String, Object>();
+            
+            if (idName.getPrefix().equals(IdName.PROJECT_PREFIX) && "project".equals(idName.getType())) {
+                tree.put("id", IdName.PROJECT_PREFIX + idName.getId());
+            }  else if (idName.getPrefix().equals(IdName.BRANCH_PREFIX) && "branch".equals(idName.getType())) {
+                tree.put("id", IdName.BRANCH_PREFIX + idName.getId());
+            } else {
+                tree.put("id", idName.getPrefix() + idName.getId());
+            }
+            
+            tree.put("text", idName.getName());
+
+            boolean isLeaf = false;
+            if (idName.getPrefix().equals(IdName.OBJF_PREFIX)){
+                isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.XDPA_PREFIX) && idName.getId()>0){
+                isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.PBIZ_PREFIX) && idName.getId().intValue() != 0 ){
+                isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.ORGN_PREFIX) && idName.isLeaf(false) && (Integer) ((Map<String, Object>) idName.getTarget()).get("isUserEmpty") == 1){
+                isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.ROLE_PREFIX)){
+                isLeaf = !participantAPIService.isExistedSon(idName.getId());
+            } else if (idName.getPrefix().equals(IdName.GENERAL_PREFIX) && idName.getId()>0){
+                isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.BRANCH_PREFIX)){
+                isLeaf = true;
+            }
+            
+            tree.put("leaf", isLeaf);
+            tree.put("prefix", idName.getPrefix());
+            tree.put("type", idName.getType());
+            
+            if (prefix.equals(IdName.ROOT_PREFIX)) {
+                tree.put("checkable", false);
+            }else{
+                tree.put("checkable", true);
+            }
+
+            if (idName.getPrefix().equals(IdName.GENERAL_PREFIX)) { // 通用角色
+                tree.put("iconCls", "img_role");
+            }if (idName.getPrefix().equals(IdName.ROLE_PREFIX)) {
+                tree.put("iconCls", "img_role");
+            } else if (idName.getPrefix().equals(IdName.USER_PREFIX)) {
+                tree.put("iconCls", "img_user");
+            } else if (idName.getPrefix().equals(IdName.PROJECT_PREFIX)) {
+                tree.put("iconCls", "img_group");
+            } else if (idName.getPrefix().equals(IdName.PART_PREFIX)) {
+                if("user".equals(idName.getType())){
+                    tree.put("iconCls", "img_user");
+                    tree.put("leaf", true);
+                }
+                else if("role".equals(idName.getType())){
+                    tree.put("iconCls", "img_role");
+                }
+                else if("group".equals(idName.getType())){
+                    tree.put("iconCls", "img_group");
+                }
+                else{
+                    tree.put("iconCls", "img_orgn");
+                }
+               
+            } else if (idName.getPrefix().equals(IdName.PBIZ_PREFIX)) {
+                tree.put("iconCls", "img_bizp");
+            }
+
+            trees.add(tree);
+        }
+
+        Map<String, Object> pageMap = new HashMap<String, Object>();
+        pageMap.put("total", trees.size());
+        pageMap.put("nodes", trees);
+        String jsonString = JsonUtils.toJSONString(trees);
+        renderJson(jsonString);
+    }
+
+    public String userSelect() {
+        request.setAttribute("datas", decodeParams(request.getParameter("datas")));
+        request.setAttribute("opType", request.getParameter("opType"));
+        return "userSelect";
+    }
+
+    private String decodeParams(String datas) {
+        try {
+            if (StringUtils.isNotBlank(datas)) {
+            	datas = java.net.URLDecoder.decode(datas,"utf-8"); 
+            }
+        } catch (UnsupportedEncodingException e) {
+            e.printStackTrace();
+        }
+        return datas;
+    }
+    
+    public String projectListIndex() {
+        request.setAttribute("datas", decodeParams(request.getParameter("datas")));
+        return "projectListIndex";
+    }
+    
+    /**
+     * 项目列表
+     * @return
+     */
+    @SuppressWarnings("deprecation")
+    public String projectList() {
+        //针对流程目录
+        String isDisabled = "";
+        //针对流程模板
+        String ifDisabled = "";
+        Long ctId = null;
+        Long serviceObjectDefineId = null;
+        Long appId = null;
+        String nameOrCode = "";
+        if(null != ctDto){
+            if (StringUtils.isNotBlank(ctDto.getCtId())){
+                ctId = Long.valueOf(ctDto.getCtId().trim());
+            }
+            if (StringUtils.isNotBlank(ctDto.getServiceObjectDefineId())){
+                serviceObjectDefineId = Long.valueOf(ctDto.getServiceObjectDefineId().trim());
+            }
+            if (StringUtils.isNotBlank(ctDto.getAppId())){
+                appId = Long.valueOf(ctDto.getAppId().trim());
+            }
+            isDisabled = ctDto.getStatus();
+            ifDisabled = ctDto.getValStatus();
+            nameOrCode = ctDto.getKeyword();
+        }
+        DetachedCriteria dcAs = DetachedCriteria.forClass(Fl.class, "flowAs");
+        dcAs.setProjection(Property.forName("flowVersion").max());
+        dcAs.add(Property.forName("flowAs.flowCode").eqProperty("flowObj.flowCode"));
+        DetachedCriteria dc = DetachedCriteria.forClass(Fl.class, "flowObj");
+        dc.add(Property.forName("flowVersion").eq(dcAs));
+        dc.setFetchMode("ct", FetchMode.JOIN);
+        dc.setFetchMode("serviceObjectDefine", FetchMode.JOIN);
+        if(StringUtils.isNotBlank(nameOrCode)){
+            dc.add(Restrictions.or(Restrictions.like("flowName", "%" + nameOrCode.trim() + "%"), Restrictions.like("flowCode", "%" + nameOrCode.trim() + "%")));
+        }
+        if (ifDisabled == null || "".equals(ifDisabled)) {
+            
+        } else {
+            if ("0".equals(ifDisabled)) {
+                dc.add(Restrictions.eq("isDisabled", 0));
+            } else {
+                dc.add(Restrictions.eq("isDisabled", 1));
+            }
+        }
+        if (ctId != null && ctId != 0){
+            ct = getCommonService().getById(Ct.class, ctId);
+            //如果当前目录已删除就将目录设为空
+            if (null != ct && null != ct.getIsDisabled() && ct.getIsDisabled().intValue() == 1
+                    && StringUtils.isNotBlank(isDisabled) && !StringHelper.parseBoolean(isDisabled)){
+                ct = null;
+                ctId = null;
+                ctDto.setCtId(null);
+            }
+            if (null != ctId && ctId > 0){
+                List<Long> subCtIdList = this.getSubCtIdList(ctId, isDisabled);
+                subCtIdList.add(ctId);
+                dc.add(Restrictions.in("ctId", subCtIdList));
+            } else {
+                dc.add(Restrictions.eq("ctId", 0L));
+            }
+        }
+        if (serviceObjectDefineId != null && serviceObjectDefineId != 0){
+            sod = getCommonService().getById(ServiceObjectDefine.class, serviceObjectDefineId);
+            dc.add(Restrictions.eq("serviceObjectDefineId", serviceObjectDefineId));
+        }
+        if (appId != null && appId != 0){
+            String sqlStr = "select s.id from sm_service_object_define s inner join sm_app a on s.module_code = a.code where a.id = ? ";
+            List<Long> sodIdList = App.getBean(JdbcTemplate.class).queryForList(sqlStr, new Object[]{appId}, Long.class);
+            if (null != sodIdList && sodIdList.size() > 0){
+                dc.add(Restrictions.in("serviceObjectDefineId", sodIdList));
+            } else {
+                dc.add(Restrictions.eq("serviceObjectDefineId", 0L));
+            }
+        }
+        dc.addOrder(Order.asc("flSort"));
+        dc.addOrder(Order.asc("id"));
+        page = getCommonService().findPage(dc, start, limit);
+        if(ctId!=null){
+            String selectPath = "/Root_0/Cate_0/" + this.getCtIdPath(ctId);
+            if (StringUtils.isNotBlank(selectPath) && selectPath.endsWith("/")){
+                selectPath = selectPath.substring(0, selectPath.lastIndexOf("/"));
+            }
+            request.setAttribute("selectPath", selectPath);
+        } else if(serviceObjectDefineId!=null){
+            //必须是存在的有且只有一个
+            Long curAppId = App.getBean(JdbcTemplate.class).queryForLong("select min(a.id) from sm_service_object_define s inner join sm_app a on s.module_code = a.code where s.id = ? ", serviceObjectDefineId);
+            String selectPath = "/Root_0/Object_0/App_" + curAppId + "/Object_" + serviceObjectDefineId;
+            request.setAttribute("selectPath", selectPath);
+        } else if(appId!=null){
+            String selectPath = "/Root_0/Object_0/App_" + appId ;
+            request.setAttribute("selectPath", selectPath);
+        } else {
+            String selectPath = "/Root_0";
+            request.setAttribute("selectPath", selectPath);
+        }
+        String datas = request.getParameter("datas");
+        request.setAttribute("datas", datas);
+        return "projectList";
+    }
+    
+    public boolean isChecked(String datas, Long id) {
+        boolean b = false;
+        if (StringUtils.isNotBlank(datas)) {
+            for (int x=0; x<datas.split(",").length; x++) {
+                if (Long.parseLong(datas.split(",")[x]) == id.longValue()) {
+                    b = true;
+                    break;
+                }
+            }
+        }
+        return b;
+    }
+    
+    public boolean isChecked(String datas, Integer id) {
+        boolean b = false;
+        if (StringUtils.isNotBlank(datas)) {
+            for (int x=0; x<datas.split(",").length; x++) {
+                if (Integer.parseInt(datas.split(",")[x].trim()) == id.intValue()) {
+                    b = true;
+                    break;
+                }
+            }
+        }
+        return b;
+    }
+    
+    public String selectedFlowTempNames(String datas) {
+        String names = "";
+        if (StringUtils.isNotBlank(datas)) {
+            DetachedCriteria dc = DetachedCriteria.forClass(Fl.class);
+            dc.add(Restrictions.sqlRestriction("id in ("+datas+")"));
+            List<Fl> dcList = getCommonService().findByCriteria(dc);
+            if (dcList != null && !dcList.isEmpty()) {
+                for (Fl fl : dcList) {
+                    names += fl.getFlowName() + ",";
+                }
+            }
+        }
+        return StringUtils.isNotBlank(names) ? names.substring(0, names.length() - 1) : null;
+    }
+    
+    /**
+     * 得到ids
+     * @author jun
+     * @param ctId
+     * @param isDisabled
+     * @return
+     */
+    private String getCtIdPath(Long parentCtId){
+        return ctService.getCtIdPath(parentCtId);
+    }
+    
+    /**
+     * 得到ids
+     * @author jun
+     * @param ctId
+     * @param isDisabled
+     * @return
+     */
+    private List<Long> getSubCtIdList(Long ctId, String isDisabled){
+        return ctService.getSubCtIdList(ctId, isDisabled);
+    }
+
+    public FlowMonitor getFlowMonitor() {
+        return flowMonitor;
+    }
+
+    public void setFlowMonitor(FlowMonitor flowMonitor) {
+        this.flowMonitor = flowMonitor;
+    }
+
+    public FlowMonitorDto getFlowMonitorDto() {
+        return flowMonitorDto;
+    }
+
+    public void setFlowMonitorDto(FlowMonitorDto flowMonitorDto) {
+        this.flowMonitorDto = flowMonitorDto;
+    }
+
+    public CtDto getCtDto() {
+        return ctDto;
+    }
+
+    public void setCtDto(CtDto ctDto) {
+        this.ctDto = ctDto;
+    }
+
+    public Ct getCt() {
+        return ct;
+    }
+
+    public void setCt(Ct ct) {
+        this.ct = ct;
+    }
+
+    public ServiceObjectDefine getSod() {
+        return sod;
+    }
+
+    public void setSod(ServiceObjectDefine sod) {
+        this.sod = sod;
+    }
+    
+}

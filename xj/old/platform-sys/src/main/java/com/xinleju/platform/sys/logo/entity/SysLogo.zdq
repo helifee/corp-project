@@ -1,0 +1,51 @@
+package com.xinleju.platform.sys.logo.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Table(value="PT_SYS_LOGO",desc="平台logo")
+public class SysLogo extends BaseEntity{
+	
+		
+	@Column(value="name",desc="logo名称")
+	private String name;
+    
+  		
+	@Column(value="icon",desc="logo图标")
+	private String icon;
+
+	@Column(value="url",desc="logo地址")
+	private String url;
+		
+	public String getName() {
+		return name;
+	}
+	public void setName(String name) {
+		this.name = name;
+	}
+    
+  		
+	public String getIcon() {
+		return icon;
+	}
+	public void setIcon(String icon) {
+		this.icon = icon;
+	}
+
+
+	public String getUrl() {
+		return url;
+	}
+
+	public void setUrl(String url) {
+		this.url = url;
+	}
+}

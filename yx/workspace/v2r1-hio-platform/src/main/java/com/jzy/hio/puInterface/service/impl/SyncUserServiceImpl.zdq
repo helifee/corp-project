@@ -1,0 +1,272 @@
+package com.jzy.hio.puInterface.service.impl;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.NoOpPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.config.HuanXinConfig;
+import com.jzy.hio.entity.PersonalSecret;
+import com.jzy.hio.entity.TendUserInfo;
+import com.jzy.hio.entity.UserInfo;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.feign.DiskFeignService;
+import com.jzy.hio.feign.PuSysFeignService;
+import com.jzy.hio.platform.constant.UserOrFriendConstant;
+import com.jzy.hio.platform.friendinfo.service.ImRegisterUserApi;
+import com.jzy.hio.platform.param.PuUserParam;
+import com.jzy.hio.platform.tenduser.service.TendUserInfoService;
+import com.jzy.hio.platform.userinfo.service.UserInfoService;
+import com.jzy.hio.puInterface.param.SyncUserParam;
+import com.jzy.hio.puInterface.param.SyncUserParam.SyncUserDto;
+import com.jzy.hio.puInterface.service.SyncUserService;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.springmvc.ApiResponse;
+import com.netflix.hystrix.strategy.concurrency.HystrixRequestContext;
+
+import io.swagger.client.model.RegisterUsers;
+import io.swagger.client.model.User;
+
+/**
+ * 
+ * @author chc<br/>
+ *         2018年6月6日
+ */
+@Service
+public class SyncUserServiceImpl  implements SyncUserService {
+	protected Logger logger = LoggerFactory.getLogger(SyncUserServiceImpl.class);
+	
+	@Autowired
+	private UserInfoService userInfoService;
+	@Autowired
+	private ImRegisterUserApi imRegisterUserApi;
+	@Autowired
+	private TendUserInfoService tendUserInfoService;
+	@Autowired
+    private DiskFeignService diskFeignService;
+	@Autowired
+	private PuSysFeignService puSysFeign;
+	@Autowired
+	private HuanXinConfig huanXinConfig;
+	
+	@Override
+	public ApiResponse<Map<String,Object>> syncUser(SyncUserParam userParam) throws Exception{
+		ApiResponse<Map<String,Object>> res = new ApiResponse<Map<String,Object>>();
+		List<SyncUserDto> listParam = userParam.getUserList();
+		if(listParam != null && listParam.size() > 20) {
+			res.setStatus(407);
+			res.setMessage("每次最多保存20个！");
+            return res;
+    	}
+		List<SyncUserDto> list = new ArrayList<SyncUserDto>();
+		List<SyncUserDto> resultList = new ArrayList<SyncUserDto>();
+		List<Map<String,String>> listmap = new ArrayList<Map<String,String>>();
+		Map<String,Object> resultMap = new HashMap<String,Object>();
+		logger.info("保存招采用户开始");
+		for(SyncUserDto param : listParam) {
+			UserInfo queryDto = new UserInfo();
+			queryDto.setMobile(param.getMobile());
+			List<UserInfo> userInfoList = userInfoService.queryList(queryDto);
+			if(Base.isEmpty(userInfoList)) {
+				String hxid = UUID.randomUUID().toString().replace("-", "");
+				//        BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
+				PasswordEncoder encoder = NoOpPasswordEncoder.getInstance();
+		        String password = encoder.encode(param.getPassword());
+				UserInfo userInfo = new UserInfo();
+				userInfo.setMobile(param.getMobile());
+				userInfo.setState(1);
+				userInfo.setId(hxid);
+				userInfo.setLoginName(param.getLoginName());
+				userInfo.setName(param.getName());
+				userInfo.setSex(UserOrFriendConstant.MALE);
+				userInfo.setPassword(password);
+				userInfo.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+				userInfo.setCreateDate(new Date());
+				userInfo.setHxPassword(param.getPassword());
+				userInfo.setCreatePersonId("");
+				userInfo.setUpdatePersonId("");
+				userInfo.setCreatePersonName("招采");
+				userInfo.setUpdatePersonName("");
+				userInfoService.save(userInfo);
+				
+				param.setUserIMId(hxid);
+				list.add(param);
+				
+				UserInfo userInfoApp = new UserInfo();
+				userInfoApp.setMobile(param.getMobile() +"_app");
+				userInfoApp.setState(1);
+				userInfoApp.setId(UUID.randomUUID().toString().replace("-", ""));
+				userInfoApp.setLoginName(param.getLoginName());
+				userInfoApp.setName(param.getName());
+				userInfoApp.setSex(UserOrFriendConstant.MALE);
+				userInfoApp.setPassword(password);
+				userInfoApp.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+				userInfoApp.setCreateDate(new Date());
+				userInfoApp.setHxPassword(param.getPassword());
+				userInfoApp.setCreatePersonId("");
+				userInfoApp.setUpdatePersonId("");
+				userInfoApp.setCreatePersonName("招采");
+				userInfoApp.setUpdatePersonName("");
+				userInfoService.save(userInfoApp);
+				
+				UserInfo userInfoPc = new UserInfo();
+				userInfoPc.setMobile(param.getMobile() +"_pc");
+				userInfoPc.setState(1);
+				userInfoPc.setId(UUID.randomUUID().toString().replace("-", ""));
+				userInfoPc.setLoginName(param.getLoginName());
+				userInfoPc.setName(param.getName());
+				userInfoPc.setSex(UserOrFriendConstant.MALE);
+				userInfoPc.setPassword(password);
+				userInfoPc.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+				userInfoPc.setCreateDate(new Date());
+				userInfoPc.setHxPassword(param.getPassword());
+				userInfoPc.setCreatePersonId("");
+				userInfoPc.setUpdatePersonId("");
+				userInfoPc.setCreatePersonName("招采");
+				userInfoPc.setUpdatePersonName("");
+				userInfoService.save(userInfoPc);
+				
+				/**
+	             * 初始化用户隐私redis数据 start
+	             */
+	            PersonalSecret personalSecret = new PersonalSecret();
+	            personalSecret.setUid(hxid);
+	            personalSecret.setCompanyFlag(0);
+	            personalSecret.setFriendMoibleFlag(0);
+	            personalSecret.setMobileFlag(0);
+	            personalSecret.setPhoneFlag(0);
+	            personalSecret.setWorkMoibleFlag(0);
+	            personalSecret.setRemindFlag(0);
+	            personalSecret.setCreatePersonId("");
+	            personalSecret.setUpdatePersonId("");
+	            personalSecret.setCreatePersonName("招采");
+	            personalSecret.setUpdatePersonName("");
+	            JedisUtil.addRowCustomKey(hxid, personalSecret);
+	            
+	            /**
+	             * 异步创建个人网盘 start 
+	             */
+	            final String huanxinId = hxid;
+	            ExecutorService diskPool = Executors.newSingleThreadExecutor();
+	            diskPool.submit(new Runnable() {
+	                @Override
+	                public void run() {
+	                    HystrixRequestContext.initializeContext();
+	                    ApiFeignResponse<Object> obj= diskFeignService.initializePersonalSpace(huanxinId);
+	                    logger.info("用户{} 网盘创建 {}",huanxinId,obj.getMessage());
+	                }
+	            });
+	            diskPool.shutdown();
+	            /**
+	             * 异步线程创建个人网盘 end 
+	             */
+				
+				JedisUtil.addRow(userInfo);
+	            JedisUtil.addIndexMobile(UserOrFriendConstant.IM_USER_INFO, userInfo.getMobile(), userInfo.getId());// 用户id与手机号的对应关系
+	            JedisUtil.addRow(userInfoApp);
+	            JedisUtil.addIndexMobile(UserOrFriendConstant.IM_USER_INFO, userInfoApp.getMobile(), userInfoApp.getId());// 用户id与手机号的对应关系
+	            JedisUtil.addRow(userInfoPc);
+	            JedisUtil.addIndexMobile(UserOrFriendConstant.IM_USER_INFO, userInfoPc.getMobile(), userInfoPc.getId());// 用户id与手机号的对应关系
+			}else {
+				param.setUserIMId(userInfoList.get(0).getId());
+				resultList.add(param);
+			}
+		}
+		if(huanXinConfig.getIsSendMsg()) {
+			RegisterUsers users = new RegisterUsers();
+			logger.info("创建环信账号开始");
+			
+			if(Base.isNotEmpty(list)) {
+				for(SyncUserDto param : list) {
+					User hxUser = new User().username(param.getUserIMId()).password(param.getPassword());
+					users.add(hxUser);
+				}
+				io.swagger.client.ApiResponse<String> registHX = (io.swagger.client.ApiResponse<String>)imRegisterUserApi.createNewIMUserSingle(users);
+				if(registHX.getStatusCode() == 200) {
+					resultList.addAll(list);
+					logger.info("创建环信账号成功结束");
+				}else {
+					logger.info("创建环信账号失败");
+					throw new HioException("创建环信账号失败！");
+				}
+			}
+		}
+		logger.info("保存招采用户结束");
+		logger.info("保存用户租户关系开始");
+		Map<String,List<PuUserParam>> apiParam = new HashMap<String,List<PuUserParam>>();
+		for(SyncUserDto param : resultList) {
+			TendUserInfo checkParam = new TendUserInfo();
+			checkParam.setUid(param.getUserIMId());
+			checkParam.setTendId(param.getTendId());
+			checkParam.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+			List<TendUserInfo> checkList = tendUserInfoService.queryList(checkParam);
+			if(Base.isEmpty(checkList)) {
+				TendUserInfo entity = new TendUserInfo();
+				entity.setId(tendUserInfoService.generatePk());
+				entity.setUid(param.getUserIMId());
+				entity.setTendId(param.getTendId());
+				entity.setDefaultFlag(UserOrFriendConstant.DEFAULT_COMP_YES);
+				entity.setOuterLinkman(UserOrFriendConstant.outerLinkman);
+				entity.setCreateDate(new Date());
+				entity.setDelflag(0);
+				entity.setCreatePersonId("");
+				entity.setUpdatePersonId("");
+				entity.setCreatePersonName("招采");
+				entity.setUpdatePersonName("");
+				entity.setReserve1(BaseConstants.UserWorkStatus.JOB.getWorkStatus());
+				tendUserInfoService.save(entity);
+				JedisUtil.addRow(entity);
+			}
+			/**
+			 * 调用sys接口保存到租户里
+			 */
+			if(null != apiParam.get(param.getTendId())) {
+				List<PuUserParam> puUserParamList = apiParam.get(param.getTendId());
+				PuUserParam puUserParam = new PuUserParam();
+				puUserParam.setImUserId(param.getUserIMId());
+				puUserParam.setMobile(param.getMobile());
+				puUserParam.setName(param.getName());
+				puUserParam.setTendId(param.getTendId());
+				puUserParamList.add(puUserParam);
+				puUserParam.setPuUserId(param.getPuUserId());
+				apiParam.put(param.getTendId(), puUserParamList);
+			}else {
+				List<PuUserParam> puUserParamList = new ArrayList<PuUserParam>();
+				PuUserParam puUserParam = new PuUserParam();
+				puUserParam.setImUserId(param.getUserIMId());
+				puUserParam.setMobile(param.getMobile());
+				puUserParam.setName(param.getName());
+				puUserParam.setTendId(param.getTendId());
+				puUserParam.setPuUserId(param.getPuUserId());
+				puUserParamList.add(puUserParam);
+				apiParam.put(param.getTendId(), puUserParamList);
+			}
+		}
+		ApiFeignResponse<List<Map<String,String>>> userApi = puSysFeign.userSaveBatch(apiParam);
+		if(200 == userApi.getStatus()) {
+			resultMap.put("imUserIdList", userApi.getResult());
+		}else {
+			throw new HioException("用户同步失败！");
+		}
+		
+		logger.info("保存用户租户关系结束");
+		res.setMessage("获取用户id成功！");
+		res.setResult(resultMap);
+		return res;
+	}
+}

@@ -1,0 +1,239 @@
+package com.xinleju.erp.flow.service.api;
+
+import java.util.LinkedList;
+import java.util.List;
+
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.base.utils.JsonUtils;
+import com.xinleju.erp.flow.dao.impl.FiDAO;
+import com.xinleju.erp.flow.dao.impl.GvDAO;
+import com.xinleju.erp.flow.dao.impl.ParticipantDAO;
+import com.xinleju.erp.flow.flowutils.utils.WsConstant;
+import com.xinleju.erp.flow.frameapi.domain.User;
+import com.xinleju.erp.flow.models.Ai;
+import com.xinleju.erp.flow.models.Fi;
+import com.xinleju.erp.flow.models.FlowEvent;
+import com.xinleju.erp.flow.models.FlowMonitor;
+import com.xinleju.erp.flow.models.Wi;
+import com.xinleju.erp.flow.models.Wp;
+import com.xinleju.erp.flow.service.FlowEventService;
+import com.xinleju.erp.flow.service.FlowService;
+import com.xinleju.erp.flow.service.IFlowMonitorService;
+import com.xinleju.erp.flow.service.api.utils.ApiUtils;
+
+/**
+ * 
+ * 
+ * <p>
+ * 发布工作流状态改变、动作改变事件
+ * </p>
+ * <p>
+ * 
+ * </p>
+ * 
+ * @author 孙朝辉
+ * @version $Id: DoAfterService.java 2315 2015-01-19 05:25:13Z zhongjun $
+ * @since
+ * 
+ */
+@Service
+public class DoAfterService extends BaseService {
+	
+    /**
+     * 流程事件Service
+     */
+    @Autowired
+    private FlowEventService flowEventService;
+
+    /**
+     * 流程service
+     */
+    @Autowired
+    private FlowService flowService;
+
+    /**
+     * 流程状态改变接口
+     */
+    @Autowired
+    private FiStatusChangeService fiStatusChangeService;
+    
+    @Autowired
+    private IFlowMonitorService iFlowMonitorService;
+    
+    /**
+     * 流程结束
+     * 
+     * @param fi
+     *            Fi
+     */
+    public void doAfterFiComplete(Fi fi) {
+        String json = JsonUtils.toJSONString(ApiUtils.buildFiBean(fi));
+        // 1.发布流程结束事件
+        boolean isPublish = flowEventService.publish(FlowEvent.EVENT_CODE_FE, fi.getId(), json, fi.getFiName(), fi.getId(), fi.getFl().getAppCode(), fi.getFl().getIsBizFl());
+        if (isPublish){
+        	fiStatusChangeService.statusChange(fi, WsConstant.FI_STATUS_CHANGE_TYPE_JS);
+        }
+    }
+
+    /**
+     * 环节实例结束
+     * 
+     * @param ai
+     *            Ai
+     */
+    public void doAfterAiComplete(Ai ai) {
+        String json = JsonUtils.toJSONString(ApiUtils.buildAiBean(ai));
+        // 1.发布ai结束事件
+        boolean isPublish = flowEventService.publish(FlowEvent.EVENT_CODE_AE, ai.getId(), json, ai.getFi().getFiName(), ai.getFiId(), (ai.getFl() == null ? ai.getFi().getFl().getAppCode() : ai.getFl().getAppCode()), (ai.getFl() == null ? ai.getFi().getFl().getIsBizFl() : ai.getFl().getIsBizFl()));
+        // 2.执行自动抄送
+        flowService.autoChaoSong(ai.getId());
+        
+        if (isPublish && null != ai.getAc() && StringUtils.isNotBlank(ai.getAc().getEndTag()) && !ai.getAc().getEndTag().trim().equals("0")){
+        	
+        	fiStatusChangeService.statusChange(ai.getFi(), WsConstant.FI_STATUS_CHANGE_TYPE_FZJS, ai.getAc().getEndTag());
+        	
+        }else{
+        	//通过
+        	fiStatusChangeService.statusChange(ai.getFi(), WsConstant.FI_STATUS_CHANGE_TYPE_JT,ai);
+        }
+    }
+    /**
+     * 将ai设为过期
+     * @author jun
+     * @param ai ai
+     */
+    public void doAfterAiOverdue(Ai ai) {
+        String json = JsonUtils.toJSONString(ApiUtils.buildAiBean(ai));
+        // 1.发布ai过期事件
+        boolean isPublish = flowEventService.publish(FlowEvent.EVENT_CODE_AO, ai.getId(), json, ai.getFi().getFiName(), ai.getFiId(), (ai.getFl() == null ? ai.getFi().getFl().getAppCode() : ai.getFl().getAppCode()), (ai.getFl() == null ? ai.getFi().getFl().getIsBizFl() : ai.getFl().getIsBizFl()));
+        if (isPublish && null != ai.getAc() && StringUtils.isNotBlank(ai.getAc().getEndTag()) && !ai.getAc().getEndTag().trim().equals("0")){
+        	fiStatusChangeService.statusChange(ai.getFi(), WsConstant.FI_STATUS_CHANGE_TYPE_FZJS, ai.getAc().getEndTag());
+        }
+    }
+    
+    /**
+     * 工作开始
+     * 
+     * @param newWiList
+     *            List
+     */
+    public void doAfterWiStarted(List<Wi> newWiList) {
+        // 1.发布工作开始事件
+        for (Wi wi : newWiList) {
+            this.doAfterWiStart(wi);
+        }
+    }
+
+    /**
+     * 工作结束
+     * 
+     * @param wi
+     *            Wi
+     */
+    public void doAfterWiComplete(Wi wi) {
+        // 1.发布工作结束事件
+        String json = JsonUtils.toJSONString(ApiUtils.buildWiBean(wi, true));
+        
+        boolean isPublish = flowEventService.publish(FlowEvent.EVENT_CODE_WE, wi.getId(), json, wi.getFi().getFiName(), wi.getFiId(), wi.getFl().getAppCode(), wi.getFl().getIsBizFl());
+        
+        
+        if (isPublish && null != wi.getAc() && wi.getAc().getIsStart() == 1 && !wi.getWiType().equals(WsConstant.WiType.CY.getCode()) && !wi.getWiType().equals(WsConstant.WiType.CB.getCode()) ){
+        	
+        	fiStatusChangeService.statusChange(wi.getFi(), WsConstant.FI_STATUS_CHANGE_TYPE_FQ);
+        }
+    }
+
+    /**
+     * 批量工作结束
+     * 
+     * @param newWiList
+     *            List
+     */
+    public void doAfterWiComplete(List<Wi> newWiList) {
+        // 1.发布工作结束事件
+        for (Wi wi : newWiList) {
+            doAfterWiComplete(wi);
+        }
+    }
+
+    /**
+     * 工作过期
+     * 
+     * @param wi
+     *            Wi
+     */
+    public void doAfterWiOverdue(Wi wi) {
+        String json = JsonUtils.toJSONString(ApiUtils.buildWiBean(wi, true));
+        // 1.发布工作失效事件
+        flowEventService.publish(FlowEvent.EVENT_CODE_WO, wi.getId(), json, wi.getFi().getFiName(), wi.getFiId(), wi.getFl().getAppCode(), wi.getFl().getIsBizFl());
+    }
+
+    /**
+     * 工作重置到Running状态
+     * 
+     * @param wi
+     *            Wi
+     */
+    public void doAfterWiReset(Wi wi) {
+        String json = JsonUtils.toJSONString(ApiUtils.buildWiBean(wi, true));
+        // 1.发布工作重置事件
+        flowEventService.publish(FlowEvent.EVENT_CODE_WR, wi.getId(), json, wi.getFi().getFiName(), wi.getFiId(), wi.getFl().getAppCode(), wi.getFl().getIsBizFl());
+    }
+    
+    /**
+     * 工作start
+     * 
+     * @param wi
+     *            Wi
+     */
+    public void doAfterWiStart(Wi wi) {
+        String json = JsonUtils.toJSONString(ApiUtils.buildWiBean(wi, true));
+        flowEventService.publish(FlowEvent.EVENT_CODE_WS, wi.getId(), json, wi.getFi().getFiName(), wi.getFiId(), wi.getFl().getAppCode(), wi.getFl().getIsBizFl());
+    }
+    
+    /**
+     * 启动流程动作事件
+     * @author jun
+     * @param fi 流程实例
+     */
+    public void doAfterFiStarted(Fi fi) {
+    	try{
+	        String json = JsonUtils.toJSONString(ApiUtils.buildFiBean(fi));
+	        // 1.发布流程结束事件
+	        flowEventService.publish(FlowEvent.EVENT_CODE_FS, fi.getId(), json, fi.getFiName(), fi.getId(), fi.getFl().getAppCode(), fi.getFl().getIsBizFl());
+	        // 2.将可阅人员解析并放入到fi.readUsers里
+	        LinkedList<User> readUsers = participantDAO.getPaticipantUsers(fi.getId(), fi.getFl().getKyList(), null, gvDAO.getGvs(fi.getId()));
+	        fi.setReadUsers(fiDAO.changeReadUsers(fi.getId(), readUsers));
+    	}catch(Exception ex){
+    		ex.printStackTrace();
+    	}
+    }
+    
+    /**
+     * 节点挂起
+     * @param wp
+     */
+    public void doAfterWpSuspend(Wp wp) {
+    	if (null != wp && null != wp.getFiId()){
+    		iFlowMonitorService.flowMoitor(FlowMonitor.MONITOR_POINT_FLOW_SUSPEND, wp.getFiId(), null);
+    	}
+    }
+    
+    /**
+     * 流程实例dao
+     */
+    @Autowired FiDAO fiDAO;
+    /**
+     * 全局变量dao
+     */
+    @Autowired GvDAO gvDAO;
+    /**
+     * 人员解析dao
+     */
+    @Autowired ParticipantDAO participantDAO;
+
+}

@@ -1,0 +1,40 @@
+package com.xinleju.platform.sys.base.service;
+
+import java.util.Map;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.sys.base.entity.SettlementTrades;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface SettlementTradesService extends  BaseService <String,SettlementTrades>{
+
+	/**
+	 * @param map
+	 * @return
+	 */
+	public Page getSettlementTradesPage(Map map) throws Exception;
+
+	/**
+	 * @param settlementTrades
+	 * @return
+	 */
+	public int updateStatus(SettlementTrades settlementTrades)throws Exception;
+
+	/**
+	 * @param settlementTrades
+	 */
+	public int saveSettlementTrades(SettlementTrades settlementTrades)throws Exception;
+
+	/**
+	 * @param settlementTrades
+	 * @return
+	 */
+	public int updateSettlementTrades(SettlementTrades settlementTrades);
+	
+}

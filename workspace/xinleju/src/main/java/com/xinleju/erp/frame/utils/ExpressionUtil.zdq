@@ -1,0 +1,122 @@
+package com.xinleju.erp.frame.utils;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import net.sf.json.JSONObject;
+
+import org.wltea.expression.ExpressionEvaluator;
+import org.wltea.expression.ExpressionExecutor;
+import org.wltea.expression.ExpressionToken;
+import org.wltea.expression.ExpressionToken.ETokenType;
+import org.wltea.expression.IllegalExpressionException;
+import org.wltea.expression.datameta.Variable;
+
+import com.xinleju.erp.frame.enums.FiFieldTypeEnum;
+import com.xinleju.erp.frame.enums.OperatorEnum;
+import com.xinleju.erp.frame.models.BOFieldInfo;
+import com.xinleju.erp.frame.models.helper.BODataHelper;
+import com.xinleju.erp.frame.models.helper.BODataTempCache;
+import com.xinleju.erp.frame.models.helper.BOFieldHelper;
+
+public class ExpressionUtil {
+	public static String json2Expression(JSONObject condition) throws IllegalExpressionException{
+		List<String> expressions = new ArrayList<String>();
+		Object[] keys = condition.keySet().toArray();
+		for(Object key : keys ){
+			if(key == null)
+				continue;
+			Object value = condition.get(key);
+			if(value == null)
+				continue;
+			expressions.add(eq(key.toString(), value.toString()));
+		}
+		return and(expressions.toArray(new String[0]));
+	}
+	
+	public static String or(String... expressions) throws IllegalExpressionException{
+		return operator(OperatorEnum.OP_OR.getCode(), expressions);
+	}
+	
+	public static String and(String... expressions) throws IllegalExpressionException{
+		return operator(OperatorEnum.OP_AND.getCode(), expressions);
+	}
+	
+	public static String eq(String key ,String value) throws IllegalExpressionException{
+		return operator(OperatorEnum.OP_EQ.getCode(), new String[]{key,"\""+value+"\""});
+	}
+	
+	public static String operator(String operator,String... expressions) throws IllegalExpressionException{
+		ExpressionExecutor executor = new ExpressionExecutor();
+		StringBuffer res = new StringBuffer();
+		if(expressions.length == 1){
+			return expressions[0];
+		}
+		for(String expression : expressions){
+			List<ExpressionToken> tokens = executor.analyze(expression);
+			if(tokens.size() == 0)
+				continue;
+			boolean isExpression = tokens != null && tokens.size() > 1;
+			if(isExpression)
+				res.append("(");
+			res.append(" ").append(expression).append(" ");
+			if(isExpression)
+				res.append(")");
+			res.append(operator);
+		}
+		if(res.length() > operator.length()){
+			return res.substring(0,res.length() - operator.length());
+		}else{
+			return res.toString();
+		}
+	}
+	
+	public static String getFieldName(String variableName,BOFieldHelper helper){
+		List<BOFieldInfo> fieldList =  helper.getFieldList(FiFieldTypeEnum.TYPE_ENUM);
+		if(fieldList == null)
+			return variableName;
+		for(BOFieldInfo fieldInfo : fieldList){
+			String key = fieldInfo.getFieldkey();
+			if(variableName.length() > key.length()){
+				String subName = variableName.substring(0,key.length());
+				if(subName.equals(key)){
+					return key;
+				}
+			}
+		}
+		return variableName;
+	}
+	
+	public static Object getVariableValue(String variableName,BODataHelper data , BODataTempCache cache) throws IllegalExpressionException{
+		BOFieldHelper fieldhelper = data.getFieldHelper();
+		String fieldName = getFieldName(variableName, fieldhelper);
+		BOFieldInfo fieldinfo = fieldhelper.getFieldInfoByFieldkey(fieldName);
+		Object value = data.getAttribute(fieldName);
+		if(value == null)
+			return value;
+		if(fieldinfo.getVtype().equals(FiFieldTypeEnum.TYPE_ENUM.getKey())){
+			if(variableName.length() > fieldName.length()){
+				String subName = variableName.substring(fieldName.length()+1);
+				BODataHelper datahelper = cache.getBODataHelperByKey(fieldinfo.getDsid(), value);
+				value = getVariableValue(subName,datahelper,cache);
+			}
+		}
+		return value;
+	}
+	
+	public static Object execute(String expression ,BODataHelper data, BODataTempCache cache) throws IllegalExpressionException{
+		if(expression == null || expression.length() == 0)
+			return null;
+		ExpressionExecutor executor = new ExpressionExecutor();
+		List<Variable> variables = new ArrayList<Variable>();
+		List<ExpressionToken> tokens = executor.analyze(expression);
+		for(ExpressionToken token : tokens){
+			if(!token.getTokenType().equals(ETokenType.ETOKEN_TYPE_VARIABLE))
+				continue;
+			String name = token.getVariable().getVariableName();
+			variables.add(Variable.createVariable(name, getVariableValue(name, data, cache)));
+		}
+		return ExpressionEvaluator.evaluate(expression, variables);
+	}
+		
+}

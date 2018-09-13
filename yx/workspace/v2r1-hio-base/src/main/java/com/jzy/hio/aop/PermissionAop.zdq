@@ -1,0 +1,415 @@
+package com.jzy.hio.aop;
+
+import java.util.List;
+import java.util.Map;
+
+import javax.servlet.http.HttpServletRequest;
+
+import org.aspectj.lang.ProceedingJoinPoint;
+import org.aspectj.lang.annotation.Around;
+import org.aspectj.lang.annotation.Aspect;
+import org.aspectj.lang.annotation.Pointcut;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
+import org.springframework.security.authentication.AnonymousAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.RedisKeyConstant;
+import com.jzy.hio.config.YmlConfig;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.exception.HioPermissionException;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.redis.RedisFeignService;
+import com.jzy.hio.redis.RedisService;
+import com.jzy.hio.redis.entity.RoleMenuButtonRds;
+import com.jzy.hio.redis.entity.TendUserIdRds;
+import com.jzy.hio.springmvc.ApiResponse;
+import com.jzy.hio.utils.OrderValue;
+
+/**
+ * <p>
+ * 权限控制、目前控制在controoler层
+ * 
+ * 因为aop执行顺序的缘故、该类无法动态配置
+ * 
+ * </p>
+ * 
+ * @author wt.coffee<br/>
+ *         2018年3月7日下午2:17:55
+ */
+@Aspect
+@Order(OrderValue.AOP_PREMISSION)
+@Configuration
+public class PermissionAop extends Base {
+
+	private static Logger logger = LoggerFactory.getLogger(PermissionAop.class);
+
+	@Autowired
+	private RedisService redisService;
+	@Autowired
+	private RedisFeignService redisFeignService;
+
+	@Autowired
+	private YmlConfig.Aop aopConfig;
+
+	/**
+	 * 判断指定的imUser 是否是指定tend的外部联系人
+	 * 
+	 * @param imUserId
+	 * @param tendId
+	 * @return
+	 */
+	private boolean checkIsOutlinkman(String imUserId, String tendId) {
+		String tendUserJson = JedisUtil.fetchRow(RedisKeyConstant.userTendList + imUserId, tendId);
+		if (isNotEmpty(tendUserJson)) {
+			Map<String, Object> tendUser = json2map(tendUserJson);
+			Object tmp = tendUser.get("outerLinkman");
+			return isEquals("1", tmp + "") && isEquals("1", tendUser.get("reserve1") + "");
+		}
+		return false;
+	}
+
+	@Pointcut("execution(* com.jzy.hio..controller.*.*(..) )")
+	public void checkPremission() {
+
+	}
+
+	public static void main(String[] args) {
+		logger.info("所有租户{} header租户{}", "null", "null");
+		boolean result = isNotEmpty("null");
+		System.out.println(result);
+
+		String black = "/news/.*";
+		System.out.println(black.matches("/news/1"));
+		System.out.println("/news/1".matches(black));
+	}
+
+	/**
+	 * 判断是否白名单--如果是白名单 返回true
+	 * 
+	 * @param thisJoinPoint
+	 * @param requestUri
+	 * @return
+	 * @throws Throwable
+	 * @throws HioException
+	 */
+	private boolean isWhiteList(ProceedingJoinPoint thisJoinPoint, String requestUri) throws Throwable, HioException {
+		// 1.2、 白名单放行
+		if (aopConfig.getPermissionWhiteList() != null) {
+			logger.info("白名单 {}", aopConfig.getPermissionWhiteList());
+			for (String url : aopConfig.getPermissionWhiteList()) {
+				if (requestUri.startsWith(url)) {
+					logger.info("白名单--放行{}", requestUri);
+					return true;
+				}
+			}
+		}
+		// 1.3 /sys中的查询放行
+		if (requestUri.startsWith("/sys") && (requestUri.contains("query") || requestUri.contains("get"))) {
+			// continue;
+			logger.debug("query get 接口统统放行 {} {}");
+			return true;
+		}
+		return false;
+	}
+
+	/**
+	 * 检测权限
+	 * 
+	 * <pre>
+	 * --核心逻辑
+	 * 	 * feign 无法判断是否登录(取不到Authentication)、所以一概放行
+	 * 	 * 判断是否登录:
+	 * 			未登录   ** 禁止访问(登录白名单除外)
+	 * 	      	已登录   ** 1.判断访问的租户是否合法
+	 * 				   ** 2.不需要权限控制 一律放行 (白名单、/sys/..query  /sys../get)
+	 * 		    	   ** 3.需要权限控制
+	 * 						*** 系统管理员放行
+	 * 						*** 禁用的app禁止访问
+	 * 						*** 其他需要权限认证
+	 * </pre>
+	 * 
+	 * @param thisJoinPoint
+	 */
+	@Around("checkPremission()")
+	public Object around(ProceedingJoinPoint thisJoinPoint) throws Throwable, HioException {
+		if (aopConfig.isPermission() == false) {
+			logger.debug("权限未打开, isOpen == false");
+			return thisJoinPoint.proceed();
+		}
+		ServletRequestAttributes ra = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+		HttpServletRequest request = ra.getRequest();
+
+		// feign接口可能获取不到authentication
+		String isFeign = request.getHeader(BaseConstants.HTTP_HEADER_FEIGN_KEY);
+		// 1.1、判断是否是feign接口 , 如果是 则一概放行
+		if (BaseConstants.HTTP_HEADER_FEIGN_VALUE.equals(isFeign)) {
+			logger.info("feign接口之间的授权--统统放行");
+			return thisJoinPoint.proceed();
+		}
+
+		String requestUri = request.getRequestURI();
+		Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+		// 匿名用户、或者feign接口
+		if (authentication instanceof AnonymousAuthenticationToken) {
+			if (aopConfig.getPermissionLoginWhiteList() != null) {
+				for (String url : aopConfig.getPermissionLoginWhiteList()) {
+					if (requestUri.startsWith(url)) {
+						logger.info("登录白名单--放行{}", requestUri);
+						return thisJoinPoint.proceed();
+					}
+				}
+			}
+			logger.info("匿名用户禁止访问");
+			throw new HioPermissionException("用户未登录、禁止访问");
+		}
+
+		Map<String, String> session = getSession();
+		logger.info("session -- {}", session);
+		String userIdIm = session.get(BaseConstants.SESSION_USERID_IM);
+		Map<String, String> userTendJson = JedisUtil.fetchRelationRow(RedisKeyConstant.userTendList + userIdIm);
+
+		String tendId = request.getHeader(BaseConstants.HTTP_PARAM_TENDID);
+		if (isEmpty(tendId)) {
+			tendId = session.get(BaseConstants.SESSION_TENDID);
+		}
+		logger.info("所有租户{} header租户{}", userTendJson, tendId);
+		// @TODO
+		// 外部联系人---- 权限拦截需要修改 注释掉以下代码
+		if (isEmpty(tendId)) {
+			// 如果是外部联系人、header、session可能不带tendId (参数带), 此时需要特殊处理
+			if (aopConfig.getPermissionExternalWhiteList() != null) {
+				for (String url : aopConfig.getPermissionExternalWhiteList()) {
+					if (requestUri.startsWith(url)) {
+						logger.info("外部联系人-白名单--放行{}", requestUri);
+						return thisJoinPoint.proceed();
+					}
+				}
+			}
+			// IM用户也可能不带tendId
+			if (isWhiteList(thisJoinPoint, requestUri)) {
+				return thisJoinPoint.proceed();
+			} else {
+				throw new HioPermissionException("没有企业");
+			}
+		} else {
+			// 员工离职 --- 4.1也是true [目前无法查询企业已经解散]
+			// 4.1判断企业是否解散--注意该步骤需要放在 判断员工是否离职之前--因为解散企业4.2的if条件也成立
+			// String tendUserJson = JedisUtil.fetchRow(RedisKeyConstant.userTendList + userIdIm, tendId);
+			// if (isEmpty(tendUserJson)) {
+			// logger.info("企业已经解散 {}", tendId, userIdIm);
+			// throw new HioPermissionException("企业已经解散");
+			// }
+
+			// 4.2 判断是否离职、租户是否合法
+			if (userTendJson.containsKey(tendId) == false) {
+				// 离职用户--可以访问的接口(移动端特殊处理)
+				// 离职以后 session端用户的租户id还保留着离职租户的tendId、、访问用户增量更新接口的时候会有问题、so
+				if (userTendJson.containsKey(tendId) == false) {
+					if (aopConfig.getPermissionOfflineWhiteList() != null) {
+						logger.info("离线--白名单 {}", aopConfig.getPermissionOfflineWhiteList());
+						for (String url : aopConfig.getPermissionOfflineWhiteList()) {
+							if (requestUri.startsWith(url)) {
+								logger.info("离线--白名单--放行{}", requestUri);
+								return thisJoinPoint.proceed();
+							}
+						}
+					}
+				}
+				//
+				logger.info("非法用户 {}, {}", userTendJson.keySet(), tendId);
+				throw new HioPermissionException("非法用户, 禁止访问");
+			}
+			// 邀请用户-用户未接受邀请(未激活)
+			Map<String, Object> tendMap = Base.json2map(userTendJson.get(tendId));
+			if (isEquals("0", tendMap.get("reserve1") + "")) {
+				logger.info("用户未激活 {}, {}", userTendJson.keySet(), tendId);
+				throw new HioPermissionException("非法用户, 禁止访问");
+			}
+			// IM用户也可能不带tendId
+			if (isWhiteList(thisJoinPoint, requestUri)) {
+				return thisJoinPoint.proceed();
+			} else {
+				// 如果不是白名单、 继续往下走 判断角色权限
+			}
+		}
+
+		String imUserId = session.get(BaseConstants.SESSION_USERID_IM);
+		// @TODO
+		if (checkIsOutlinkman(imUserId, tendId)) {
+			logger.info("{}是{}的外部联系人", imUserId, tendId);
+			String json = redisService.getRow(tendId, RoleMenuButtonRds.class, BaseConstants.MYSQL_ROLE_EXTERNAL_ID);
+			if (isEmpty(json)) {
+				logger.info("同步redis数据 {}", tendId);
+				ApiResponse<String> resp = redisFeignService.sync(tendId, false);
+				if (resp.isSuccess()) {
+					json = redisService.getRow(tendId, RoleMenuButtonRds.class, BaseConstants.MYSQL_ROLE_EXTERNAL_ID);
+				} else {
+					logger.info("同步失败 {}", tendId);
+				}
+			}
+			RoleMenuButtonRds rds = json2obj(json, RoleMenuButtonRds.class);
+			if (rds == null) {
+				logger.info("同步数据失败, RoleMenuButtonRds 2001为空");
+				rds = new RoleMenuButtonRds();
+				rds.getMenuUrls().addAll(aopConfig.getPermissionExternalList());
+				if (isEmpty(rds.getMenuUrls())) {
+					rds.getMenuUrls().add("/task");
+					rds.getMenuUrls().add("/disk");
+					rds.getMenuUrls().add("/flow");
+					rds.getMenuUrls().add("/project");
+					rds.getMenuUrls().add("/schedule");
+				}
+			}
+			for (String url : rds.getMenuUrls()) {
+				if (requestUri.startsWith(url)) {
+					logger.info("外部联系人--放行{}", requestUri);
+					return thisJoinPoint.proceed();
+				}
+			}
+			return thisJoinPoint.proceed();
+		}
+
+		logger.debug("权限判断 {} -- start");
+		String userDetail = tendId + ":" + BaseConstants.REDIS_TABLE_USERDETAIL;
+		// 注意--查询oaUser不能通过session查询, 有可能出现 用户当前session在A租户、但是需要操作B租户，这时候需要取B租户的权限
+		// String userId = session.get(BaseConstants.SESSION_USERID_OA);
+		String userId = redisService.getRow(tendId, TendUserIdRds.class, imUserId);
+		String userRoles = redisService.getRow(userDetail + ":" + userId, "roles");
+		logger.info("当前用户的角色 {} {} {}", tendId, userId, userRoles);
+
+		if (isEmpty(userId) || isEmpty(userRoles)) {
+			if (isNotEmpty(tendId)) {
+				logger.info("userId查询失败, redis数据异常--重新同步");
+				ApiResponse<String> resp = redisFeignService.sync(tendId, false);
+				if (resp.isSuccess()) {
+					userId = redisService.getRow(tendId, TendUserIdRds.class, imUserId);
+					userRoles = redisService.getRow(userDetail + ":" + userId, "roles");
+				}
+			}
+		}
+
+		// 5、1 判断是否是禁用的应用
+		// String servletPath = request.getServletPath();
+		// 下行代码--- 取servletPath值 "/task/queryTaskId" 中的task 不包含开头/
+		String firstPath = requestUri.indexOf("/", 1) != -1 ? requestUri.substring(1, requestUri.indexOf("/", 1)) : requestUri.substring(0);
+
+		String appDisableKey = tendId + ":" + BaseConstants.REDIS_TABLE_APPDISABLE;
+		// key-appCode value-appUrl
+		Map<String, String> appDisableMap = JedisUtil.fetchRelationRow(appDisableKey);
+		for (String rdsRow : appDisableMap.keySet()) {
+			// firstPath 定义为appCode
+			if (rdsRow.equals(firstPath)) {
+				logger.info("app被禁用、禁止访问 {}", rdsRow);
+				throw new HioPermissionException("您无权访问该应用请联系系统管理员");
+			}
+		}
+		// 5.2 超级管理员也不能访问被禁止的应用
+		if (userRoles != null && userRoles.contains(BaseConstants.MYSQL_ROLE_SUPERID)) {
+			// 是超级管理员
+			logger.info("超级管理员放行 {} {}", userId, userRoles);
+			return thisJoinPoint.proceed();
+		}
+		// 5.3 不是超级管理员、则判断是否被授权
+		// 是否需要全路径验证
+		boolean isFullPermission = false;
+		List<String> blackList = aopConfig.getPermissionBlackList();
+		logger.info("blackList >>> {}", blackList);
+		for (String black : blackList) {
+			// 类似/news/delete/* -- /news/delete/111
+			if (black.endsWith("*") && requestUri.matches(black)) {
+				isFullPermission = true;
+				break;
+			}
+			if (isEquals(black, requestUri)) {
+				isFullPermission = true;
+				break;
+			}
+		}
+
+		// 先检查一下该url是否在权限控制下
+		boolean isForbiden = true;
+		//
+		List<String> roleIds = Base.json2list(userRoles, String.class);
+		if (isEmpty(roleIds)) {
+			// 没有权限的话 直接拦截
+			isForbiden = true;
+		} else {
+			outter: for (String roleId : roleIds) {
+				String json = redisService.getRow(tendId, RoleMenuButtonRds.class, roleId);
+				logger.info("{} 角色{}--权限 {} -- isFullPermission {} ", tendId, roleId, json, isFullPermission);
+				if (json != null) { // newsType
+					// firstPath 不带"/"--需要在前后添加 "/",
+					// 防止用户只具备/news权限 ,但是/newsType开头的请求也通过
+					String path = "/" + firstPath + "/";
+					RoleMenuButtonRds roleUrl = json2obj(json, RoleMenuButtonRds.class);
+					// 全路径的话 不匹配 menu--只匹配button
+					if (isFullPermission == false) {
+						for (String menuUrl : roleUrl.getMenuUrls()) {
+							if (menuUrl == null) {
+								continue;
+							}
+							if (path.startsWith(menuUrl) || menuUrl.contains(path)) {
+								// 已授权
+								isForbiden = false;
+								logger.info("通过>>>> menuUrl-{}, path-{}", menuUrl, path);
+								break outter;
+							}
+						}
+					} else {
+						// 继续
+					}
+					for (String buttonUrl : roleUrl.getButtonUrls()) {
+						if (buttonUrl == null) {
+							continue;
+						}
+						// 黑名单里的url--需要特殊处理(全路径匹配)
+						if (isFullPermission) {
+							if (buttonUrl.endsWith("*") && requestUri.matches(buttonUrl)) {
+								isForbiden = false;
+								logger.info("黑名单-通过 * >>>> servletPath-{}, buttonUrl-{}", requestUri, buttonUrl);
+								break outter;
+							}
+							if (isEquals(requestUri, buttonUrl)) {
+								isForbiden = false;
+								logger.info("黑名单-通过>>>> servletPath-{}, buttonUrl-{}", requestUri, buttonUrl);
+								break outter;
+							}
+						} else {
+							if (path.startsWith(buttonUrl) || buttonUrl.contains(path)) {
+								// 已授权
+								isForbiden = false;
+								logger.info("通过>>>> servletPath-{}, buttonUrl-{}", requestUri, buttonUrl);
+								break outter;
+							}
+						}
+					}
+				} else {
+					continue;
+				}
+			}
+
+		}
+		if (isForbiden) {
+			logger.info("权限不足 -End");
+			// 不执行controller方法
+			throw new HioPermissionException("你没有访问权限，请联系管理员。");
+		} else {
+			try {
+				logger.info("权限通过 end");
+				return thisJoinPoint.proceed();
+			} catch (Throwable e) {
+				throw e;
+			}
+		}
+	}
+
+}

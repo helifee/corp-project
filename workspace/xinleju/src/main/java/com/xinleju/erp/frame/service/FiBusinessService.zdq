@@ -1,0 +1,177 @@
+package com.xinleju.erp.frame.service;
+
+import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.hibernate.criterion.DetachedCriteria;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.erp.annotation.PageField;
+import com.xinleju.erp.base.app.bean.Page;
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.frame.dao.FiBusinessDao;
+import com.xinleju.erp.frame.dto.QueryMapDTO;
+import com.xinleju.erp.frame.enums.FiDataSetEnum;
+import com.xinleju.erp.frame.exception.ValidateException;
+import com.xinleju.erp.frame.models.BaseEntity;
+import com.xinleju.erp.frame.models.BusinessObject;
+import com.xinleju.erp.frame.models.ChildEntity;
+import com.xinleju.erp.frame.service.extend.dto.FiAggDTO;
+import com.xinleju.erp.frame.utils.BeanUtil;
+import com.xinleju.erp.frame.utils.CommonUtil;
+@Service
+@Transactional
+public class FiBusinessService extends BaseService {
+	@Autowired
+    private FiBusinessDao fiBusinessDao;
+
+	
+	public FiBusinessDao getFiBusinessDao() {
+		return fiBusinessDao;
+	}
+
+	public void setFiBusinessDao(FiBusinessDao fiBusinessDao) {
+		this.fiBusinessDao = fiBusinessDao;
+	}
+
+	/**
+	 * 保存表头、表体
+	 * @param aggDTO
+	 * @throws ValidateException 
+	 */
+	public  void saveOrUpdate(FiAggDTO aggDTO) throws ValidateException{
+		checkUnique(aggDTO.getParent());
+		fiBusinessDao.saveAggDTO(aggDTO);
+	}
+	
+	public void saveOrUpdate(Class<? extends ChildEntity> clazz,List<? extends ChildEntity> list,Long pid) throws ValidateException{
+		checkUnique(clazz,list,pid);
+		fiBusinessDao.saveChindren(list,pid);
+	}
+	
+	private void checkUnique(Class<? extends ChildEntity> clazz,List<? extends ChildEntity> list,Long pid) throws ValidateException{
+		List<String> uniquefiels = new ArrayList<String>();
+		Map<String,PageField > map = new HashMap<String,PageField>();
+		String fieldName = "";
+		for(Field field:clazz.getDeclaredFields()){
+			PageField check =  field.getAnnotation(PageField.class);
+			if(check == null || !check.unique())
+				continue;
+			map.put(field.getName(), check);
+			uniquefiels.add(field.getName());
+			fieldName +="["+check.showname()+"]";
+		}
+		if(uniquefiels.size() == 0)
+			return;
+		Set<String> uniqueSet = new HashSet<String>();
+		StringBuffer error =  new StringBuffer();
+		int i = 0 ; 
+		for(ChildEntity child : list){
+			String key = "";
+			for(String field : uniquefiels){
+				Object obj = BeanUtil.getAttribute(field, child);
+				if((obj == null || obj.toString().length()==0)  && !map.get(field).must())
+					continue;
+				key = obj.toString() + "#";
+			}
+			if(!uniqueSet.add(key)){
+				error.append(i+1).append("、");
+			}
+			i ++;
+		}
+		if(error.length() > 0){
+			error.delete(error.length() - 1, error.length()).insert(0, fieldName+"内容在[第").append("行]中存在重复");
+			throw new ValidateException(error.toString());
+		}
+	}
+	
+	private void checkUnique(BaseEntity entity) throws ValidateException{
+		StringBuffer where = new StringBuffer(" WHERE t.id != ? ");
+		List<Object> list = new ArrayList<Object>();
+		list.add(entity.getId()==null?-1l:entity.getId());
+		StringBuffer error = new StringBuffer("");
+		int uniquefieldscount = 0;
+		for(Field field:entity.getClass().getDeclaredFields()){
+			PageField check =  field.getAnnotation(PageField.class);
+			if(check == null || !check.unique())
+				continue;
+			uniquefieldscount++;
+			where.append(" AND  t.").append(field.getName()).append(" = ?");
+			Object value = entity.getAttribute(field.getName());
+			error.append("[").append(check.showname()).append("=").append(value==null?"":value.toString()).append("]");
+			list.add(value);
+		}
+		if(uniquefieldscount> 1){
+			error.insert(0, "以下信息组合存在重复记录:");
+		}else if(uniquefieldscount == 1){
+			error.insert(0, "以下信息内容存在重复记录:");
+		}else{
+			return;
+		}
+		List<? extends BaseEntity> resList = fiBusinessDao.findByHQL(entity.getClass(),"FROM " +entity.getClass().getSimpleName() +" t "+where.toString(), list.toArray(new Object[0]));
+		if(resList != null && resList.size() > 0)
+			throw new ValidateException(error.toString());
+	}
+	
+	public FiAggDTO queryAggById(Class<? extends BaseEntity> clazz,Long id){
+		return fiBusinessDao.queryAggById(clazz, id) ;
+	}
+	
+	public FiAggDTO[] queryAggByIds(Class<? extends BaseEntity> clazz,Long[] ids){
+		return fiBusinessDao.queryAggByIds(clazz, ids) ;
+	}
+	
+	public<T extends BaseEntity> List<T> findByHQL(Class<T> clazz, String hql, Object... arg){
+		return fiBusinessDao.findByHQL(clazz, hql,arg);
+	}
+	
+	public void batchUpdateStatus(Class<? extends BaseEntity> clazz , Long[] ids ,Integer status ){
+		fiBusinessDao.batchUpdateStatus(clazz, ids, status);
+	}
+	
+	public void  update(BaseEntity[] entitys ,String[] fields){
+		fiBusinessDao.update(entitys, fields);
+	}
+	
+	public Map<Long,String> queryBdBOMap(){
+		Map<Long,String> map = new HashMap<Long,String>();
+		List<BusinessObject> list = fiBusinessDao.findByHQL(BusinessObject.class, "FROM " +BusinessObject.class.getSimpleName()+ " t WHERE t.bdobject = 'true'");
+		for(BusinessObject bo : list )
+			map.put(bo.getId(),bo.getVobject());
+	
+		return map;
+	} 
+	
+	public Map<String,Map<Object,Object>> queryRefs(QueryMapDTO[] dtos){
+		Map<String,Map<Object,Object>>  map = new HashMap<String,Map<Object,Object>>();
+		for(QueryMapDTO dto : dtos){
+			map.put(dto.getLable(),  queryMap(dto));
+		}
+		return map;
+	}
+	
+	public Map<Object,Object> queryMap(QueryMapDTO dto){
+		Page page =  fiBusinessDao.getDao().findPage(dto.getDc(), dto.getStart(), dto.getLimit());
+		Map<Object,Object> map = new HashMap<Object,Object>();
+		CommonUtil.transform(page.getItems(),dto.getKeyfiled(),dto.getValuefield());
+		return map;
+	}
+
+	public <T extends BaseEntity>  Map<Object,Object> queryDataSet(Class<T> clazz){
+		FiDataSetEnum dsenum = FiDataSetEnum.get(clazz);
+		DetachedCriteria dc = dsenum.getValue();
+		Page page = fiBusinessDao.getDao().findPage(dc, 0, Integer.MAX_VALUE);
+		return CommonUtil.transform(page.getItems(),dsenum.getKeyfield(),dsenum.getValuefield());
+	}
+
+	public void delete(Class<? extends BaseEntity> clazz, Long[] idAry) {
+		fiBusinessDao.delete(clazz , idAry);
+	}
+}

@@ -1,0 +1,29 @@
+package com.xinleju.platform.utils;
+
+import org.springframework.beans.BeansException;
+import org.springframework.context.ApplicationContext;
+
+/**
+ * Created by xubaoyong on 2017/3/30.
+ */
+public class SpringContextHelper {
+
+    private static ApplicationContext applicationContext;
+
+    public static ApplicationContext getApplicationContext() {
+        return applicationContext;
+    }
+
+    public static void setApplicationContext(ApplicationContext applicationContext) {
+        SpringContextHelper.applicationContext = applicationContext;
+    }
+
+    public static Object getBean(Class var1) throws BeansException{
+            return  applicationContext.getBean(var1);
+    }
+
+    public static Object getBean(String beanName){
+
+        return applicationContext.getBean(beanName);
+    }
+}

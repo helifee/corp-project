@@ -1,0 +1,184 @@
+package com.xinleju.erp.frame.dao;
+
+
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.erp.base.utils.CollectionUtils;
+import com.xinleju.erp.base.utils.DateUtils;
+import com.xinleju.erp.flow.dao.impl.BaseDAO;
+import com.xinleju.erp.flowengine.utils.TaskTypeStatus;
+import com.xinleju.erp.form.utils.DbType;
+import com.xinleju.erp.frame.models.BaseEntity;
+import com.xinleju.erp.frame.models.FlowAuth;
+
+
+@Repository
+public class FlowAuthDao extends BaseDAO {
+	SimpleDateFormat sd = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+	@Autowired
+	private JdbcTemplate jt;
+    /**
+     * 更新状态
+     * @param roleId
+     * @param status
+     * @return
+     */
+    public boolean changeStatus(Long roleId, Integer status){
+    	boolean changeStatusSuccess = false;
+    	if (null != roleId && roleId > 0 && null != status){
+    		getDao().execute("update FlowAuth set status = ? where id= ?", status, roleId);
+    	}
+    	return changeStatusSuccess;
+    }
+    /**
+     * 是不是授权中
+     * @param userId
+     * @param authUserId
+     * @return
+     */
+    public boolean isFlowAuth(Long auth2UserId, Long authUserId, Date wiCreateDate){
+        boolean isFlowAuth = false;
+        List<FlowAuth> lst = this.findFlowAuthByAuth2UserId(auth2UserId);
+        if (null != authUserId && null != lst && !lst.isEmpty()){
+            if (null != wiCreateDate){
+                Date authBeginDate = null;
+                for (FlowAuth flowAuth : lst){
+                    isFlowAuth = authUserId.equals(flowAuth.getAuthUserId());
+                    //非实时生效
+                    if (!FlowAuth.TRANS_FLAG_REAL.equals(flowAuth.getTransFlg())){
+                        isFlowAuth = false;
+                        authBeginDate = flowAuth.getAuthBeginDate();
+                        if (null != authBeginDate && authBeginDate.before(wiCreateDate)){
+                            isFlowAuth = true;
+                        }
+                    }
+                    if (isFlowAuth){
+                        break;
+                    }
+                }
+            } else {
+                isFlowAuth = CollectionUtils.collectAsList(lst, "authUserId").contains(authUserId);
+            }
+        }
+        return isFlowAuth;
+    }
+    /**
+     * 根据用户登录名获取有效的授权
+     * @author zhongjun
+     * @param loginName
+     * @return
+     */
+    public List<FlowAuth> findFlowAuthByAuth2UserLoginName(String loginName) {
+        List<FlowAuth> lst = null;
+        if (StringUtils.isNotBlank(loginName)){
+            lst = this.findFlowAuthByAuth2UserId(getDao().findLong("select min(id) from User where loginName = ?", loginName));
+        }
+        if (null == lst){
+            lst = new ArrayList<FlowAuth>();
+        }
+        return lst;
+    }
+    /**
+     * 根据用户id获取有效的授权
+     * @author zhongjun
+     * @param userId
+     * @return
+     */
+    public List<FlowAuth> findFlowAuthByAuth2UserId(Long userId) {
+        List<FlowAuth> lst = null;
+        if (null != userId){
+            Calendar cal = Calendar.getInstance();
+            String currDate = DateUtils.formatDate(cal.getTime(), DateUtils.DATE_FORMAT_YYYY_MM_DD_HH_MM_SS);
+            DetachedCriteria dc = DetachedCriteria.forClass(FlowAuth.class);
+            dc.add( Restrictions.eq("auth2UserId", userId) );
+            dc.add( Restrictions.eq("status", BaseEntity.STATUS_ENABLE) );
+            dc.add(Restrictions.sqlRestriction(" (auth_begin_date is null and auth_end_date >= '" + currDate + "') or (auth_begin_date <= '" + currDate + "' and auth_end_date >= '" + currDate + "') "));
+            lst = getDao().findByCriteria(dc);
+        }
+        if (null == lst){
+            lst = new ArrayList<FlowAuth>();
+        }
+        return lst;
+    }
+    
+    
+    public List<String>  getByFlowInstanceStepTaskList(Map map){
+    	//一定是未被代理的任务
+        Long proxyParticipant=(Long)map.get("proxyParticipant");
+    	StringBuffer sql=new StringBuffer("select DISTINCT t.guid from flow_instance_step_work_task t,flow_instance_step_work w ,flow_instance f ,tf_fl l where t.work_id=w.guid  and t.fi_id=f.guid and f.fl_id=l.id ");
+    	sql.append(" and t.guid not in (select  tk.flow_business_id  from flow_instance_step_work_task tk where tk.flow_business_type='"+TaskTypeStatus.BUSINESS_TYPE_PROXY+"' and tk.participant ="+proxyParticipant+" )");
+    	
+    	
+    	
+    	if(map.get("postIds")!=null){
+    		String[] postIds=map.get("postIds").toString().split(";");
+    		if(postIds!=null && postIds.length>0){
+    			StringBuilder sb=new StringBuilder();
+        		for(String postId:postIds){
+        			if(StringUtils.isNotEmpty(postId)){
+        		      sb.append("'"+postId+"',");
+        			}
+        		}
+        		if(StringUtils.isNotEmpty(sb.toString())){
+        			sb.deleteCharAt(sb.toString().length()-1);
+        		  sql.append(" and w.participant_post_id in ("+sb.toString()+") ");
+        		}
+    		}
+    		
+    	}
+    	if(map.get("flowCodes")!=null){
+    		String[] flowCodes=map.get("flowCodes").toString().split(";");
+    		if(flowCodes!=null && flowCodes.length>0){
+    			StringBuilder sb=new StringBuilder();
+        		for(String flowCode:flowCodes){
+        			if(StringUtils.isNotEmpty(flowCode)){
+        		       sb.append("'"+flowCode+"',");
+        			}
+        		}
+        		if(StringUtils.isNotEmpty(sb.toString())){
+        			sb.deleteCharAt(sb.toString().length()-1);
+        		  sql.append(" and l.flow_code in ("+sb.toString()+") ");
+        		}
+    		}
+    	
+    	}
+    	if(map.get("participant")!=null){
+    		sql.append(" and participant ='"+map.get("participant")+ "'");
+    	}
+    	
+    	if(map.get("createDate")!=null){
+    		sql.append(" and t.create_time >='"+sd.format(map.get("createDate"))+ "'");
+    	}
+    	
+    	if(map.get("endDate")!=null){
+    		sql.append(" and t.create_time <='"+sd.format(map.get("endDate"))+ "'");
+    	}
+    	
+    	
+    	List<String> list=jt.queryForList(sql.toString(), String.class);
+    	return list;
+    }
+    
+    
+    public List<String> getFlowAuthList(String fiId,Long proxyUserId,Long proxPostId){
+         Date date =new Date();
+    	 String sql= "select DISTINCT a.auth2_user_id from flow_instance f ,tf_fl l, sm_flow_auth a where f.fl_id=l.id  and  (("+DbType.getType()+"locate(l.flow_code,a.auth_scope)>0 and a.auth_scope is not null ) or (a.auth_scope is null or a.auth_scope=''))"
+    			   +"and (("+DbType.getType()+"locate('"+proxPostId+"',a.auth_items)>0 and a.auth_items is not null) or (a.auth_items is null or a.auth_items ='' )) and a.auth_user_id='"+proxyUserId+"' and  '"+sd.format(date)+"'>= a.auth_begin_date and '"+sd.format(date)+"'<= a.auth_end_date ";
+
+        List<String> list=jt.queryForList(sql.toString(), String.class);
+    	return list;
+    }
+    
+}

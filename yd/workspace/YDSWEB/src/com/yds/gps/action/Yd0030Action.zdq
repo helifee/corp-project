@@ -1,0 +1,323 @@
+/*
+ * @(#)Yd0030Action.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 社内团购系统
+ */
+package com.yds.gps.action;
+
+import java.util.List;
+
+import org.springframework.beans.factory.config.BeanDefinition;
+import org.springframework.context.annotation.Scope;
+import org.springframework.stereotype.Controller;
+
+import com.yds.base.action.AbstractBaseAction;
+import com.yds.common.bean.ComCodeInfo;
+import com.yds.common.service.ComCodeInfoService;
+import com.yds.common.service.ComSequenceService;
+import com.yds.common.service.CommonConstants;
+import com.yds.common.service.SessionService;
+import com.yds.common.service.SessionStoreConstants;
+import com.yds.common.service.UserService;
+import com.yds.gps.bean.GpsAccount;
+import com.yds.gps.bean.GpsGoodsCate;
+import com.yds.gps.bean.GpsGoodsInfo;
+import com.yds.gps.bean.GpsOrderGoods;
+import com.yds.gps.bean.Yd0030CondA;
+import com.yds.gps.common.bean.GpsOrderInfo;
+import com.yds.gps.service.GpsConstants;
+import com.yds.gps.service.Yd0030Service;
+import com.yds.util.service.SessionStore;
+
+/**
+ * 发布订单Action
+ * 
+ * @author 远东)lincheng
+ * @version 1.00 2010/10/22
+ */
+@Scope(BeanDefinition.SCOPE_PROTOTYPE)
+@Controller("yd0030Action")
+public class Yd0030Action extends AbstractBaseAction {
+	
+	private static final long serialVersionUID = 6658703193282310168L;
+	
+	private static final String actionkey = SessionStoreConstants.YD0030;
+	private static final String DEFAULT_FROM_ID="yd0030";
+	private Yd0030Service yd0030Service;
+	private ComCodeInfoService comCodeInfoService;
+	private ComSequenceService comSequenceService;
+	private UserService userService;
+	// 订单信息
+	private GpsOrderInfo orderInfo;
+	// 商品列表
+	private List<GpsGoodsInfo> goodsInfoList;
+	// 订单商品ID列表
+	private List<String> orderGoodsIdList;
+	// 分类列表
+	private List<GpsGoodsCate> goodsCateList;
+	// 订单商品
+	private GpsOrderGoods orderGoods;
+	// 商品分类ID
+	private String goodsCateId;
+	// 订单ID
+	private String orderId;
+	// 业务类型
+	private List<ComCodeInfo> bussFlagList;
+	// 结算方式
+	private List<ComCodeInfo> payFlagList;
+	// 条件bean
+	private Yd0030CondA condA;
+	
+	/**
+	 * 页面初始化处理
+	 * @return
+	 */
+	public String initDeal() {
+		// 取得用户ID
+		String userId = SessionService.getLoginUserId();
+		// 取得账户区分
+		GpsAccount account = yd0030Service.getGpsAccount(userId);
+		
+		if (hasPermit(GpsConstants.SYSTEM_NAME, GpsConstants.GPS_MANAGER)) {
+			account.setAccFlag(GpsConstants.ACC_COMPANY);
+		}
+		// 取得商品分类列表
+		goodsCateList = yd0030Service.getGpsGoodsCateList(account);
+		// 业务类型列表
+		bussFlagList = comCodeInfoService.getComCodeInfo("GPS", "BUSS_FLAG");
+		// 结算方式列表
+		payFlagList = comCodeInfoService.getComCodeInfo("GPS", "PAYMENT");
+		// 判断是否含有商品
+		boolean hasGood = true;
+		if (null == goodsCateList || goodsCateList.size() == 0 || null == goodsCateList.get(0)) {
+			hasGood = false;
+		}
+		// 条件bean设值
+		condA = new Yd0030CondA();
+		// 订单参照新规
+		if (null != orderId && !"".equals(orderId)) {
+			if (orderId.length() == 8) {
+				orderInfo = yd0030Service.getYd0030OrderInfo(orderId);
+			}
+			if (null != orderInfo && !userId.equals(orderInfo.getCreateUser())
+					&& (!hasPermit(GpsConstants.SYSTEM_NAME, GpsConstants.GPS_MANAGER)
+					|| GpsConstants.BUSS_PERSON.equals(orderInfo.getBussFlag()))) {
+				// 操作状态消息
+				putOpTip(propMgr.getMessage("yds.gps.warning.0002", userService.getUserNm(orderInfo.getUpdateUser())));
+				
+				return INPUT;
+			} else if (null != orderInfo) {
+				condA.setGoodsCateId(orderInfo.getGoodsCateId());
+				orderGoodsIdList = yd0030Service.getYd0030OrderGoodsList(orderId);
+			} else {
+				// 操作状态消息
+				putOpTip(propMgr.getMessage("yds.gps.error.0001", orderId));
+				
+				return INPUT;
+			}
+		// 画面重载
+		} else if (CommonConstants.ActionReloadFlg.Reload_Condition.value().equals(super.getReloadFlg())
+				&& null != SessionStore.getCondition(actionkey)
+				&& !"".equals(SessionStore.getCondition(actionkey))) {
+			
+			orderInfo = (GpsOrderInfo) SessionStore.getCondition(actionkey);
+			if (null != orderInfo.getGoodsCateId()
+					&& !"".equals(orderInfo.getGoodsCateId())
+					|| null == goodsCateList || goodsCateList.size() == 0) {
+				condA.setGoodsCateId(orderInfo.getGoodsCateId());
+			} else {
+				condA.setGoodsCateId(goodsCateList.get(0).getGoodsCateId());
+			}
+		// 新规订单
+		} else {
+			orderInfo = new GpsOrderInfo();
+			orderInfo.setBussFlag(GpsConstants.BUSS_COMPANY);
+			orderInfo.setPayFlag(GpsConstants.PAY_ACCOUNT);
+			if (hasGood) {
+				condA.setGoodsCateId(goodsCateList.get(0).getGoodsCateId());
+				orderInfo.setGoodsCateId(goodsCateList.get(0).getGoodsCateId());
+			}
+		}
+
+		// 取得商品列表
+		if (hasGood) {
+			goodsInfoList = yd0030Service.getGpsGoodsInfoList(condA);
+			for (GpsGoodsInfo gil : goodsInfoList) {
+				if (null != orderId && !"".equals(orderId)) {
+					if (orderGoodsIdList.contains(gil.getGoodsId())) {
+						gil.setGoodsFlag(true);
+					} else {
+						gil.setGoodsFlag(false);
+					}
+				} else {
+					gil.setGoodsFlag(true);
+				}
+			}
+		}
+		
+		if (null == getFromId() || "".equals(getFromId())) {
+			setFromId(DEFAULT_FROM_ID);
+		}
+		SessionStore.setCondition(SessionStoreConstants.YD0030, "");		
+		
+		return SUCCESS;
+	}
+	
+	/**
+	 * 取得商品列表
+	 * @return
+	 */
+	public String getGoodsInfo() {
+		// 条件bean设值
+		condA = new Yd0030CondA();
+		condA.setGoodsCateId(goodsCateId);
+		// 取得商品列表
+		goodsInfoList = yd0030Service.getGpsGoodsInfoList(condA);
+		for (GpsGoodsInfo gil : goodsInfoList) {
+			gil.setGoodsFlag(true);
+		}
+		
+		return SUCCESS;
+	}
+	
+	/**
+	 * 发布订单
+	 * @return
+	 * @throws Exception 
+	 */
+	public String issueOrder() throws Exception {
+		
+		// 取得用户ID
+		String userId = SessionService.getLoginUserId();
+		
+		// 设置订单ID
+		String orderId = comSequenceService.getNextSequence("GPS_ORDER_INFO", "ORDER_ID", 8);
+		orderInfo.setOrderId(orderId);
+		
+		// 设置发布订单者ID
+		orderInfo.setCreateUser(userId);
+		orderInfo.setUpdateUser(userId);
+		// 订单默认开启状态 1
+		orderInfo.setSwitchFlag(GpsConstants.ORDER_OPEN);
+		if (!hasPermit(GpsConstants.SYSTEM_NAME, GpsConstants.GPS_MANAGER)) {
+			orderInfo.setBussFlag(GpsConstants.BUSS_PERSON);
+			orderInfo.setPayFlag(GpsConstants.PAY_PRIVATE);
+		}
+		// 生成订单信息,设置订单商品表
+		yd0030Service.insertGpsOrderGoodsInfo(orderInfo, goodsInfoList);
+		
+		// 操作状态消息
+		putOpTip(propMgr.getMessage("yds.gps.info.0017"));
+		
+		return SUCCESS;
+	}
+	
+	/**
+	 * 保存表单条件数据
+	 * @return
+	 */
+	public String saveCond() {
+		// 保存表单条件
+		SessionStore.setCondition(actionkey, orderInfo);
+		return SUCCESS;
+	}
+
+	public void setYd0030Service(Yd0030Service yd0030Service) {
+		this.yd0030Service = yd0030Service;
+	}
+
+	public Yd0030Service getYd0030Service() {
+		return yd0030Service;
+	}
+
+	public GpsOrderInfo getOrderInfo() {
+		return orderInfo;
+	}
+
+	public void setOrderInfo(GpsOrderInfo orderInfo) {
+		this.orderInfo = orderInfo;
+	}
+
+	public List<GpsGoodsCate> getGoodsCateList() {
+		return goodsCateList;
+	}
+
+	public void setGoodsCateList(List<GpsGoodsCate> goodsCateList) {
+		this.goodsCateList = goodsCateList;
+	}
+
+	public List<GpsGoodsInfo> getGoodsInfoList() {
+		return goodsInfoList;
+	}
+
+	public void setGoodsInfoList(List<GpsGoodsInfo> goodsInfoList) {
+		this.goodsInfoList = goodsInfoList;
+	}
+
+	public void setComCodeInfoService(ComCodeInfoService comCodeInfoService) {
+		this.comCodeInfoService = comCodeInfoService;
+	}
+
+	public List<ComCodeInfo> getBussFlagList() {
+		return bussFlagList;
+	}
+
+	public void setBussFlagList(List<ComCodeInfo> bussFlagList) {
+		this.bussFlagList = bussFlagList;
+	}
+
+	public List<ComCodeInfo> getPayFlagList() {
+		return payFlagList;
+	}
+
+	public void setPayFlagList(List<ComCodeInfo> payFlagList) {
+		this.payFlagList = payFlagList;
+	}
+
+	public String getGoodsCateId() {
+		return goodsCateId;
+	}
+
+	public void setGoodsCateId(String goodsCateId) {
+		this.goodsCateId = goodsCateId;
+	}
+
+	public void setComSequenceService(ComSequenceService comSequenceService) {
+		this.comSequenceService = comSequenceService;
+	}
+
+	public GpsOrderGoods getOrderGoods() {
+		return orderGoods;
+	}
+
+	public void setOrderGoods(GpsOrderGoods orderGoods) {
+		this.orderGoods = orderGoods;
+	}
+
+	public String getOrderId() {
+		return orderId;
+	}
+
+	public void setOrderId(String orderId) {
+		this.orderId = orderId;
+	}
+
+	public List<String> getOrderGoodsIdList() {
+		return orderGoodsIdList;
+	}
+
+	public void setOrderGoodsIdList(List<String> orderGoodsIdList) {
+		this.orderGoodsIdList = orderGoodsIdList;
+	}
+
+	public UserService getUserService() {
+		return userService;
+	}
+
+	public void setUserService(UserService userService) {
+		this.userService = userService;
+	}
+
+}

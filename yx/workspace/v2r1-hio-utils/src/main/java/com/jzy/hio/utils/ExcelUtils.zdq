@@ -1,0 +1,264 @@
+package com.jzy.hio.utils;
+
+import org.apache.commons.io.IOUtils;
+import org.apache.poi.hssf.usermodel.HSSFCell;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.util.CellRangeAddress;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.ResourceLoader;
+import org.springframework.stereotype.Component;
+
+import javax.servlet.ServletOutputStream;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import java.io.InputStream;
+import java.math.BigDecimal;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.text.DecimalFormat;
+
+/**
+ * excel工具类
+ *
+ * @author kimchou
+ * @create 2018-03-25 18:19
+ **/
+@Component
+public class ExcelUtils {
+    @Autowired
+    private ResourceLoader resourceLoader;
+
+    /**
+     * @param response
+     * @param request
+     * @param fileName 返回给前端的文件名称
+     * @param filePath 文件的路径，放在 resource下面的文件
+     */
+    public void downLoadResource(HttpServletResponse response, HttpServletRequest request, String fileName, String filePath) {
+        InputStream inputStream = null;
+        ServletOutputStream servletOutputStream = null;
+        try {
+            org.springframework.core.io.Resource resource = resourceLoader.getResource("classpath:" + filePath);
+            response.setContentType("application/vnd.ms-excel");
+            response.addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+            response.addHeader("charset", "utf-8");
+            response.addHeader("Pragma", "no-cache");
+            String encodeName = URLEncoder.encode(fileName, StandardCharsets.UTF_8.toString());
+            response.setHeader("Content-Disposition", "attachment; filename=\"" + encodeName + "\"; filename*=utf-8''" + encodeName);
+            inputStream = resource.getInputStream();
+            servletOutputStream = response.getOutputStream();
+            IOUtils.copy(inputStream, servletOutputStream);
+            response.flushBuffer();
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            try {
+                if (servletOutputStream != null) {
+                    servletOutputStream.close();
+                    servletOutputStream = null;
+                }
+                if (inputStream != null) {
+                    inputStream.close();
+                    inputStream = null;
+                }
+                System.gc();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    public void downLoadExcel(HttpServletRequest request, HttpServletResponse response, XSSFWorkbook xf) {
+        ServletOutputStream outputStream = null;
+        try {
+            response.addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+            response.addHeader("charset", "utf-8");
+            response.addHeader("Pragma", "no-cache");
+            String encodeName = System.currentTimeMillis() + ".xlsx";
+//            response.setContentType("application/vnd.ms-excel");
+//            response.setHeader("Content-Disposition", "attachment; filename=\"" + URLEncoder.encode(encodeName,"utf-8"));
+            // 解决火狐直接打开会再次追加后缀问题
+            response.setContentType("application/octet-stream");
+            response.addHeader( "Content-Disposition", "attachment;filename=" + new String(encodeName.getBytes("gb2312"), "ISO8859-1"));
+            outputStream = response.getOutputStream();
+            xf.write(outputStream);
+            outputStream.flush();
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            try {
+                if (outputStream != null) {
+                    outputStream.close();
+                    outputStream = null;
+                }
+                System.gc();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    /**
+     * 获取excel表格中的值
+     *
+     * @param row
+     * @param index
+     * @return
+     */
+    public String getCellValue(Row row, int index) {
+       return getCellValue(row,index,false);
+    }
+    public String getCellValue(Row row, int index,boolean isIgnoreNumber) {
+        String value = "";
+        if (index == -1) {
+            return value;
+        }
+        Cell cell = row.getCell(index);
+        if (cell == null) {
+            return value;
+        }
+        switch (cell.getCellType()) {
+            case HSSFCell.CELL_TYPE_STRING:// String
+                value = cell.getStringCellValue();
+                break;
+            case HSSFCell.CELL_TYPE_BLANK:// 空
+                value = "";
+                break;
+            case HSSFCell.CELL_TYPE_BOOLEAN:// boolean
+                value = cell.getBooleanCellValue() + "";
+                break;
+            case HSSFCell.CELL_TYPE_FORMULA: // 公式
+                value = cell.getCellFormula() + "";
+                break;
+            case HSSFCell.CELL_TYPE_NUMERIC:
+                if (isIgnoreNumber){
+                    value =  new DecimalFormat("0").format(cell.getNumericCellValue());
+                }else {
+                    value = new BigDecimal(cell.getNumericCellValue() + "").toString();
+                }
+                break;
+            case HSSFCell.CELL_TYPE_ERROR: // 故障
+                value = "非法字符";
+                break;
+            default:
+                value = "未知类型";
+                break;
+        }
+        return value;
+    }
+
+    /**
+     * 判断指定的单元格是否是合并单元格
+     *
+     * @param sheet
+     * @param row    行下标
+     * @param column 列下标
+     * @return
+     */
+    public boolean isMergedRegion(Sheet sheet, int row, int column) {
+        int sheetMergeCount = sheet.getNumMergedRegions();
+        for (int i = 0; i < sheetMergeCount; i++) {
+            CellRangeAddress range = sheet.getMergedRegion(i);
+            int firstColumn = range.getFirstColumn();
+            int lastColumn = range.getLastColumn();
+            int firstRow = range.getFirstRow();
+            int lastRow = range.getLastRow();
+            if (row >= firstRow && row <= lastRow) {
+                if (column >= firstColumn && column <= lastColumn) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 获取合并单元格的值
+     *
+     * @param sheet
+     * @param row
+     * @param column
+     * @return
+     */
+    public String getMergedRegionValue(Sheet sheet, int row, int column) {
+        return getMergedRegionValue(sheet,row,column,false);
+    }
+    /**
+     * 获取合并单元格的值
+     *
+     * @param sheet
+     * @param row
+     * @param column
+     * @return
+     */
+    public String getMergedRegionValue(Sheet sheet, int row, int column,boolean isIgnoreNumber) {
+        int sheetMergeCount = sheet.getNumMergedRegions();
+
+        for (int i = 0; i < sheetMergeCount; i++) {
+            CellRangeAddress ca = sheet.getMergedRegion(i);
+            int firstColumn = ca.getFirstColumn();
+            int lastColumn = ca.getLastColumn();
+            int firstRow = ca.getFirstRow();
+            int lastRow = ca.getLastRow();
+
+            if (row >= firstRow && row <= lastRow) {
+                if (column >= firstColumn && column <= lastColumn) {
+                    Row fRow = sheet.getRow(firstRow);
+                    Cell fCell = fRow.getCell(firstColumn);
+                    return getCellValue(fRow,firstColumn,isIgnoreNumber);
+                }
+            }
+        }
+
+        return "";
+    }
+    
+    /**
+     * 获取单元格value，支持合并单元格
+     * @param sheet
+     * @param rowNum
+     * @param column
+     * @return
+     */
+    public String getCellValue(Sheet sheet, int rowNum, int column) {
+        String value = "";
+        if (column == -1) {
+			return value;
+		}
+        
+        Row row = sheet.getRow(rowNum);
+        Cell cell = row.getCell(column);
+        if (cell == null) {
+            return value;
+        }
+        int sheetMergeCount = sheet.getNumMergedRegions();
+        for (int i = 0; i < sheetMergeCount; i++) {
+            CellRangeAddress ca = sheet.getMergedRegion(i);
+            int firstColumn = ca.getFirstColumn();
+            int lastColumn = ca.getLastColumn();
+            int firstRow = ca.getFirstRow();
+            int lastRow = ca.getLastRow();
+
+            if (rowNum >= firstRow && rowNum <= lastRow 
+            		&& column >= firstColumn && column <= lastColumn) {
+                Row fRow = sheet.getRow(firstRow);
+                return getCellValue(fRow,firstColumn);
+            }
+        }
+        
+        return getCellValue(row, column);
+    }
+
+
+    public boolean isExcel2003(String filePath) {
+        return filePath.matches("^.+\\.(?i)(xls)$");
+    }
+
+    public boolean isExcel2007(String filePath) {
+        return filePath.matches("^.+\\.(?i)(xlsx)$");
+    }
+
+}

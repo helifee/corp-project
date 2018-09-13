@@ -1,0 +1,29 @@
+package com.xinleju.platform.sys.base.dao;
+
+import java.util.List;
+
+import com.xinleju.platform.base.dao.BaseDao;
+import com.xinleju.platform.sys.base.entity.BaseSupplierCompany;
+
+/**
+ * @author admin
+ *
+ */
+
+public interface BaseSupplierCompanyDao extends BaseDao<String, BaseSupplierCompany> {
+
+	/**
+	 * @param id
+	 * @return
+	 */
+	List<String> getObjectBySupplierId(String id);
+
+	/**
+	 * @param id
+	 * @return
+	 */
+	List<String> getIdsBySupplierId(String id);
+	
+	
+
+}

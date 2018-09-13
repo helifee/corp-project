@@ -1,0 +1,5 @@
+document.write("<scr"+"ipt src='../js/highlighter/scripts/shCore.js'></scr"+"ipt>")
+document.write("<scr"+"ipt src='../js/highlighter/scripts/shBrushJava.js'></scr"+"ipt>")
+document.write("<scr"+"ipt src='../js/highlighter/scripts/shBrushJScript.js'></scr"+"ipt>")
+document.write("<scr"+"ipt src='../js/highlighter/scripts/shBrushXml.js'></scr"+"ipt>")
+document.write("<scr"+"ipt src='../js/highlighter/scripts/shBrushCss.js'></scr"+"ipt>")

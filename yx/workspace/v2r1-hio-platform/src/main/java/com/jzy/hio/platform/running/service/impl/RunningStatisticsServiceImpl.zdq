@@ -1,0 +1,227 @@
+/**
+ * 
+ */
+package com.jzy.hio.platform.running.service.impl;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.github.pagehelper.PageHelper;
+import com.github.pagehelper.PageInfo;
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.entity.RunningDayStatistics;
+import com.jzy.hio.entity.RunningMonthStatistics;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.platform.constant.UserOrFriendConstant;
+import com.jzy.hio.platform.dto.userinfo.ImUserInfoDto;
+import com.jzy.hio.platform.running.dto.RunningDto;
+import com.jzy.hio.platform.running.mapper.RunningStatisticsMapper;
+import com.jzy.hio.platform.running.service.RunningPraiseService;
+import com.jzy.hio.platform.running.service.RunningStatisticsService;
+import com.jzy.hio.platform.userinfo.service.UserInfoService;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.sys.organization.dto.SkyDriveDto;
+import com.jzy.hio.sys.organization.param.SkyDriveParam;
+
+/**
+ * 运动统计
+ * @author 马长习
+ * @date 2017年10月31日
+ */
+@Service
+public class RunningStatisticsServiceImpl extends BaseServiceImpl<RunningDayStatistics> implements RunningStatisticsService {
+
+	@Autowired
+	private RunningPraiseService runningPraiseService;
+	
+	@Autowired
+	private RunningStatisticsMapper runningStatisticsMapper;
+	
+	@Autowired
+	private UserInfoService userInfoService;
+	
+	@Autowired
+	private SysFeignService sysFeignService;
+	
+	@Override
+	public void setRunningOpen(String tendId, String uid, int openType) {
+		runningStatisticsMapper.setRunningOpen(tendId, uid, openType);
+	}
+
+	@Override
+	public void saveRunStatisticsByDay(RunningDayStatistics runStatistics) {
+		super.save(runStatistics);
+	}
+	
+	@Override
+	public void updateRunningPraise(String enterpriseId, String uid, String runDate){
+		runningStatisticsMapper.updateRunningPraise(enterpriseId, uid, runDate);
+	}
+	
+	@Override
+	public RunningDayStatistics findRunningChampion(String enterpriseId, String runDate){
+		return runningStatisticsMapper.findRunningChampion(enterpriseId, runDate);
+	}
+	
+	@Override
+	public PageInfo<RunningDto> findHistoryRunningRanking(String enterpriseId, String uid, String runDate, int pageNo, int pageSize){
+		PageHelper.startPage(pageNo, pageSize);
+		List<RunningDayStatistics> runList = runningStatisticsMapper.findHistoryRunningRanking(enterpriseId, runDate);
+		if(runList != null){
+			List<RunningDto> runDtoList = new ArrayList<RunningDto>();
+			for(int i=0; i<runList.size(); i++){
+				String userJson = JedisUtil.fetchRow(UserOrFriendConstant.IM_USER_INFO, runList.get(i).getUid());
+				ImUserInfoDto userDto = null;
+				if(StringUtils.isBlank(userJson)) {
+					userDto = userInfoService.getUserInfoById(runList.get(i).getUid());
+				}else {
+					userDto = json2obj(userJson, ImUserInfoDto.class);
+				}
+				if(userDto == null){
+					continue;
+				}
+				String userName = selectUserNameByTendIdAndQuit(runList.get(i).getUid(), runList.get(i).getEnterpriseId());
+				RunningDto runDto = new RunningDto();
+				BeanUtils.copyProperties(runList.get(i), runDto);
+				runDto.setUserName(userName);
+				runDto.setRunRanking(runList.get(i).getRunRanking());
+				runDto.setHeadPortrait(userDto.getResourceImgUrl());
+				runDto.setGender(userDto.getSex());
+				runDto.setRunningCover(userDto.getRunningCoverUrl());
+				boolean isPraise = runningPraiseService.isPraiseForUser(enterpriseId, uid, runDto.getUid(), runDate);
+				if(isPraise){
+					runDto.setPraiseState(1);
+				}else{
+					runDto.setPraiseState(0);
+				}
+				runDtoList.add(runDto);
+			}
+			PageInfo<RunningDto> page = new PageInfo<RunningDto>(runDtoList);
+			return page;
+		}
+		return null;
+	}
+
+	@Override
+	public PageInfo<RunningDayStatistics> findRunStatisticsByDay(String enterpriseId, String uid, int pageNo,
+			int pageSize) {
+		PageHelper.startPage(pageNo, pageSize);
+		List<RunningDayStatistics> runStatis = runningStatisticsMapper.findRunStatisticsByDay(enterpriseId, uid);
+		if(runStatis != null){
+			PageInfo<RunningDayStatistics> page = new PageInfo<RunningDayStatistics>(runStatis);
+			return page;
+		}
+		return null;
+	}
+
+	@Override
+	public List<RunningDayStatistics> findRunSteps(String enterpriseId, String uid, String startDate, String endDate) {
+		List<RunningDayStatistics> runStatis = runningStatisticsMapper.findRunSteps(enterpriseId, uid, startDate, endDate);
+		if(runStatis == null){
+			runStatis = new ArrayList<RunningDayStatistics>();
+		}
+		return runStatis;
+	}
+
+	@Override
+	public PageInfo<RunningMonthStatistics> findRunStatisticsByMonth(String enterpriseId, String uid, int pageNo,
+			int pageSize) {
+		PageHelper.startPage(pageNo, pageSize);
+		List<RunningMonthStatistics> runStatis = runningStatisticsMapper.findRunStatisticsByMonth(enterpriseId, uid);
+		if(runStatis != null){
+			PageInfo<RunningMonthStatistics> page = new PageInfo<RunningMonthStatistics>(runStatis);
+			return page;
+		}
+		return null;
+	}
+	
+	/**
+	 * 查询人员某个月的运动步数
+	 * @param enterpriseId
+	 * @param uid
+	 * @param runMonth
+	 * @return
+	 */
+	@Override
+	public Integer findRunStepsByMonth(String enterpriseId, String uid, String runMonth){
+		return runningStatisticsMapper.findRunStepsByMonth(enterpriseId, uid, runMonth);
+	}
+	
+	/**
+	 * 删除运动天表中6个月前的运动记录
+	 * @param runMonth
+	 */
+	@Override
+	public void deleteRunSteps(String runMonth){
+		runningStatisticsMapper.deleteRunSteps(runMonth);
+	}
+	
+	@Override
+	public Integer findPraiseCountByMonth(String enterpriseId, String uid, String runMonth){
+		return runningStatisticsMapper.findPraiseCountByMonth(enterpriseId, uid, runMonth);
+	}
+	
+	@Override
+	public Integer findRunKilometreByMonth(String enterpriseId, String uid, String runMonth){
+		return runningStatisticsMapper.findRunKilometreByMonth(enterpriseId, uid, runMonth);
+	}
+	
+	@Override
+	public RunningDto findRunningByRunDate(String enterpriseId, String uid, String runDate){
+		RunningDayStatistics runSta = runningStatisticsMapper.findRunningByRunDate(enterpriseId, uid, runDate);
+		if(runSta != null){
+			String userJson = JedisUtil.fetchRow(UserOrFriendConstant.IM_USER_INFO, uid);
+			ImUserInfoDto userDto = new ImUserInfoDto();
+			if(StringUtils.isBlank(userJson)) {
+				userDto = userInfoService.getUserInfoById(uid);
+			}else {
+				userDto = json2obj(userJson, ImUserInfoDto.class);
+			}
+			String userName = selectUserNameByTendIdAndQuit(uid, enterpriseId);
+			RunningDto runDto = new RunningDto();
+			BeanUtils.copyProperties(runSta, runDto);
+			runDto.setUserName(userName);
+			runDto.setRunRanking(runSta.getRunRanking());
+			runDto.setHeadPortrait(userDto.getResourceImgUrl());
+			runDto.setGender(userDto.getSex());
+			runDto.setRunningCover(userDto.getRunningCoverUrl());
+			return runDto;
+		}
+		return null;
+	}
+	
+	private String selectUserNameByTendIdAndQuit(String imUserId, String tendId) {
+		String userName = null;
+		if (!StringUtils.isEmpty(imUserId)) {
+			ApiFeignResponse<String> response = sysFeignService.queryOaUserIdByImUserId(imUserId, tendId);
+			String oaUserId = response.getResult();
+			List<String> userIdList = new ArrayList<String>();
+			userIdList.add(oaUserId);
+			SkyDriveParam skyDriveParam = new SkyDriveParam();
+			skyDriveParam.setUserIds(userIdList);
+			skyDriveParam.setTendId(tendId);
+			skyDriveParam.setStatus(1);
+			ApiFeignResponse<List<SkyDriveDto>> apiFeignResponse = sysFeignService.queryNameByOrgAndRoleAndUser(skyDriveParam);
+			if (apiFeignResponse != null) {
+				if (200 == apiFeignResponse.getStatus()) {
+					List<SkyDriveDto> skyDriveDtoList = apiFeignResponse.getResult();
+					if (skyDriveDtoList != null && skyDriveDtoList.size() > 0) {
+						userName = skyDriveDtoList.get(0).getName();
+					}
+				} else {
+					throw new HioException("调用queryNameByOrgAndRoleAndUser feign接口失败" + apiFeignResponse.getMessage());
+				}
+
+			}
+		}
+		return userName;
+	}
+	
+}

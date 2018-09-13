@@ -1,0 +1,62 @@
+package com.xinleju.platform.flow.dto.service;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.flow.dto.AcDto;
+import com.xinleju.platform.flow.dto.FlowApproveViewBean;
+import com.xinleju.platform.flow.dto.FlowQueryBean;
+import com.xinleju.platform.flow.dto.InstanceAcDto;
+import com.xinleju.platform.flow.dto.UserDto;
+import com.xinleju.platform.flow.dto.utils.FlowResult;
+
+public interface FlowService {
+
+	/**
+	 * 流程发起，流程新的移动端发起接口，动态数据源
+	 * 
+	 * @param userInfo : 用户信息
+	 * @param startUserId: 流程发起人ID
+	 * @param userNote：流程发起人意见
+	 * @param flowCode：流程模板编码
+	 * @param bizId：业务表单ID
+	 * @return
+	 */
+	public FlowResult<String> startFlow(String userInfo, String startUserId, 
+			String userNote,String flowCode,String bizId);
+   
+    /**
+     * 流程业务查看
+     * @param flowCode: 流程模板编码
+     * @param bizId: 业务表单ID
+     * @param tendCode: 租户编码
+     * @return
+     */
+    public FlowResult<FlowApproveViewBean> queryFlowData(FlowQueryBean queryBean);
+    
+    /**
+     * 根据业务对象编码查询对应的流程模板列表
+     * 
+     * @param businessCode
+     * @return
+     */
+    public FlowResult<List<Map<String, String>>> queryFlowTemplateBy(String userInfo, String businessCode);
+    
+    /**
+     * 批量查询流程实例当前审批人
+     * 
+     * @param userInfo		:当前用户信息
+     * @param flCode		:流程模板code
+     * @param businessId	:业务表单ID
+     * @return Map<businessId, List<UserDto>> id:用户ID；name:用户真实姓名；loginName:暂无
+     */
+    public FlowResult<Map<String, List<UserDto>>> queryCurrentApproversOf(String userInfo, List<FlowQueryBean> flowInfos);
+    
+    /**
+     * 查询指定流程当前节点信息
+     * @param userInfo		:当前用户信息
+     * @param instanceId	:流程实例ID
+     * @return List<InstanceAcDto>	approveTypeId:审批类型；currentApproverIds:当前审批人ID（以逗号分隔）
+     */
+    public FlowResult<List<InstanceAcDto>> queryCurrentNodeOf(String userInfo, FlowQueryBean flowInfo);
+}

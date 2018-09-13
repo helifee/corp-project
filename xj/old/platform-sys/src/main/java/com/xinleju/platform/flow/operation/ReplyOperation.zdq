@@ -1,0 +1,156 @@
+package com.xinleju.platform.flow.operation;
+
+import java.sql.Timestamp;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.flow.dto.ApprovalSubmitDto;
+import com.xinleju.platform.flow.dto.AssistDto;
+import com.xinleju.platform.flow.dto.UserDto;
+import com.xinleju.platform.flow.entity.SysNoticeMsg;
+import com.xinleju.platform.flow.enumeration.TaskStatus;
+import com.xinleju.platform.flow.enumeration.TaskType;
+import com.xinleju.platform.flow.model.ApproverUnit;
+import com.xinleju.platform.flow.model.InstanceUnit;
+import com.xinleju.platform.flow.model.TaskUnit;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+/**
+ * 回复操作:
+ * 1、被协办的人可以回复
+ * 2、沟通发起人后，发起人可以回复
+ * 
+ * @author daoqi
+ *
+ */
+public class ReplyOperation extends DefaultOperation implements Operation{
+	
+	ReplyOperation() {
+		super(OperationType.REPLY);
+	}
+
+//	@Override
+//	public String action(InstanceUnit instanceUnit, ApprovalSubmitDto approvalDto)
+//			throws Exception {
+//		
+//		//1、设置当前位置
+//		setCurrentLocation(instanceUnit, approvalDto);
+//		
+//		//2、完成当前审批人,当前任务完成，回写意见
+//		complate(currentApprover, approvalDto);
+//		
+//		//3、保存数据
+//		save(instanceUnit);
+//		
+//		//5、发送待办消息
+//		handleMessages(instanceUnit, approvalDto);
+//		
+//		//删除待办消息
+////		completeMessage(approvalDto.getMsgId());
+//		
+//		return "success";
+//	}
+
+//	private void complate(ApproverUnit currentApprover, ApprovalSubmitDto approvalDto) {
+//		TaskUnit task = currentApprover.getTask();
+//		task.setTaskStatus(TaskStatus.FINISHED.getValue());
+//		task.setEndTime(new Timestamp(System.currentTimeMillis()));
+//		task.setTaskResult(approvalDto.getOperationType());
+//		task.setTaskResultName(approvalDto.getOperationName());
+//		String userNote = "【回复：" + currentApprover.getTask().getFromName() + "】 意见：" + approvalDto.getUserNote();
+//		task.setTaskComments(userNote);
+//		
+//		super.sortIn(currentPost);
+//	}
+
+	@Override
+	public void operate(InstanceUnit instanceUnit, 
+			ApprovalSubmitDto approvalDto) throws Exception {
+		//完成当前审批人,当前任务完成，回写意见
+		TaskUnit task = currentApprover.getTask();
+		
+		task.setTaskStatus(TaskStatus.FINISHED.getValue());
+		task.setEndTime(new Timestamp(System.currentTimeMillis()));
+		task.setTaskResult(approvalDto.getOperationType());
+		task.setTaskResultName(approvalDto.getOperationName());
+		String userNote = "【回复：" + currentApprover.getTask().getFromName() + "】 意见：" + approvalDto.getUserNote();
+		task.setTaskComments(userNote);
+		
+		//区分协办人与其他（审批人或发起人）
+		//发起人回复, 作为审批人处理下面点亮一条沟通发出者行
+		if(TaskType.STARTER.getValue().equals(task.getTaskType())) {
+			ApproverUnit newApprover = new ApproverUnit();
+			newApprover.setId(IDGenerator.getUUID());
+			newApprover.setAcPostId(currentApprover.getAcPostId());
+			newApprover.setApproverId(currentApprover.getTask().getFromId());
+			newApprover.setApproverName(currentApprover.getTask().getFromName());
+			newApprover.setOwner(currentApprover.getOwner());
+			newApprover.setDbAction(1);
+			
+			TaskUnit newTask = new TaskUnit();
+			newTask.setTaskId(IDGenerator.getUUID());
+			newTask.setStartTime(new Timestamp(System.currentTimeMillis()));
+			newTask.setTaskStatus(TaskStatus.RUNNING.getValue());
+			newTask.setTaskType(TaskType.APPROVER.getValue());
+			newTask.setDbAction(1);
+			newTask.setFromId(currentApprover.getApproverId());
+			newTask.setFromName(currentApprover.getApproverName());
+			newApprover.setTask(newTask);
+			currentApprover.getOwner().getApprovers().add(newApprover);
+		}
+		
+		super.sortIn(currentPost);
+		
+		//被协办人回复后，给协办发起者发送一条待阅提醒
+		if(TaskType.ASSIST.getValue().equals(task.getTaskType())){
+			UserDto user = new UserDto(task.getFromId(), task.getFromName());
+			SysNoticeMsg toReadMsg = createToReadMsg(instanceUnit, instanceUnit.getCustomFormURL(), user);
+			service.getMsgService().saveAndNotifyOthers(toReadMsg);
+			
+			//被协办人回复后重置（发起协办人）消息上剩余被协办人的数量
+			Map<String,Object> paramMap=new HashMap<String,Object>();
+			paramMap.put("approvalId", task.getFromId());
+			paramMap.put("instanceId", instanceUnit.getId());
+			SysNoticeMsg sysNoticeMsg=service.getMsgService().getLanuchAssist(paramMap);
+			if(sysNoticeMsg!=null && sysNoticeMsg.getOperationTip()!=null && !"".equals(sysNoticeMsg.getOperationTip())){
+				AssistDto assistDto=JacksonUtils.fromJson(sysNoticeMsg.getOperationTip(), AssistDto.class);
+				String[] remainderNames=assistDto.getRemainderNames().split(",");
+				List<String> list = new ArrayList<>(Arrays.asList(remainderNames));  
+				if(list.contains(currentApprover.getApproverName())){
+					assistDto.setRemainder(assistDto.getRemainder()-1);
+					String replayName="";
+					if(assistDto.getReplyNames()!=null && !"".equals(assistDto.getReplyNames())){
+						replayName+=",";
+						replayName+=currentApprover.getApproverName();
+					}else{
+						replayName=currentApprover.getApproverName();
+					}
+					assistDto.setReplyNames(replayName);
+					list.remove(currentApprover.getApproverName());
+					assistDto.setRemainderNames(this.toListToStr(list));
+					paramMap.clear();
+					paramMap.put("operationTip", JacksonUtils.toJson(assistDto));
+					paramMap.put("msgId", sysNoticeMsg.getId());
+					service.getMsgService().assistMessageUpdate(paramMap);
+				}
+			}
+		}
+	}
+
+	private String toListToStr(List<String> list) {
+		String returnStr="";
+		if(list!=null && list.size()>0){
+			for(int i=0;i<list.size();i++){
+				if(!"".equals(returnStr)){
+					returnStr+=",";
+				}
+				returnStr+=list.get(i);
+			}
+		}
+		return returnStr;
+	}
+}

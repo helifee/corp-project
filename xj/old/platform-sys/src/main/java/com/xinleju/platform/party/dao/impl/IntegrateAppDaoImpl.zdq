@@ -1,0 +1,52 @@
+package com.xinleju.platform.party.dao.impl;
+
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.platform.base.dao.impl.BaseDaoImpl;
+import com.xinleju.platform.party.dao.IntegrateAppDao;
+import com.xinleju.platform.party.entity.IntegrateApp;
+import com.xinleju.platform.sys.base.entity.SettlementTrades;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Repository
+public class IntegrateAppDaoImpl extends BaseDaoImpl<String,IntegrateApp> implements IntegrateAppDao{
+
+	public IntegrateAppDaoImpl() {
+		super();
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.party.dao.IntegrateAppDao#getIntegrateAppCount(java.util.Map)
+	 */
+	@Override
+	public Integer getIntegrateAppCount(Map map) {
+	     return getSqlSession().selectOne("com.xinleju.platform.party.entity.IntegrateApp.getIntegrateAppCount",map);
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.party.dao.IntegrateAppDao#getIntegrateAppPage(java.util.Map)
+	 */
+	@Override
+	public List<IntegrateApp> getIntegrateAppPage(Map map) {
+		 return getSqlSession().selectList("com.xinleju.platform.party.entity.IntegrateApp.getIntegrateAppPage",map);
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.party.dao.IntegrateAppDao#getIntegrateAppCountByName(java.util.Map)
+	 */
+	@Override
+	public Integer getIntegrateAppCountByName(Map<String, Object> map) {
+		return getSqlSession().selectOne("com.xinleju.platform.party.entity.IntegrateApp.getIntegrateAppCountByName",map);
+	}
+
+	
+	
+}

@@ -1,0 +1,755 @@
+package com.xinleju.platform.sys.org.service.impl;
+
+import java.util.*;
+
+import com.xinleju.platform.base.utils.*;
+import com.xinleju.platform.sys.org.dto.OrgnazationExcelDto;
+import com.xinleju.platform.utils.MyChecker;
+import org.apache.commons.lang.StringUtils;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.platform.base.annotation.Description;
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.encrypt.EndecryptUtil;
+import com.xinleju.platform.sys.org.dao.UserDao;
+import com.xinleju.platform.sys.org.dto.OrgnazationDto;
+import com.xinleju.platform.sys.org.dto.OrgnazationNodeDto;
+import com.xinleju.platform.sys.org.dto.UserDto;
+import com.xinleju.platform.sys.org.dto.service.impl.UserDtoServiceProducer;
+import com.xinleju.platform.sys.org.entity.Orgnazation;
+import com.xinleju.platform.sys.org.entity.User;
+import com.xinleju.platform.sys.org.service.OrgnazationService;
+import com.xinleju.platform.sys.org.service.UserService;
+import com.xinleju.platform.sys.org.utils.EncryptionUtils;
+import com.xinleju.platform.sys.res.utils.InvalidCustomException;
+import com.xinleju.platform.sys.security.dto.AuthenticationDto;
+
+/**
+ * @author sy
+ * 
+ * 
+ */
+
+@Service
+public class UserServiceImpl extends  BaseServiceImpl<String,User> implements UserService{
+	
+	private static Logger log = Logger.getLogger(UserServiceImpl.class);
+	
+	@Autowired
+	private UserDao userDao;
+	
+	@Autowired
+	private OrgnazationService orgnazationService;
+	
+
+	/**
+	 * 根据组织结构查询所有人
+	 * @param parentId
+	 * @return
+	 */
+	@Override
+	public List<UserDto> queryUserListByOrgId(Map<String, Object> paramater)  throws Exception{
+		return userDao.queryUserListByOrgId(paramater);
+	}
+
+	@Override
+	@Description(instruction = "根据岗位查询用户列表")
+	public List<UserDto> queryUserListByPostId(Map<String, Object> paramater) throws Exception {
+		// TODO Auto-generated method stub
+		return userDao.queryUserListByPostId(paramater);
+	}
+	
+	@Override
+	@Description(instruction = "根据角色查询用户列表")
+	public List<UserDto> queryUserListByRoleId(Map<String, Object> paramater) throws Exception {
+		// TODO Auto-generated method stub
+		return userDao.queryUserListByRoleId(paramater);
+	}
+	@Override
+	public List<UserDto> queryRoleUserByRoleId(Map<String, Object> paramater) throws Exception {
+		return userDao.queryRoleUserByRoleId(paramater);
+	}
+	
+	@Override
+	public List<OrgnazationNodeDto> queryAllUserList(Map<String,Object> map) throws Exception {
+		return userDao.queryAllUserList(map);
+		
+	}
+	
+	@Override
+	public List<UserDto> queryAllUserListReturnUser(Map<String,Object> map) throws Exception {
+		return userDao.queryAllUserListReturnUser(map);
+		
+	}
+	@Override
+	public List<Map<String,String>> queryUsersByIds(Map map)throws Exception{
+		return userDao.queryUsersByIds(map);
+	}
+	/**
+	 * 根据IDs获取人员DTO
+	 * @param paramater
+	 * @return
+	 */
+	@Override
+	public List<UserDto> getUserByUserIds(Map map)throws Exception{
+		String ids = (String)map.get("userIds");
+		String[] idsList = ids.split(",");
+		Map mapCon = new HashMap<String,Object>();
+		mapCon.put("ids", idsList);
+		return userDao.getUserByUserIds(mapCon);
+	}
+	
+	/**
+	 * 根据人员姓名获取人员DTO
+	 * @param paramater
+	 * @return
+	 */
+	@Override
+	public List<UserDto> getUserByUserName(Map map)throws Exception{
+		return userDao.getUserByUserName(map);
+	}
+	
+	/**
+	 * 根据loginNames获取人员DTO
+	 * @param paramater
+	 * @return
+	 */
+	@Override
+	public List<UserDto> getUserByUserLoginNames(Map map)throws Exception{
+		String loginNames = (String)map.get("loginNames");
+		String[] loginNamesList = loginNames.split(",");
+		Map mapCon = new HashMap<String,Object>();
+		mapCon.put("loginNames", loginNamesList);
+		return userDao.getUserByUserLoginNames(mapCon);
+	}
+	/**
+	 * 批量保存用户排序号
+	 * @param paramater
+	 * @return
+	 */
+	public Integer saveUsersSort(Map map)throws Exception{
+		return userDao.saveUsersSort(map);
+	}
+	/**
+	 * 获取用户详情
+	 * @param paramater
+	 * @return
+	 */
+	public UserDto selectUserInfoById(Map map)throws Exception{
+		return userDao.selectUserInfoById(map);
+	}
+	/**
+	 * 校验登录名是否重复
+	 * @param paramater
+	 * @return
+	 */
+	public Integer checkLoginName(Map map)throws Exception{
+		return userDao.checkLoginName(map);
+	}
+
+	@Override
+	public AuthenticationDto getOrgInfoByUserIdOrOrgId(Map map) throws Exception {
+		AuthenticationDto authenticationDto = new AuthenticationDto();
+		if(null != map.get("userId") && !"".equals((String)map.get("userId"))){
+			User user = userDao.getObjectById((String)map.get("userId"));
+			map.put("orgId", user.getBelongOrgId());
+		}else{
+			if(null == map.get("orgId") || "".equals((String)map.get("orgId"))){
+				return authenticationDto;
+			}
+		}
+		
+		//当前用户的所属组织
+		//获取当前用户的组织机构
+		List<OrgnazationDto> orgnazationDtoList = orgnazationService.queryAuthOrgListByOrgId(map);
+		
+		if(null != orgnazationDtoList && orgnazationDtoList.size()>0){
+			
+			//直属组织
+			OrgnazationDto orgnazationDto= orgnazationDtoList.get(orgnazationDtoList.size()-1);
+			//顶级组织
+			OrgnazationDto topOrgnazationDto= orgnazationDtoList.get(0);
+			//公司
+			List<OrgnazationDto> companyList = new ArrayList<OrgnazationDto>();
+			//部门
+			List<OrgnazationDto> deptList = new ArrayList<OrgnazationDto>();
+			for(OrgnazationDto orgDto:orgnazationDtoList){
+				if(orgDto.getType().equals("company") || orgDto.getType().equals("zb")){
+					companyList.add(orgDto);
+				}
+				if(orgDto.getType().equals("dept")){
+					deptList.add(orgDto);
+				}
+			}
+			//设置当前用户所在组织的类型
+			authenticationDto.setOrganizationType(orgnazationDto.getType());
+			//设置当前用户所在的组织，分期、项目、部门、顶级部门、公司、顶级公司
+			if(orgnazationDto.getType().equals("branch")){
+				//设置分期
+				authenticationDto.setBranchDto(orgnazationDto);
+				//设置项目
+				authenticationDto.setGroupDto(orgnazationDtoList.get(orgnazationDtoList.size()-2));
+				//设置直属公司
+				authenticationDto.setDirectCompanyDto(companyList.get(companyList.size()-1));
+				//设置顶级公司
+				authenticationDto.setTopCompanyDto(companyList.get(0));
+				//顶级公司也可以如下设置
+				//authenticationDto.setTopCompanyDto(topOrgnazationDto);
+			}else if(orgnazationDto.getType().equals("group")){
+				//设置项目
+				authenticationDto.setGroupDto(orgnazationDto);
+				//设置直属公司
+				authenticationDto.setDirectCompanyDto(companyList.get(companyList.size()-1));
+				//设置顶级公司
+				authenticationDto.setTopCompanyDto(companyList.get(0));
+			}else if(orgnazationDto.getType().equals("dept")){
+				//设置直属部门
+				authenticationDto.setDirectDeptDto(orgnazationDto);
+				//设置顶级部门
+				authenticationDto.setTopDeptDto(deptList.get(0));
+				//设置直属公司
+				authenticationDto.setDirectCompanyDto(companyList.get(companyList.size()-1));
+				//设置顶级公司
+				authenticationDto.setTopCompanyDto(companyList.get(0));
+			}else if(orgnazationDto.getType().equals("company")){
+				//设置直属公司
+				authenticationDto.setDirectCompanyDto(orgnazationDto);
+				//设置顶级公司
+				authenticationDto.setTopCompanyDto(topOrgnazationDto);
+			}else if(orgnazationDto.getType().equals("zb")){
+				//设置直属公司
+				authenticationDto.setDirectCompanyDto(orgnazationDto);
+				//设置顶级公司
+				authenticationDto.setTopCompanyDto(topOrgnazationDto);
+			}
+		}
+		return authenticationDto;
+	}
+	
+	/**
+	 *  根据岗位Id获取userDto
+	 * @return
+	 */
+	@Override
+	public Map<String, Object> getUserListByPostIds(Map<String, Object> paramater) throws Exception {
+		String[] postIds = paramater.get("postIds").toString().split(",");
+		Map<String,Object> res=new HashMap<String,Object>();
+		for (int i = 0; i < postIds.length; i++) {
+			Map<String,Object> mapCon=new HashMap<String,Object>();
+			mapCon.put("postId", postIds[i]);
+			List<UserDto> listUserDto = this.queryUserListByPostId(mapCon);
+			res.put(postIds[i],listUserDto);
+		}
+		return res;
+	}
+	/**
+	 *  根据标准岗位Id和组织机构id（项目、公司、集团）获取userDto
+	 * @return
+	 */
+	@Override
+	public Map<String, Object> getUserListByStandardpostIdAndOrgIds(Map<String, Object> paramater) throws Exception {
+		Map<String,Object> res=new HashMap<String,Object>();
+		Map<String,Object> mapCon=new HashMap<String,Object>();
+		mapCon.put("standardpostId", paramater.get("standardpostId").toString());
+		List<UserDto> listUserDto = new ArrayList<UserDto>();
+		//首先查分期ID
+		if(paramater.containsKey("branchId") && paramater.get("branchId")!=null && !StringUtils.isBlank(paramater.get("branchId").toString())){
+			mapCon.put("orgId", paramater.get("branchId").toString());
+			listUserDto = userDao.getUserListByStandardpostIdAndOrgIds(mapCon);
+			//分期为空，查项目ID
+			if(null == listUserDto || listUserDto.size() == 0){
+				if(paramater.containsKey("groupId") && paramater.get("groupId")!=null && !StringUtils.isBlank(paramater.get("groupId").toString())){
+					mapCon.put("orgId", paramater.get("groupId").toString());
+					listUserDto = userDao.getUserListByStandardpostIdAndOrgIds(mapCon);
+					//项目为空，查公司ID
+					if(null == listUserDto || listUserDto.size() == 0){
+						if(paramater.containsKey("companyId") && paramater.get("companyId")!=null && !StringUtils.isBlank(paramater.get("companyId").toString())){
+							mapCon.put("orgId", paramater.get("companyId").toString());
+//							listUserDto = userDao.getUserListByStandardpostIdAndOrgIds(mapCon);
+							listUserDto = userDao.getUserListByStandardpostIdAndOrgIdsUnder(mapCon);
+							//公司为空，查集团ID
+							if(null == listUserDto || listUserDto.size() == 0){
+								if(paramater.containsKey("zbId") && paramater.get("zbId")!=null && !StringUtils.isBlank(paramater.get("zbId").toString())){
+									mapCon.put("orgId", paramater.get("zbId").toString());
+//									listUserDto = userDao.getUserListByStandardpostIdAndOrgIds(mapCon);
+									listUserDto = userDao.getUserListByStandardpostIdAndOrgIdsUnder(mapCon);
+									if(null == listUserDto || listUserDto.size() == 0){
+										res.put(paramater.get("standardpostId").toString(),listUserDto);
+									}else{
+										res.put(paramater.get("standardpostId").toString(),listUserDto);
+									}
+								}
+							}else{
+								res.put(paramater.get("standardpostId").toString(),listUserDto);
+							}
+						}
+					}else{
+						res.put(paramater.get("standardpostId").toString(),listUserDto);
+					}
+				}
+			}else{
+				res.put(paramater.get("standardpostId").toString(),listUserDto);
+			}
+			
+		}
+		
+		return res;
+	}
+	
+	/**
+	 * 获取指定组织下的人员
+	 * @return
+	 */
+	@Override
+	public Map<String,Object> getUserListByOrgId(Map<String, Object> param) throws Exception {
+		String[] orgIds=param.get("orgIds").toString().split(",");
+		Boolean isLeaf=(Boolean)param.get("isLeaf");
+		//查询出来所有组织机构
+		List<Orgnazation> list_org  = orgnazationService.queryAllOrgListReturnOrg();
+
+		Map<String,Object> map = new HashMap<String,Object>();
+		//查询出来所有人
+		List<UserDto> list_user  = this.queryAllUserListReturnUser(map);
+		
+		Map<String,Object> res=new HashMap<String,Object>();
+		if(isLeaf){//包含下级
+			for (int i = 0; i < orgIds.length; i++) {
+				Orgnazation orgnazation =  orgnazationService.getObjectById(orgIds[i]);
+				//包含下级组织机构的list
+				List<Orgnazation> list_result = new ArrayList<Orgnazation>();
+				//返回的人员List
+				List<UserDto> listUserDto = new ArrayList<UserDto>();
+				if(null!=orgnazation){
+					list_result.add(orgnazation);
+					list_result = getOrgList(list_result,orgnazation,list_org);
+				}
+				for(Orgnazation o:list_result){
+					for(UserDto u:list_user){
+						if(u.getBelongOrgId().equals(o.getId())){
+							listUserDto.add(u);
+						}
+					}
+				}
+				res.put(orgIds[i],listUserDto);
+			}
+		}else{//不包含下级
+			for (int i = 0; i < orgIds.length; i++) {
+				//返回的人员List
+				List<UserDto> listUserDto = new ArrayList<UserDto>();
+				for(UserDto u:list_user){
+					if(u.getBelongOrgId().equals(orgIds[i])){
+						listUserDto.add(u);
+					}
+				}
+				res.put(orgIds[i],listUserDto);
+			}
+		}
+		return res;
+	}
+	
+	/**
+	 * 递归查询组织结构子节点
+	 * @param orgnazationNodeDto
+	 * @return
+	 */
+	public List<Orgnazation> getOrgList(List<Orgnazation> list_result , Orgnazation orgnazation,List<Orgnazation> list_org) throws Exception{
+		List<Orgnazation> list1  = queryOrgChildNodeReturnOrg(orgnazation.getId(),list_org);
+		list_result.addAll(list1);
+		if(list1!=null && list1.size()>0){
+			for(Orgnazation orgnazation1:list1){
+				getOrgList(list_result,orgnazation1,list_org);
+			}
+		}else{
+			return list_result;
+		}
+		return list_result;
+	}
+
+	//查询组织结构子节点（代替从数据库中进行查询）
+	public List<Orgnazation> queryOrgChildNodeReturnOrg(String parentId,List<Orgnazation> list_org){
+		List<Orgnazation> listOrgChildNode = new ArrayList<Orgnazation>();
+		for(Orgnazation orgNodeDto:list_org){
+			if(parentId.equals(orgNodeDto.getParentId())){
+				listOrgChildNode.add(orgNodeDto);
+			}
+		}
+		return listOrgChildNode;
+	}
+	
+	/**
+	 * 根据角色id获取用户
+	 * @return
+	 */
+	public Map<String, Object> getUserListByRoleIds(Map<String, Object> paramater) throws Exception {
+		String[] roleIds = paramater.get("roleIds").toString().split(",");
+		Map<String,Object> res=new HashMap<String,Object>();
+		for (int i = 0; i < roleIds.length; i++) {
+			Map<String,Object> mapCon=new HashMap<String,Object>();
+			mapCon.put("roleId", roleIds[i]);
+			List<UserDto> listUserDto = this.queryUserListByRoleId(mapCon);
+			res.put(roleIds[i],listUserDto);
+		}
+		return res;
+	}
+	/**
+	 *根据搜索条件查询用户及其岗位
+	 * @param userInfo
+	 * @return
+	 */
+	@Override
+	public List<Map<String, Object>> queryUserAndPostsByUname(Map<String, Object> paramater) throws Exception {
+		if(paramater.get("uType")!=null && paramater.get("uType").equals("belongOrg")){
+			return	userDao.queryUserAndBeLongOrgsByUname(paramater);
+		}else{
+			return userDao.queryUserAndPostsByUname(paramater);
+		}
+	}
+
+	@Override
+	public String resetPassword(String sign ,String password,String loginName) throws Exception {
+		try {
+			//重置全部用户密码
+			if(sign.equals("1")){
+				Map map = new HashMap<>();
+				map.put("sidx", "id");
+				map.put("sord", "desc");
+				List<User> userList = userDao.queryList(map);
+				for(User user : userList){
+					user.setPassword(EncryptionUtils.getEncryptInfo(user.getLoginName(),password));
+					userDao.update(user);
+				}
+			}else if(sign.equals("0")){
+				//重置单个用户密码
+				Map map = new HashMap<>();
+				map.put("loginName", loginName);
+				
+				List<User> userList = userDao.queryList(map);
+				for(User user : userList){
+					user.setPassword(EncryptionUtils.getEncryptInfo(user.getLoginName(),password));
+					userDao.update(user);
+				}
+			}
+
+			return "重置成功";
+		} catch (Exception e) {
+			return "重置失败";
+		}
+	}
+	/**
+	 * 获取多个人员岗位id
+	 * @param paramater
+	 * @return
+	 */
+	@Override
+	public List<String> selectPuIds(Map<String, Object> paramater)throws Exception{
+		return userDao.selectPuIds(paramater);
+	}
+	/**
+	 * 获取多个人员
+	 * @param paramater
+	 * @return
+	 */
+	@Override
+	public List<Map<String, String>> queryPostUsersByIds(Map<String, Object> paramater)throws Exception{
+		return userDao.queryPostUsersByIds(paramater);
+	}
+	/**
+	 * 根据条件查询用户
+	 * @param paramater
+	 * @return
+	 */
+	@Override
+	public List<UserDto> selectUserByQuery(Map<String, Object> paramater)throws Exception{
+		return userDao.selectUserByQuery(paramater);
+	}
+	/**
+	 * 除去物业的人集合
+	 * @param paramater
+	 * @return
+	 */
+	@Override
+	public List<User> queryListOutWuye(Map<String, Object> paramater)throws Exception{
+		return userDao.queryListOutWuye(paramater);
+	}
+	/**
+	 * 更改用户密码按组织机构进行查询
+	 * @param paramater
+	 * @return
+	 */
+	@Override
+	public List<User> queryListUpdatePwdUserByOrgId(Map<String, Object> paramater)throws Exception{
+		return userDao.queryListUpdatePwdUserByOrgId(paramater);
+	}
+	
+	/**
+	 * 根据条件查询用户
+	 * @param paramater
+	 * @return
+	 */
+	public Page selectUserByQueryPage(Map<String, Object> map)throws Exception{
+		List<UserDto> list = userDao.selectUserByQuery(map);
+		Integer count  = userDao.selectUserByQueryCount(map);
+		Page page=new Page();
+		page.setList(list);
+		page.setLimit((Integer) map.get("limit"));
+		page.setStart((Integer) map.get("start"));
+		page.setTotal(count);
+		return page;
+	}
+
+/**
+	 * 修改密码，并同时修改ad密码 和邮箱密码
+	 * @param user
+	 * @param pwd
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	@Transactional(readOnly=false,rollbackFor=Exception.class, propagation = Propagation.REQUIRED)
+	public int updateAndAd(User user,String pwd)  throws Exception{
+		if (StringUtils.isNotBlank(pwd)){
+			EndecryptUtil test = new EndecryptUtil();
+			String reValue = test.get3DESEncrypt(pwd, user.getId());
+			user.setEmailPwd(reValue);
+		}
+		int result = userDao.update(user);
+		SecurityUserBeanInfo loginUser=LoginUtils.getSecurityUserBeanInfo();
+		String tendCode=loginUser.getTendCode();
+		log.info(String.format("updateAndAd.1>>loginName=[%s],pwd=[%s],tendCode=[%s]", user.getLoginName(),pwd,tendCode));
+		if(result>0 && StringUtils.isNotBlank(pwd) && "test_test009".equals(tendCode)){
+//		if(result>0 && StringUtils.isNotBlank(pwd) ){
+			try {
+				//验证用户是否存在
+				MessageResult mResult =AdAuthenticationUtil.authenticateIsExist(user.getLoginName());
+				log.info(String.format("updateAndAd.2>>ifAdUser=[%s],msg=[%s]", mResult.isSuccess(),mResult.getMsg()));
+				if(mResult.isSuccess()){
+						//修改AD密码
+						MessageResult messageResult = AdAuthenticationUtil.adminChangePassword(user.getLoginName(), pwd);
+						log.info(String.format("updateAndAd.3>>upPwd=[%s],msg=[%s]", messageResult.isSuccess(),messageResult.getMsg()));
+						if(!messageResult.isSuccess()){//如果AD没有修改成功，回滚
+							throw new InvalidCustomException(messageResult.getMsg());
+						}
+				}
+			} catch (Exception e) {
+				log.info("updateAndAd.4>>"+e.getMessage());
+				throw new InvalidCustomException("修改AD密码失败");
+			}
+		}
+		return result;
+	}
+	/**
+	 * 新增，并同时修改ad密码
+	 * @param user
+	 * @param pwd
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	@Transactional(readOnly=false,rollbackFor=Exception.class, propagation = Propagation.REQUIRED)
+	public int saveAndAd(User user,String pwd)  throws Exception{
+		if (StringUtils.isNotBlank(pwd)){
+			EndecryptUtil test = new EndecryptUtil();
+			String reValue = test.get3DESEncrypt(pwd, user.getId());
+			user.setEmailPwd(reValue);
+		}
+		int result = userDao.save(user);
+		SecurityUserBeanInfo loginUser=LoginUtils.getSecurityUserBeanInfo();
+		String tendCode=loginUser.getTendCode();
+		log.info(String.format("saveAndAd.1>>loginName=[%s],pwd=[%s],tendCode=[%s]", user.getLoginName(),pwd,tendCode));
+		if(result>0 && StringUtils.isNotBlank(pwd) && "test_test009".equals(tendCode)){
+//		if(result>0 && StringUtils.isNotBlank(pwd)){
+			try {
+				//验证用户是否存在
+				MessageResult mResult =AdAuthenticationUtil.authenticateIsExist(user.getLoginName());
+				log.info(String.format("saveAndAd.2>>ifAdUser=[%s],msg=[%s]", mResult.isSuccess(),mResult.getMsg()));
+				if(mResult.isSuccess()){					
+						//修改AD密码
+						MessageResult messageResult = AdAuthenticationUtil.adminChangePassword(user.getLoginName(), pwd);
+						log.info(String.format("saveAndAd.3>>upPwd=[%s],msg=[%s]", messageResult.isSuccess(),messageResult.getMsg()));
+						if(!messageResult.isSuccess()){//如果AD没有修改成功，回滚
+							throw new InvalidCustomException(messageResult.getMsg());
+						}
+					
+				}
+			} catch (Exception e) {
+				log.info("saveAndAd.4>>"+e.getMessage());
+				throw new InvalidCustomException("修改AD密码失败");
+			}
+		}
+		return result;
+	}
+	/**
+	 * 读excel并插入db，校验数据的合法性，插入数据库，并返回结果
+	 * add by gyh 2018-1-12
+	 * @param list:读取excel组织数据
+	 */
+	@Override
+	public Map<String,Object> readExcelAndInsert(List<UserDto> list)throws Exception{
+		//合法数据
+		List<UserDto> rightList = new ArrayList<>(list.size());
+		//非法数据：用户名、账号、密码、所属组织、手机、邮箱为空
+		List<UserDto> wrongBlankList = new ArrayList<>();
+		//非法数据：输入项不合法（字段长度不在范围内，或密码邮箱不符合校验规则）
+		List<UserDto> wrongCheckList = new ArrayList<>();
+		//非法数据：账号重复
+		List<UserDto> wrongLoginNameList = new ArrayList<>();
+		//非法数据：所属组织不存在或所属组织编码存在多条数据
+		List<UserDto> wrongParentList = new ArrayList<>();
+		//需要查询数据库的组织orgCodes
+		Set<String> orgCodes = new HashSet<>();
+		//需要查询数据库的账号
+		Set<String> loginNames = new HashSet<>();
+		for (int i = 0; i <list.size() ; i++) {
+			UserDto user = list.get(i);
+			//用户名为空
+			if(StringUtils.isBlank(user.getRealName())){
+				wrongBlankList.add(user);
+				continue;
+			}
+			//长度校验
+			if(user.getRealName().length() > 64){
+				wrongCheckList.add(user);
+				continue;
+			}
+			//账号为空
+			if(StringUtils.isBlank(user.getLoginName())){
+				wrongBlankList.add(user);
+				continue;
+			}
+			//长度校验
+			if(user.getLoginName().length() > 128){
+				wrongCheckList.add(user);
+				continue;
+			}
+			//账号重复
+			if(!loginNames.add(user.getLoginName())){
+				wrongLoginNameList.add(user);
+				continue;
+			}
+			//密码为空
+			if(StringUtils.isBlank(user.getPassword())){
+				wrongBlankList.add(user);
+				continue;
+			}
+			//长度校验
+			if(user.getPassword().length() > 50 || user.getPassword().length() < 6){
+				wrongCheckList.add(user);
+				continue;
+			}
+			//所属组织为空
+			if(StringUtils.isBlank(user.getBelongOrgId())){
+				wrongBlankList.add(user);
+				continue;
+			}
+			//手机号为空
+			if(StringUtils.isBlank(user.getMobile())){
+				wrongBlankList.add(user);
+				continue;
+			}
+			//手机号校验
+			if(!MyChecker.isPhoneNo(user.getMobile())){
+				wrongCheckList.add(user);
+				continue;
+			}
+			//邮箱为空
+			if(StringUtils.isBlank(user.getEmail())){
+				wrongBlankList.add(user);
+				continue;
+			}
+			//邮箱校验
+			if(!MyChecker.isEmail(user.getEmail())){
+				wrongCheckList.add(user);
+				continue;
+			}
+			//校验微信号长度
+			if(StringUtils.isBlank(user.getWeChat()) && user.getWeChat().length() > 50){
+				wrongBlankList.add(user);
+				continue;
+			}
+			//校验remark长度
+			if(StringUtils.isBlank(user.getRemark()) && user.getRemark().length() > 2000){
+				wrongBlankList.add(user);
+				continue;
+			}
+			rightList.add(user);
+			orgCodes.add(user.getBelongOrgId());
+		}
+		Map<String,Object> dbParam = new HashMap<>();
+		//校验账号，去除已存在的账号
+		if(loginNames.size()>0){
+			dbParam.put("loginNames",loginNames);
+			List<String> dbLoginNames = userDao.selectHaveLoginName(dbParam);
+			for (int i = 0; i <rightList.size() ; i++) {
+				UserDto user = rightList.get(i);
+				if(dbLoginNames.indexOf(user.getLoginName()) >= 0){
+					wrongLoginNameList.add(user);
+					continue;
+				}
+			}
+			rightList.removeAll(wrongLoginNameList);
+		}
+		//校验组织，去掉所属组织不存在的和所属组织多条的用户
+		if(orgCodes.size()>0){
+			dbParam.put("orgCodes",orgCodes);
+			//合法的组织code<->id
+			Map<String,String> rightCodeIds = new HashMap<>();
+			List<Map<String,Object>> dbOrgCodes = userDao.selectHaveOrgCode(dbParam);
+			for (int i = 0; i <dbOrgCodes.size() ; i++) {
+				Map<String,Object> dbOrg = dbOrgCodes.get(i);
+				if(Integer.valueOf(dbOrg.get("count").toString()) == 1){
+					rightCodeIds.put(dbOrg.get("code").toString(),dbOrg.get("id").toString());
+				}
+			}
+			String belongOrgCode = null;
+			String belongOrgId = null;
+			String id = null;
+			for (int i = 0; i < rightList.size(); i++) {
+				UserDto user = rightList.get(i);
+				belongOrgCode = user.getBelongOrgId();
+				belongOrgId = rightCodeIds.get(belongOrgCode);
+				if(belongOrgId != null){
+					user.setBelongOrgId(belongOrgId);
+					String loginName = user.getLoginName();
+					loginName = loginName.replaceAll("\\\\", "\\\\\\\\");
+					loginName = loginName.replaceAll("\'", "\\\\'");
+					String pwd = EncryptionUtils.getEncryptInfo(loginName,user.getPassword());
+					user.setPassword(pwd);
+					user.setId(IDGenerator.getUUID());
+				}else{
+					wrongParentList.add(user);
+				}
+			}
+			rightList.removeAll(wrongParentList);
+		}
+		Integer insertCount = 0;
+		if(rightList.size() > 0){
+			SecurityUserDto loginUser = LoginUtils.getSecurityUserBeanInfo().getSecurityUserDto();
+			dbParam.put("users",rightList);
+			dbParam.put("loginUserId",loginUser.getId());
+			dbParam.put("loginUserName",loginUser.getRealName());
+			dbParam.put("createDate",new Date());
+			insertCount = userDao.insertExcelData(dbParam);
+		}
+		Map<String,Object> resMap = new HashMap<>();
+		resMap.put("insertCount",insertCount);
+		if(insertCount<=200){
+			resMap.put("right",rightList);
+		}
+		resMap.put("wrongBlank",wrongBlankList);
+		resMap.put("wrongCheck",wrongCheckList);
+		resMap.put("wrongLoginName",wrongLoginNameList);
+		resMap.put("wrongBelongOrg",wrongParentList);
+		return resMap;
+	}
+	@Override
+	public int lockUsersOrNot(Map<String, Object> param)throws Exception{
+		/*List<String> userIds = (ArrayList)param.get("userIds");
+		String status = param.get("status").toString();
+*/
+		return userDao.lockUsersOrNot(param);
+	}
+}

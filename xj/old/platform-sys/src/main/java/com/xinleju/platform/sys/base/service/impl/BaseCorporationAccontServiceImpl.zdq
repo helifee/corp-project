@@ -1,0 +1,43 @@
+package com.xinleju.platform.sys.base.service.impl;
+
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.sys.base.dao.BaseCorporationAccontDao;
+import com.xinleju.platform.sys.base.dto.BaseCorporationAccontDto;
+import com.xinleju.platform.sys.base.entity.BaseCorporationAccont;
+import com.xinleju.platform.sys.base.service.BaseCorporationAccontService;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class BaseCorporationAccontServiceImpl extends  BaseServiceImpl<String,BaseCorporationAccont> implements BaseCorporationAccontService{
+	
+
+	@Autowired
+	private BaseCorporationAccontDao baseCorporationAccontDao;
+
+	@Override
+	public List<Map<String,Object>> getBaseCorporationAccontByCorporationId(
+			String id) {
+		return baseCorporationAccontDao.getBaseCorporationAccontByCorporationId(id);
+		
+	}
+
+	@Override
+	public List<BaseCorporationAccont> getBaseCorporationAccontListByCorporationId(
+			String id) {
+		return baseCorporationAccontDao.getBaseCorporationAccontListByCorporationId(id);
+	}
+	
+
+}

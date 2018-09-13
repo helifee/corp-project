@@ -1,0 +1,1847 @@
+package com.jzy.hio.oa.meeting.service.impl;
+
+import java.io.BufferedInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.sql.Timestamp;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.log4j.Logger;
+import org.csource.common.NameValuePair;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.base.utils.AttachmentDto;
+import com.jzy.hio.base.utils.DubboServiceResultInfo;
+import com.jzy.hio.base.utils.FastDFSClient;
+import com.jzy.hio.base.utils.IDGenerator;
+import com.jzy.hio.base.utils.LoginUtils;
+import com.jzy.tools.data.JacksonUtils;
+import com.jzy.hio.base.utils.Page;
+import com.jzy.hio.base.utils.SecurityOrganizationDto;
+import com.jzy.hio.base.utils.SecurityUserBeanInfo;
+import com.jzy.hio.base.utils.ThreadPoolUtil;
+import com.jzy.hio.feign.FlowFeignService;
+import com.jzy.hio.feign.SearchFeignService;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.feign.dto.UserDto;
+import com.jzy.hio.feign.dto.flow.SysNoticeMsgDto;
+import com.jzy.hio.oa.content.entity.ContentRowType;
+import com.jzy.hio.oa.content.service.ContentRowTypeService;
+import com.jzy.hio.oa.meeting.dto.MeetingAgendaDto;
+import com.jzy.hio.oa.meeting.dto.MeetingDto;
+import com.jzy.hio.oa.meeting.entity.Meeting;
+import com.jzy.hio.oa.meeting.entity.MeetingAgenda;
+import com.jzy.hio.oa.meeting.entity.MeetingPartner;
+import com.jzy.hio.oa.meeting.entity.MeetingReply;
+import com.jzy.hio.oa.meeting.mapper.MeetingAgendaDao;
+import com.jzy.hio.oa.meeting.mapper.MeetingDao;
+import com.jzy.hio.oa.meeting.mapper.MeetingPartnerDao;
+import com.jzy.hio.oa.meeting.mapper.MeetingReplyDao;
+import com.jzy.hio.oa.meeting.service.MeetingAgendaService;
+import com.jzy.hio.oa.meeting.service.MeetingPartnerService;
+import com.jzy.hio.oa.meeting.service.MeetingReplyService;
+import com.jzy.hio.oa.meeting.service.MeetingService;
+import com.jzy.hio.oa.meeting.service.MeetingSummaryService;
+import com.jzy.hio.oa.meeting.utils.MeetingStatusType;
+import com.jzy.hio.oa.meeting.utils.UserIdentifiy;
+import com.jzy.hio.oa.schedule.entity.WorkSchedule;
+import com.jzy.hio.oa.schedule.service.WorkScheduleService;
+
+
+/**
+ * @author wangw
+ * 
+ * 
+ */
+
+@Service
+public class MeetingServiceImpl extends BaseServiceImpl<String, Meeting> implements MeetingService {
+	private static Logger log = Logger.getLogger(MeetingServiceImpl.class);
+
+	@Autowired
+	private MeetingDao meetingDao;
+	@Autowired
+	private MeetingAgendaDao meetingAgendaDao;
+
+	@Autowired
+	private MeetingPartnerDao meetingPartnerDao;
+	@Autowired
+	private MeetingReplyDao meetingReployDao;
+	@Autowired
+	private MeetingAgendaService meetingAgendaService;
+	
+	@Autowired
+	private SysFeignService sysFeignService;
+	
+	@Autowired
+	private FlowFeignService flowFeignService;
+	
+	@Autowired
+	private SearchFeignService searchFeignService;
+
+//	@Autowired
+//	private MailMsgDtoServiceCustomer mailMsgDtoServiceCustomer;
+//	@Autowired
+//	private SysNoticePhoneMsgDtoServiceCustomer sysNoticePhoneMsgDtoServiceCustomer;
+//	@Autowired
+//	private SysNoticeMsgService sysNoticeMsgDtoServiceCustomer;
+//	@Autowired
+//	private UserDtoServiceCustomer userDtoServiceCustomer;
+	@Autowired
+	private MeetingPartnerService meetingPartnerService;
+	@Autowired
+	private MeetingReplyService meetingReployService;
+	@Autowired
+	private MeetingSummaryService meetingSummaryService;
+	@Autowired
+	private WorkScheduleService workScheduleService;
+	@Autowired
+	private ContentRowTypeService contentRowTypeService;
+
+	private ExecutorService pool = ThreadPoolUtil.getInstance();
+	
+	// @Value("#{configuration['attachmentUrl']}")
+	 private String attachmentUrl = "C://attachmentFiles";
+
+	/**
+	 * 待发会议列表
+	 * 
+	 * @param map
+	 * @return
+	 */
+	@Override
+	public List getWaitSendPage(Map map) {
+		return meetingDao.getWaitSendPage(map);
+	}
+
+	/**
+	 * 待开会议列表
+	 * 
+	 * @param map
+	 * @return
+	 */
+	@Override
+	public List getWaitBeginPage(Map map) {
+		return meetingDao.getWaitBeginPage(map);
+	}
+
+	/**
+	 * 已开会议列表
+	 * 
+	 * @return
+	 */
+	@Override
+	public List getOpenPage(Map map) {
+		return meetingDao.getOpenPage(map);
+	}
+
+	@Override
+	public Page getMeetingByPage(Map map) throws Exception {
+		// TODO Auto-generated method stub
+		Page page = new Page();
+		List<Map<String, Object>> list = meetingDao.getMeetingPage(map);
+		if (list.size() > 0) {
+			SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");// 设置日期格式
+			String currentTime = df.format(new Date());// new Date()为获取当前系统时间
+			for (Map<String, Object> mapMeeting : list) {
+				if (mapMeeting.get("flowStatus") != null
+						&& (mapMeeting.get("flowStatus").equals(MeetingStatusType.RUNNING.getCode()) || mapMeeting.get("flowStatus").equals(MeetingStatusType.HANGUP.getCode()))) {
+					mapMeeting.put("status", MeetingStatusType.RUNNING.getCode());
+				} else if (mapMeeting.get("flowStatus") != null && (mapMeeting.get("flowStatus").equals(MeetingStatusType.WITHDRAW.getCode())
+						|| mapMeeting.get("flowStatus").equals(MeetingStatusType.REJECT.getCode()) || mapMeeting.get("flowStatus").equals(MeetingStatusType.CANCEL.getCode()))) {
+					mapMeeting.put("status", MeetingStatusType.DRAFT.getCode());
+				} else if (mapMeeting.get("flowStatus") != null && (mapMeeting.get("flowStatus").equals(MeetingStatusType.DRAFT.getCode()))) {
+					mapMeeting.put("status", MeetingStatusType.DRAFT.getCode());
+				} else if (mapMeeting.get("flowStatus") != null && (mapMeeting.get("flowStatus").equals(MeetingStatusType.FINISHED.getCode()))) {
+					if (mapMeeting.get("status") != null && ("11".equals(mapMeeting.get("status")) || "10".equals(mapMeeting.get("status")))) {
+						continue;
+					}
+					String beginData = mapMeeting.get("beginTime").toString();// 开始时间
+					String endData = mapMeeting.get("endTime").toString();// 结束时间
+					if (df.parse(beginData).getTime() > df.parse(currentTime).getTime()) {
+						mapMeeting.put("status", MeetingStatusType.NOTBEGIN.getCode());
+					} else if (df.parse(beginData).getTime() < df.parse(currentTime).getTime() && df.parse(endData).getTime() > df.parse(currentTime).getTime()) {
+						mapMeeting.put("status", MeetingStatusType.HAVEING.getCode());
+					} else if (df.parse(endData).getTime() < df.parse(currentTime).getTime()) {
+						mapMeeting.put("status", MeetingStatusType.ISOVER.getCode());
+					}
+				}
+
+			}
+		}
+
+		Integer count = meetingDao.getMeetingCount(map);
+		page.setLimit((Integer) map.get("limit"));
+		page.setList(list);
+		page.setStart((Integer) map.get("start"));
+		page.setTotal(count);
+		return page;
+	}
+
+	@Override
+	public List getAllMeetingPage(Map map) {
+		// TODO Auto-generated method stub
+		return meetingDao.getAllMeetingPage(map);
+	}
+
+	@Override
+	public int saveMeetingAndUser(String userInfo, String saveJson) {
+		MeetingDto meetingDto = JacksonUtils.fromJson(saveJson, MeetingDto.class);
+		int result = 0;
+		if (meetingDto.getChangeMeetingId() != null && !"".equals(meetingDto.getChangeMeetingId())) {
+
+			result = changeMeetingAndUser(userInfo, saveJson);
+		} else {
+			result = saveMeetingInfo(userInfo, saveJson);
+		}
+		return result;
+	}
+
+	public int saveMeetingInfo(String userInfo, String saveJson) {
+		MeetingDto meetingDto = JacksonUtils.fromJson(saveJson, MeetingDto.class);
+		Meeting meeting = new Meeting();
+		BeanUtils.copyProperties(meetingDto, meeting);
+
+		SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");// 设置日期格式
+		String currentTime = df.format(new Date());// new Date()为获取当前系统时间
+		meeting.setBeginDate(currentTime);
+		meeting.setEndDate(currentTime);
+		if (meeting.getBeginTime() == null || "".equals(meeting.getBeginTime())) {
+			meeting.setBeginTime(currentTime);
+		}
+		if (meeting.getEndTime() == null || "".equals(meeting.getEndTime())) {
+			meeting.setEndTime(currentTime);
+		}
+		meeting.setStatus(MeetingStatusType.DRAFT.getCode());
+		if (meetingDto.getConclusion() != null && !"".equals(meetingDto.getConclusion()) && "sj".equals(meetingDto.getConclusion())) {
+			meeting.setStatus(MeetingStatusType.NOTBEGIN.getCode());
+			meeting.setFlowStatus(MeetingStatusType.FINISHED.getCode());
+		} else {
+			meeting.setFlowStatus(MeetingStatusType.DRAFT.getCode());
+			// 直接发起流程审批，会议状态为审批中
+			meeting.setStatus(MeetingStatusType.RUNNING.getCode());
+		}
+		if (meetingDto.getChangeMeetingId() != null && !"".equals(meetingDto.getChangeMeetingId())) {
+			Meeting changeMeeting = meetingDao.selectByPrimaryKey(meetingDto.getChangeMeetingId());
+			int newChangeMeeting = 0;
+			if (changeMeeting.getChangeNumber() != 0) {
+				newChangeMeeting = changeMeeting.getChangeNumber() + 1;
+			} else {
+				newChangeMeeting = 1;
+			}
+			meeting.setChangeNumber(newChangeMeeting);
+		}
+		int result = meetingDao.insertSelective(meeting);
+
+		// 保存完会议信息之后，保存会议议程信息
+		List<MeetingAgendaDto> list = meetingDto.getList();
+		if (list != null && list.size() > 0) {
+			List<MeetingAgenda> meetingAgendalist = new ArrayList<MeetingAgenda>();
+			// 循环dto对象 拿到list子表 把子表dto转化为实体对象 然后封装到list集合里面
+			for (MeetingAgendaDto meetingAgendaDto : list) {
+				MeetingAgenda meetingAgenda = new MeetingAgenda();
+				BeanUtils.copyProperties(meetingAgendaDto, meetingAgenda);
+				meetingAgenda.setId(IDGenerator.getUUID());
+				meetingAgendalist.add(meetingAgenda);
+			}
+			// 批量保存
+			int number1 = meetingAgendaDao.insertList(meetingAgendalist);
+		}
+
+		String flag = "create";
+		if (meetingDto.getCreateUserId() != null && !"".equals(meetingDto.getCreateUserId())) {
+			saveMeetingPartner(userInfo, meeting, meetingDto.getCreateUserId(), "创建人");
+		}
+		if (meetingDto.getEmceeId() != null && !"".equals(meetingDto.getEmceeId())) {
+			saveMeetingPartner(userInfo, meeting, meetingDto.getEmceeId(), "主持人");
+		}
+		if (meetingDto.getRecorderId() != null && !"".equals(meetingDto.getRecorderId())) {
+			saveMeetingPartner(userInfo, meeting, meetingDto.getRecorderId(), "记录人");
+		}
+		if (meetingDto.getMeetingOrganizationId() != null && !"".equals(meetingDto.getMeetingOrganizationId())) {
+			saveMeetingPartner(userInfo, meeting, meetingDto.getMeetingOrganizationId(), "会议组织人");
+		}
+		if (meetingDto.getAttendees() != null && !"".equals(meetingDto.getAttendees())) {
+			saveMeetingPartner(userInfo, meeting, meetingDto.getAttendees(), "与会人");
+		}
+		if (meetingDto.getCopySendId() != null && !"".equals(meetingDto.getCopySendId())) {
+			saveMeetingPartner(userInfo, meeting, meetingDto.getCopySendId(), "抄送人");
+
+		}
+		if (meetingDto.getOtherReadersId() != null && !"".equals(meetingDto.getOtherReadersId())) {
+			saveMeetingPartner(userInfo, meeting, meetingDto.getOtherReadersId(), "其他可阅读者");
+		}
+
+		// 如果在新增页面是直接审批，则要发代办待阅通知
+		if (meetingDto.getConclusion() != null && !"".equals(meetingDto.getConclusion()) && "sj".equals(meetingDto.getConclusion())) {
+			startNotice(userInfo, meeting, MeetingStatusType.FINISHED.getCode());
+			// 保存日程信息
+			// startWorkSchedule(userInfo,meeting,MeetingStatusType.FINISHED.getCode());
+		}
+
+		return result;
+	}
+
+	public int changeMeetingAndUser(String userInfo, String saveJson) {
+		MeetingDto meetingDto = JacksonUtils.fromJson(saveJson, MeetingDto.class);
+		Meeting meeting = new Meeting();
+		BeanUtils.copyProperties(meetingDto, meeting);
+		SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");// 设置日期格式
+		String currentTime = df.format(new Date());// new Date()为获取当前系统时间
+		meeting.setBeginDate(currentTime);
+		meeting.setEndDate(currentTime);
+		if (meeting.getBeginTime() == null || "".equals(meeting.getBeginTime())) {
+			meeting.setBeginTime(currentTime);
+		}
+		if (meeting.getEndTime() == null || "".equals(meeting.getEndTime())) {
+			meeting.setEndTime(currentTime);
+		}
+
+		if (meetingDto.getConclusion() != null && !"".equals(meetingDto.getConclusion()) && "sj".equals(meetingDto.getConclusion())) {
+			meeting.setStatus(MeetingStatusType.NOTBEGIN.getCode());
+			meeting.setFlowStatus(MeetingStatusType.FINISHED.getCode());
+		} else {
+			meeting.setStatus(MeetingStatusType.RUNNING.getCode());
+			meeting.setFlowStatus(MeetingStatusType.DRAFT.getCode());
+		}
+		if (meetingDto.getChangeMeetingId() != null && !"".equals(meetingDto.getChangeMeetingId())) {
+			Meeting changeMeeting = meetingDao.selectByPrimaryKey(meetingDto.getChangeMeetingId());
+			int newChangeMeeting = 0;
+			if (changeMeeting.getChangeNumber() != 0) {
+				newChangeMeeting = changeMeeting.getChangeNumber() + 1;
+			} else {
+				newChangeMeeting = 1;
+			}
+			meeting.setChangeNumber(newChangeMeeting);
+		}
+		int result = 0;
+
+		if (meetingDto.getChangeMeetingId() != null && !"".equals(meetingDto.getChangeMeetingId())) {// 如果不等于空，说明是会议变更，
+			try {
+				// 把该会议原来的与会人员是代办状态的直接 删除，伪删除
+				Map<String, Object> mapNoytice = new HashMap<String, Object>();
+				mapNoytice.put("businessId", meetingDto.getChangeMeetingId());
+				mapNoytice.put("opType", "DB");
+				String noticeMapJson = JacksonUtils.toJson(mapNoytice);
+				//sysNoticeMsgDtoServiceCustomer.deleteOpTypeDataByParamMap(mapNoytice);
+				flowFeignService.deleteOpTypeDataByParamMap(mapNoytice);
+				// 会议变更，变更前的记录保存，会议变更就是重新生成一条会议
+				result = meetingDao.insertSelective(meeting);
+
+				// 保存完会议信息之后，保存会议议程信息
+				List<MeetingAgendaDto> list = meetingDto.getList();
+				if (list != null && list.size() > 0) {
+					List<MeetingAgenda> meetingAgendalist = new ArrayList<MeetingAgenda>();
+					// 循环dto对象 拿到list子表 把子表dto转化为实体对象 然后封装到list集合里面
+					for (MeetingAgendaDto meetingAgendaDto : list) {
+						MeetingAgenda meetingAgenda = new MeetingAgenda();
+						BeanUtils.copyProperties(meetingAgendaDto, meetingAgenda);
+						meetingAgenda.setId(IDGenerator.getUUID());
+						meetingAgendalist.add(meetingAgenda);
+					}
+					// 批量保存
+					int number1 = meetingAgendaDao.insertList(meetingAgendalist);
+				}
+
+				String flag = "create";
+				if (meetingDto.getCreateUserId() != null && !"".equals(meetingDto.getCreateUserId())) {
+					saveMeetingPartner(userInfo, meeting, meetingDto.getCreateUserId(), "创建人");
+				}
+				if (meetingDto.getEmceeId() != null && !"".equals(meetingDto.getEmceeId())) {
+					saveMeetingPartner(userInfo, meeting, meetingDto.getEmceeId(), "主持人");
+				}
+				if (meetingDto.getRecorderId() != null && !"".equals(meetingDto.getRecorderId())) {
+					saveMeetingPartner(userInfo, meeting, meetingDto.getRecorderId(), "记录人");
+				}
+				if (meetingDto.getMeetingOrganizationId() != null && !"".equals(meetingDto.getMeetingOrganizationId())) {
+					saveMeetingPartner(userInfo, meeting, meetingDto.getMeetingOrganizationId(), "会议组织人");
+				}
+				if (meetingDto.getAttendees() != null && !"".equals(meetingDto.getAttendees())) {
+					saveMeetingPartner(userInfo, meeting, meetingDto.getAttendees(), "与会人");
+				}
+				if (meetingDto.getCopySendId() != null && !"".equals(meetingDto.getCopySendId())) {
+					saveMeetingPartner(userInfo, meeting, meetingDto.getCopySendId(), "抄送人");
+				}
+				if (meetingDto.getOtherReadersId() != null && !"".equals(meetingDto.getOtherReadersId())) {
+					saveMeetingPartner(userInfo, meeting, meetingDto.getOtherReadersId(), "其他可阅读者");
+				}
+			} catch (Exception e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+
+			// 如果是会议变更，组要执行会议变更的一系列操作
+			if (meetingDto.getChangeMeetingId() != null && !"".equals(meetingDto.getChangeMeetingId())) {
+				Map<String, Object> map = new HashMap<String, Object>();
+				map.put("meetingId", meetingDto.getChangeMeetingId());
+				map.put("flag", "change");
+				this.operationMeeting(userInfo, map);
+			}
+		}
+		// 如果在新增页面是直接审批，则要发代办待阅通知
+		if (meetingDto.getConclusion() != null && !"".equals(meetingDto.getConclusion()) && "sj".equals(meetingDto.getConclusion())) {
+			startNotice(userInfo, meeting, MeetingStatusType.FINISHED.getCode());
+			// 保存日程信息
+			// startWorkSchedule(userInfo,meeting,MeetingStatusType.FINISHED.getCode());
+		}
+
+		return result;
+		//return 0;
+	}
+
+	public void saveMeetingPartner(String userInfo, Meeting meeting, String userId, String flag) {
+		List<MeetingPartner> reployList = new ArrayList<MeetingPartner>();
+		String[] userids = userId.split(",");
+		for (String userIdTem : userids) {
+			MeetingPartner meetingPartner = new MeetingPartner();
+			meetingPartner.setId(IDGenerator.getUUID());
+			meetingPartner.setMeetingId(meeting.getId());
+			meetingPartner.setUserId(userIdTem);
+			// 根据用户id获取用户信息
+			Map<String, Object> map = new HashMap<String, Object>();
+		    map.put("userId", userIdTem);
+		    String userDtoJson = sysFeignService.selectUserInfoById(map);
+		    UserDto userDto = JacksonUtils.fromJson(userDtoJson, UserDto.class);
+			
+			//String dubboResultInfo = userDtoServiceCustomer.getObjectById(userInfo, "{\"id\":\"" + userIdTem + "\"}");
+			//DubboServiceResultInfo dubboServiceResultInfo = JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+			//if (dubboServiceResultInfo.isSucess()) {
+			//	String resultInfo = dubboServiceResultInfo.getResult();
+			//	UserDto userDto = JacksonUtils.fromJson(resultInfo, UserDto.class);
+				if (StringUtils.isNotBlank(userDto.getRealName())) {
+					meetingPartner.setUserName(userDto.getRealName());
+				} else if (StringUtils.isNotBlank(userDto.getLoginName())) {
+					meetingPartner.setUserName(userDto.getLoginName());
+				}
+
+			//}
+			// 默认与会人员参加会议
+			// meetingPartner.setJoinFlag("1");
+			if (flag.equals(UserIdentifiy.attendees.getName())) {
+				meetingPartner.setUserIdentifiy(UserIdentifiy.attendees.getCode());
+			} else if (flag.equals(UserIdentifiy.Emcee.getName())) {
+				meetingPartner.setUserIdentifiy(UserIdentifiy.Emcee.getCode());
+			} else if (flag.equals(UserIdentifiy.Recorder.getName())) {
+				meetingPartner.setUserIdentifiy(UserIdentifiy.Recorder.getCode());
+			} else if (flag.equals(UserIdentifiy.meetingOrganization.getName())) {
+				meetingPartner.setUserIdentifiy(UserIdentifiy.meetingOrganization.getCode());
+			} else if (flag.equals(UserIdentifiy.copySend.getName())) {
+				meetingPartner.setUserIdentifiy(UserIdentifiy.copySend.getCode());
+			} else if (flag.equals(UserIdentifiy.OtherReaders.getName())) {
+				meetingPartner.setUserIdentifiy(UserIdentifiy.OtherReaders.getCode());
+			} else if (flag.equals(UserIdentifiy.CreateUser.getName())) {
+				meetingPartner.setUserIdentifiy(UserIdentifiy.CreateUser.getCode());
+			}
+
+			reployList.add(meetingPartner);
+
+		}
+		meetingPartnerDao.insertList(reployList);
+	}
+
+	public void saveSysNoticeMsg(String userInfo, Meeting meeting, String userIds, String flag) {
+		SecurityUserBeanInfo securityUserBeanInfo = JacksonUtils.fromJson(userInfo, SecurityUserBeanInfo.class);
+		if (userIds != null && !"".equals(userIds)) {
+			String meetingTitle = meeting.getTitle();
+			String beginTime = meeting.getBeginTime();
+			if (beginTime.indexOf('.') > -1) {
+				beginTime = beginTime.substring(0, beginTime.indexOf("."));
+			}
+			meetingTitle += ";会议时间：" + beginTime + ";地点：" + meeting.getAddress();
+			if (flag.equals("summaryReminder")) {
+				// sysNoticeMsgDto.setTitle("催办会议纪要: "+meeting.getTitle());
+				meetingTitle = "催办会议纪要: " + meetingTitle;
+			} else if (flag.equals("cancel")) {
+				// sysNoticeMsgDto.setTitle(securityUserBeanInfo.getSecurityUserDto().getRealName().toString()+"取消会议: "+meeting.getTitle());
+				meetingTitle = securityUserBeanInfo.getSecurityUserDto().getRealName().toString() + "取消会议, 主题是:" + meetingTitle;
+			} else if (flag.equals("reminder")) {
+				// sysNoticeMsgDto.setTitle("请尽快处理,"+" 会议主题是: "+meeting.getTitle());
+				meetingTitle = "请尽快处理,主题是: " + meetingTitle;
+			} else {
+				if (meeting.getChangeMeetingId() != null && !"".equals(meeting.getChangeMeetingId())) {// 如果不等于空，说明是会议变更，
+					// sysNoticeMsgDto.setTitle(meeting.getTitle()+" 的第"+meeting.getChangeNumber()+"次变更");
+					meetingTitle = meetingTitle + "的第" + meeting.getChangeNumber() + "次变更";
+				} else {
+					// sysNoticeMsgDto.setTitle("请您参加会议,"+" 主题是: "+meeting.getTitle());
+					meetingTitle = "请您参加会议," + " 主题是: " + meetingTitle;
+				}
+			}
+
+			// 根据userId获取用户信息
+			Map<String, Object> mapIds = new HashMap<String, Object>();
+			mapIds.put("userIds", userIds);
+			//String dubboResultInfo = userDtoServiceCustomer.getUserInfoByUserIds(userInfo, JacksonUtils.toJson(mapIds));
+			List<Map<String,String>> userList = sysFeignService.getUserByUserIds(mapIds);	
+			Set<String> listPhones = new HashSet<>();
+			// 定义邮箱的集合
+			Set<String> listMails = new HashSet<String>();
+			if (userList.size() > 0) {
+					for (Map map : userList) {
+						if (map.get("mobile") != null && map.get("email") != null && map.get("mobile").toString() != null && !"".equals(map.get("mobile").toString())) {
+							listPhones.add(map.get("mobile").toString());
+							listMails.add(map.get("email").toString());
+						}
+						SysNoticeMsgDto sysNoticeMsgDto = new SysNoticeMsgDto();
+						String noticeId = IDGenerator.getUUID();
+						sysNoticeMsgDto.setId(noticeId);
+						// sysNoticeMsgDto.setCode("");
+
+						sysNoticeMsgDto.setTitle(meetingTitle);
+						sysNoticeMsgDto.setLoginName(map.get("loginName").toString());
+						sysNoticeMsgDto.setUserId(map.get("id").toString());
+						sysNoticeMsgDto.setUserName(map.get("realName").toString());
+						sysNoticeMsgDto.setMsgType(false);
+						// 如果是催办获取取消会议则都发，则发待阅
+						String noticeFlag = null;
+						if (flag.equals("reminder") || flag.equals("cancel") || flag.equals("copySend") || flag.equals("summaryReminder")) {
+							// 如果是催办，则发待阅
+							sysNoticeMsgDto.setOpType("DY");
+							noticeFlag = "DY";
+						} else if (flag.equals("create")) {
+							// 会议刚创建，则全部给与会人员发待办
+							if (meeting.getNotifiyWay().equals("0")) {
+								sysNoticeMsgDto.setOpType("DY");
+								noticeFlag = "DY";
+							} else {
+								sysNoticeMsgDto.setOpType("DB");
+								noticeFlag = "DB";
+							}
+						}
+						sysNoticeMsgDto.setSource("flow");// 巨洲云
+						sysNoticeMsgDto.setAppCode("OA");// OA
+						sysNoticeMsgDto.setBusinessId(meeting.getId());
+						// 暂时传空IP
+						sysNoticeMsgDto.setIpAddress("");
+						SimpleDateFormat dateFormater = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+						Date date = new Date();
+						Timestamp timestamp = Timestamp.valueOf(dateFormater.format(date));
+
+						sysNoticeMsgDto.setSendDate(timestamp);
+						sysNoticeMsgDto.setExtendInfo("meeting");
+						sysNoticeMsgDto.setUrl("meeting/meeting/meeting_view.html?id=" + meeting.getId() + "&update=false" + "&act=view" + "&noticeFlag=" + noticeFlag);
+						sysNoticeMsgDto.setMobibleUrl("mobile/meeting/meeting_detail.html?meetingId=" + meeting.getId());
+						sysNoticeMsgDto.setIsOpen(true);
+						sysNoticeMsgDto.setDelflag(false);
+						sysNoticeMsgDto.setFirstType("MEETING");
+						String sysNoticeMsgJson = JacksonUtils.toJson(sysNoticeMsgDto);
+						flowFeignService.saveSysNoticeMsg(sysNoticeMsgJson);
+					}
+				}
+			// 推送完流程之后，给与会人员发送短信
+			// paramaterJson( { sendAddress:"收件人如：1041954045@qq.com，多个用英文逗号隔开", copyAddress:"抄送人如：1041954045@qq.com，多个用英文逗号隔开", context:"正文", title:"主题" })
+			if (listPhones.size() > 0) {
+				String phones = StringUtils.join(listPhones.toArray(), ",");
+				String emails = StringUtils.join(listMails.toArray(), ",");
+				Map<String, String> map = new HashMap<String, String>();
+				map.put("msg", meetingTitle);
+				map.put("phones", phones);
+				String paramaterJson = JacksonUtils.toJson(map);
+				// sysNoticePhoneMsgDtoServiceCustomer.sendMsg(userInfo, paramaterJson);
+				pool.execute(new PhoneAndMailThread(userInfo, paramaterJson, "phone"));
+				map.put("sendAddress", emails);
+				map.put("title", meetingTitle);
+				map.put("context", meetingTitle);
+				String mailJson = JacksonUtils.toJson(map);
+				// mailMsgDtoServiceCustomer.sendMailMsg(userInfo, mailJson);
+				// 异步发送请求
+				pool.execute(new PhoneAndMailThread(userInfo, mailJson, "mail"));
+			}
+		}
+	}
+
+	// 异步发送短息或者邮件
+	class PhoneAndMailThread extends Thread {
+		String userInfo;
+		String paramaterJson;
+		String flag;
+
+		public PhoneAndMailThread(String userInfo, String paramaterJson, String flag) {
+			this.userInfo = userInfo;
+			this.paramaterJson = paramaterJson;
+			this.flag = flag;
+		}
+
+		@Override
+		public void run() {
+			if ("phone".equals(flag)) {
+				sysFeignService.saveSendMsg(JacksonUtils.fromJson(paramaterJson, Map.class));
+			} else {
+				// 发送短信或者邮件
+				sysFeignService.sendMailMsg(paramaterJson);
+			}
+		}
+	}
+
+	@Override
+	public String sendMsg() throws Exception {
+		/*Map<String, String> map = new HashMap<String, String>();
+		map.put("msg", "测试短信");
+		map.put("phones", "13718007959");
+		String paramaterJson = JacksonUtils.toJson(map);
+		sysNoticePhoneMsgDtoServiceCustomer.sendMsg(null, paramaterJson);
+		return "success";*/
+		return null;
+	}
+
+	@Override
+	public int updateMeetingStatusByTimer(String userInfo, Map map) throws Exception {
+		List<Map<String, Object>> list = meetingDao.getMeetingPage(map);
+		if (list.size() > 0) {
+			for (Map<String, Object> map2 : list) {
+				String paramaterJson = JacksonUtils.toJson(map2);
+				Meeting meetingInfo = JacksonUtils.fromJson(paramaterJson, Meeting.class);
+				meetingInfo.setStatus(MeetingStatusType.ISOVER.getCode());
+				meetingDao.updateByPrimaryKeySelective(meetingInfo);
+			}
+		}
+		return list.size();
+	}
+
+	@Override
+	public int updateMeeingStatusOfNoticeMsg(String userInfo, Map map) throws Exception {
+		/*
+		 * String updateJson= JacksonUtils.toJson(map); int result = 0; //获取用户对象 SecurityUserBeanInfo user=LoginUtils.getSecurityUserBeanInfo(); //如果选择不参加会议，则与会人员表中更新状态
+		 * if(map.get("feedBackFlag").equals("2")){ //获取与会人员的信息，此人员就为登录人id Map<String,Object> mapReploy = new HashMap<String,Object>(); mapReploy.put("userId",
+		 * user.getSecurityUserDto().getId()); mapReploy.put("meetingId", map.get("id").toString()); List<MeetingReply> mapReployList = meetingReplyDao.queryList(mapReploy);
+		 * if(mapReployList.size() > 0){ MeetingReply meetingReply = (MeetingReply)meetingReplyDao.queryList(mapReploy).get(0);
+		 * meetingReply.setFeedBackFlag(map.get("feedBackFlag").toString()); meetingReply.setFeedBack(map.get("feedBack").toString()); result =
+		 * meetingReplyDao.update(meetingReply); } //如果是拒绝的话，则要更新待办状态 updateStatusOfNoticeMsg(userInfo, map); }else if(map.get("feedBackFlag").equals("1")){ //获取与会人员的信息，此人员就为登录人id
+		 * Map<String,Object> mapReploy = new HashMap<String,Object>(); mapReploy.put("userId", user.getSecurityUserDto().getId().toString()); mapReploy.put("meetingId",
+		 * map.get("id").toString()); List<MeetingReply> mapReployList = meetingReplyDao.queryList(mapReploy); if(mapReployList.size() > 0){ MeetingReply meetingReply =
+		 * meetingReplyDao.queryList(mapReploy).get(0); meetingReply.setFeedBackFlag(map.get("feedBackFlag").toString()); result = meetingReplyDao.update(meetingReply); }
+		 * updateStatusOfNoticeMsg(userInfo, map); }else if(map.get("feedBackFlag").equals("3")){ //获取会议信息 Meeting meeting = meetingDao.getObjectById(map.get("id").toString());
+		 * //同时自己的表中要更新指代人 //获取与会人员的信息，此人员就为登录人id Map<String,Object> mapReploy = new HashMap<String,Object>(); mapReploy.put("userId",
+		 * user.getSecurityUserDto().getId().toString()); mapReploy.put("meetingId", map.get("id").toString()); List<MeetingReply> mapReployList =
+		 * meetingReplyDao.queryList(mapReploy); if(mapReployList.size() > 0){ MeetingReply meetingReplyTem = meetingReplyDao.queryList(mapReploy).get(0);
+		 * meetingReplyTem.setFeedBackFlag(map.get("feedBackFlag").toString()); meetingReplyTem.setReplacePersonId(map.get("replacePersonId").toString()); result =
+		 * meetingReplyDao.update(meetingReplyTem); } //如果指定他人，则与会人员表中也要添加指代人信息 MeetingReply meetingReply = new MeetingReply(); meetingReply.setId(IDGenerator.getUUID());
+		 * meetingReply.setMeetingId(meeting.getId()); meetingReply.setUserId(map.get("replacePersonId").toString()); //默认与会人员参加会议 meetingReply.setFeedBackFlag("1"); result =
+		 * meetingReplyDao.save(meetingReply); //如果是指定替代人，则重新发起待办通知 saveSysNoticeMsg(userInfo,meeting,map.get("replacePersonId").toString()); //指代替代人之后，本人的待办信息要改为 已办
+		 * updateStatusOfNoticeMsg(userInfo, map); } return result;
+		 */
+		return 0;
+	}
+
+	// 代办人处理后，更新待办状态
+	public void updateStatusOfNoticeMsg(String userInfo, Map map, String flag) {
+		SecurityUserBeanInfo securityUserBeanInfo = JacksonUtils.fromJson(userInfo, SecurityUserBeanInfo.class);
+		Map<String, Object> noticeMap = new HashMap<>();
+
+		noticeMap.put("oldStatus", "DB");
+		// noticeMap.put("id", map.get("noticeId").toString());
+		noticeMap.put("businessId", map.get("meetingId").toString());
+		noticeMap.put("extendInfo", "meeting");
+		noticeMap.put("userId", map.get("userId").toString());
+		if ("cancel".equals(flag)) {
+			noticeMap.put("newStatus", "DY");
+
+		} else {
+			noticeMap.put("newStatus", "YB");
+		}
+		if ("change".equals(flag)) {
+			noticeMap.remove("newStatus");
+		}
+		String noticeMapJson = JacksonUtils.toJson(noticeMap);
+		// noticeMap.put("userId", securityUserBeanInfo.getSecurityUserDto().getId());
+		if ("change".equals(flag)) {
+//			sysNoticeMsgDtoServiceCustomer.deleteOpTypeDataByParamMap(userInfo, noticeMapJson);
+			flowFeignService.deleteOpTypeDataByParamMap(noticeMap);
+		} else {
+			// sysNoticeMsgDtoServiceCustomer.updateStatusOfNoticeMsg(userInfo, noticeMapJson);
+			flowFeignService.updateStatusOfNoticeMsg(noticeMap);
+		}
+
+	}
+
+	// 会议取消删除所有的待办和待阅
+	public void deleteStatusOfNoticeMsg(String userInfo, Map map, String flag) {
+		SecurityUserBeanInfo securityUserBeanInfo = JacksonUtils.fromJson(userInfo, SecurityUserBeanInfo.class);
+		Map<String, Object> noticeMap = new HashMap<>();
+		if (map.get("meetingId") != null && !"".equals(map.get("meetingId"))) {
+			noticeMap.put("businessId", map.get("meetingId").toString());
+		}
+		if (map.get("userId") != null && !"".equals(map.get("userId"))) {
+			noticeMap.put("userId", map.get("userId").toString());
+		}
+		flowFeignService.deleteOpTypeDataByParamMap(noticeMap);
+	}
+
+	@Override
+	public List<Meeting> getAllMeetingByParameter(String userInfo, Map map) {
+		// TODO Auto-generated method stub
+		return meetingDao.getAllMeetingByParameter(map);
+	}
+
+	@Override
+	public MeetingDto getMeetingAndAgendaById(String id) throws Exception {
+		// 通过主表id获取主子表数据 封装到dto里面 供修改页面时 回显使用
+		// 查询主表
+		/*
+		 * Map<String,Object> mapIds = new HashMap<String,Object>(); mapIds.put("id", id); List<Meeting> singleObject = meetingDao.queryList(mapIds); Meeting meeting=
+		 * singleObject.get(0);
+		 */
+		Meeting meeting = meetingDao.selectByPrimaryKey(id);
+		MeetingDto meetingDto = new MeetingDto();
+		BeanUtils.copyProperties(meeting, meetingDto);
+		SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");// 设置日期格式
+		String currentTime = df.format(new Date());// new Date()为获取当前系统时间
+
+		String newBegintime = meeting.getBeginTime().substring(0, meeting.getBeginTime().length() - 5);
+		String newEndtime = meeting.getEndTime().substring(0, meeting.getEndTime().length() - 5);
+		meetingDto.setBeginTime(newBegintime);
+		meetingDto.setEndTime(newEndtime);
+
+		if (meeting.getFlowStatus() != null
+				&& (meeting.getFlowStatus().equals(MeetingStatusType.RUNNING.getCode()) || meeting.getFlowStatus().equals(MeetingStatusType.HANGUP.getCode()))) {
+			meetingDto.setStatus(MeetingStatusType.RUNNING.getCode());
+		} else if (meeting.getFlowStatus() != null && (meeting.getFlowStatus().equals(MeetingStatusType.WITHDRAW.getCode())
+				|| meeting.getFlowStatus().equals(MeetingStatusType.REJECT.getCode()) || meeting.getFlowStatus().equals(MeetingStatusType.CANCEL.getCode()))) {
+			meetingDto.setStatus(MeetingStatusType.DRAFT.getCode());
+		} else if (meeting.getFlowStatus() != null && (meeting.getFlowStatus().equals(MeetingStatusType.DRAFT.getCode()))) {
+			meetingDto.setStatus(MeetingStatusType.DRAFT.getCode());
+		} else if (meeting.getFlowStatus() != null && (meeting.getFlowStatus().equals(MeetingStatusType.FINISHED.getCode()))) {
+			if (meeting.getStatus() != null && ("11".equals(meeting.getStatus()) || "10".equals(meeting.getStatus()))) {
+			} else {
+				String beginData = meeting.getBeginTime();// 开始时间
+				String endData = meeting.getEndTime();// 结束时间
+				if (df.parse(beginData).getTime() > df.parse(currentTime).getTime()) {
+					meetingDto.setStatus(MeetingStatusType.NOTBEGIN.getCode());
+				} else if (df.parse(beginData).getTime() < df.parse(currentTime).getTime() && df.parse(endData).getTime() > df.parse(currentTime).getTime()) {
+					meetingDto.setStatus(MeetingStatusType.HAVEING.getCode());
+				} else if (df.parse(endData).getTime() < df.parse(currentTime).getTime()) {
+					meetingDto.setStatus(MeetingStatusType.ISOVER.getCode());
+				}
+			}
+
+		}
+		// 查询子表实体对象
+		Map<String, Object> meetingId = new HashMap<String, Object>();
+		meetingId.put("meetingId", id);
+		meetingId.put("sidx", "meetingTime");
+		meetingId.put("sord", "asc");
+
+		List<MeetingAgenda> meetingAgendaList = meetingAgendaService.queryListByExample(meetingId);
+		// 把子表实体对象 封装到子表dto里面
+		List<MeetingAgendaDto> meetingAgendaDtoList = new ArrayList<MeetingAgendaDto>();
+		if (meetingAgendaList != null && meetingAgendaList.size() > 0) {
+			for (MeetingAgenda meetingAgenda : meetingAgendaList) {
+				MeetingAgendaDto meetingAgendaDto = new MeetingAgendaDto();
+				BeanUtils.copyProperties(meetingAgenda, meetingAgendaDto);
+				if (meetingAgenda.getMeetingTime() != null && !"".equals(meetingAgenda.getMeetingTime())) {
+					String meetingTime = meetingAgenda.getMeetingTime().substring(0, meeting.getBeginTime().length() - 2);
+					meetingAgendaDto.setMeetingTime(meetingTime);
+				}
+				meetingAgendaDtoList.add(meetingAgendaDto);
+			}
+		}
+		meetingDto.setList(meetingAgendaDtoList);
+
+		/*
+		 * //如果是录入会议纪要，则默认带出，实际与会成员，实际与会成员是已经做过回复记录的 char ch = ','; Map<String,Object> mapSummary = new HashMap<String,Object>(); mapSummary.put("meetingId", meeting.getId());
+		 * //会议纪要里面的实际与会成员 默认带出已回复参加的 //首先获取参加会议的已经回复的人员 List<String> parters = meetingPartnerDao.queryUseerIdByMeetingId(mapSummary); List<String> listUsername = new
+		 * ArrayList<String>(); List<String> listUserids = new ArrayList<String>(); for (String partnerUserId : parters) { mapSummary.put("userId", partnerUserId); MeetingReply
+		 * meetingReply = meetingReployDao.queryMeetingReployByNew(mapSummary); //获取最新回复参加的人员信息 if(meetingReply != null && meetingReply.getJoinFlag() != null &&
+		 * meetingReply.getJoinFlag().equals("1")){ String reployUsername = meetingReply.getUserName(); listUsername.add(reployUsername); listUserids.add(meetingReply.getUserId());
+		 * } } if(listUsername.size() > 0){ String userNames = listToString(listUsername,ch); meetingDto.setActualAttendeesName(userNames); } if(listUserids.size() > 0){ String
+		 * userIds = listToString(listUserids,ch); meetingDto.setActualAttendeesId(userIds); }
+		 */
+
+		// 返回dto对象
+		return meetingDto;
+	}
+
+	/*
+	 * @Override public String operationMeeting(String userInfo, String flag, Map paramaterJson) { try { if(flag.equals("reminder")){ Map<String ,Object> map = new HashMap<String,
+	 * Object>(); map.put("meetingId", paramaterJson.get("meetingId")); List<MeetingPartner> parters = meetingPartnerService.queryList(map); List<MeetingReply> meetingReplyMap =
+	 * meetingReployService.queryList(map); List<String> parterslist = new ArrayList<String>(); List<String> replylist = new ArrayList<String>(); //定义未回复人员的集合 List<String>
+	 * noReplylist = new ArrayList<String>(); for (MeetingPartner meetingPartner : parters) { parterslist.add(meetingPartner.getUserId()); } for (MeetingReply meetingReply :
+	 * meetingReplyMap) { replylist.add(meetingReply.getUserId()); } for (String replyUserId : replylist) { if(!parterslist.contains(replyUserId)){ noReplylist.add(replyUserId); }
+	 * } } } catch (Exception e) { } return null; }
+	 */
+
+	@Override
+	public String operationMeeting(String userInfo, Map paramaterJson) {
+		Meeting meeting = null;
+		char ch = ',';
+		try {
+			// 首先获取会议信息
+			meeting = meetingDao.selectByPrimaryKey(paramaterJson.get("meetingId").toString());
+			Map<String, Object> map = new HashMap<String, Object>();
+			map.put("meetingId", paramaterJson.get("meetingId"));
+			// 查询本条会议除抄送人和其他可阅读者和创建人之外的人员
+			List<String> userIdentifiyList = new ArrayList<String>();
+			userIdentifiyList.add("4");
+			userIdentifiyList.add("5");
+			userIdentifiyList.add("6");
+
+			String userIdsTem = listToString(userIdentifiyList, ch);
+			map.put("userIdentifiy", userIdentifiyList.toArray());
+			List<String> parters = meetingPartnerDao.queryUseerIdByMeetingId(map);
+			List<String> meetingReplyMap = meetingReployDao.queryUseerIdByMeetingId(map);
+
+			if (paramaterJson.get("flag").equals("reminder")) {
+				// 催办会议的操作，催办会议只发待阅，原来的不变，催办只针对未回复的人员。
+				// 查询未回复的人员,从与会人员表中查询
+				// 定义未回复人员的集合
+				List<String> noReplylist = new ArrayList<String>();
+				for (String replyUserId : parters) {
+					if (!meetingReplyMap.contains(replyUserId)) {
+						noReplylist.add(replyUserId);
+					}
+				}
+				// 取到未回复人员id后，如果是催办会议则要发待阅
+				// String userIds = JacksonUtils.toJson(noReplylist);
+
+				String userIds = listToString(noReplylist, ch);
+				saveSysNoticeMsg(userInfo, meeting, userIds, paramaterJson.get("flag").toString());
+			} else if (paramaterJson.get("flag").equals("cancel")) {
+				// 取消会议是待办都消失，待办变为待阅，会议状态变为取消
+				// 获取所有与会人员的id
+				userIdentifiyList.remove("4");
+				map.put("userIdentifiy", userIdentifiyList.toArray());
+				List<String> joinParters = meetingPartnerDao.queryUseerIdByMeetingId(map);
+				String userIds = listToString(joinParters, ch);
+				map.put("userId", userIds);
+				// 删除原来所有的待办和待阅
+				deleteStatusOfNoticeMsg(userInfo, map, paramaterJson.get("flag").toString());
+				// 更改会议状态，变为已取消
+				meeting.setStatus(MeetingStatusType.MEETINGCANCEL.getCode());
+				meetingDao.updateByPrimaryKeySelective(meeting);
+				// 同时此会议回复表中插入一条变更记录
+				saveMeetingReployDaoByChange(userInfo, meeting, "cancel");
+				// 重新给所有人发待阅，发一个待阅,
+				saveSysNoticeMsg(userInfo, meeting, userIds, paramaterJson.get("flag").toString());
+				// 如果是取消会议，则要通知日程中该会议的状态
+				if (meeting.getId() != null && !"".equals(meeting.getId())) {
+					Map<String, Object> mapWork = new HashMap<String, Object>();
+					mapWork.put("businessId", meeting.getId());
+					List<WorkSchedule> workScheduleList = workScheduleService.queryListByExample(mapWork);
+					List<String> deleteIds = new ArrayList<String>();
+					if (workScheduleList.size() > 0) {
+						for (WorkSchedule workSchedule : workScheduleList) {
+							deleteIds.add(workSchedule.getId());
+						}
+						workScheduleService.deleteAllObjectByIds(deleteIds);
+					}
+				}
+			} else if (paramaterJson.get("flag").equals("change")) {
+				// 原来的待办取消掉，然后发一个待阅,会议变更的操作
+				// 获取所有与会人员的id
+				userIdentifiyList.remove("4");
+				map.put("userIdentifiy", userIdentifiyList.toArray());
+				List<String> joinParters = meetingPartnerDao.queryUseerIdByMeetingId(map);
+				String userIds = listToString(joinParters, ch);
+				map.put("userId", userIds);
+				// 删除原来所有的待办和待阅
+				deleteStatusOfNoticeMsg(userInfo, map, paramaterJson.get("flag").toString());
+				// 更改会议状态，变为已取消
+				meeting.setStatus("12");
+				meeting.setDelflag(true);
+				meetingDao.updateByPrimaryKeySelective(meeting);
+				// 同时此会议回复表中插入一条变更记录
+				saveMeetingReployDaoByChange(userInfo, meeting, "change");
+				// 取消会议：（给所有参会人员）删除待办，发一个待阅
+				// saveSysNoticeMsg(userInfo,meeting,userIds,paramaterJson.get("flag").toString());
+				// 如果是取消会议，则要通知日程中该会议的状态
+				if (meeting.getId() != null && !"".equals(meeting.getId())) {
+					Map<String, Object> mapWork = new HashMap<String, Object>();
+					mapWork.put("businessId", meeting.getId());
+					List<WorkSchedule> workScheduleList = workScheduleService.queryListByExample(mapWork);
+					List<String> deleteIds = new ArrayList<String>();
+					if (workScheduleList.size() > 0) {
+						for (WorkSchedule workSchedule : workScheduleList) {
+							deleteIds.add(workSchedule.getId());
+						}
+						workScheduleService.deleteAllObjectByIds(deleteIds);
+					}
+				}
+			} else if (paramaterJson.get("flag").equals("summaryReminder")) {
+				// 原来的待办取消掉，然后发一个待阅,会议变更的操作
+				// 获取所有与会人员的id
+				userIdentifiyList.add("1");
+				userIdentifiyList.add("2");
+				userIdentifiyList.add("3");
+				map.put("userIdentifiy", userIdentifiyList.toArray());
+				List<String> joinParters = meetingPartnerDao.queryUseerIdByMeetingId(map);
+				String userIds = listToString(joinParters, ch);
+				saveSysNoticeMsg(userInfo, meeting, userIds, paramaterJson.get("flag").toString());
+			}
+		} catch (Exception e) {
+			// e.printStackTrace();
+		}
+
+		return JacksonUtils.toJson(meeting);
+	}
+
+	public void saveMeetingReployDaoByChange(String userInfo, Meeting meeting, String flag) {
+		SecurityUserBeanInfo securityUserBeanInfo = JacksonUtils.fromJson(userInfo, SecurityUserBeanInfo.class);
+		MeetingReply meetingReploy = new MeetingReply();
+		meetingReploy.setId(IDGenerator.getUUID());
+		meetingReploy.setMeetingId(meeting.getId());
+		meetingReploy.setUserId(securityUserBeanInfo.getSecurityUserDto().getId());
+		meetingReploy.setUserName(securityUserBeanInfo.getSecurityUserDto().getRealName());
+		if (flag.equals("change")) {
+			// 2代表会议变更
+			meetingReploy.setJoinFlag("2");
+		} else if (flag.equals("cancel")) {
+			// 3代表会议取消
+			meetingReploy.setJoinFlag("3");
+		}
+		// 默认与会人员参加会议
+		meetingReployDao.insertSelective(meetingReploy);
+	}
+
+	public String listToString(List list, char separator) {
+		StringBuilder sb = new StringBuilder();
+		for (int i = 0; i < list.size(); i++) {
+			sb.append(list.get(i)).append(separator);
+		}
+		return sb.toString().substring(0, sb.toString().length() - 1);
+	}
+
+	/*
+	 * @Override public List<MeetingDto> getAllMeetingByRecordUser(String userInfo, Map map) { List<Meeting> list = meetingDao.getAllMeetingByRecordUser(map); char ch = ',';
+	 * //再根据会议id 去会议纪要表查询，如果会议纪要表已存在记录，则此会议不能再创建 List<Meeting> exitMeeitnSummary = new ArrayList<Meeting>();
+	 * 
+	 * List<MeetingDto> meetingDtoList = new ArrayList<MeetingDto>(); try { for (Meeting meeting : list) { MeetingDto meetingDto = new MeetingDto(); Map<String,Object> mapSummary =
+	 * new HashMap<String,Object>(); mapSummary.put("meetingId", meeting.getId()); List<MeetingSummary> summaryList = meetingSummaryService.queryList(mapSummary);
+	 * if(summaryList.size() > 0){ exitMeeitnSummary.add(meeting); continue; } //会议纪要里面的实际与会成员 默认带出已回复参加的 //首先获取参加会议的已经回复的人员 List<String> parters =
+	 * meetingPartnerDao.queryUseerIdByMeetingId(mapSummary); List<String> listUsername = new ArrayList<String>(); List<String> listUserids = new ArrayList<String>(); for (String
+	 * partnerUserId : parters) { mapSummary.put("userId", partnerUserId); MeetingReply meetingReply = meetingReployDao.queryMeetingReployByNew(mapSummary);
+	 * 
+	 * //获取最新回复参加的人员信息 if(meetingReply != null && meetingReply.getJoinFlag() != null && meetingReply.getJoinFlag().equals("1")){ String reployUsername = meetingReply.getUserName();
+	 * listUsername.add(reployUsername); listUserids.add(meetingReply.getUserId()); } } if(listUsername.size() > 0){ String userNames = listToString(listUsername,ch);
+	 * meetingDto.setActualAttendeesName(userNames); } if(listUserids.size() > 0){ String userIds = listToString(listUserids,ch); meetingDto.setActualAttendeesId(userIds); }
+	 * 
+	 * BeanUtils.copyProperties(meeting, meetingDto); meetingDtoList.add(meetingDto); } } catch (Exception e) { // TODO Auto-generated catch block e.printStackTrace(); }
+	 * if(exitMeeitnSummary.size() > 0){ for (Meeting meeting : exitMeeitnSummary) { if(list.contains(meeting)){ list.remove(meeting); } } } return meetingDtoList; }
+	 */
+
+	@Override
+	public List<MeetingDto> getAllMeetingByRecordUser(String userInfo, Map map) throws Exception {
+		/*
+		 * Set<String> set = new HashSet<String>(); set.add("2"); set.add("0"); meetingDao.getAllMeetingByNoSummaryTem(set);
+		 */
+
+		List<Meeting> list = meetingDao.getAllMeetingByNoSummary(map);
+		char ch = ',';
+		List<MeetingDto> meetingDtoList = new ArrayList<MeetingDto>();
+		for (Meeting meeting : list) {
+			MeetingDto meetingDto = new MeetingDto();
+			Map<String, Object> mapSummary = new HashMap<String, Object>();
+			mapSummary.put("meetingId", meeting.getId());
+
+			// 会议纪要里面的实际与会成员 默认带出已回复参加的
+			// 首先获取参加会议的已经回复的人员
+			List<String> parters = meetingPartnerDao.queryUseerIdByMeetingId(mapSummary);
+			List<String> listUsername = new ArrayList<String>();
+			List<String> listUserids = new ArrayList<String>();
+			for (String partnerUserId : parters) {
+				mapSummary.put("userId", partnerUserId);
+				MeetingReply meetingReply = meetingReployDao.queryMeetingReployByNew(mapSummary);
+
+				// 获取最新回复参加的人员信息
+				if (meetingReply != null && meetingReply.getJoinFlag() != null && meetingReply.getJoinFlag().equals("1")) {
+					String reployUsername = meetingReply.getUserName();
+					listUsername.add(reployUsername);
+					listUserids.add(meetingReply.getUserId());
+				}
+			}
+			if (listUsername.size() > 0) {
+				String userNames = listToString(listUsername, ch);
+				meetingDto.setActualAttendeesName(userNames);
+			}
+			if (listUserids.size() > 0) {
+				String userIds = listToString(listUserids, ch);
+				meetingDto.setActualAttendeesId(userIds);
+			}
+
+			BeanUtils.copyProperties(meeting, meetingDto);
+			meetingDtoList.add(meetingDto);
+		}	
+
+		return meetingDtoList;
+	}
+
+	/**
+	 * 暂存
+	 * 
+	 * @param meetingDto
+	 * @return
+	 */
+	@Override
+	public Integer saveBean(String userInfo, MeetingDto meetingDto) {
+
+		// 把该会议原来的与会人员是代办状态的直接 删除，伪删除
+		if (meetingDto.getChangeMeetingId() != null && !"".equals(meetingDto.getChangeMeetingId())) {// 如果不等于空，说明是会议变更，
+			Map<String, Object> mapNoytice = new HashMap<>();
+			mapNoytice.put("businessId", meetingDto.getChangeMeetingId());
+			mapNoytice.put("opType", "DB");
+//			String noticeMapJson = JacksonUtils.toJson(mapNoytice);
+//			sysNoticeMsgDtoServiceCustomer.deleteOpTypeDataByParamMap(userInfo, noticeMapJson);
+//			sysNoticeMsgDtoServiceCustomer.deleteOpTypeDataByParamMap(mapNoytice);
+		}
+		Meeting meeting = new Meeting();
+		BeanUtils.copyProperties(meetingDto, meeting);
+		SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");// 设置日期格式
+		String currentTime = df.format(new Date());// new Date()为获取当前系统时间
+		meeting.setBeginDate(currentTime);
+		meeting.setEndDate(currentTime);
+		meeting.setFlowStatus(MeetingStatusType.DRAFT.getCode());
+		meeting.setStatus(MeetingStatusType.DRAFT.getCode());
+		if (meeting.getBeginTime() == null || "".equals(meeting.getBeginTime())) {
+			meeting.setBeginTime(currentTime);
+		}
+		if (meeting.getEndTime() == null || "".equals(meeting.getEndTime())) {
+			meeting.setEndTime(currentTime);
+		}
+		if (meetingDto.getChangeMeetingId() != null && !"".equals(meetingDto.getChangeMeetingId())) {
+			Meeting changeMeeting = meetingDao.selectByPrimaryKey(meetingDto.getChangeMeetingId());
+			int newChangeMeeting = 0;
+			if (changeMeeting.getChangeNumber() != 0) {
+				newChangeMeeting = changeMeeting.getChangeNumber() + 1;
+			} else {
+				newChangeMeeting = 1;
+			}
+			meeting.setChangeNumber(newChangeMeeting);
+		}
+		int result = meetingDao.insertSelective(meeting);
+		// 保存完会议信息之后，保存会议议程信息
+		List<MeetingAgendaDto> list = meetingDto.getList();
+		if (list.size() > 0 && meetingDto.getDeleteList().size() > 0) {
+			list.removeAll(meetingDto.getDeleteList());
+		}
+		if (list != null && list.size() > 0) {
+			List<MeetingAgenda> meetingAgendalist = new ArrayList<MeetingAgenda>();
+			// 循环dto对象 拿到list子表 把子表dto转化为实体对象 然后封装到list集合里面
+			for (MeetingAgendaDto meetingAgendaDto : list) {
+				MeetingAgenda meetingAgenda = new MeetingAgenda();
+				BeanUtils.copyProperties(meetingAgendaDto, meetingAgenda);
+				meetingAgenda.setId(IDGenerator.getUUID());
+				meetingAgendalist.add(meetingAgenda);
+			}
+			// 批量保存
+			int number1 = meetingAgendaDao.insertList(meetingAgendalist);
+		}
+
+		if (StringUtils.isNotBlank(meetingDto.getCreateUserId())) {
+			saveMeetingPartner(userInfo, meeting, meetingDto.getCreateUserId(), UserIdentifiy.CreateUser.getName());
+		}
+		if (StringUtils.isNotBlank(meetingDto.getEmceeId())) {
+			saveMeetingPartner(userInfo, meeting, meetingDto.getEmceeId(), UserIdentifiy.Emcee.getName());
+		}
+		if (StringUtils.isNotBlank(meetingDto.getRecorderId())) {
+			saveMeetingPartner(userInfo, meeting, meetingDto.getRecorderId(), UserIdentifiy.Recorder.getName());
+		}
+		if (StringUtils.isNotBlank(meetingDto.getMeetingOrganizationId())) {
+			saveMeetingPartner(userInfo, meeting, meetingDto.getMeetingOrganizationId(), UserIdentifiy.meetingOrganization.getName());
+		}
+		if (StringUtils.isNotBlank(meetingDto.getAttendees())) {
+			saveMeetingPartner(userInfo, meeting, meetingDto.getAttendees(), UserIdentifiy.attendees.getName());
+		}
+		if (StringUtils.isNotBlank(meetingDto.getCopySendId())) {
+			saveMeetingPartner(userInfo, meeting, meetingDto.getCopySendId(), UserIdentifiy.copySend.getName());
+		}
+		if (StringUtils.isNotBlank(meetingDto.getOtherReadersId())) {
+			saveMeetingPartner(userInfo, meeting, meetingDto.getOtherReadersId(), UserIdentifiy.OtherReaders.getName());
+		}
+		// 如果是会议变更，组要执行会议变更的一系列操作
+		if (meetingDto.getChangeMeetingId() != null && !"".equals(meetingDto.getChangeMeetingId())) {
+			Map<String, Object> map = new HashMap<String, Object>();
+			map.put("meetingId", meetingDto.getChangeMeetingId());
+			map.put("flag", "change");
+			this.operationMeeting(userInfo, map);
+		}
+
+		return result;
+		
+	}
+
+	/**
+	 * 清空暂存
+	 * 
+	 * @param meetingDto
+	 * @return
+	 */
+	@Override
+	public Integer deleteBean(MeetingDto meetingDto) throws Exception{
+		Meeting meeting = new Meeting();
+		BeanUtils.copyProperties(meetingDto, meeting);
+		// 清空会议
+		int result = meetingDao.deleteByPrimaryKey(meeting.getId());
+		//Integer result = super.deleteObjectById(meeting.getId());
+		List<MeetingAgendaDto> list = meetingDto.getList();
+		if (meetingDto.getDeleteList().size() > 0) {
+			list.addAll(meetingDto.getDeleteList());
+		}
+		// 清空会议相关人员信息
+		Map<String, String> map = new HashMap<String, String>();
+		map.put("meetingId", meetingDto.getId());
+		if (list != null && list.size() > 0) {
+			// 清空会议
+			meetingAgendaDao.deleteMeetingAgendaByMeetingId(map);
+		}
+			// 清空会议相关人员信息
+			meetingPartnerDao.deleteMeetingPartnerByMeetingId(map);
+		return result;
+	}
+
+	/*
+	 * (non-Javadoc)
+	 * 
+	 * @see com.jzy.hio.oa.meeting.service.MeetingService#getStartFlowInfo(com.xinleju.platform.base.utils.SecurityUserBeanInfo, java.lang.String)
+	 */
+	@Override
+	public Map getStartFlowInfo(SecurityUserBeanInfo securityUserBeanInfo, String id) throws Exception {
+		MeetingDto meetingDto = this.getMeetingAndAgendaById(id);
+		Map<String, Object> flowData = this.getMeetingDataToJson(meetingDto);
+		Map<String, Object> map = new HashMap<String, Object>();
+		map.put("flow_phone_data", flowData);
+		map.put("flow_business_data", flowData);
+		// userMap.get(key)
+		// SecurityUserDto
+		Map<String, Object> param = new HashMap<String, Object>();
+		SecurityOrganizationDto securityDirectCompanyDto = securityUserBeanInfo.getSecurityDirectCompanyDto();
+		if (securityDirectCompanyDto != null) {
+			String companyId = securityDirectCompanyDto.getId();
+			String companyName = securityDirectCompanyDto.getName();
+			param.put("flow_business_company_id", companyId);
+			param.put("flow_business_company_name", companyName);
+		} else {
+			param.put("flow_business_company_id", null);
+			param.put("flow_business_company_name", null);
+
+		}
+		SecurityOrganizationDto securityDirectDeptDto = securityUserBeanInfo.getSecurityDirectDeptDto();
+		if (securityDirectDeptDto != null) {
+			String deptId = securityDirectDeptDto.getId();
+			String deptName = securityDirectDeptDto.getName();
+			param.put("flow_business_dept_id", deptId);
+			param.put("flow_business_dept_name", deptName);
+		} else {
+			param.put("flow_business_dept_id", null);
+			param.put("flow_business_dept_name", null);
+		}
+		SecurityOrganizationDto securityGroupDto = securityUserBeanInfo.getSecurityGroupDto();
+		if (securityGroupDto != null) {
+			String projectId = securityGroupDto.getId();
+			String projectName = securityGroupDto.getName();
+			param.put("flow_business_project_id", projectId);
+			param.put("flow_business_project_name", projectName);
+		} else {
+			param.put("flow_business_project_id", null);
+			param.put("flow_business_project_name", null);
+		}
+		SecurityOrganizationDto securityBranchDto = securityUserBeanInfo.getSecurityBranchDto();
+		if (securityBranchDto != null) {
+			String branchId = securityBranchDto.getId();
+			String branchName = securityBranchDto.getName();
+			param.put("flow_business_project_branch_id", branchId);
+			param.put("flow_business_project_branch_name", branchName);
+		} else {
+			param.put("flow_business_project_branch_id", null);
+			param.put("flow_business_project_branch_name", null);
+		}
+		String createPersonId = meetingDto.getCreatePersonId();
+		param.put("start_user_id", createPersonId);
+		param.put("start_user_name", meetingDto.getCreatePersonName());
+		param.put("title", meetingDto.getTitle());
+		param.put("meetingType", meetingDto.getMeetingType());
+		map.put("flow_business_variable_data", param);
+
+		return map;
+	}
+
+	private Map<String, Object> getMeetingDataToJson(MeetingDto meetingDto) throws Exception {
+		Map<String, Object> resultMap = new HashMap<String, Object>();
+		Map<String, Object> map1 = new HashMap<>();
+		Map<String, Object> map2 = new HashMap<>();
+		Map<String, Object> map3 = new HashMap<>();
+		Map<String, Object> map4 = new HashMap<>();
+		Map<String, Object> map5 = new HashMap<>();
+		Map<String, Object> map6 = new HashMap<>();
+		Map<String, Object> map7 = new HashMap<>();
+		Map<String, Object> map8 = new HashMap<>();
+		Map<String, Object> map9 = new HashMap<>();
+		Map<String, Object> map10 = new HashMap<>();
+		Map<String, Object> map11 = new HashMap<>();
+		Map<String, Object> map16 = new HashMap<>();
+
+		List<Map<String, Object>> list = new ArrayList<Map<String, Object>>();
+		map1.put("name", "会议主题");
+		map1.put("value", meetingDto.getMtTitle());
+		map2.put("name", "会议类别");
+		map2.put("value", meetingDto.getMeetingType());
+		map3.put("name", "组织部门");
+		map3.put("value", meetingDto.getOrganDepart());
+		map4.put("name", "开始时间");
+		map4.put("value", meetingDto.getBeginTime());
+		map5.put("name", "结束时间");
+		map5.put("value", meetingDto.getEndTime());
+		map6.put("name", "会议地点");
+		map6.put("value", meetingDto.getAddress());
+		map7.put("name", "主持人");
+		map7.put("value", meetingDto.getEmceeName());
+		map8.put("name", "组织人");
+		map8.put("value", meetingDto.getMeetingOrganizationName());
+		map9.put("name", "与会人员");
+		map9.put("value", meetingDto.getAttendeesName());
+		map10.put("name", "纪要人员");
+		map10.put("value", meetingDto.getRecorderName());
+		map11.put("name", "会议目标");
+		map11.put("value", meetingDto.getMeetingTarget());
+		map16.put("name", "附件");
+		map16.put("value", meetingDto.getDocumentAttachments());
+		list.add(map1);
+		list.add(map2);
+		list.add(map3);
+		list.add(map4);
+		list.add(map5);
+		list.add(map6);
+		list.add(map7);
+		list.add(map8);
+		list.add(map9);
+		list.add(map10);
+		list.add(map11);
+		list.add(map16);
+		List<MeetingAgendaDto> meetingAgendaDtoList = meetingDto.getList();
+		for (MeetingAgendaDto meetingAgendaDto : meetingAgendaDtoList) {
+			Map<String, Object> map12 = new HashMap<>();
+			Map<String, Object> map13 = new HashMap<>();
+			Map<String, Object> map14 = new HashMap<>();
+			Map<String, Object> map15 = new HashMap<>();
+			map12.put("name", "议程时间");
+			map12.put("value", meetingAgendaDto.getMeetingTime());
+			map13.put("name", "会议议程");
+			map13.put("value", meetingAgendaDto.getMeetingAgenda());
+			map14.put("name", "对应议程的上会资料");
+			map14.put("value", meetingAgendaDto.getMeetingAgendaData());
+			map15.put("name", "资料提交人");
+			map15.put("value", meetingAgendaDto.getSubmitDataUser());
+			list.add(map12);
+			list.add(map13);
+			list.add(map14);
+			list.add(map15);
+		}
+
+		resultMap.put("dataList", list);
+		return resultMap;
+	}
+
+	/*
+	 * (non-Javadoc)
+	 * 
+	 * @see com.jzy.hio.oa.meeting.service.MeetingService#updateStatus(java.util.Map)
+	 */
+	@Override
+	public int updateStatus(String userInfo, Map map) throws Exception {
+		log.info("流程回调业务对象改状态的返回数据：" + map);
+		String id = (String) map.get("businessId");
+		String status = (String) map.get("status");
+		String instanceId = (String) map.get("instanceId");
+		Meeting meeting = meetingDao.selectByPrimaryKey(id);
+		meeting.setInstanceId(instanceId);
+		if (status.equals(MeetingStatusType.CANCEL.getCode()) || status.equals(MeetingStatusType.WITHDRAW.getCode()) || status.equals(MeetingStatusType.REJECT.getCode())) {
+			meeting.setStatus(MeetingStatusType.DRAFT.getCode());
+		} else if (status.equals(MeetingStatusType.RUNNING.getCode()) || status.equals(MeetingStatusType.HANGUP.getCode())) {
+			meeting.setStatus(MeetingStatusType.RUNNING.getCode());
+		} else if (status.equals(MeetingStatusType.FINISHED.getCode())) {
+			meeting.setStatus(MeetingStatusType.NOTBEGIN.getCode());
+		}
+		meeting.setFlowStatus(status);
+		// 流程审批完成后，如果审批状态是 已完成，则要发起代办通知
+		if (status.equals(MeetingStatusType.FINISHED.getCode())) {
+			startNotice(userInfo, meeting, status);
+		}
+		// 流程审批完成后，如果审批状态是 已完成，则要发起日程通知
+		/*
+		 * if(status.equals(MeetingStatusType.FINISHED.getCode())){ startWorkSchedule(userInfo,meeting,status); };
+		 */
+		log.info("更改流程回调业务对象改状态的接口结束：" + "---businessId---" + map.get("businessId") + "---status---" + map.get("status") + "----instanceId--" + map.get("instanceId") + "------");
+
+		return meetingDao.updateByPrimaryKeySelective(meeting);
+
+	}
+
+	/**
+	 * 流程审批完成后，如果审批状态是 已完成，则要发起代办通知
+	 */
+	public void startWorkSchedule(String userInfo, Meeting meeting, String status) {
+		if (status.equals(MeetingStatusType.FINISHED.getCode())) {
+			// 定义发送日程通知的人员集合
+			List<String> userIds = new ArrayList<String>();
+			char ch = ',';
+
+			if (meeting.getEmceeId() != null && !"".equals(meeting.getEmceeId())) {
+				String[] emceeIds = meeting.getEmceeId().split(",");
+				for (String emceeId : emceeIds) {
+					userIds.add(emceeId);
+				}
+			}
+			if (meeting.getRecorderId() != null && !"".equals(meeting.getRecorderId())) {
+				String[] recorderIds = meeting.getRecorderId().split(",");
+				for (String recordersId : recorderIds) {
+					if (!userIds.contains(recordersId)) {
+						userIds.add(recordersId);
+					}
+				}
+			}
+			if (meeting.getMeetingOrganizationId() != null && !"".equals(meeting.getMeetingOrganizationId())) {
+				String[] meetingOrganizationIds = meeting.getMeetingOrganizationId().split(",");
+				for (String meetingOrganizationId : meetingOrganizationIds) {
+					if (!userIds.contains(meetingOrganizationId)) {
+						userIds.add(meetingOrganizationId);
+					}
+				}
+			}
+			if (meeting.getAttendees() != null && !"".equals(meeting.getAttendees())) {
+				String[] getAttendees = meeting.getAttendees().split(",");
+				for (String attendees : getAttendees) {
+					if (!userIds.contains(attendees)) {
+						userIds.add(attendees);
+					}
+				}
+			}
+
+			// 目前其他可阅读者不发送代办或者待阅
+			/*
+			 * if(meeting.getOtherReadersId() != null && !"".equals(meeting.getCopySendId())){ // 会议创建完之后推送一条代办到流程,此时发待办
+			 * saveSysNoticeMsg(userInfo,meeting,meeting.getOtherReadersId(),flag); }
+			 */
+			String noticeUserIds = listToString(userIds, ch);
+			try {
+				this.savetWorkSchedule(userInfo, meeting, noticeUserIds);
+			} catch (Exception e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+
+		}
+	}
+
+	public void savetWorkSchedule(String userInfo, Meeting meeting, String userIds) throws Exception {
+		/*if (userIds != null && !"".equals(userIds)) {
+			// 根据userId获取用户信息
+			Map<String, String> mapIds = new HashMap<String, String>();
+			mapIds.put("ids", userIds);
+			String dubboResultInfo = userDtoServiceCustomer.getUserInfoByUserIds(userInfo, JacksonUtils.toJson(mapIds));
+			DubboServiceResultInfo dubboServiceResultInfo = JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+			if (dubboServiceResultInfo.isSucess()) {
+				String resultInfo = dubboServiceResultInfo.getResult();
+				List<Map> list = JacksonUtils.fromJson(resultInfo, ArrayList.class, Map.class);
+				if (list.size() > 0) {
+					List<WorkSchedule> workScheduleList = new ArrayList<WorkSchedule>();
+					for (Map map : list) {
+						WorkSchedule workSchedule = new WorkSchedule();
+						String noticeId = IDGenerator.getUUID();
+						workSchedule.setId(noticeId);
+						workSchedule.setContent(meeting.getTitle());
+						workSchedule.setType("MEETING");
+						workSchedule.setBeginTime(meeting.getBeginTime());
+						workSchedule.setEndTime(meeting.getEndTime());
+						workSchedule.setTaskOwner(map.get("name").toString());
+						workSchedule.setTaskOwnerId(map.get("id").toString());
+						workSchedule.setSource("OA");
+						workSchedule.setBusinessId(meeting.getId());
+
+						SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm");// 设置日期格式
+						String currentTime = df.format(new Date());// new Date()为获取当前系统时间
+						String beginData = meeting.getBeginTime();// 开始时间
+						String endData = meeting.getEndTime();// 结束时间
+						try {
+							if (df.parse(beginData).getTime() > df.parse(currentTime).getTime()) {
+								workSchedule.setStatus(MeetingStatusType.NOTBEGIN.getCode());
+							} else if (df.parse(beginData).getTime() < df.parse(currentTime).getTime() && df.parse(endData).getTime() > df.parse(currentTime).getTime()) {
+								workSchedule.setStatus(MeetingStatusType.HAVEING.getCode());
+							} else if (df.parse(endData).getTime() < df.parse(currentTime).getTime()) {
+								workSchedule.setStatus(MeetingStatusType.ISOVER.getCode());
+							}
+						} catch (ParseException e) {
+							// TODO Auto-generated catch block
+							e.printStackTrace();
+						}
+						workScheduleList.add(workSchedule);
+
+					}
+					if (workScheduleList.size() > 0) {
+						workScheduleService.saveBatch(workScheduleList);
+					}
+				}
+			}
+		}*/
+	}
+
+	/**
+	 * 流程审批完成后，如果审批状态是 已完成，则要发起代办通知
+	 */
+	public void startNotice(String userInfo, Meeting meeting, String status) {
+		if (status.equals(MeetingStatusType.FINISHED.getCode())) {
+			String flag = null;
+			String notifiyWay = meeting.getNotifiyWay();
+			// 定义发待办的人员集合
+			List<String> userIds = new ArrayList<String>();
+			char ch = ',';
+			// 主持人员
+			if (meeting.getEmceeId() != null && !"".equals(meeting.getEmceeId())) {
+				String[] emceeIds = meeting.getEmceeId().split(",");
+				for (String emceeId : emceeIds) {
+					userIds.add(emceeId);
+				}
+			}
+			// 纪要人
+			if (meeting.getRecorderId() != null && !"".equals(meeting.getRecorderId())) {
+				String[] recorderIds = meeting.getRecorderId().split(",");
+				for (String recordersId : recorderIds) {
+					if (!userIds.contains(recordersId)) {
+						userIds.add(recordersId);
+					}
+				}
+			}
+			// 组织人
+			if (meeting.getMeetingOrganizationId() != null && !"".equals(meeting.getMeetingOrganizationId())) {
+				String[] meetingOrganizationIds = meeting.getMeetingOrganizationId().split(",");
+				for (String meetingOrganizationId : meetingOrganizationIds) {
+					if (!userIds.contains(meetingOrganizationId)) {
+						userIds.add(meetingOrganizationId);
+					}
+				}
+			}
+			// 与会人
+			if (meeting.getAttendees() != null && !"".equals(meeting.getAttendees())) {
+				String[] getAttendees = meeting.getAttendees().split(",");
+				for (String attendees : getAttendees) {
+					if (!userIds.contains(attendees)) {
+						userIds.add(attendees);
+					}
+				}
+			}
+
+			// 目前其他可阅读者不发送代办或者待阅
+			/*
+			 * if(meeting.getOtherReadersId() != null && !"".equals(meeting.getCopySendId())){ // 会议创建完之后推送一条代办到流程,此时发待办
+			 * saveSysNoticeMsg(userInfo,meeting,meeting.getOtherReadersId(),flag); }
+			 */
+			if ("1".equals(notifiyWay)) {
+				// 此种情况下发送代办
+				flag = "create";
+				if (userIds.size() > 0) {
+					String noticeUserIds = listToString(userIds, ch);
+					saveSysNoticeMsg(userInfo, meeting, noticeUserIds, flag);
+				}
+				// 抄送人永远发送待阅
+				if (meeting.getCopySendId() != null && !"".equals(meeting.getCopySendId())) {
+					// 会议创建完之后推送一条代办到流程,此时发待办，抄送人永远发送待阅
+					saveSysNoticeMsg(userInfo, meeting, meeting.getCopySendId(), "copySend");
+				}
+			} else if ("0".equals(notifiyWay)) {
+				// 此种情况下发送待阅
+				flag = "copySend";
+				if (meeting.getCopySendId() != null && !"".equals(meeting.getCopySendId())) {
+					String[] getCopySendIds = meeting.getCopySendId().split(",");
+					for (String copySendId : getCopySendIds) {
+						if (!userIds.contains(copySendId)) {
+							userIds.add(copySendId);
+						}
+					}
+				}
+				// 会议创建完之后推送一条代办到流程,此时发待办，抄送人永远发送待阅
+				String noticeDYUserIds = listToString(userIds, ch);
+				saveSysNoticeMsg(userInfo, meeting, noticeDYUserIds, "copySend");
+			}
+		}
+
+	}
+
+	@Override
+	public int updateMeetingStatusByTask(String userInfo, Map updateJson) throws Exception {
+		updateJson.put("flowStatus", MeetingStatusType.FINISHED.getCode());
+		// updateJson.put("status", MeetingStatusType.NOTBEGIN.getCode());
+		List<Meeting> list = queryListByExample(updateJson);
+		int count = 0;
+		if (list.size() > 0) {
+			SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");// 设置日期格式
+			String currentTime = df.format(new Date());// new Date()为获取当前系统时间
+			for (Meeting meeting : list) {
+				if (meeting.getFlowStatus() != null && meeting.getFlowStatus().equals(MeetingStatusType.FINISHED.getCode())
+						&& !meeting.getStatus().equals(MeetingStatusType.MEETINGCANCEL.getCode()) && !meeting.getStatus().equals(MeetingStatusType.MEETINGCHANGE.getCode())
+						&& !meeting.getStatus().equals(MeetingStatusType.ISOVER.getCode())) {
+					String beginData = meeting.getBeginTime();// 开始时间
+					String endData = meeting.getEndTime();// 结束时间
+					if (df.parse(beginData).getTime() > df.parse(currentTime).getTime()) {
+						meeting.setStatus(MeetingStatusType.NOTBEGIN.getCode());
+					} else if (df.parse(beginData).getTime() < df.parse(currentTime).getTime() && df.parse(endData).getTime() > df.parse(currentTime).getTime()) {
+						meeting.setStatus(MeetingStatusType.HAVEING.getCode());
+					} else if (df.parse(endData).getTime() < df.parse(currentTime).getTime()) {
+						meeting.setStatus(MeetingStatusType.ISOVER.getCode());
+					}
+
+					String paramaterJson = JacksonUtils.toJson(meeting);
+					Meeting meetingInfo = JacksonUtils.fromJson(paramaterJson, Meeting.class);
+					// meetingInfo.setStatus(MeetingStatusType.ISOVER.getCode());
+					meetingDao.updateByPrimaryKeySelective(meetingInfo);
+					count++;
+
+					// 获取本条会议除抄送人和其他可阅读者和创建人之外的人员
+					Map<String, Object> map = new HashMap<String, Object>();
+					map.put("meetingId", meetingInfo.getId());
+					// 查询本条会议除抄送人和其他可阅读者和创建人之外的人员
+					List<String> userIdentifiyList = new ArrayList<String>();
+					userIdentifiyList.add("4");
+					userIdentifiyList.add("5");
+					userIdentifiyList.add("6");
+					map.put("userIdentifiy", userIdentifiyList.toArray());
+					List<String> parters = meetingPartnerDao.queryUseerIdByMeetingId(map);
+
+					// 如果会议是已结束，则要把代办待阅消失掉，根据会议中的结束后消失，要消失掉
+					char ch = ',';
+					if (meetingInfo.getStatus().equals(MeetingStatusType.ISOVER.getCode())) {
+						// 并且会议代办消失方式为会议结束后消失,1代表会议结束后消失
+						if (StringUtils.isNotBlank(meetingInfo.getDisappearWay()) && meetingInfo.getDisappearWay().equals("1")) {
+							if (parters.size() > 0) {
+								String userIds = listToString(parters, ch);
+								// 删除原来所有的待办和待阅
+								Map<String, String> noticeMap = new HashMap<String, String>();
+								noticeMap.put("meetingId", meetingInfo.getId());
+								noticeMap.put("userId", userIds);
+								deleteStatusOfNoticeMsg(userInfo, noticeMap, null);
+							}
+						}
+					}
+
+					// 如果会议状态改变，则会议日程中会议的状态也要改变
+					/*
+					 * try { if(parters.size() > 0){ String WorkUserIds = listToString(parters,ch); this.savetWorkSchedule(userInfo,meetingInfo,WorkUserIds); } } catch (Exception
+					 * e) { e.printStackTrace(); }
+					 */
+				}
+			}
+		}
+		return count;
+	}
+
+	@Override
+	public Page getMobileMeetingByPage(Map map) throws Exception {
+		// TODO Auto-generated method stub
+		Page page = new Page();
+		List<Map<String, Object>> list = meetingDao.getMeetingPage(map);
+
+		Integer count = meetingDao.getMeetingCount(map);
+		page.setLimit((Integer) map.get("limit"));
+		page.setList(list);
+		page.setStart((Integer) map.get("start"));
+		page.setTotal(count);
+		return page;
+	}
+
+	@Override
+	public Page getPotalPage(Map map) throws Exception {
+		// TODO Auto-generated method stub
+		Page page = new Page();
+		List<Map<String, Object>> list = meetingDao.getPoatlPage(map);
+		if (list.size() > 0) {
+			SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");// 设置日期格式
+			String currentTime = df.format(new Date());// new Date()为获取当前系统时间
+			for (Map<String, Object> mapMeeting : list) {
+				if (mapMeeting.get("flowStatus") != null
+						&& (mapMeeting.get("flowStatus").equals(MeetingStatusType.RUNNING.getCode()) || mapMeeting.get("flowStatus").equals(MeetingStatusType.HANGUP.getCode()))) {
+					mapMeeting.put("status", MeetingStatusType.RUNNING.getCode());
+				} else if (mapMeeting.get("flowStatus") != null && (mapMeeting.get("flowStatus").equals(MeetingStatusType.WITHDRAW.getCode())
+						|| mapMeeting.get("flowStatus").equals(MeetingStatusType.REJECT.getCode()) || mapMeeting.get("flowStatus").equals(MeetingStatusType.CANCEL.getCode()))) {
+					mapMeeting.put("status", MeetingStatusType.DRAFT.getCode());
+				} else if (mapMeeting.get("flowStatus") != null && (mapMeeting.get("flowStatus").equals(MeetingStatusType.DRAFT.getCode()))) {
+					mapMeeting.put("status", MeetingStatusType.DRAFT.getCode());
+				} else if (mapMeeting.get("flowStatus") != null && (mapMeeting.get("flowStatus").equals(MeetingStatusType.FINISHED.getCode()))) {
+					if (mapMeeting.get("status") != null && ("11".equals(mapMeeting.get("status")) || "10".equals(mapMeeting.get("status")))) {
+						continue;
+					}
+					String beginData = mapMeeting.get("beginTime").toString();// 开始时间
+					String endData = mapMeeting.get("endTime").toString();// 结束时间
+					if (df.parse(beginData).getTime() > df.parse(currentTime).getTime()) {
+						mapMeeting.put("status", MeetingStatusType.NOTBEGIN.getCode());
+					} else if (df.parse(beginData).getTime() < df.parse(currentTime).getTime() && df.parse(endData).getTime() > df.parse(currentTime).getTime()) {
+						mapMeeting.put("status", MeetingStatusType.HAVEING.getCode());
+					} else if (df.parse(endData).getTime() < df.parse(currentTime).getTime()) {
+						mapMeeting.put("status", MeetingStatusType.ISOVER.getCode());
+					}
+				}
+
+			}
+		}
+
+		Integer count = meetingDao.getPoatlMeetingCount(map);
+		page.setLimit((Integer) map.get("limit"));
+		page.setList(list);
+		page.setStart((Integer) map.get("start"));
+		page.setTotal(count);
+		return page;
+	}
+
+	@Override
+	public MeetingDto getMeetingSummInfoById(String id) throws Exception {
+		// 通过主表id获取主子表数据 封装到dto里面 供修改页面时 回显使用
+		// 查询主表
+		Meeting meeting = meetingDao.selectByPrimaryKey(id);
+		MeetingDto meetingDto = new MeetingDto();
+		BeanUtils.copyProperties(meeting, meetingDto);
+		// 如果是录入会议纪要，则默认带出，实际与会成员，实际与会成员是已经做过回复记录的
+		char ch = ',';
+		Map<String, Object> mapSummary = new HashMap<String, Object>();
+		mapSummary.put("meetingId", meeting.getId());
+		// 会议纪要里面的实际与会成员 默认带出已回复参加的
+		// 首先获取参加会议的已经回复的人员
+		List<String> parters = meetingPartnerDao.queryUseerIdByMeetingId(mapSummary);
+		List<String> listUsername = new ArrayList<String>();
+		List<String> listUserids = new ArrayList<String>();
+		for (String partnerUserId : parters) {
+			mapSummary.put("userId", partnerUserId);
+			MeetingReply meetingReply = meetingReployDao.queryMeetingReployByNew(mapSummary);
+			// 获取最新回复参加的人员信息
+			if (meetingReply != null && meetingReply.getJoinFlag() != null && meetingReply.getJoinFlag().equals("1")) {
+				String reployUsername = meetingReply.getUserName();
+				listUsername.add(reployUsername);
+				listUserids.add(meetingReply.getUserId());
+			}
+		}
+		if (listUsername.size() > 0) {
+			String userNames = listToString(listUsername, ch);
+			meetingDto.setActualAttendeesName(userNames);
+		}
+		if (listUserids.size() > 0) {
+			String userIds = listToString(listUserids, ch);
+			meetingDto.setActualAttendeesId(userIds);
+		}
+		// 返回dto对象
+		return meetingDto;
+	}
+
+	@Override
+	public List meetingManagerList(String userInfo, Map param) throws Exception{
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		List list = null; 
+		if(!param.isEmpty()){
+				int status = Integer.parseInt(param.get("status")+"");
+				if(status == 1){
+					list = meetingDao.getWaitSendPage(param);
+				}else if(status == 2){
+					list = meetingDao.getWaitBeginPage(param);
+				}else if(status == 3){
+					list = meetingDao.getOpenPage(param);
+				}else{
+					list = meetingDao.getOpenPage(param);
+				}
+		}else{
+				list = meetingDao.select(null);
+		}
+		return list;
+	}
+
+	@Override
+	public int archiveMeeting(String userInfo, String paramaterJson, Map<String, Object> map) {
+		 int updateMeeting = 0;
+		 List<Meeting> meetingList = new ArrayList<Meeting>();
+		 List<ContentRowType> contentRowTypeList = new ArrayList<ContentRowType>();
+		 SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+		 if (StringUtils.isNotBlank(paramaterJson)) {
+			   List<String> list=Arrays.asList(paramaterJson.split(","));
+			   for (String meetingId : list) {
+				   Meeting meeting = meetingDao.selectByPrimaryKey(meetingId);
+				   //已归档代表4
+				   meeting.setStatus("4");
+				   meeting.setPigeonholeUserId(userBeanInfo.getSecurityUserDto().getId());
+				   if(map.get("PigeonholePath") != null && !"".equals(map.get("PigeonholePath"))){
+					   meeting.setPigeonholePath(map.get("PigeonholePath").toString());
+				   }
+				   SimpleDateFormat dateFormater = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+				   Date date=new Date();
+				   Timestamp timestamp = Timestamp.valueOf(dateFormater.format(date));
+				   meeting.setPigeonholeDate(timestamp.toString());
+				   meetingList.add(meeting);
+				   //拼装会议文档内容
+				   ContentRowType contentRowType = new ContentRowType();
+				   contentRowType.setId(IDGenerator.getUUID());
+				   contentRowType.setTitle(meeting.getMtTitle());
+				   contentRowType.setDocContent(meeting.getMtPlan());
+				   contentRowType.setCreatePersonName(meeting.getCreatePersonName());
+				   contentRowType.setCreateDate(meeting.getCreateDate());
+				   contentRowType.setContentChildId(map.get("contentChildId").toString());
+				   contentRowTypeList.add(contentRowType);
+			   }
+			   //批量更新会议内容
+			   updateMeeting = super.updateBatch(meetingList);
+			   if(updateMeeting > 0){
+				   //如果有会议更新，则需把该会议部分内容同步到文档中心，做会议归档记录
+				   contentRowTypeService.saveBatch(contentRowTypeList);
+			   }
+			}	   
+			
+		   return updateMeeting;
+	}
+
+	@Override
+	public int uploadMeetingSummary(String userInfo, String id) {
+		int update = 0;
+		if(StringUtils.isNotBlank(id)) {
+			Meeting meeting = meetingDao.selectByPrimaryKey(id);
+			if (null != meeting) {
+				//5代表已经上传会议纪要
+				meeting.setStatus("5");
+				//批量更新会议内容
+				update = meetingDao.updateByPrimaryKeySelective(meeting);
+			}
+			
+		}		  
+		return update;   
+	}
+
+	/**
+	 * 暂存数据
+	 * @param userJson
+	 * @param saveJson
+	 * @return
+     */
+	@Override
+	public String saveTemporary(String userJson, String saveJson) throws Exception{
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		MeetingDto meetingDto = JacksonUtils.fromJson(saveJson,MeetingDto.class);
+		//先清空暂存数据在保存数据
+		this.deleteBean(meetingDto);
+		this.saveBean(userJson,meetingDto);
+		info.setResult(JacksonUtils.toJson(meetingDto));
+		info.setSucess(true);
+		info.setMsg("暂存对象成功!");
+		return JacksonUtils.toJson(info);
+	}
+
+	/**
+	 * 保存附件数据
+	 * @param userJson
+	 * @param saveJson
+	 * @return
+	*/
+	@Override
+	public int saveAttachment(String saveJson) throws Exception{
+		int result = 0;
+		Map<String,String> saveMap = JacksonUtils.fromJson (saveJson,Map.class);
+        String preId = saveMap.get ("businessId");
+        String newId = saveMap.get ("newBusinessId");
+        String appId = saveMap.get ("appId");
+        String categoryId = saveMap.get ("categoryId");
+        Map<String, Object> postMap = new HashMap<String,Object>();
+        postMap.put ("businessId", Arrays.asList (saveMap.get ("businessId").split (",")));
+        postMap.put ("appId", appId);
+        postMap.put ("categoryId", categoryId);
+        String resultJson = searchFeignService.queryListByObject(postMap);
+        if (!resultJson.isEmpty()) {
+        	  List<AttachmentDto> attachmentDtos = JacksonUtils.fromJson (resultJson, List.class, AttachmentDto.class);
+              for (AttachmentDto attachmentDto : attachmentDtos) {
+                  final AttachmentDto temp = attachmentDto;
+                  if(temp.getType().equals("file")){
+                  	 String fullPath = attachmentDto.getPath ();
+                       final String group = fullPath.substring (0, fullPath.indexOf ("/"));
+                       final String fileStorageName = fullPath.substring (fullPath.indexOf ("/") + 1);
+                       final String localFileName = attachmentUrl + File.separator + System.currentTimeMillis () + "." + temp.getExtendName ();
+                 /*  new Thread (new Runnable () {
+                       @Override
+                       public void run() {*/
+                      
+                       new FastDFSClient ().download (group, fileStorageName, localFileName);
+                       BufferedInputStream bis = new BufferedInputStream (new FileInputStream (new File (localFileName)));
+                       ByteArrayOutputStream baos = new ByteArrayOutputStream ();
+                       int c = bis.read ();//读取bis流中的下一个字节
+                       while (c != -1) {
+                           baos.write (c);
+                           c = bis.read ();
+                       }
+                       bis.close ();
+                       byte retArr[] = baos.toByteArray ();
+                       NameValuePair[] metaList = new NameValuePair[3];
+                       metaList[0] = new NameValuePair ("fileName", temp.getFullName ());
+                       metaList[1] = new NameValuePair ("fileExtName", temp.getExtendName ());
+                       metaList[2] = new NameValuePair ("fileLength", String.valueOf (temp.getFileSize ()));
+                       String[] upResults = new FastDFSClient ().upload (retArr, temp.getExtendName (), metaList);
+                       temp.setPath (upResults[0] + "/" + upResults[1]);
+                       temp.setUrl (upResults[2]);
+                       temp.setId (IDGenerator.getUUID ());
+                       temp.setBusinessId (newId);
+                       result = searchFeignService.attachmentTempSave(JacksonUtils.toJson (temp));    
+                  }else if(temp.getType().equals("url")){
+                  	temp.setId (IDGenerator.getUUID ());
+                  	temp.setBusinessId (newId);
+                  	result = searchFeignService.attachmentTempSave(JacksonUtils.toJson (temp));
+                  }
+                 
+//                  }
+            /*  }).start ();*/		
+
+              } 
+        }
+        return result;
+	    
+	}
+
+	
+	@Override
+	public int saveMeeting(String userJson, String saveJson) throws Exception {
+		 MeetingDto meetingDto = JacksonUtils.fromJson(saveJson,
+					MeetingDto.class);
+		//先清空暂存数据在保存数据
+		this.deleteBean(meetingDto);
+		int saveresult = this.saveMeetingAndUser(userJson, saveJson);
+		return saveresult;
+	}
+
+	
+	@Override
+	public int updateMeeting(String updateJson) throws Exception {
+		 Meeting meeting=JacksonUtils.fromJson(updateJson, Meeting.class);
+		 int result = this.update(meeting);
+		 //保存成功后给与会人员发送短信
+		 if(result > 0){
+			   MeetingDto meetingDto=JacksonUtils.fromJson(updateJson, MeetingDto.class);
+			   String[] userids = meetingDto.getAttendees().split(",");
+			   StringBuilder phone = new StringBuilder();
+
+			   for (int i = 0; i < userids.length; i++) {
+				 //根据userId获取用户信息，拿到用户手机号
+				   String userId = userids[i];
+				// 根据用户id获取用户信息
+				   Map<String, Object> map = new HashMap<String, Object>();
+				   map.put("userId", userId);
+				   String userDtoJson = sysFeignService.selectUserInfoById(map);
+				   UserDto userDto = JacksonUtils.fromJson(userDtoJson, UserDto.class);
+				   String mobile = userDto.getMobile();
+				   phone.append(mobile);
+				   if(i == userids.length -1){
+					}else{
+						phone.append(",");
+					}
+				}
+			 
+			   Map<String, String> map = new HashMap<String, String>();
+			   map.put("msg", meetingDto.getTitle()+",请您准时参加！");
+			   map.put("phones", phone.toString());
+			   String paramaterJson = JacksonUtils.toJson(map);
+			   sysFeignService.saveSendMsg(JacksonUtils.fromJson(paramaterJson, Map.class));
+		   }
+		 return result;
+	}
+	
+	
+	
+	
+
+}

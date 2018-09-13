@@ -1,0 +1,889 @@
+/**
+ * 
+ * @Title OaUserUtil.java
+ * @Package com.jzy.hio.oa.meeting.util
+ * @author shangb
+ * @date 2018年3月28日 下午3:52:01
+ * @version V1.0
+ */
+
+package com.jzy.hio.utils;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.commons.lang.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
+import com.alibaba.fastjson.JSON;
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.feign.SysExtrenalFeignService;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.feign.SysRoleFeignService;
+import com.jzy.hio.oa.OaConstant;
+import com.jzy.hio.oa.contract.dto.ResultMsg;
+import com.jzy.hio.platform.constant.UserOrFriendConstant;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.sys.external.param.ExternalContactRelationParam;
+import com.jzy.hio.sys.organization.dto.GeneralDto;
+import com.jzy.hio.sys.organization.dto.OrganizationDto;
+import com.jzy.hio.sys.organization.dto.SkyDriveDto;
+import com.jzy.hio.sys.organization.dto.SysCurrencyDto;
+import com.jzy.hio.sys.organization.param.SkyDriveParam;
+import com.jzy.hio.sys.user.dto.OAUserDto;
+import com.jzy.hio.sys.user.dto.UserStatusDto;
+import com.jzy.hio.sys.user.param.UserStatusParam;
+
+/**
+ * oa的工具类
+ * 
+ * @author shangb
+ * @date 2018年3月28日 下午3:52:01
+ */
+@Component
+public class OaUserUtil {
+
+	private static Logger logger = LoggerFactory.getLogger(OaUserUtil.class);
+
+	@Autowired
+	private SysFeignService sysFeignService;
+
+	@Autowired
+	private SysRoleFeignService sysRoleFeignService;
+
+	@Autowired
+	private SysExtrenalFeignService sysExtrenalFeignService;
+
+	/**
+	 * 获取人员所有组织id,包含所有上级组织,会有重复
+	 * 
+	 * @param tendId
+	 * @param userId
+	 * @return
+	 */
+	public List<String> findAllOrgIds(String tendId, String userId) {
+		
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用findAllOrgIds feign接口开始>>>>userId:>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>>>", userId);
+		
+		List<String> orgIds = new ArrayList<String>();
+		ApiFeignResponse<List<OrganizationDto>> response = sysFeignService.queryOrganizationsByUserId(tendId, userId);
+		if (response.getStatus() == 200) {
+			List<OrganizationDto> orgList = response.getResult();
+			String[] orgIdArray = null;
+			logger.info(">>>>>>>>>>>>>>>>>>>>orgList{}>>>>>>>>>>>>>>>>>>>>>>>>>>>>>", orgList.toString());
+			if (orgList != null && orgList.size() > 0) {
+				for (OrganizationDto org : orgList) {
+					String ids = org.getPrefixId();
+					orgIdArray = ids.split("/");
+					for (int i = 0; i < orgIdArray.length; i++) {
+						orgIds.add(orgIdArray[i]);
+					}
+				}
+			}
+			
+		} else {
+			throw new HioException("调用findAllOrgIds feign接口失败" + response.getMessage());
+		}
+		
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用findAllOrgIds feign接口结束>>>>orgIds:>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>>>", orgIds.toString());
+		
+		return orgIds;
+	}
+	
+	/**
+	 * 获取人员所有组织id,包含所有上级组织,去掉重复
+	 * 
+	 * @param tendId
+	 * @param userId
+	 * @return
+	 */
+	public Set<String> findAllOrgIdsToSet(String tendId, String userId) {
+		
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用findAllOrgIds feign接口开始>>>>userId:>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>>>", userId);
+		
+		Set<String> orgIds = new HashSet<String>();
+		ApiFeignResponse<List<OrganizationDto>> response = sysFeignService.queryOrganizationsByUserId(tendId, userId);
+		if (response.getStatus() == 200) {
+			List<OrganizationDto> orgList = response.getResult();
+			String[] orgIdArray = null;
+			if (orgList != null && orgList.size() > 0) {
+				for (OrganizationDto org : orgList) {
+					String ids = org.getPrefixId();
+					orgIdArray = ids.split("/");
+					for (int i = 0; i < orgIdArray.length; i++) {
+						orgIds.add(orgIdArray[i]);
+					}
+				}
+			}
+		} else {
+			throw new HioException("调用findAllOrgIdsToSet feign接口失败" + response.getMessage());
+		}
+		
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用findAllOrgIds feign接口结束>>>>orgIds:>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>>>", orgIds.toString());
+		
+		return orgIds;
+	}
+
+	/**
+	 * 根据一个userID查询一个userName
+	 * 
+	 * @author shangb
+	 * @author wdy
+	 * @date 2018年3月28日 下午3:53:15
+	 * @param userId
+	 * @return
+	 */
+	public String selectUserName(String userId) {
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用queryNameByOrgAndRoleAndUser feign接口开始>>>>userId:>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>>>", userId);
+
+		String userName = null;
+		if (!StringUtils.isEmpty(userId)) {
+			List<String> userIdList = new ArrayList<String>();
+			userIdList.add(userId);
+			SkyDriveParam skyDriveParam = new SkyDriveParam();
+			skyDriveParam.setUserIds(userIdList);
+			skyDriveParam.setStatus(1);
+			ApiFeignResponse<List<SkyDriveDto>> apiFeignResponse = sysFeignService.queryNameByOrgAndRoleAndUser(skyDriveParam);
+			if (apiFeignResponse != null) {
+				if (200 == apiFeignResponse.getStatus()) {
+					List<SkyDriveDto> skyDriveDtoList = apiFeignResponse.getResult();
+					if (skyDriveDtoList != null && skyDriveDtoList.size() > 0) {
+						userName = skyDriveDtoList.get(0).getName();
+					}
+				} else {
+					throw new HioException("调用queryNameByOrgAndRoleAndUser feign接口失败" + apiFeignResponse.getMessage());
+				}
+
+			}
+		}
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用queryNameByOrgAndRoleAndUser feign接口结束>>>>>userName:>>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>", userName);
+		return userName;
+	}
+
+	/**
+	 * 根据一个userID查询一个userName
+	 * 
+	 * @author wdy
+	 * @date 2018年3月28日 下午3:53:15
+	 * @param userId
+	 * @return
+	 */
+	public String selectUserNameByTendId(String userId, String tendId) {
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用queryNameByOrgAndRoleAndUser feign接口开始>>>>userId:>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>>>", userId);
+
+		String userName = null;
+		if (!StringUtils.isEmpty(userId)) {
+			List<String> userIdList = new ArrayList<String>();
+			userIdList.add(userId);
+			SkyDriveParam skyDriveParam = new SkyDriveParam();
+			skyDriveParam.setUserIds(userIdList);
+			skyDriveParam.setTendId(tendId);
+			ApiFeignResponse<List<SkyDriveDto>> apiFeignResponse = sysFeignService.queryNameByOrgAndRoleAndUser(skyDriveParam);
+			if (apiFeignResponse != null) {
+				if (200 == apiFeignResponse.getStatus()) {
+					List<SkyDriveDto> skyDriveDtoList = apiFeignResponse.getResult();
+					if (skyDriveDtoList != null && skyDriveDtoList.size() > 0) {
+						userName = skyDriveDtoList.get(0).getName();
+					}
+				} else {
+					throw new HioException("调用queryNameByOrgAndRoleAndUser feign接口失败" + apiFeignResponse.getMessage());
+				}
+
+			}
+		}
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用queryNameByOrgAndRoleAndUser feign接口结束>>>>>userName:>>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>", userName);
+		return userName;
+	}
+
+	/**
+	 * 根据一个userID查询一个userName,包含离职
+	 * 
+	 * @author wdy
+	 * @date 2018年3月28日 下午3:53:15
+	 * @param userId
+	 * @return
+	 */
+	public String selectUserNameByTendIdAndQuit(String userId, String tendId) {
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用queryNameByOrgAndRoleAndUser feign接口开始>>>>userId:>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>>>", userId);
+
+		String userName = null;
+		if (!StringUtils.isEmpty(userId)) {
+			List<String> userIdList = new ArrayList<String>();
+			userIdList.add(userId);
+			SkyDriveParam skyDriveParam = new SkyDriveParam();
+			skyDriveParam.setUserIds(userIdList);
+			skyDriveParam.setTendId(tendId);
+			skyDriveParam.setStatus(1);
+			ApiFeignResponse<List<SkyDriveDto>> apiFeignResponse = sysFeignService.queryNameByOrgAndRoleAndUser(skyDriveParam);
+			if (apiFeignResponse != null) {
+				if (200 == apiFeignResponse.getStatus()) {
+					List<SkyDriveDto> skyDriveDtoList = apiFeignResponse.getResult();
+					if (skyDriveDtoList != null && skyDriveDtoList.size() > 0) {
+						userName = skyDriveDtoList.get(0).getName();
+					}
+				} else {
+					throw new HioException("调用queryNameByOrgAndRoleAndUser feign接口失败" + apiFeignResponse.getMessage());
+				}
+
+			}
+		}
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用queryNameByOrgAndRoleAndUser feign接口结束>>>>>userName:>>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>", userName);
+		return userName;
+	}
+
+	/**
+	 * 根据一个userID查询一个userName
+	 * 
+	 * @author shangb
+	 * @author wdy
+	 * @date 2018年3月28日 下午3:53:15
+	 * @param userId
+	 * @return
+	 */
+	public String selectUserName(String userId, String tendId) {
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用queryNameByOrgAndRoleAndUser feign接口开始>>>>userId:>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>>>", userId);
+
+		String userName = null;
+		if (!StringUtils.isEmpty(userId)) {
+			List<String> userIdList = new ArrayList<String>();
+			userIdList.add(userId);
+			SkyDriveParam skyDriveParam = new SkyDriveParam();
+			skyDriveParam.setUserIds(userIdList);
+			skyDriveParam.setTendId(tendId);
+			ApiFeignResponse<List<SkyDriveDto>> apiFeignResponse = sysFeignService.queryNameByOrgAndRoleAndUser(skyDriveParam);
+			if (apiFeignResponse != null) {
+				if (200 == apiFeignResponse.getStatus()) {
+					List<SkyDriveDto> skyDriveDtoList = apiFeignResponse.getResult();
+					if (skyDriveDtoList != null && skyDriveDtoList.size() > 0) {
+						userName = skyDriveDtoList.get(0).getName();
+					}
+				} else {
+					throw new HioException("调用queryNameByOrgAndRoleAndUser feign接口失败" + apiFeignResponse.getMessage());
+				}
+
+			}
+		}
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用queryNameByOrgAndRoleAndUser feign接口结束>>>>>userName:>>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>", userName);
+		return userName;
+	}
+
+	/**
+	 * 根据角色ID查询出角色名称
+	 * 
+	 * @param roleId
+	 * @return
+	 */
+	public String selectRoleName(String roleId, String tendId) {
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用queryNameByOrgAndRoleAndUser feign接口开始>>>>roleId:>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>>>", roleId);
+
+		String roleName = null;
+		if (!StringUtils.isEmpty(roleId)) {
+			List<String> roleIdList = new ArrayList<String>();
+			roleIdList.add(roleId);
+			SkyDriveParam skyDriveParam = new SkyDriveParam();
+			skyDriveParam.setRoleIds(roleIdList);
+			skyDriveParam.setTendId(tendId);
+			ApiFeignResponse<List<SkyDriveDto>> apiFeignResponse = sysFeignService.queryNameByOrgAndRoleAndUser(skyDriveParam);
+			if (apiFeignResponse != null) {
+				if (200 == apiFeignResponse.getStatus()) {
+					List<SkyDriveDto> skyDriveDtoList = apiFeignResponse.getResult();
+					if (skyDriveDtoList != null && skyDriveDtoList.size() > 0) {
+						roleName = skyDriveDtoList.get(0).getName();
+					} else {
+						throw new HioException("调用queryNameByOrgAndRoleAndUser feign接口失败" + apiFeignResponse.getMessage());
+					}
+				}
+			}
+
+		}
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用queryNameByOrgAndRoleAndUser feign接口结束>>>>>roleName:>>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>", roleName);
+		return roleName;
+	}
+
+	/**
+	 * 根据组织ID查询出组织名称
+	 * 
+	 * @author shangb
+	 * @author wdy
+	 * @date 2018年3月29日 下午6:21:44
+	 * @param orgId
+	 * @return
+	 */
+	public String selectOrgName(String orgId, String tendId) {
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用queryNameByOrgAndRoleAndUser feign接口开始>>>>orgId:>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>>>", orgId);
+
+		String orgName = null;
+		if (!StringUtils.isEmpty(orgId)) {
+			List<String> orgIdList = new ArrayList<String>();
+			orgIdList.add(orgId);
+			SkyDriveParam skyDriveParam = new SkyDriveParam();
+			skyDriveParam.setOrganizationIds(orgIdList);
+			skyDriveParam.setTendId(tendId);
+			ApiFeignResponse<List<SkyDriveDto>> apiFeignResponse = sysFeignService.queryNameByOrgAndRoleAndUser(skyDriveParam);
+			if (apiFeignResponse != null) {
+				if (200 == apiFeignResponse.getStatus()) {
+					List<SkyDriveDto> skyDriveDtoList = apiFeignResponse.getResult();
+					if (skyDriveDtoList != null && skyDriveDtoList.size() > 0) {
+						orgName = skyDriveDtoList.get(0).getName();
+					}
+				} else {
+					throw new HioException("调用queryNameByOrgAndRoleAndUser feign接口失败" + apiFeignResponse.getMessage());
+				}
+			}
+		}
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用queryNameByOrgAndRoleAndUser feign接口结束>>>>orgName:>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>>>", orgName);
+		return orgName;
+	}
+
+	/**
+	 * 根据一个为userID数组的字符串查询所有userName，并且放到一个字符串里返回
+	 * 
+	 * @author shangb
+	 * @date 2018年3月28日 下午4:24:52
+	 * @param userIds
+	 * @return
+	 */
+	public List<String> selectUserNameByArray(String userIds) {
+		List<String> userNameList = null;
+		if (!StringUtils.isEmpty(userIds)) {
+			String[] userIdArr = userIds.split(userIds);
+			List<String> userIdList = Arrays.asList(userIdArr);
+			userNameList = selectUserNameByList(userIdList);
+		}
+		return userNameList;
+	}
+
+	/**
+	 * 根据userID的list查询所有userName，并且放到一个list里返回
+	 * 
+	 * @author shangb
+	 * @date 2018年3月28日 下午4:31:57
+	 * @param userIdList
+	 * @return
+	 */
+	public List<String> selectUserNameByList(List<String> userIdList) {
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用queryNameByOrgAndRoleAndUser feign接口开始>>>>userIdList.size():>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>>>", userIdList.size());
+
+		List<String> userNameList = new ArrayList<String>();
+		if (userIdList != null && userIdList.size() > 0) {
+			SkyDriveParam skyDriveParam = new SkyDriveParam();
+			skyDriveParam.setUserIds(userIdList);
+			ApiFeignResponse<List<SkyDriveDto>> apiFeignResponse = sysFeignService.queryNameByOrgAndRoleAndUser(skyDriveParam);
+			if (apiFeignResponse != null) {
+				if (200 == apiFeignResponse.getStatus()) {
+					List<SkyDriveDto> skyDriveDtoList = apiFeignResponse.getResult();
+					if (skyDriveDtoList != null && skyDriveDtoList.size() > 0) {
+						for (SkyDriveDto skyDriveDto : skyDriveDtoList) {
+							userNameList.add(skyDriveDto.getName());
+						}
+					}
+				} else {
+					throw new HioException("调用queryNameByOrgAndRoleAndUser feign接口失败" + apiFeignResponse.getMessage());
+				}
+			}
+
+		}
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用queryNameByOrgAndRoleAndUser feign接口结束>>>>userNameList.size():>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>>>", userNameList.size());
+		return userNameList;
+	}
+
+	/**
+	 * 根据用户姓名模糊查询出userID的list
+	 * 
+	 * @author shangb
+	 * @date 2018年4月2日 下午3:47:08
+	 * @param userName
+	 * @param tendId
+	 *            租户ID
+	 * @return
+	 */
+	public List<String> selectUserIdListByLikeName(String userName, String tendId) {
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用queryUserListByName feign接口开始>>>>userName:>>>" + userName + ">>>>>>tendId:>>{}>>>>>>>>>>>>>>>>>>>>>", tendId);
+
+		List<String> userIdList = new ArrayList<String>();
+
+		ApiFeignResponse<List<OAUserDto>> apiFeignResponse = sysFeignService.queryUserListByName(userName, tendId);
+		if (apiFeignResponse != null) {
+			if (200 == apiFeignResponse.getStatus()) {
+				List<OAUserDto> oAUserDtoList = apiFeignResponse.getResult();
+
+				if (oAUserDtoList != null && oAUserDtoList.size() > 0) {
+					for (OAUserDto oAUserDto : oAUserDtoList) {
+						userIdList.add(oAUserDto.getId());
+					}
+				}
+			} else {
+				throw new HioException("调用queryUserListByName feign接口失败" + apiFeignResponse.getMessage());
+			}
+		}
+		return userIdList;
+	}
+
+	/**
+	 * 根据组织id、租户id查询组织名称
+	 * 
+	 * @author shangb
+	 * @date 2018年4月17日 上午11:14:41
+	 * @param id
+	 * @param tendId
+	 * @return
+	 */
+	public String queryOrgNameById(String id, String tendId) {
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用queryOrganizationNameById feign接口开始>>>>id:>>>" + id + ">>>>>>tendId:>>{}>>>>>>>>>>>>>>>>>>>>", tendId);
+
+		String name = "";
+		ApiFeignResponse<GeneralDto> apiFeignResponse = sysFeignService.queryOrganizationNameById(tendId, id);
+		if (apiFeignResponse != null) {
+			if (200 == apiFeignResponse.getStatus()) {
+				GeneralDto generalDto = apiFeignResponse.getResult();
+				if (generalDto != null) {
+					name = generalDto.getName();
+				}
+			} else {
+				throw new HioException("调用queryOrganizationNameById feign接口失败" + apiFeignResponse.getMessage());
+			}
+		}
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用queryOrganizationNameById feign接口结束>>>>name:>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>", name);
+		return name;
+
+	}
+
+	/**
+	 * 根据角色id、租户id查询角色名称
+	 * 
+	 * @author shangb
+	 * @date 2018年4月17日 上午11:17:00
+	 * @param id
+	 * @param tendId
+	 * @return
+	 */
+	public String queryRoleNameById(String id, String tendId) {
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用queryRoleNameById feign接口开始>>>>id:>>>" + id + ">>>>>>tendId:>>{}>>>>>>>>>>>>>>>>>>>>", tendId);
+
+		String name = null;
+		ApiFeignResponse<GeneralDto> apiFeignResponse = sysRoleFeignService.queryRoleNameById(tendId, id);
+		if (apiFeignResponse != null) {
+			if (200 == apiFeignResponse.getStatus()) {
+				GeneralDto generalDto = apiFeignResponse.getResult();
+				if (generalDto != null) {
+					name = generalDto.getName();
+				}
+			} else {
+				throw new HioException("调用queryRoleNameById feign接口失败" + apiFeignResponse.getMessage());
+			}
+		}
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用queryRoleNameById feign接口结束>>>>name:>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>", name);
+		return name;
+
+	}
+
+	/**
+	 * 通过oaUserId查询imUserId
+	 * 
+	 * @author shangb
+	 * @date 2018年4月19日 下午5:04:44
+	 * @param userId
+	 * @param tendId
+	 * @return
+	 */
+	public String queryImUserIdByOaUserId(String userId, String tendId) {
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用queryImUserIdByOaUserId feign接口开始>>>>id:>>>{}>>>>>>tendId:>>{}>>>>>>>>>>>>>>>>>>>>>", userId, tendId);
+		String name = null;
+		ApiFeignResponse<SysCurrencyDto> apiFeignResponse = sysFeignService.queryImUserIdByOaUserId(tendId, userId);
+		if (apiFeignResponse != null) {
+			if (200 == apiFeignResponse.getStatus()) {
+				SysCurrencyDto sysCurrencyDto = apiFeignResponse.getResult();
+				if (sysCurrencyDto != null) {
+					name = sysCurrencyDto.getImUserId();
+				}
+			} else {
+				throw new HioException("调用queryImUserIdByOaUserId feign接口失败" + apiFeignResponse.getMessage());
+			}
+		}
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用queryImUserIdByOaUserId feign接口结束>>>>name:>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>", name);
+		return name;
+	}
+
+	/**
+	 * 通过oaUserId查询imUserId，并且通过imUserId从redis里取出用户头像
+	 * 
+	 * @author shangb
+	 * @date 2018年4月27日 上午10:26:08
+	 * @param tendId
+	 * @param userId
+	 * @return
+	 */
+	public String queryImgUrl(String tendId, String userId) {
+		String imgUrl = null;
+		// 调用sys方法：通过oaUserId查询imUserId
+		String userIdIM = queryImUserIdByOaUserId(userId, tendId);
+
+		logger.info("通过userId>>{}查询imUserId>>{}获取头像queryImgUrl", userId, userIdIM);
+
+		if (!StringUtils.isEmpty(userIdIM)) {
+			// 从redis里取出用户头像
+			String imgStr = JedisUtil.fetchRow(UserOrFriendConstant.IM_USER_INFO, userIdIM);
+			if (!StringUtils.isEmpty(imgStr)) {
+				Map<String, Object> imgMap = JacksonUtils.fromJson(imgStr, Map.class);
+				if (imgMap != null) {
+					imgUrl = (String) imgMap.get("resourceImgUrl");
+					logger.info("通过oaUserId查询imUserId，并且通过imUserId从redis里取出用户头像,userId:{}，imgUrl：{}", userId, imgUrl);
+				}
+			}
+		}
+		return imgUrl;
+	}
+
+	/**
+	 * 通过imUserId从redis里取出用户头像
+	 *
+	 * @author yangning
+	 * @date 2018年5月3日 上午10:26:08
+	 * @param imUserId
+	 * @return
+	 */
+	public String queryImgUrlByImId(String imUserId) {
+		String imgUrl = null;
+
+		if (!StringUtils.isEmpty(imUserId)) {
+			// 从redis里取出用户头像
+			String imgStr = JedisUtil.fetchRow(UserOrFriendConstant.IM_USER_INFO, imUserId);
+			logger.info("通过imUserId从redis里取出用户头像,userId:{}，imgStr：{}", imUserId, imgStr);
+			if (!StringUtils.isEmpty(imgStr)) {
+				Map<String, Object> imgMap = JacksonUtils.fromJson(imgStr, Map.class);
+				if (imgMap != null) {
+					imgUrl = (String) imgMap.get("resourceImgUrl");
+					logger.info("通过imUserId从redis里取出用户头像,userId:{}，imgUrl：{}", imUserId, imgUrl);
+				}
+			}
+		}
+		return imgUrl;
+	}
+
+	/**
+	 * 查询userId用户状态(正常、离职)
+	 * 
+	 * @author wdy
+	 * @date 2018年3月28日 下午3:53:15
+	 * @param apiParam
+	 * @return
+	 */
+	public Boolean queryUserStatusByIds(UserStatusParam apiParam) {
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用queryUserStatusByIds feign接口开始>>>>userIds:>>>{}>>>>>>>>>>>imUserId>>>{}>>>>>>>>>>>>>>>", apiParam.getUserIds().size());
+
+		boolean status = true;
+		List<String> userIds = apiParam.getUserIds();
+		List<String> exterIds = apiParam.getExterIds();
+
+		ApiFeignResponse<Map<String, UserStatusDto>> apiFeignResponse = sysFeignService.queryUserStatusByIds(apiParam);
+		if (apiFeignResponse != null) {
+			if (200 == apiFeignResponse.getStatus()) {
+				Map<String, UserStatusDto> map = apiFeignResponse.getResult();
+
+				if(userIds != null){
+					if(userIds.size() > 0){
+						for (String userId : userIds) {
+							if (!map.containsKey(userId)) {
+								status = false;
+							}
+						}
+					}
+				}
+				
+				if(exterIds != null){
+					if(exterIds.size() > 0){
+						for (String exterId : exterIds) {
+							if (!map.containsKey(exterId)) {
+								status = false;
+							}
+						}
+					}
+				}
+				
+				
+
+			} else {
+				throw new HioException("调用queryImUserIdByOaUserId feign接口失败" + apiFeignResponse.getMessage());
+			}
+		}
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用queryUserStatusByIds feign接口结束>>>>>status:>>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>", status);
+		return status;
+	}
+
+	/**
+	 * 查询外部联系人和当前人是否有关系
+	 * 
+	 * @author wdy
+	 * @date 2018年3月28日 下午3:53:15
+	 * @param userId
+	 * @return
+	 */
+	public Boolean queryExternalIsHaveRelation(ExternalContactRelationParam apiParam) {
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用queryExternalIsHaveRelation feign接口开始>>>>>>>>tendId>>{}>>>>>>>>>",apiParam.getTendId());
+
+		boolean status = true;
+
+		ApiFeignResponse<Boolean> apiFeignResponse = sysExtrenalFeignService.queryExternalIsHaveRelation(apiParam);
+		if (apiFeignResponse != null) {
+			if (200 == apiFeignResponse.getStatus()) {
+
+				status = apiFeignResponse.getResult();
+
+			} else {
+				throw new HioException("调用queryExternalIsHaveRelation feign接口失败" + apiFeignResponse.getMessage());
+			}
+		}
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用queryExternalIsHaveRelation feign接口结束>>>>>>>>>>>>status>>>{}>>>>>",status);
+		return status;
+	}
+	
+	/**
+	 * 
+	 * <p>根据status 人员查询状态控制--->
+	 * 0 表示查询正常状态人员(不包含删除以及离职的)；
+	 * 1表示查询包含离职人员但不包含删除的；
+	 * 2表示查询包含删除但不包含离职的；
+	 * 3表示不需要状态（包含删除以及离职的）
+	 * <br>
+	 * @author wliang
+	 * @date 2018年6月27日 下午9:09:14 
+	 * @param userIdList
+	 * @param tendId
+	 * @param type
+	 * @return
+	 */
+	public List<String> selectUserNameByListAndStatus(List<String> userIdList,String tendId,int status) {
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用selectUserNameByListAndStatus feign接口开始>>>>userIdList.size():>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>>>", userIdList.size());
+
+		List<String> userNameList = new ArrayList<String>();
+		if (Base.isNotEmpty(userIdList)) {
+			SkyDriveParam skyDriveParam = new SkyDriveParam();
+			skyDriveParam.setUserIds(userIdList);
+			skyDriveParam.setTendId(tendId);
+			skyDriveParam.setStatus(status);
+			ApiFeignResponse<List<SkyDriveDto>> apiFeignResponse = sysFeignService.queryNameByOrgAndRoleAndUser(skyDriveParam);
+			if (Base.isNotEmpty(apiFeignResponse)) {
+				if (Base.isEquals(200,apiFeignResponse.getStatus())) {
+					List<SkyDriveDto> skyDriveDtoList = apiFeignResponse.getResult();
+					if (Base.isNotEmpty(skyDriveDtoList)) {
+						for (SkyDriveDto skyDriveDto : skyDriveDtoList) {
+							userNameList.add(skyDriveDto.getName());
+						}
+					}
+				} else {
+					throw new HioException("调用selectUserNameByListAndStatus feign接口失败" + apiFeignResponse.getMessage());
+				}
+			}
+		}
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用selectUserNameByListAndStatus feign接口结束>>>>userNameList.size():>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>>>", userNameList.size());
+		return userNameList;
+	}
+	
+	/**
+	 * 
+	 * <p>根据status 人员查询状态控制--->
+	 * 0 表示查询正常状态人员(不包含删除以及离职的)；
+	 * 1表示查询包含离职人员但不包含删除的；
+	 * 2表示查询包含删除但不包含离职的；
+	 * 3表示不需要状态（包含删除以及离职的）
+	 * <br>
+	 * @author wliang
+	 * @date 2018年6月27日 下午9:08:59 
+	 * @param userId
+	 * @param tendId
+	 * @param status
+	 * @return
+	 */
+	public String selectUserNameByTendIdAndStatus(String userId, String tendId,int status) {
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用selectUserNameByTendIdAndStatus feign接口开始>>>>userId:>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>>>", userId);
+
+		String userName = null;
+		if (Base.isNotEmpty(userId)) {
+			List<String> userIdList = new ArrayList<String>();
+			userIdList.add(userId);
+			SkyDriveParam skyDriveParam = new SkyDriveParam();
+			skyDriveParam.setUserIds(userIdList);
+			skyDriveParam.setTendId(tendId);
+			skyDriveParam.setStatus(status);
+			ApiFeignResponse<List<SkyDriveDto>> apiFeignResponse = sysFeignService.queryNameByOrgAndRoleAndUser(skyDriveParam);
+			if (Base.isNotEmpty(apiFeignResponse)) {
+				if (Base.isEquals(200,apiFeignResponse.getStatus())) {
+					List<SkyDriveDto> skyDriveDtoList = apiFeignResponse.getResult();
+					if (Base.isNotEmpty(skyDriveDtoList)) {
+						userName = skyDriveDtoList.get(0).getName();
+					}
+				} else {
+					throw new HioException("调用selectUserNameByTendIdAndStatus feign接口失败" + apiFeignResponse.getMessage());
+				}
+
+			}
+		}
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用selectUserNameByTendIdAndStatus feign接口结束>>>>>userName:>>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>", userName);
+		return userName;
+	}
+	
+	/**
+	 * 
+	 * <p>根据status 人员查询状态控制--->
+	 * 0 表示查询正常状态人员(不包含删除以及离职的)；
+	 * 1表示查询包含离职人员但不包含删除的；
+	 * 2表示查询包含删除但不包含离职的；
+	 * 3表示不需要状态（包含删除以及离职的）
+	 * <br>
+	 * @author wliang
+	 * @date 2018年6月28日 上午11:25:26 
+	 * @param userIdList
+	 * @param tendId
+	 * @param status
+	 * @return
+	 */
+	public List<SkyDriveDto> selectUsersByListAndStatus(List<String> userIdList,String tendId,int status) {
+		
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用selectUsersByListAndStatus feign接口开始>>>>userIdList.size():>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>>>", userIdList.size());
+
+		List<String> userNameList = new ArrayList<String>();
+		if (Base.isNotEmpty(userIdList)) {
+			SkyDriveParam skyDriveParam = new SkyDriveParam();
+			skyDriveParam.setUserIds(userIdList);
+			skyDriveParam.setTendId(tendId);
+			skyDriveParam.setStatus(status);
+			ApiFeignResponse<List<SkyDriveDto>> apiFeignResponse = sysFeignService.queryNameByOrgAndRoleAndUser(skyDriveParam);
+			if (Base.isNotEmpty(apiFeignResponse)) {
+				if (Base.isEquals(200,apiFeignResponse.getStatus())) {
+					List<SkyDriveDto> skyDriveDtoList = apiFeignResponse.getResult();
+					return skyDriveDtoList;
+				} else {
+					throw new HioException("调用selectUsersByListAndStatus feign接口失败" + apiFeignResponse.getMessage());
+				}
+			}
+		}
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用selectUsersByListAndStatus feign接口结束>>>>userNameList.size():>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>>>", userNameList.size());
+		return null;
+	}
+	
+	/**
+	 * 
+	 * <p>根据status 人员查询状态控制--->
+	 * 0 表示查询正常状态人员(不包含删除以及离职的)；
+	 * 1表示查询包含离职人员但不包含删除的；
+	 * 2表示查询包含删除但不包含离职的；
+	 * 3表示不需要状态（包含删除以及离职的）
+	 * <br>
+	 * @author wdy
+	 * @date 2018年7月6日 上午11:07:26 
+	 * @param userIdList
+	 * @param tendId
+	 * @param status
+	 * @return
+	 */
+	public Set<String> selectUsersByListAndStatus(Set<String> userIdList,String tendId,int status) {
+		
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用selectUsersByListAndStatus feign接口开始>>>>输入userIdList:>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>>>", JSON.toJSONString(userIdList));
+
+		List<String> userIds = new ArrayList<String>();
+		Set<String> outSet = new HashSet<String>();
+		
+		Iterator<String> it = userIdList.iterator();
+		while (it.hasNext()) {
+			String str = it.next();
+			userIds.add(str);
+		}
+		
+		if (Base.isNotEmpty(userIds)) {
+			SkyDriveParam skyDriveParam = new SkyDriveParam();
+			skyDriveParam.setUserIds(userIds);
+			skyDriveParam.setTendId(tendId);
+			skyDriveParam.setStatus(status);
+			ApiFeignResponse<List<SkyDriveDto>> apiFeignResponse = sysFeignService.queryNameByOrgAndRoleAndUser(skyDriveParam);
+			if (Base.isNotEmpty(apiFeignResponse)) {
+				if (Base.isEquals(200,apiFeignResponse.getStatus())) {
+					List<SkyDriveDto> skyDriveDtoList = apiFeignResponse.getResult();
+					for (SkyDriveDto skyDriveDto : skyDriveDtoList) {
+						outSet.add(skyDriveDto.getImUserId());
+					}
+					
+					return outSet;
+				} else {
+					throw new HioException("调用selectUsersByListAndStatus feign接口失败" + apiFeignResponse.getMessage());
+				}
+			}
+		}
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用selectUsersByListAndStatus feign接口结束>>>>输出outSet:>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>>>",JSON.toJSONString(outSet));
+		return outSet;
+	}
+	
+	/**
+	 * 
+	 * <p>保存/修改校验人员是否离职/删除<br>
+	 * @author wliang
+	 * @date 2018年7月19日 上午10:40:11 
+	 * @param userIdList
+	 * @param tendId
+	 * @return
+	 */
+	public ResultMsg checkUserEffective(List<String> userIdList,String tendId){
+		ResultMsg resMsg = new ResultMsg();
+		resMsg.setSuccess(true);
+		
+		if(Base.isNotEmpty(userIdList) && Base.isNotEmpty(tendId)){
+			//获取人员信息
+			List <SkyDriveDto> uList = this.selectUsersByListAndStatus(userIdList,tendId,OaConstant.OA_USER_QUERY_STATUS_3);
+			if(Base.isNotEmpty(uList)){
+				StringBuffer sb = null;
+				for(SkyDriveDto dto : uList){
+					//用户删除/离职不能保存
+					if(Base.isEquals(OaConstant.CONTRACT_DEL_FLAG_1, dto.getDelflag())
+							|| Base.isEquals(OaConstant.OA_WORK_STATUS_2, dto.getWorkStatus())){
+						if(Base.isEmpty(sb)){
+							sb = new StringBuffer();
+							sb.append("存在离职/删除人员:");
+						}
+						sb.append(dto.getName()).append(",");
+					}
+				}
+				if(Base.isNotEmpty(sb)){
+					sb.append("请重新选择!");
+					resMsg.setSuccess(false);
+					resMsg.setMsg(sb.toString());
+				}
+			}
+		}	
+		return resMsg;
+	}
+	
+	
+	
+}

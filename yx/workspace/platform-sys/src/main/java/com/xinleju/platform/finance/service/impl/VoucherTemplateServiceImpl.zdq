@@ -1,0 +1,201 @@
+package com.xinleju.platform.finance.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.finance.dao.AccountCaptionDao;
+import com.xinleju.platform.finance.dao.AssMappingDao;
+import com.xinleju.platform.finance.dao.AssTypeDao;
+import com.xinleju.platform.finance.dao.CashFlowItemDao;
+import com.xinleju.platform.finance.dao.VoucherTemplateDao;
+import com.xinleju.platform.finance.dao.VoucherTemplateEntryDao;
+import com.xinleju.platform.finance.dao.VoucherTemplateTypeDao;
+import com.xinleju.platform.finance.dto.AccountCaptionDto;
+import com.xinleju.platform.finance.dto.AssMappingDto;
+import com.xinleju.platform.finance.dto.AssTypeDto;
+import com.xinleju.platform.finance.dto.CashFlowItemDto;
+import com.xinleju.platform.finance.dto.VoucherTemplateDto;
+import com.xinleju.platform.finance.dto.VoucherTemplateEntryDto;
+import com.xinleju.platform.finance.dto.VoucherTemplateTypeDto;
+import com.xinleju.platform.finance.entity.AccountCaption;
+import com.xinleju.platform.finance.entity.AssMapping;
+import com.xinleju.platform.finance.entity.AssType;
+import com.xinleju.platform.finance.entity.CashFlowItem;
+import com.xinleju.platform.finance.entity.VoucherTemplate;
+import com.xinleju.platform.finance.entity.VoucherTemplateEntry;
+import com.xinleju.platform.finance.entity.VoucherTemplateType;
+import com.xinleju.platform.finance.service.VoucherTemplateService;
+import com.xinleju.platform.finance.utils.ExcelSheet;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class VoucherTemplateServiceImpl extends  BaseServiceImpl<String,VoucherTemplate> implements VoucherTemplateService{
+	
+
+	@Autowired
+	private VoucherTemplateDao voucherTemplateDao;
+	@Autowired
+	private AccountCaptionDao accountCaptionDao;
+	@Autowired
+	private CashFlowItemDao cashFlowItemDao;
+	@Autowired
+	private AssTypeDao assTypeDao;
+	@Autowired
+	private AssMappingDao assMappingDao;
+	@Autowired
+	private VoucherTemplateTypeDao voucherTemplateTypeDao;
+	@Autowired
+	private VoucherTemplateEntryDao voucherTemplateEntryDao;
+	
+	@Override
+	@Transactional
+	public String saveVoucher(String paramaterJson,String excelCompanyId,String companyId) throws Exception{
+		@SuppressWarnings("unchecked")
+		Map<String, Object> map=JacksonUtils.fromJson(paramaterJson, HashMap.class);
+
+		List<AccountCaptionDto> accountCaptionDtoList =
+				JacksonUtils.fromJson(JacksonUtils.toJson(map.get(ExcelSheet.ACCOUNT_CAPTION.getName())),ArrayList.class,AccountCaptionDto.class);
+		if(accountCaptionDtoList != null && accountCaptionDtoList.size() > 0){
+			for(AccountCaptionDto accountCaptionDto: accountCaptionDtoList){
+				accountCaptionDto.setAccountSetId(excelCompanyId);
+				accountCaptionDto.setDelflag(false);
+				accountCaptionDto.setId(accountCaptionDto.getId().substring(0,accountCaptionDto.getId().length()>32?32:accountCaptionDto.getId().length())+excelCompanyId);
+				if(null!=accountCaptionDto.getParentId()){
+					accountCaptionDto.setParentId(accountCaptionDto.getParentId().substring(0,accountCaptionDto.getParentId().length()>32?32:accountCaptionDto.getParentId().length())+excelCompanyId);
+				}
+				if(null!=accountCaptionDto.getAssIds()&&!"".equals(accountCaptionDto.getAssIds())){
+					StringBuffer assIds = new StringBuffer();
+					String[] assIdsArr = accountCaptionDto.getAssIds().split(",");
+					if(assIdsArr.length>0){
+						for(String assId : assIdsArr){
+							if(assId.length()>0){
+								assIds.append(assId.subSequence(0, assId.length()>32?32:assId.length())+excelCompanyId+",");
+							}
+						}
+						accountCaptionDto.setAssIds(assIds.substring(0,assIds.length()-1));
+					}
+				}
+				AccountCaption accountCaption = JacksonUtils.fromJson(JacksonUtils.toJson(accountCaptionDto),AccountCaption.class);
+				accountCaptionDao.save(accountCaption);
+			}
+		}
+		List<CashFlowItemDto> cashFlowItemList =
+				JacksonUtils.fromJson(JacksonUtils.toJson(map.get(ExcelSheet.CASH_FLOW_ITEM.getName())),ArrayList.class,CashFlowItemDto.class);
+		if(cashFlowItemList != null && cashFlowItemList.size() > 0){
+			for(CashFlowItemDto cashFlowItemDto: cashFlowItemList){
+				cashFlowItemDto.setAccountSetId(excelCompanyId);
+				cashFlowItemDto.setDelflag(false);
+				cashFlowItemDto.setId(cashFlowItemDto.getId().substring(0,cashFlowItemDto.getId().length()>32?32:cashFlowItemDto.getId().length())+excelCompanyId);
+				if(null!=cashFlowItemDto.getParentId()){
+					cashFlowItemDto.setParentId(cashFlowItemDto.getParentId().substring(0,cashFlowItemDto.getParentId().length()>32?32:cashFlowItemDto.getParentId().length())+excelCompanyId);
+				}
+				CashFlowItem cashFlowItem = JacksonUtils.fromJson(JacksonUtils.toJson(cashFlowItemDto),CashFlowItem.class);
+				cashFlowItemDao.save(cashFlowItem);
+			}
+		}
+		List<AssTypeDto> assTypeList =
+				JacksonUtils.fromJson(JacksonUtils.toJson(map.get(ExcelSheet.ASS_TYPE.getName())),ArrayList.class,AssTypeDto.class);
+		if(assTypeList != null && assTypeList.size() > 0){
+			for(AssTypeDto assTypeDto: assTypeList){
+				assTypeDto.setAccountSetId(excelCompanyId);
+				assTypeDto.setDelflag(false);
+				assTypeDto.setCompanyId(companyId);
+				assTypeDto.setId(assTypeDto.getId().substring(0,assTypeDto.getId().length()>32?32:assTypeDto.getId().length())+excelCompanyId);
+				AssType assType = JacksonUtils.fromJson(JacksonUtils.toJson(assTypeDto),AssType.class);
+				assTypeDao.save(assType);
+			}
+		}
+		List<AssMappingDto> assMappingList =
+				JacksonUtils.fromJson(JacksonUtils.toJson(map.get(ExcelSheet.ASS_MAPPING.getName())),ArrayList.class,AssMappingDto.class);
+		if(assMappingList != null && assMappingList.size() > 0){
+			for(AssMappingDto assMappingDto: assMappingList){
+				assMappingDto.setDelflag(false);
+				assMappingDto.setId(assMappingDto.getId().substring(0,assMappingDto.getId().length()>32?32:assMappingDto.getId().length())+excelCompanyId);
+				assMappingDto.setAssMappingId(assMappingDto.getAssMappingId().substring(0,assMappingDto.getAssMappingId().length()>32?32:assMappingDto.getAssMappingId().length())+excelCompanyId);
+				AssMapping assMapping = JacksonUtils.fromJson(JacksonUtils.toJson(assMappingDto),AssMapping.class);
+				assMappingDao.save(assMapping);
+			}
+		}
+		List<VoucherTemplateTypeDto> voucherTemplateTypeList =
+				JacksonUtils.fromJson(JacksonUtils.toJson(map.get(ExcelSheet.VOUCHER_TEMPLATE_TYPE.getName())),ArrayList.class,VoucherTemplateTypeDto.class);
+		if(voucherTemplateTypeList != null && voucherTemplateTypeList.size() > 0){
+			for(VoucherTemplateTypeDto voucherTemplateTypeDto: voucherTemplateTypeList){
+				voucherTemplateTypeDto.setAccountSetId(excelCompanyId);
+				voucherTemplateTypeDto.setCompanyId(companyId);
+				voucherTemplateTypeDto.setDelflag(false);
+				voucherTemplateTypeDto.setId(voucherTemplateTypeDto.getId().substring(0,voucherTemplateTypeDto.getId().length()>32?32:voucherTemplateTypeDto.getId().length())+excelCompanyId);
+				if(null!=voucherTemplateTypeDto.getParentId()){
+					voucherTemplateTypeDto.setParentId(voucherTemplateTypeDto.getParentId().substring(0,voucherTemplateTypeDto.getParentId().length()>32?32:voucherTemplateTypeDto.getParentId().length())+excelCompanyId);
+				}
+				VoucherTemplateType voucherTemplateType = JacksonUtils.fromJson(JacksonUtils.toJson(voucherTemplateTypeDto),VoucherTemplateType.class);
+				voucherTemplateTypeDao.save(voucherTemplateType);
+			}
+		}
+		List<VoucherTemplateDto> voucherTemplateDtoList =
+				JacksonUtils.fromJson(JacksonUtils.toJson(map.get(ExcelSheet.VOUCHER_TEMPLATE.getName())),ArrayList.class,VoucherTemplateDto.class);
+		if(voucherTemplateDtoList != null && voucherTemplateDtoList.size() > 0){
+			for(VoucherTemplateDto voucherTemplateDto: voucherTemplateDtoList){
+				voucherTemplateDto.setDelflag(false);
+				voucherTemplateDto.setId(voucherTemplateDto.getId().substring(0,voucherTemplateDto.getId().length()>32?32:voucherTemplateDto.getId().length())+excelCompanyId);
+				voucherTemplateDto.setTypeId(voucherTemplateDto.getTypeId().substring(0,voucherTemplateDto.getTypeId().length()>32?32:voucherTemplateDto.getTypeId().length())+excelCompanyId);
+				String filter = "";
+				if(null != voucherTemplateDto.getFilter() && !"null".equals(voucherTemplateDto.getFilter()) && !"".equals(voucherTemplateDto.getFilter())){
+					filter = voucherTemplateDto.getFilter().replace("'", "\\'");
+				}
+				voucherTemplateDto.setFilter(filter);
+				VoucherTemplate voucherTemplate = JacksonUtils.fromJson(JacksonUtils.toJson(voucherTemplateDto),VoucherTemplate.class);
+				voucherTemplateDao.save(voucherTemplate);
+			}
+		}
+		List<VoucherTemplateEntryDto> voucherTemplateEntryDtoList =
+				JacksonUtils.fromJson(JacksonUtils.toJson(map.get(ExcelSheet.VOUCHER_TEMPLATE_ENTRY.getName())),ArrayList.class,VoucherTemplateEntryDto.class);
+		if(voucherTemplateEntryDtoList != null && voucherTemplateEntryDtoList.size() > 0){
+			for(VoucherTemplateEntryDto voucherTemplateEntryDto: voucherTemplateEntryDtoList){
+				voucherTemplateEntryDto.setDelflag(false);
+				voucherTemplateEntryDto.setId(voucherTemplateEntryDto.getId().substring(0,voucherTemplateEntryDto.getId().length()>32?32:voucherTemplateEntryDto.getId().length())+excelCompanyId);
+				voucherTemplateEntryDto.setVoucherTemplateId(voucherTemplateEntryDto.getVoucherTemplateId().substring(0,voucherTemplateEntryDto.getVoucherTemplateId().length()>32?32:voucherTemplateEntryDto.getVoucherTemplateId().length())+excelCompanyId);
+				if(null!=voucherTemplateEntryDto.getCashFlowId()){
+					voucherTemplateEntryDto.setCashFlowId(voucherTemplateEntryDto.getCashFlowId().substring(0,voucherTemplateEntryDto.getCashFlowId().length()>32?32:voucherTemplateEntryDto.getCashFlowId().length())+excelCompanyId);
+				}
+				voucherTemplateEntryDto.setCaptionId(voucherTemplateEntryDto.getCaptionId().substring(0,voucherTemplateEntryDto.getCaptionId().length()>32?32:voucherTemplateEntryDto.getCaptionId().length())+excelCompanyId);
+				if(null!=voucherTemplateEntryDto.getAssCode()&&!"".equals(voucherTemplateEntryDto.getAssCode())){
+					StringBuffer assIds = new StringBuffer();
+					String[] assIdsArr = voucherTemplateEntryDto.getAssCode().split(",");
+					if(assIdsArr.length>0){
+						for(String assId : assIdsArr){
+							if(assId.length()>0){
+								assIds.append(assId.subSequence(0,assId.length()>32?32:assId.length())+excelCompanyId+",");
+							}
+						}
+						voucherTemplateEntryDto.setAssCode(assIds.substring(0,assIds.length()-1));
+					}
+				}
+				String filter = "";
+				if(null != voucherTemplateEntryDto.getFilter() && !"null".equals(voucherTemplateEntryDto.getFilter()) && !"".equals(voucherTemplateEntryDto.getFilter())){
+					filter = voucherTemplateEntryDto.getFilter().replace("'", "\\'");
+				}
+				voucherTemplateEntryDto.setFilter(filter);
+				VoucherTemplateEntry voucherTemplateEntry = JacksonUtils.fromJson(JacksonUtils.toJson(voucherTemplateEntryDto),VoucherTemplateEntry.class);
+				voucherTemplateEntryDao.save(voucherTemplateEntry); 
+			}
+		}
+		return "";
+	}
+	
+	public List queryListByTypeIds(List<String> paramList){
+		return voucherTemplateDao.queryListByTypeIds(paramList);
+	}
+}

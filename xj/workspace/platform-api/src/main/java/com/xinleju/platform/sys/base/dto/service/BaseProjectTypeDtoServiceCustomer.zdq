@@ -1,0 +1,22 @@
+package com.xinleju.platform.sys.base.dto.service;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.dto.service.BaseDtoServiceCustomer;
+import com.xinleju.platform.sys.base.dto.BaseProjectTypeDto;
+
+public interface BaseProjectTypeDtoServiceCustomer extends BaseDtoServiceCustomer{
+
+	public String getTypetree(String userinfo, String paramaterJson);
+
+	public String updateSort(String userinfo, String string,
+			Map<String, Object> map);
+
+	public String updateName(String userinfo, String string,
+			Map<String, Object> map);
+
+	public String updateStatus(String userinfo, String string);
+
+	public List<Map<String,Object>> getLeafBaseProjectType(String userinfo);
+}

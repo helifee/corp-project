@@ -1,0 +1,454 @@
+package com.xinleju.platform.sys.base.dto.service.impl;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.sys.base.dto.service.CustomArchivesDtoServiceCustomer;
+import com.xinleju.platform.sys.base.entity.CustomArchives;
+import com.xinleju.platform.sys.base.entity.CustomArchivesItem;
+import com.xinleju.platform.sys.base.service.CustomArchivesItemService;
+import com.xinleju.platform.sys.base.service.CustomArchivesService;
+import com.xinleju.platform.sys.base.service.CustomFormInstanceService;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+/**
+ * @author admin
+ * 
+ *
+ */
+ 
+public class CustomArchivesDtoServiceProducer implements CustomArchivesDtoServiceCustomer{
+	private static Logger log = Logger.getLogger(CustomArchivesDtoServiceProducer.class);
+	@Autowired
+	private CustomArchivesService customArchivesService;
+	
+	@Autowired
+	private CustomArchivesItemService customArchivesItemService;
+	
+	@Autowired
+	private CustomFormInstanceService customFormInstanceService;
+
+	public String save(String userInfo, String saveJson){
+		// TODO Auto-generated method stub
+	   DubboServiceResultInfo info=new DubboServiceResultInfo();
+	   try {
+		   CustomArchives customArchives=JacksonUtils.fromJson(saveJson, CustomArchives.class);
+		   customArchivesService.save(customArchives);
+		   info.setResult(JacksonUtils.toJson(customArchives));
+		   info.setSucess(true);
+		   info.setMsg("保存对象成功!");
+		} catch (Exception e) {
+		 log.error("保存对象失败!"+e.getMessage());
+		 info.setSucess(false);
+		 info.setMsg("保存对象失败!");
+		 info.setExceptionMsg(e.getMessage());
+		}
+	   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String saveBatch(String userInfo, String saveJsonList)
+			 {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public String updateBatch(String userInfo, String updateJsonList)
+			 {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public String update(String userInfo, String updateJson)  {
+		// TODO Auto-generated method stub
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   CustomArchives customArchives=JacksonUtils.fromJson(updateJson, CustomArchives.class);
+			   int result=   customArchivesService.update(customArchives);
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("更新对象成功!");
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deleteObjectById(String userInfo, String deleteJson)
+	{
+		// TODO Auto-generated method stub
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   CustomArchives customArchives=JacksonUtils.fromJson(deleteJson, CustomArchives.class);
+			   int result= customArchivesService.deleteObjectById(customArchives.getId());
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("删除对象成功!");
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deleteAllObjectByIds(String userInfo, String deleteJsonList)
+   {
+		// TODO Auto-generated method stub
+		 DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   if (StringUtils.isNotBlank(deleteJsonList)) {
+				   Map map=JacksonUtils.fromJson(deleteJsonList, HashMap.class);
+				   List<String> list=Arrays.asList(map.get("id").toString().split(","));
+				   int result= customArchivesService.deleteAllObjectByIds(list);
+				   info.setResult(JacksonUtils.toJson(result));
+				   info.setSucess(true);
+				   info.setMsg("删除对象成功!");
+				}
+			} catch (Exception e) {
+			 log.error("删除对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getObjectById(String userInfo, String getJson)
+	 {
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			CustomArchives customArchives=JacksonUtils.fromJson(getJson, CustomArchives.class);
+			CustomArchives	result = customArchivesService.getObjectById(customArchives.getId());
+			info.setResult(JacksonUtils.toJson(result));
+		    info.setSucess(true);
+		    info.setMsg("获取对象成功!");
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getPage(String userInfo, String paramater) {
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map map=JacksonUtils.fromJson(paramater, HashMap.class);
+				Page page=customArchivesService.getPage(map, (Integer)map.get("start"),  (Integer)map.get("limit"));
+				info.setResult(JacksonUtils.toJson(page));
+			    info.setSucess(true);
+			    info.setMsg("获取分页对象成功!");
+			}else{
+				Page page=customArchivesService.getPage(new HashMap(), null, null);
+				info.setResult(JacksonUtils.toJson(page));
+			    info.setSucess(true);
+			    info.setMsg("获取分页对象成功!");
+			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取分页对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取分页对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String queryList(String userInfo, String paramater){
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map map=JacksonUtils.fromJson(paramater, HashMap.class);
+//				List list=customArchivesService.queryList(map);
+				List<CustomArchives> list=customArchivesService.queryListSort(map);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}else{
+				List list=customArchivesService.queryList(null);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取列表对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取列表对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getCount(String userInfo, String paramater)  {
+		// TODO Auto-generated method stub
+		return null;
+	}
+	
+	@Override
+	public String deletePseudoObjectById(String userInfo, String deleteJson)
+	{
+		// TODO Auto-generated method stub
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   CustomArchives customArchives=JacksonUtils.fromJson(deleteJson, CustomArchives.class);
+			   int result= customArchivesService.deletePseudoObjectById(customArchives.getId());
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("删除对象成功!");
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deletePseudoAllObjectByIds(String userInfo, String deleteJsonList)
+   {
+		// TODO Auto-generated method stub
+		 DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   if (StringUtils.isNotBlank(deleteJsonList)) {
+				   Map map=JacksonUtils.fromJson(deleteJsonList, HashMap.class);
+				   List<String> list=Arrays.asList(map.get("id").toString().split(","));
+				   int result= customArchivesService.deletePseudoAllObjectByIds(list);
+				   info.setResult(JacksonUtils.toJson(result));
+				   info.setSucess(true);
+				   info.setMsg("删除对象成功!");
+				}
+			} catch (Exception e) {
+			 log.error("删除对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	/**
+	 * 查询树
+	 */
+	@Override
+	public String getTree(String userInfo, String paramater) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			info=customArchivesService.getTree(paramater);
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取列表对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取列表对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String saveList(String userInfo, String saveJson) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+	    try {
+		    info=customArchivesService.saveList(saveJson);
+		} catch (Exception e) {
+			log.error("保存对象失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("保存对象失败!");
+		 	info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String queryItemsById(String userInfo, String getJson) {
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			CustomArchives customArchives=JacksonUtils.fromJson(getJson, CustomArchives.class);
+			Integer count = customArchivesService.queryItemsById(customArchives.getId());
+			info.setResult(count.toString());
+		    info.setSucess(true);
+		    info.setMsg("获取对象成功!");
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	
+	@Override
+	public String deletePseudoAndChildById(String userInfo, String deleteJson)
+	{
+		// TODO Auto-generated method stub
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   CustomArchives customArchives=JacksonUtils.fromJson(deleteJson, CustomArchives.class);
+			   int result=customArchivesItemService.updateCustomArchives(customArchives.getId());
+			   result= customArchivesService.deletePseudoObjectById(customArchives.getId());
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("删除对象成功!");
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String saveImportData(String userInfo, String saveJson) {
+		// TODO Auto-generated method stub
+	   DubboServiceResultInfo info=new DubboServiceResultInfo();
+	   try {
+		   CustomArchives customArchivesPre=JacksonUtils.fromJson(saveJson, CustomArchives.class);
+		   List<CustomArchives> customArchivesList=new ArrayList<CustomArchives>();
+		   if("1".equals(customArchivesPre.getCode())){
+			   if(customArchivesPre.getName()!=null && !"".equals(customArchivesPre.getName())){
+					String[] rowStrs=customArchivesPre.getName().split(";");
+					for(int i=0;i<rowStrs.length;i++){
+						String[] groupStrs=rowStrs[i].split(",");
+						CustomArchives customArchives=new CustomArchives();
+						String id=IDGenerator.getUUID();
+						customArchives.setId(id);
+						customArchives.setConcurrencyVersion(0);
+						customArchives.setDelflag(false);
+						customArchives.setName(groupStrs[0]);
+						customArchives.setCode(groupStrs[1]);
+						customArchives.setShowType("列表");
+						customArchives.setStatus("1");
+						customArchivesList.add(customArchives);
+					}
+			   }
+			   customArchivesService.saveBatch(customArchivesList);
+		   }else if("2".equals(customArchivesPre.getCode())){
+			   Map<String,Object> idMaps=this.getCustomArchivesMaps();
+			   if(customArchivesPre.getName()!=null && !"".equals(customArchivesPre.getName())){
+					String[] rowStrs=customArchivesPre.getName().split(";");
+					for(int i=0;i<rowStrs.length;i++){
+						String[] groupStrs=rowStrs[i].split(",");
+						CustomArchives customArchivesParent=(CustomArchives) idMaps.get(groupStrs[0]);
+						String[] childStrs=groupStrs[1].split("#");
+						List<CustomArchivesItem> customArchivesItemList=new ArrayList<CustomArchivesItem>();
+						for(int s=0;s<childStrs.length;s++){
+							CustomArchivesItem customArchivesItem=new CustomArchivesItem();
+							customArchivesItem.setId(IDGenerator.getUUID());
+							customArchivesItem.setCode(groupStrs[0]+"-"+(s+1));
+							customArchivesItem.setName(childStrs[s]);
+							customArchivesItem.setConcurrencyVersion(0);
+							customArchivesItem.setDelflag(false);
+							customArchivesItem.setDescription(null);
+							customArchivesItem.setMainId(customArchivesParent.getId());
+							customArchivesItem.setSort(Long.valueOf(s+1));
+							customArchivesItem.setStatus("1");
+							customArchivesItemList.add(customArchivesItem);
+						}
+						customArchivesItemService.saveBatch(customArchivesItemList);
+					}
+			   }
+		   }
+		   info.setResult(JacksonUtils.toJson(customArchivesPre));
+		   info.setSucess(true);
+		   info.setMsg("保存对象成功!");
+		} catch (Exception e) {
+		 log.error("保存对象失败!"+e.getMessage());
+		 info.setSucess(false);
+		 info.setMsg("保存对象失败!");
+		 info.setExceptionMsg(e.getMessage());
+		}
+	   	return JacksonUtils.toJson(info);
+	}
+	
+	private Map<String, Object> getCustomArchivesMaps() {
+		Map<String, Object> resultMap=new HashMap<String, Object>();
+		Map<String, Object> paramMap=new HashMap<String, Object>();
+		paramMap.put("delflag", "0");
+		List<CustomArchives> list;
+		try {
+			list = customArchivesService.queryList(paramMap);
+			if(list!=null && list.size()>0){
+				for(int i=0;i<list.size();i++){
+					CustomArchives customArchives=list.get(i);
+					resultMap.put(customArchives.getCode(), customArchives);
+				}
+			}
+		} catch (Exception e) {
+		}
+		
+		return resultMap;
+	}
+
+//	@Override
+//	public String saveImportDataItem(String userInfo, String saveJson) {
+//		// TODO Auto-generated method stub
+//	   DubboServiceResultInfo info=new DubboServiceResultInfo();
+//	   try {
+//		   CustomArchives customArchivesPre=JacksonUtils.fromJson(saveJson, CustomArchives.class);
+//		   List<CustomArchives> customArchivesList=new ArrayList<CustomArchives>();
+//		   if(customArchivesPre.getName()!=null && !"".equals(customArchivesPre.getName())){
+//				String[] rowStrs=customArchivesPre.getName().split(";");
+//				for(int i=0;i<rowStrs.length;i++){
+//					String[] groupStrs=rowStrs[i].split(",");
+//					CustomArchives customArchives=new CustomArchives();
+//					String id=IDGenerator.getUUID();
+//					customArchives.setId(id);
+//					customArchives.setConcurrencyVersion(0);
+//					customArchives.setDelflag(false);
+//					customArchives.setName(groupStrs[0]);
+//					customArchives.setCode(groupStrs[1]);
+//					customArchives.setShowType("列表");
+//					customArchives.setStatus("1");
+//					customArchivesList.add(customArchives);
+//				}
+//		   }
+//		   customArchivesService.saveBatch(customArchivesList);
+//		   info.setResult(JacksonUtils.toJson(customArchivesPre));
+//		   info.setSucess(true);
+//		   info.setMsg("保存对象成功!");
+//		} catch (Exception e) {
+//		 log.error("保存对象失败!"+e.getMessage());
+//		 info.setSucess(false);
+//		 info.setMsg("保存对象失败!");
+//		 info.setExceptionMsg(e.getMessage());
+//		}
+//	   	return JacksonUtils.toJson(info);
+//	}
+	
+	public static void main(String[] args) {
+		System.out.println(Math.random()*100);
+	}
+}

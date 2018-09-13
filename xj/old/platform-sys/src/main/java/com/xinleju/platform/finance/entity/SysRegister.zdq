@@ -1,0 +1,92 @@
+package com.xinleju.platform.finance.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Table(value="PT_FI_SYS_REGISTER",desc="财务系统注册")
+public class SysRegister extends BaseEntity{
+	
+		
+	@Column(value="fi_sys_code",desc="财务系统标识")
+	private String fiSysCode;
+    
+  		
+	@Column(value="fi_sys_name",desc="财务系统名称")
+	private String fiSysName;
+    
+  		
+	@Column(value="type",desc="业务类型")
+	private String type;
+    
+  		
+	@Column(value="sender",desc="发送方标识")
+	private String sender;
+    
+  		
+	@Column(value="status",desc="状态")
+	private String status;
+    
+  		
+	@Column(value="web_url",desc="财务系统webservice地址")
+	private String webUrl;
+    
+  		
+		
+	public String getFiSysCode() {
+		return fiSysCode;
+	}
+	public void setFiSysCode(String fiSysCode) {
+		this.fiSysCode = fiSysCode;
+	}
+    
+  		
+	public String getFiSysName() {
+		return fiSysName;
+	}
+	public void setFiSysName(String fiSysName) {
+		this.fiSysName = fiSysName;
+	}
+    
+  		
+	public String getType() {
+		return type;
+	}
+	public void setType(String type) {
+		this.type = type;
+	}
+    
+  		
+	public String getSender() {
+		return sender;
+	}
+	public void setSender(String sender) {
+		this.sender = sender;
+	}
+    
+  		
+	public String getStatus() {
+		return status;
+	}
+	public void setStatus(String status) {
+		this.status = status;
+	}
+    
+  		
+	public String getWebUrl() {
+		return webUrl;
+	}
+	public void setWebUrl(String webUrl) {
+		this.webUrl = webUrl;
+	}
+    
+  		
+	
+}

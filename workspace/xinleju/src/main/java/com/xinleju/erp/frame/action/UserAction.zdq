@@ -1,0 +1,715 @@
+package com.xinleju.erp.frame.action;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.Order;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.xinleju.erp.base.app.action.BaseAction;
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.flow.bean.LoginInfo;
+import com.xinleju.erp.flow.service.api.ApiConstant;
+import com.xinleju.erp.flow.service.api.FlowServerService;
+import com.xinleju.erp.flow.service.api.extend.BaseAPI;
+import com.xinleju.erp.flow.service.api.extend.BaseAPIService;
+import com.xinleju.erp.flow.service.api.extend.dto.RoleDTO;
+import com.xinleju.erp.flow.service.api.extend.dto.UserDTO;
+import com.xinleju.erp.flow.service.api.utils.UserUtils;
+import com.xinleju.erp.flow.utils.FlowConstant;
+import com.xinleju.erp.flow.utils.LoginInfoUtils;
+import com.xinleju.erp.frame.dao.PartyEntityDao;
+import com.xinleju.erp.frame.dao.PartyStructDao;
+import com.xinleju.erp.frame.dao.RoleDao;
+import com.xinleju.erp.frame.dao.UserDao;
+import com.xinleju.erp.frame.models.LabelValueBean;
+import com.xinleju.erp.frame.models.LogRecord;
+import com.xinleju.erp.frame.models.PartyEntity;
+import com.xinleju.erp.frame.models.PartyType;
+import com.xinleju.erp.frame.models.Role;
+import com.xinleju.erp.frame.models.User;
+import com.xinleju.erp.frame.service.DictService;
+import com.xinleju.erp.frame.service.PartyEntityService;
+import com.xinleju.erp.frame.service.PartyStructService;
+import com.xinleju.erp.frame.service.PartyStructTypeService;
+import com.xinleju.erp.frame.service.RoleService;
+import com.xinleju.erp.frame.service.UserService;
+import com.xinleju.erp.frame.utils.FrameConstant;
+import com.xinleju.erp.frame.utils.Md5Utils;
+
+/**
+ * 版权：(C) 版权所有 2000-2014 上海天好电子商务有限公司苏州分公司 组维护
+ * 
+ * @author jdq
+ * @version $Id$u
+ * @since
+ * @see
+ */
+public class UserAction extends BaseAction {
+
+	private User user;
+
+	@Autowired
+	private UserDao userDao;
+	@Autowired
+	private PartyEntityDao partyEntityDao;
+	@Autowired
+	private UserService userService;
+	@Autowired
+	private PartyStructService partyStructService;
+	@Autowired
+	private PartyEntityService partyEntityService;
+	@Autowired
+	private PartyStructTypeService partyStructTypeService;
+	@Autowired
+	private RoleService roleService;
+	@Autowired
+	private PartyStructDao partyStructDao;
+	@Autowired
+	private RoleDao roleDao;
+
+	/**
+	 * 组织架构树
+	 * 
+	 * @author jdq
+	 * @return
+	 */
+	public void getTrees() {
+		List<Map<String, Object>> trees = new ArrayList<Map<String, Object>>();
+		String partyStructTypeId = request.getParameter("partyStructTypeId");
+		String parentEntityId = request.getParameter("parentEntityId");
+		List<PartyEntity> childPartyList = new ArrayList<PartyEntity>();
+		if (StringUtils.isNotBlank(parentEntityId) && !"null".equals(parentEntityId) && Long.valueOf(parentEntityId) != 0) {
+			childPartyList = partyEntityDao.findChildEntityAllNoRole(Long.valueOf(parentEntityId), Long.valueOf(partyStructTypeId));
+		} else {
+			childPartyList = partyEntityDao.findRootEntity(Long.valueOf(partyStructTypeId));
+		}
+		for (PartyEntity childParty : childPartyList) {
+			trees.add(partyEntityService.initTreeLeaf(childParty, FrameConstant.TRUE, partyStructTypeId));
+		}
+		// 加日志
+		BaseAPI baseAPIService = com.xinleju.erp.base.app.config.App.getBean(BaseAPI.class, ApiConstant.BEAN_CODE);
+		Long uid = LoginInfoUtils.getLoginInfoUserDtoId(request);
+		baseAPIService.saveLog(request.getRemoteAddr(), uid,LoginInfoUtils.getLoginInfo(request).getUserDTO().getLoginName(), "PT", "系统设置->用户管理", "UserAction.getTrees()", "获取组织结构", null, "json串", LogRecord.SIGN_QUERY, LogRecord.TYPE_OTHER);
+		super.renderJson(trees);
+	}
+
+	/**
+	 * 组织架构添加用户 查看页面 显示可添加的用户list直接绑定 和 新增
+	 * 
+	 * @author jdq
+	 * @param request
+	 * @return
+	 */
+	public String unionUser() {
+		String roleId = request.getParameter("roleId");
+		PartyEntity pe = partyEntityService.findEntityByRefId(Long.valueOf(roleId), PartyType.TYPE_ROLE);
+		String nameOrLogName = request.getParameter("nameOrLogName");
+
+		DetachedCriteria c = DetachedCriteria.forClass(User.class);
+		if (StringUtils.isNotBlank(nameOrLogName)) {
+			c.add(Restrictions.or(Restrictions.like("realName", "%" + nameOrLogName + "%"), Restrictions.ilike("loginname", "%" + nameOrLogName + "%")));
+		}
+		c.add(Restrictions.eq("status", User.STATUS_ENABLE));
+		//c.setFetchMode("mainRole", FetchMode.JOIN);
+		c.addOrder(Order.asc("id"));
+		page = getCommonService().findPage(c, start, limit);
+		for (Object obj : page.getItems()) {
+			if (((User) obj).getMainRole() != null)
+				((User) obj).getMainRole().setNamefix(roleService.getNamefix(((User) obj).getMainRole()));
+		}
+
+		List<Long> roleUserIdList = partyStructService.findChildIdsByParentEntityId(pe.getId(), PartyType.TYPE_USER);
+		request.setAttribute("roleUserIdList", roleUserIdList);
+		request.setAttribute("roleUserIds", null != roleUserIdList && roleUserIdList.size() > 0 ? ("," + StringUtils.join(roleUserIdList, ",") + ",") : "");
+		request.setAttribute("nameOrLogName", nameOrLogName);
+		request.setAttribute("roleId", roleId);
+		request.setAttribute("parentEntityId", pe.getId());
+		request.setAttribute("partyStructTypeId", request.getParameter("partyStructTypeId"));
+		// 加日志
+		BaseAPI baseAPIService = com.xinleju.erp.base.app.config.App.getBean(BaseAPI.class, ApiConstant.BEAN_CODE);
+		Long uid = LoginInfoUtils.getLoginInfoUserDtoId(request);
+		baseAPIService.saveLog(request.getRemoteAddr(), uid,LoginInfoUtils.getLoginInfo(request).getUserDTO().getLoginName(), "PT", "系统设置->用户管理", "UserAction.unionUser()", "组织架构添加用户 ", null, "json串", LogRecord.SIGN_INSERT, LogRecord.TYPE_OTHER);
+		return "unionUser";
+	}
+
+	/**
+	 * 直接绑定已有的岗位到组织架构下
+	 * 
+	 * @author jdq
+	 * @param request
+	 * @return
+	 */
+	public void joinUser() {
+		String structTypeId = request.getParameter("partyStructTypeId");
+		String userId = request.getParameter("userId");
+		String parentEntityId = request.getParameter("parentEntityId");
+		User user = userService.getById(Long.valueOf(userId));
+		partyStructService.processUserPartyStruct(user, Long.valueOf(parentEntityId), Long.valueOf(structTypeId));
+		Map<String, Object> r = new HashMap<String, Object>();
+		r.put("success", true);
+		// 加日志
+		BaseAPI baseAPIService = com.xinleju.erp.base.app.config.App.getBean(BaseAPI.class, ApiConstant.BEAN_CODE);
+		Long uid = LoginInfoUtils.getLoginInfoUserDtoId(request);
+		baseAPIService.saveLog(request.getRemoteAddr(), uid,LoginInfoUtils.getLoginInfo(request).getUserDTO().getLoginName(), "PT", "系统设置->用户管理", "UserAction.joinUser()", "直接绑定已有的岗位到组织架构下 ", null, "json串", LogRecord.SIGN_QUERY, LogRecord.TYPE_OTHER);
+		super.renderJson(r);
+	}
+
+	/**
+	 * 直接绑定已有的岗位到组织架构下
+	 * 
+	 * @author zx
+	 * @param request
+	 * @return
+	 */
+	public void joinUsers() {
+		String structTypeId = request.getParameter("partyStructTypeId");
+		String userIds = request.getParameter("userIds");
+		String parentEntityId = request.getParameter("parentEntityId");
+
+		String removeIds = request.getParameter("removeUserIds");
+		if (userIds != null && userIds.length() > 0) {
+			String[] userIdList = userIds.split(",");
+			if (userIdList.length > 0)
+				for (String userId : userIdList) {
+					User user = userService.getById(Long.valueOf(userId));
+					partyStructService.processUserPartyStruct(user, Long.valueOf(parentEntityId), Long.valueOf(structTypeId));
+				}
+		}
+
+		if (removeIds != null && removeIds.length() > 0) {
+			String[] removeUserIdList = removeIds.split(",");
+			if (removeUserIdList.length > 0)
+				for (String userId : removeUserIdList) {
+					partyStructService.removeUser(Long.valueOf(userId), Long.valueOf(parentEntityId));
+				}
+		}
+		Map<String, Object> r = new HashMap<String, Object>();
+		r.put("success", true);
+		super.renderJson(r);
+	}
+
+	/**
+	 * 组织架构下移除用户
+	 * 
+	 * @author jdq
+	 * @param request
+	 */
+	public void removeUser() {
+		String userId = request.getParameter("userId");
+		String parentEntityId = request.getParameter("parentEntityId");
+		partyStructService.removeUser(Long.valueOf(userId), Long.valueOf(parentEntityId));
+		Map<String, Object> r = new HashMap<String, Object>();
+		r.put("success", true);
+		// 加日志
+		BaseAPI baseAPIService = com.xinleju.erp.base.app.config.App.getBean(BaseAPI.class, ApiConstant.BEAN_CODE);
+		baseAPIService.saveLog(request.getRemoteAddr(), Long.parseLong(userId),LoginInfoUtils.getLoginInfo(request).getUserDTO().getLoginName(), "PT", "系统设置->用户管理", "UserAction.removeUser()", "组织架构下移除用户", null, "json串", LogRecord.SIGN_DELETE, LogRecord.TYPE_OTHER);
+		super.renderJson(r);
+	}
+
+	/**
+	 * 组织架构
+	 * 
+	 * @author jdq
+	 * @param request
+	 * @param pageable
+	 * @param model
+	 * @return
+	 */
+	public String index() {
+		String partyStructTypeId = request.getParameter("partyStructTypeId");
+		// 默认取第一个
+		if (StringUtils.isBlank(partyStructTypeId) || "null".equals(partyStructTypeId)) {
+			partyStructTypeId = String.valueOf(partyStructTypeService.getZcStructId());
+		}
+		request.setAttribute("partyStructTypeId", partyStructTypeId);
+		return "index";
+	}
+
+	/**
+	 * 组织架构下查找用户
+	 * 
+	 * @author jdq
+	 * @return
+	 */
+	public String structUserList() {
+		// 默认显示zb的数据
+		String partyStructTypeId = request.getParameter("partyStructTypeId");
+		Long parentEntityId = Long.valueOf(request.getParameter("parentEntityId"));
+		boolean isAdd = ("true".equals(request.getParameter("isAdd")) ? true : false);
+		if (parentEntityId == 0L) {
+			parentEntityId = partyEntityService.getZbEntity(Long.valueOf(partyStructTypeId));
+		}
+		String nameOrLogName = request.getParameter("nameOrLogName");
+		PartyEntity pe = getCommonService().getById(PartyEntity.class, parentEntityId);
+		page = partyStructService.findPageUserByParent(pe.getPrefix(), nameOrLogName, false, start, limit);
+		// 主岗的组织架构路径
+		for (Object u : page.getItems()) {
+			if (((User) u).getMainRole() != null)
+				((User) u).getMainRole().setNamefix(roleService.getNamefix(((User) u).getMainRole()));
+
+		}
+		request.setAttribute("nameOrLogName", nameOrLogName);
+		request.setAttribute("parentEntityId", parentEntityId);
+		request.setAttribute("partyStructTypeId", request.getParameter("partyStructTypeId"));
+		Long id = 0l;
+		if (page.getItems().size() > 0) {
+			id = (Long) ((User) page.getItems().get(0)).getId();
+		}
+		String userId = isAdd ? request.getParameter("userId") : "";
+		if (userId.equals("") && isAdd) {
+			start = 0;
+		}
+		userId = ((userId == null || userId.equals("")) && isAdd ? id.toString() : userId);
+		request.setAttribute("userId", userId);
+		// 加日志
+		BaseAPI baseAPIService = com.xinleju.erp.base.app.config.App.getBean(BaseAPI.class, ApiConstant.BEAN_CODE);
+		Long uid = LoginInfoUtils.getLoginInfoUserDtoId(request);
+		baseAPIService.saveLog(request.getRemoteAddr(), uid,LoginInfoUtils.getLoginInfo(request).getUserDTO().getLoginName(), "PT", "系统设置->用户管理", "UserAction.structUserList()", "组织架构下查找用户", null, "json串", LogRecord.SIGN_QUERY,
+				LogRecord.TYPE_OTHER);
+		
+		return "structUserList";
+	}
+
+	/**
+	 * 组织架构下查找用户
+	 * 
+	 * @author zx
+	 * @return
+	 */
+	public void structUserListAjax() {
+		// 默认显示zb的数据
+		String partyStructTypeId = request.getParameter("partyStructTypeId");
+		Long parentEntityId = Long.valueOf(request.getParameter("parentEntityId"));
+		if (parentEntityId == 0L) {
+			parentEntityId = partyEntityService.getZbEntity(Long.valueOf(partyStructTypeId));
+		}
+		String nameOrLogName = request.getParameter("nameOrLogName");
+		PartyEntity pe = getCommonService().getById(PartyEntity.class, parentEntityId);
+		page = partyStructService.findPageUserByParent(pe.getPrefix(), nameOrLogName, false, start, limit);
+		// 主岗的组织架构路径
+		for (Object u : page.getItems()) {
+			if (((User) u).getMainRole() != null)
+				((User) u).getMainRole().setNamefix(roleService.getNamefix(((User) u).getMainRole()));
+		}
+
+		List<UserDTO> dtos = UserUtils.buildUserDtoList(page.getItems());
+		request.setAttribute("nameOrLogName", nameOrLogName);
+		request.setAttribute("parentEntityId", parentEntityId);
+		request.setAttribute("partyStructTypeId", request.getParameter("partyStructTypeId"));
+		super.renderJson(dtos);
+	}
+
+	/**
+	 * 用户兼职角色列表
+	 * 
+	 * @author Administrator
+	 * @return
+	 */
+	public String userRoleList() {
+		String userId = request.getParameter("userId");
+		DetachedCriteria c = DetachedCriteria.forClass(Role.class);
+		if (StringUtils.isNotBlank(userId)) {
+			user = getCommonService().getById(User.class, Long.valueOf(userId));
+			List<Long> roleIds = partyStructDao.findParentRefIdsByChildRefId(Long.valueOf(userId), PartyType.TYPE_ROLE);
+			// 兼职角色列表不显示默认角色的
+			if (user.getMainRoleId() != null && user.getMainRoleId() != 0) {
+				roleIds.remove(user.getMainRoleId());
+			}
+			if (roleIds.size() < 1) {
+				roleIds.add(-1L);
+			}
+			c.add(Restrictions.in("id", roleIds));
+		} else {
+			c.add(Restrictions.eq("id", -1L));
+		}
+		c.addOrder(Order.asc("id"));
+		page = getCommonService().findPage(c, start, limit);
+
+		// 当删除最末页的最后一条数据的时候，界面不会自动翻页
+		if (page.getTotal() <= page.getStart()) {
+			int total = page.getTotal();
+//			start -= 5;
+			page = getCommonService().findPage(c, start, limit);
+			page.setTotal(total);
+		}
+
+		for (Object r : page.getItems()) {
+			((Role) r).setNamefix(roleService.getNamefix((Role) r));
+			String t = roleService.getUpPath((Role) r);
+			if (StringUtils.isNotBlank(t)) {
+				t = FrameConstant.XY + t;
+			}
+			((Role) r).setUpPath(t);
+		}
+		request.setAttribute("page", page);
+		request.setAttribute("userId", userId);
+		// 加日志
+		BaseAPI baseAPIService = com.xinleju.erp.base.app.config.App.getBean(BaseAPI.class, ApiConstant.BEAN_CODE);
+		Long uid = LoginInfoUtils.getLoginInfoUserDtoId(request);
+		baseAPIService.saveLog(request.getRemoteAddr(),uid,LoginInfoUtils.getLoginInfo(request).getUserDTO().getLoginName(), "PT", "系统设置->用户管理", "UserAction.userRoleList()", "用户兼职角色列表", null, "json串", LogRecord.SIGN_QUERY, LogRecord.TYPE_OTHER);
+		return "userRoleList";
+	}
+
+	public String roleUserList() {
+		String roleId = request.getParameter("roleId");
+		PartyEntity pe = null;
+		Role role = null;
+		if (StringUtils.isNotBlank(roleId)) {
+			role = getCommonService().getById(Role.class, Long.valueOf(roleId));
+			pe = partyEntityService.findEntityByRefId(Long.valueOf(roleId), PartyType.TYPE_ROLE);
+			page = partyStructService.findPageUserByParent(pe.getPrefix(), null, false, start, limit);
+			for (Object u : page.getItems()) {
+				if (((User) u).getMainRole() != null)
+					((User) u).getMainRole().setNamefix(roleService.getNamefix(((User) u).getMainRole()));
+			}
+		} else {
+			page = partyStructService.findPageUserByParent(null, null, false, start, limit);
+		}
+		request.setAttribute("parentEntityId", pe == null ? "" : pe.getId());
+		request.setAttribute("roleId", roleId);
+		request.setAttribute("role", role);
+		return "roleUserList";
+	}
+
+	/**
+	 * 组织架构下查找用户
+	 * 
+	 * @author jdq
+	 * @return
+	 */
+	public String roleList() {
+		// 组织架构节点id
+		String parentEntityId = request.getParameter("parentEntityId");
+		String name = request.getParameter("name");
+		page = roleService.findPageRoleByParentEntityId(Long.valueOf(parentEntityId), name, start, limit, true);
+		for (Object r : page.getItems()) {
+			((Role) r).setNamefix(roleService.getNamefix((Role) r));
+			String t = roleService.getUpPath((Role) r);
+			if (StringUtils.isNotBlank(t)) {
+				t = FrameConstant.XY + t;
+			}
+			((Role) r).setUpPath(t);
+		}
+		request.setAttribute("name", name);
+		request.setAttribute("parentEntityId", parentEntityId);
+		request.setAttribute("partyStructTypeId", request.getParameter("partyStructTypeId"));
+		// 加日志
+		BaseAPI baseAPIService = com.xinleju.erp.base.app.config.App.getBean(BaseAPI.class, ApiConstant.BEAN_CODE);
+		Long userId = LoginInfoUtils.getLoginInfoUserDtoId(request);
+		baseAPIService.saveLog(request.getRemoteAddr(), userId,LoginInfoUtils.getLoginInfo(request).getUserDTO().getLoginName(), "PT", "系统设置->用户管理", "UserAction.roleList()", "组织架构下查找用户", null, "json串", LogRecord.SIGN_QUERY, LogRecord.TYPE_OTHER);
+		return "roleList";
+	}
+
+	/**
+	 * 检查用户名是否重复
+	 */
+	public void checkLoginName() {
+		String id = request.getParameter("id");
+		String loginname = request.getParameter("loginname");
+		if (StringUtils.isBlank(loginname)) {
+			loginname = request.getParameter("param");
+		}
+		boolean exists = false;
+		if (StringUtils.isNotBlank(loginname)) {
+			loginname = loginname.trim();
+			// 如果id非空，即为编辑，排除本身
+			if (StringUtils.isNotBlank(id)) {
+				Long count = userDao.getUserCountWithId(loginname, Long.valueOf(id));
+				if (count > 0) {
+					exists = true;
+				}
+			} else {// 如果id为空，则为新增
+				Long count = userDao.getUserCount(loginname);
+				if (count > 0) {
+					exists = true;
+				}
+			}
+		}
+		Map<String, Object> r = new HashMap<String, Object>();
+		r.put("status", !exists ? "y" : "n");
+		r.put("info", !exists ? "" : "用户代码已存在！");
+		// 加日志
+		BaseAPI baseAPIService = com.xinleju.erp.base.app.config.App.getBean(BaseAPI.class, ApiConstant.BEAN_CODE);
+		baseAPIService.saveLog(request.getRemoteAddr(), LoginInfoUtils.getLoginInfoUserDtoId(request),LoginInfoUtils.getLoginInfo(request).getUserDTO().getLoginName(), "PT", "系统设置->用户管理", "UserAction.checkLoginName()", "检查用户名是否重复", null, "json串", LogRecord.SIGN_QUERY, LogRecord.TYPE_OTHER);
+		super.renderJson(r);
+	}
+
+	/**
+	 * 用户添加兼职岗位
+	 * 
+	 * @author jdq
+	 * @param request
+	 * @param model
+	 */
+	public void addRole() {
+		String userId = request.getParameter("userId");
+		String roleId = request.getParameter("roleId");
+		String partyStructTypeId = request.getParameter("partyStructTypeId");
+		PartyEntity pe = partyEntityService.findEntityByRefId(Long.valueOf(roleId), PartyType.TYPE_ROLE);
+		User user = getCommonService().getById(User.class, Long.valueOf(userId));
+		String result = partyStructService.processUserPartyStruct(user, pe.getId(), Long.valueOf(partyStructTypeId));
+		Map<String, Object> r = new HashMap<String, Object>();
+		r.put("result", result);
+		// 加日志
+		BaseAPI baseAPIService = com.xinleju.erp.base.app.config.App.getBean(BaseAPI.class, ApiConstant.BEAN_CODE);
+		baseAPIService.saveLog(request.getRemoteAddr(), Long.parseLong(userId),LoginInfoUtils.getLoginInfo(request).getUserDTO().getLoginName(), "PT", "系统设置->用户管理", "UserAction.removeUser()", "用户添加兼职岗位", null, "json串", LogRecord.SIGN_INSERT, LogRecord.TYPE_OTHER);
+		super.renderJson(r);
+	}
+
+	/**
+	 * 组织架构
+	 * 
+	 * @author jdq
+	 * @param request
+	 * @param pageable
+	 * @param model
+	 * @return
+	 */
+	public String roleTree() {
+		String partyStructTypeId = request.getParameter("partyStructTypeId");
+		if (StringUtils.isBlank(partyStructTypeId)) {
+			partyStructTypeId = String.valueOf(partyStructTypeService.getZcStructId());
+		}
+		request.setAttribute("partyStructTypeId", partyStructTypeId);
+		request.setAttribute("userId", request.getParameter("userId"));
+		return "roleTree";
+
+	}
+
+	/**
+	 * 用户删除兼职岗位
+	 * 
+	 * @author jdq
+	 * @param request
+	 * @param model
+	 */
+	public void removeRole() {
+		try {
+			String userId = request.getParameter("userId");
+			String roleId = request.getParameter("roleId");
+			PartyEntity pe = partyEntityService.findEntityByRefId(Long.valueOf(roleId), PartyType.TYPE_ROLE);
+			partyStructService.removeUser(Long.valueOf(userId), pe.getId());
+			Map<String, Object> r = new HashMap<String, Object>();
+			r.put("success", true);
+			// 加日志
+			BaseAPI baseAPIService = com.xinleju.erp.base.app.config.App.getBean(BaseAPI.class, ApiConstant.BEAN_CODE);
+			baseAPIService.saveLog(request.getRemoteAddr(), Long.parseLong(userId),LoginInfoUtils.getLoginInfo(request).getUserDTO().getLoginName(), "PT", "系统设置->用户管理", "UserAction.removeRole()", "用户删除兼职岗位", null, "json串", LogRecord.SIGN_DELETE, LogRecord.TYPE_OTHER);
+			super.renderJson(r);
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+	}
+
+	/**
+	 * 用户编辑
+	 * <p>
+	 * Description: @return
+	 * </p>
+	 * <p>
+	 * Todo:TODO
+	 * </p>
+	 * 
+	 * @author liugang
+	 * @date 2016-4-8
+	 */
+	public String edit() {
+		if (id != null) {
+			user = getCommonService().getById(User.class, id);
+		} else {
+			user = new User();
+			user.setStatus(User.STATUS_ENABLE);
+		}
+		// 岗位类别
+		List<LabelValueBean> gwzjList = App.getBean(DictService.class).getChildDictByCode(DictService.GWZJ);
+		String fullName = userService.getUserMainRoleFullName(user);
+		request.setAttribute("gwzjList", gwzjList);
+		request.setAttribute("depName", StringUtils.isBlank(fullName) ? "" : fullName.substring(0, fullName.lastIndexOf("/")));
+		request.setAttribute("mainRoleFullName", fullName);
+		request.setAttribute("user", user);
+		request.setAttribute("parentEntityId", request.getParameter("parentEntityId"));
+		request.setAttribute("partyStructTypeId", request.getParameter("partyStructTypeId"));
+
+		List<LabelValueBean> lvs = App.getBean(DictService.class).getChildDictByCode("GWZJ");
+		request.setAttribute("lvs", lvs);
+		// 加日志
+		BaseAPI baseAPIService = com.xinleju.erp.base.app.config.App.getBean(BaseAPI.class, ApiConstant.BEAN_CODE);
+		Long userId = LoginInfoUtils.getLoginInfoUserDtoId(request);
+		baseAPIService.saveLog(request.getRemoteAddr(), userId,LoginInfoUtils.getLoginInfo(request).getUserDTO().getLoginName(), "PT", "系统设置->用户管理", "UserAction.edit()", "用户编辑", null, "json串", LogRecord.SIGN_UPDATE, LogRecord.TYPE_OTHER);
+		return "edit";
+	}
+
+	/**
+	 * 用户禁用
+	 * <p>
+	 * Description: @return
+	 * </p>
+	 * <p>
+	 * Todo:TODO
+	 * </p>
+	 * 
+	 * @author liugang
+	 * @date 2016-4-8
+	 */
+	public void disable() {
+		String userId = request.getParameter("userId");
+		if (StringUtils.isNotBlank(userId)) {
+			userService.changeStatus(Long.valueOf(userId), User.STATUS_DISABLE);
+		}
+		Map<String, Object> r = new HashMap<String, Object>();
+		r.put("success", true);
+		// 加日志
+		BaseAPI baseAPIService = com.xinleju.erp.base.app.config.App.getBean(BaseAPI.class, ApiConstant.BEAN_CODE);
+		baseAPIService.saveLog(request.getRemoteAddr(), Long.parseLong(userId),LoginInfoUtils.getLoginInfo(request).getUserDTO().getLoginName(), "PT", "系统设置->用户管理", "UserAction.disable()", "用户禁用", null, "json串", LogRecord.SIGN_UPDATE, LogRecord.TYPE_OTHER);
+		super.renderJson(r);
+	}
+
+	/**
+	 * 用户启用
+	 * <p>
+	 * Description: @return
+	 * </p>
+	 * <p>
+	 * Todo:TODO
+	 * </p>
+	 * 
+	 * @author liugang
+	 * @date 2016-4-8
+	 */
+	public void enable() {
+		String userId = request.getParameter("userId");
+		if (StringUtils.isNotBlank(userId)) {
+			userService.changeStatus(Long.valueOf(userId), User.STATUS_ENABLE);
+		}
+		Map<String, Object> r = new HashMap<String, Object>();
+		r.put("success", true);
+		// 加日志
+		BaseAPI baseAPIService = com.xinleju.erp.base.app.config.App.getBean(BaseAPI.class, ApiConstant.BEAN_CODE);
+		baseAPIService.saveLog(request.getRemoteAddr(), Long.parseLong(userId),LoginInfoUtils.getLoginInfo(request).getUserDTO().getLoginName(), "PT", "系统设置->用户管理", "UserAction.edit()", "用户启用", null, "json串", LogRecord.SIGN_UPDATE, LogRecord.TYPE_OTHER);
+		super.renderJson(r);
+	}
+
+	public void save() {
+		try {
+			String parentEntityId = request.getParameter("parentEntityId");
+			String partyStructTypeId = request.getParameter("partyStructTypeId");
+			Map<String, Object> r = new HashMap<String, Object>();
+			if (!userService.haveUserAuth()) {
+				r.put("success", false);
+				r.put("info", "用户数目已超过许可数量！");
+				r.put("parentEntityId", parentEntityId);
+				r.put("partyStructTypeId", partyStructTypeId);
+				super.renderJson(r);
+			} else {
+				// 加密
+				UserDTO currUser = LoginInfoUtils.getLoginInfo(request).getUserDTO();
+				if (user.getId() != null && user.getId() != 0) {
+					user.setEditDate(new Date());
+					user.setEditUserId(currUser.getId());
+					String pwd = getCommonService().findString("select password from User where id = ?", user.getId());
+					if (!user.getPassword().equals(pwd)) {
+						user.setPassword(Md5Utils.makeMd5(user.getPassword()));
+					}
+				} else {
+					user.setCreateDate(new Date());
+					user.setCreateUserId(currUser.getId());
+					user.setPassword(Md5Utils.makeMd5(user.getPassword()));
+				}
+				userService.save(user, Long.valueOf(parentEntityId), Long.valueOf(partyStructTypeId));
+				r.put("success", true);
+				r.put("parentEntityId", parentEntityId);
+				r.put("partyStructTypeId", partyStructTypeId);
+				// 加日志
+				BaseAPI baseAPIService = com.xinleju.erp.base.app.config.App.getBean(BaseAPI.class, ApiConstant.BEAN_CODE);
+				Long userId = LoginInfoUtils.getLoginInfoUserDtoId(request);
+				baseAPIService.saveLog(request.getRemoteAddr(), userId,LoginInfoUtils.getLoginInfo(request).getUserDTO().getLoginName(), "PT", "系统设置->用户管理", "UserAction.save()", "用户保存", null, "json串", LogRecord.SIGN_INSERT, LogRecord.TYPE_OTHER);
+				super.renderJson(r);
+			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+	}
+
+	public String repoList() {
+		String userId = request.getParameter("userId");
+		List<Long> repoIds = new ArrayList<Long>();
+		if (StringUtils.isNotBlank(userId)) {
+			repoIds = userDao.findRepoByUserId(Long.valueOf(userId));
+		}
+		request.setAttribute("repoIds", repoIds);
+		request.setAttribute("userId", userId);
+		request.setAttribute("ids", "");
+		return "repoList";
+	}
+
+	public void saveRepo() {
+		String userId = request.getParameter("userId");
+		String[] repoIds = request.getParameterValues("ids");
+		userService.processUserRepo(Long.valueOf(userId), repoIds);
+		Map<String, Object> r = new HashMap<String, Object>();
+		r.put("success", true);
+		super.renderJson(r);
+	}
+
+	public User getUser() {
+		return user;
+	}
+
+	public void setUser(User user) {
+		this.user = user;
+	}
+
+	public String editPassword() {
+		return "passwordEdit";
+	}
+
+	/**
+	 * 更新密码
+	 */
+	public void updatePassword() {
+		LoginInfo li = (LoginInfo) request.getSession().getAttribute(FlowConstant.LOGININFO);
+		UserDTO user = li.getUserDTO();
+		Map<String, Object> result = new HashMap<String, Object>();
+		boolean success = true;
+		String errorMsg = null;
+		User dbUser = this.userService.getById(user.getId());
+		String newPassword = request.getParameter("newPassword");
+		String confirmPassword = request.getParameter("confirmPassword");
+		if (!newPassword.equals(confirmPassword)) {
+			success = false;
+			errorMsg = "两次密码输入不一致，请检查！";
+		}
+		if (!dbUser.getPassword().equals(Md5Utils.makeMd5(request.getParameter("oldPassword")))) {
+			success = false;
+			errorMsg = "输入原始密码有误！请重新输入";
+		}
+		if (success) {
+			dbUser.setPassword(Md5Utils.makeMd5(newPassword));
+			this.userService.getDao().saveOrUpdate(dbUser);
+		}
+		// 加日志
+		BaseAPI baseAPIService = com.xinleju.erp.base.app.config.App.getBean(BaseAPI.class, ApiConstant.BEAN_CODE);
+		Long userId = LoginInfoUtils.getLoginInfoUserDtoId(request);
+		baseAPIService.saveLog(request.getRemoteAddr(), userId,LoginInfoUtils.getLoginInfo(request).getUserDTO().getLoginName(), "PT", "系统设置->用户管理", "UserAction.updatePassword()", "更新密码", null, "json串", LogRecord.SIGN_UPDATE, LogRecord.TYPE_OTHER);
+		result.put("success", success);
+		result.put("errorMsg", errorMsg);
+		renderJson(result);
+	}
+
+	public String logList() {
+		return "logList";
+	}
+	
+	private BaseAPIService orgnService;
+	@Autowired
+	private FlowServerService flowServerService;
+
+}

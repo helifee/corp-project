@@ -1,0 +1,501 @@
+/*
+ * @(#) Yd0060ServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 社内团购
+ */
+package com.yds.gps.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Service;
+
+import com.yds.base.service.AbstractBaseService;
+import com.yds.common.service.SessionConstants;
+import com.yds.common.service.CommonConstants.MsgTypeEnum;
+import com.yds.common.service.CommonConstants.SparkMsgIDEnum;
+import com.yds.common.service.CommonConstants.SparkSysIDEnum;
+import com.yds.common.service.SessionService;
+import com.yds.gps.bean.GpsOrderDetail;
+import com.yds.gps.bean.TansferCondA;
+import com.yds.gps.bean.Yd0060OrderDetail;
+import com.yds.gps.bean.Yd0060OrderInfo;
+import com.yds.gps.common.service.OrderGoodsInfoService;
+import com.yds.gps.common.bean.GpsOrderInfo;
+import com.yds.gps.common.service.TansferService;
+import com.yds.gps.dao.Yd0060Dao;
+import com.yds.gps.service.GpsConstants;
+import com.yds.gps.service.Yd0060Service;
+import com.yds.util.bean.SparkMessagerBean;
+import com.yds.util.service.SendMessage;
+import com.yds.util.service.ServerInfo;
+
+/**
+ * @see com.yds.gps.service.Yd0060Service
+ */
+@Service("yd0060Service")
+public class Yd0060ServiceImpl extends AbstractBaseService implements Yd0060Service {
+	
+	private Yd0060Dao yd0060Dao;
+	private Yd0060OrderInfo yd0060OrderInfo;
+	private TansferService tansferService;
+	private OrderGoodsInfoService orderGoodsInfoService;
+	
+	@Override
+	public Yd0060OrderInfo getGpsOrderInfo(String orderId) {
+		// 取得订单信息
+		yd0060OrderInfo = yd0060Dao.getGpsOrderInfo(orderId);
+		// 取得订购一览
+		getGpsOrderDetail(orderId);
+		return yd0060OrderInfo;
+		
+	}
+
+	/**
+	 * 取得订购一览
+	 * @param orderId 订单ID
+	 */
+	private void getGpsOrderDetail(String orderId) {
+		// 根据订单ID取得订单详细信息（订购者、份数等）
+		List<GpsOrderDetail> orderDetailList = yd0060Dao.getGpsOrderDetail(orderId);
+		// 订单详细为空的情况不处理
+		if (null == orderDetailList || orderDetailList.size() == 0){
+			return ;
+		}
+		// 退避商品ID
+		String bak_goods_id = "";
+		// 订单总价重算
+		yd0060OrderInfo.setTotalPrice(0D);
+		// 处理结果List
+		List<Yd0060OrderDetail> yd0060OOrderDetailList = new ArrayList<Yd0060OrderDetail>();
+		for (GpsOrderDetail gpsOrderDetail : orderDetailList){
+			// 商品ID与上一条不同时
+			if (!bak_goods_id.equals(gpsOrderDetail.getGoodsId())){
+				Yd0060OrderDetail yd0060OrderDetail = new Yd0060OrderDetail();
+				yd0060OrderDetail.setGoodsId(gpsOrderDetail.getGoodsId());
+				yd0060OrderDetail.setGoodsName(gpsOrderDetail.getGoodsName());
+				yd0060OrderDetail.setGpsPrice(gpsOrderDetail.getCloseUnitPrice());
+				yd0060OrderDetail.setOrderCnt(gpsOrderDetail.getOrderCnt());
+				yd0060OrderDetail.setTotalPrice(gpsOrderDetail.getTotalPrice());
+				yd0060OrderDetail.setOrderId(orderId);
+				yd0060OrderDetail.setStore(gpsOrderDetail.getStore());
+				// 构造商品订购者一览List
+				List<GpsOrderDetail> customerList = new ArrayList<GpsOrderDetail>();
+				if (null != gpsOrderDetail.getCustomerId()){
+					GpsOrderDetail orderDetail = new GpsOrderDetail();
+					orderDetail.setCustomerId(gpsOrderDetail.getCustomerId());
+					orderDetail.setCustomerNm(gpsOrderDetail.getCustomerNm());
+					orderDetail.setOrderCnt(gpsOrderDetail.getOrderCnt());
+					customerList.add(orderDetail);
+				}
+				yd0060OrderDetail.setCustomerList(customerList);
+				
+				yd0060OOrderDetailList.add(yd0060OrderDetail);
+			} else {
+				// 商品ID与上一条相同，追加数量、订购者、合计价格等信息
+				Yd0060OrderDetail yd0060OrderDetail = yd0060OOrderDetailList.get(yd0060OOrderDetailList.size()-1);
+				yd0060OrderDetail.setOrderCnt(yd0060OrderDetail.getOrderCnt() + gpsOrderDetail.getOrderCnt());
+				yd0060OrderDetail.setTotalPrice(yd0060OrderDetail.getTotalPrice() + gpsOrderDetail.getTotalPrice());
+				// 追加订购者一览
+				List<GpsOrderDetail> customerList = yd0060OrderDetail.getCustomerList();
+				if (null != gpsOrderDetail.getCustomerId()){
+					GpsOrderDetail orderDetail = new GpsOrderDetail();
+					orderDetail.setCustomerId(gpsOrderDetail.getCustomerId());
+					orderDetail.setCustomerNm(gpsOrderDetail.getCustomerNm());
+					orderDetail.setOrderCnt(gpsOrderDetail.getOrderCnt());
+					customerList.add(orderDetail);
+				}
+			}
+			// 商品ID退避
+			bak_goods_id = gpsOrderDetail.getGoodsId();
+			
+			// 订单总价计算
+			yd0060OrderInfo.setTotalPrice(yd0060OrderInfo.getTotalPrice()+gpsOrderDetail.getTotalPrice());
+		}
+		yd0060OrderInfo.setYd0060OrderDetail(yd0060OOrderDetailList);
+	}
+
+	@Override
+	public void deleteOrder(String orderId) throws Exception {
+		GpsOrderInfo gpsOrderInfo = yd0060Dao.getGpsOrderInfo(orderId);
+		if (null == gpsOrderInfo){
+			return ;
+		}
+
+		List<GpsOrderDetail>gpsOrderList = yd0060Dao.getOrders(orderId);
+		// 账户支付的情况
+		if (orderGoodsInfoService.isAccountPay(orderId)){
+			for (GpsOrderDetail gpsOrderDetail : gpsOrderList){
+				// 转出
+				TansferCondA tansferCondA = new TansferCondA();
+				tansferCondA.setInId(gpsOrderDetail.getCustomerId());
+				tansferCondA.setExMoney(gpsOrderDetail.getTotalPrice());
+				tansferCondA.setExType(GpsConstants.EX_CUSTOMERS);
+				tansferCondA.setIoFlag(GpsConstants.INCOME);
+				tansferCondA.setExRemarksI(propMgr.getMessage("yds.gps.info.0013",gpsOrderDetail.getCateName()));
+				tansferCondA.setOrderId(orderId);
+				tansferService.tansfer(tansferCondA, true);
+			}
+		}
+		// Spark信息的发送
+		SparkMessagerBean sparkMessagerBean = new SparkMessagerBean();
+		// 消息的链接
+		sparkMessagerBean.setMsg_url("");
+		// 发送消息的系统ID
+		sparkMessagerBean.setSystem_id(SparkSysIDEnum.GP);
+		// 发送消息的消息类型ID
+		sparkMessagerBean.setMsg_id(SparkMsgIDEnum.GP_GP);
+		// 消息内部用ID
+		sparkMessagerBean.setSign(orderId);
+		// spark 消息类型
+		sparkMessagerBean.setStatus(MsgTypeEnum.INSERT);
+		// 要发送的人员一览
+		sparkMessagerBean.setEmpid(new String[]{"0"});
+		// 消息的内容
+		sparkMessagerBean.setMsg_content(propMgr.getMessage("yds.gps.warning.0003",gpsOrderInfo.getOrderContent()));
+		SendMessage.asyncSend(sparkMessagerBean);
+		// 转账全部成功或者无须转账时，删除订单
+		yd0060Dao.deleteOrder(orderId);
+	}
+	
+	@Override
+	public GpsOrderInfo getOrderInfo(String orderId){
+		
+		return yd0060Dao.getOrderInfo(orderId);
+	}
+	
+	@Override
+	public boolean updateOrderInfo(GpsOrderInfo gpsOrderInfo){
+		
+		yd0060Dao.updateOrderInfo(gpsOrderInfo);
+		return true;
+	}
+	
+	@Override
+	public boolean insertOrder(GpsOrderDetail gpsOrderDetail,String goodsCateId) throws Exception{
+		//更新订购者份数（不存在追加）
+		yd0060Dao.insertOrder(gpsOrderDetail);
+		if(orderGoodsInfoService.isAccountPay(gpsOrderDetail.getOrderId())){
+			//追加订购者的转账处理
+			insertOrderTrans(gpsOrderDetail,goodsCateId);
+		}
+		//追加订购者处理
+		updateOrderGoods(gpsOrderDetail);
+		return true;
+	}
+	
+	@Override
+	public boolean updateOrderDetail(GpsOrderDetail gpsOrderDetail,String goodsCateId) throws Exception{
+		//保存订购者追加的份数
+		int cnt=gpsOrderDetail.getOrderCnt();
+		if(orderGoodsInfoService.isAccountPay(gpsOrderDetail.getOrderId())){
+			//追加订购者的转账处理
+			insertOrderTrans(gpsOrderDetail,goodsCateId);
+		}
+		//进行份数处理
+		gpsOrderDetail.setOrderCnt(gpsOrderDetail.getOrderCnt()+Integer.parseInt(getDeleteCnt(gpsOrderDetail)));
+		//更新gps_order_detail(已存在追加)
+		yd0060Dao.updateOrderDetail(gpsOrderDetail);
+		//份数设置成初值
+		gpsOrderDetail.setOrderCnt(cnt);
+		//追加订购者处理
+		updateOrderGoods(gpsOrderDetail);
+		return true;
+	}
+	
+	/**
+	 * 追加订购者后的转账处理
+	 * @param gpsOrderDetail
+	 */
+	private void insertOrderTrans(GpsOrderDetail gpsOrderDetail,String goodsCateId){
+		
+		GpsOrderInfo gpsOrderInfo =  yd0060Dao.getOrderInfo(gpsOrderDetail.getOrderId());
+
+		//个人账户转账处理
+		TansferCondA tansferCondA2 = new TansferCondA();
+		tansferCondA2.setOutId(gpsOrderDetail.getCustomerId());
+		tansferCondA2.setExMoney(gpsOrderDetail.getCloseUnitPrice()*gpsOrderDetail.getOrderCnt());
+		tansferCondA2.setExType(GpsConstants.EX_CUSTOMERS);
+		tansferCondA2.setIoFlag(GpsConstants.EXPENSES);
+		tansferCondA2.setExRemarksO(propMgr.getMessage("yds.gps.info.0008",getGoodsCateName(goodsCateId)));
+		tansferCondA2.setOrderId(gpsOrderDetail.getOrderId());
+		tansferService.tansfer(tansferCondA2);
+		//团购账户的转账处理（先收入）
+		TansferCondA tansferCondA3 = new TansferCondA();
+		tansferCondA3.setInId(GpsConstants.CUSTOMERS_ACCOUNT);
+		tansferCondA3.setExMoney(tansferCondA2.getExMoney());
+		tansferCondA3.setExType(GpsConstants.EX_CUSTOMERS);
+		tansferCondA3.setIoFlag(GpsConstants.INCOME);
+		tansferCondA3.setExRemarksI(propMgr.getMessage("yds.gps.info.0009",getGoodsCateName(goodsCateId)));
+		tansferCondA3.setOrderId(gpsOrderDetail.getOrderId());
+		tansferService.tansfer(tansferCondA3);
+		TansferCondA tansferCondA=new TansferCondA();
+		//团购账户的转账处理（后支出）
+		//设置交易类型为现金
+		tansferCondA.setExType(GpsConstants.EX_CASH);
+		tansferCondA.setIoFlag(GpsConstants.EXPENSES);
+		tansferCondA.setOutId(GpsConstants.CUSTOMERS_ACCOUNT);
+		tansferCondA.setExMoney(tansferCondA2.getExMoney());
+	    //设置备注
+		tansferCondA.setExRemarksO(propMgr.getMessage("yds.gps.info.0011",getGoodsCateName(goodsCateId)));
+		tansferCondA.setOrderId(gpsOrderDetail.getOrderId());
+		//进行转账处理
+		tansferService.tansfer(tansferCondA);
+		// Spark信息的发送
+		SparkMessagerBean sparkMessagerBean = new SparkMessagerBean();
+		// 消息的链接
+		sparkMessagerBean.setMsg_url(ServerInfo.getURLPath() + GpsConstants.SYSTEM_NAME + "/yd0070Init?fromId=yd0050&orderId=" + gpsOrderDetail.getOrderId()+"&"+SessionConstants.REQUESTTARGET+"=1");
+		// 发送消息的系统ID
+		sparkMessagerBean.setSystem_id(SparkSysIDEnum.GP);
+		// 发送消息的消息类型ID
+		sparkMessagerBean.setMsg_id(SparkMsgIDEnum.GP_GP);
+		// 消息内部用ID
+		sparkMessagerBean.setSign(gpsOrderDetail.getOrderId());
+		// spark 消息类型
+		sparkMessagerBean.setStatus(MsgTypeEnum.INSERT);
+		// 要发送的人员一览
+		sparkMessagerBean.setEmpid(new String[]{gpsOrderDetail.getCustomerId()});
+		// 消息的内容
+		sparkMessagerBean.setMsg_content(propMgr.getMessage("yds.gps.info.0043",gpsOrderInfo.getOrderContent(), tansferCondA2.getExMoney()));
+		SendMessage.asyncSend(sparkMessagerBean);
+	}
+	/**
+	 * 追加订购者处理
+	 * @param gpsOrderDetail
+	 */
+	private void updateOrderGoods(GpsOrderDetail gpsOrderDetail){
+		//保存订购者追加的份数
+		int cnt=gpsOrderDetail.getOrderCnt();
+		//进行份数处理
+		gpsOrderDetail.setOrderCnt(gpsOrderDetail.getOrderCnt()+Integer.parseInt(getOrderCnt(gpsOrderDetail)));
+		//更新gps_order_goods
+		yd0060Dao.updateOrderGoods(gpsOrderDetail);
+		//进行份数处理
+		gpsOrderDetail.setOrderCnt(cnt+Integer.parseInt(getTotalOrderCnt(gpsOrderDetail.getOrderId())));
+		//更新gps_order_info
+		yd0060Dao.updateGpsOrderInfo(gpsOrderDetail);
+	}
+	/**
+	 * 取得分类名称
+	 * @param goodsCateId
+	 * @return
+	 */
+	private String getGoodsCateName(String goodsCateId){
+		
+		return yd0060Dao.getGoodsCateName(goodsCateId);
+		
+	}
+	@Override
+	public boolean updateEndOrder(String orderId,String orderContent,TansferCondA tansferCondA,String goodsCateId,boolean isSendMsg) throws Exception{
+		
+		GpsOrderInfo gpsOrderInfo =  yd0060Dao.getOrderInfo(orderId);
+		if (gpsOrderInfo == null) {
+			return false;
+		}
+		if (orderGoodsInfoService.isAccountPay(orderId)) {
+			// 设置交易类型为现金
+			tansferCondA.setExType(GpsConstants.EX_CASH);
+			tansferCondA.setIoFlag(GpsConstants.EXPENSES);
+			tansferCondA.setOutId(GpsConstants.CUSTOMERS_ACCOUNT);
+			//团购账户扣款金额不从画面传入，而由DB计算
+			//tansferCondA.setExMoney(tansferCondA.getExMoney());
+			tansferCondA.setExMoney(yd0060Dao.getTotalOrderMoney(orderId));
+			// 设置备注
+			tansferCondA.setExRemarksO(propMgr.getMessage("yds.gps.info.0011",
+					getGoodsCateName(goodsCateId)));
+			tansferCondA.setOrderId(orderId);
+			// 进行转账处理
+			tansferService.tansfer(tansferCondA);
+		}
+		if (isSendMsg) {
+			// Spark信息的发送
+			SparkMessagerBean sparkMessagerBean = new SparkMessagerBean();
+			// 消息的链接
+			sparkMessagerBean
+					.setMsg_url(ServerInfo.getURLPath()
+							+ GpsConstants.SYSTEM_NAME
+							+ "/yd0070Init?fromId=yd0050&orderId=" + orderId + "&"
+							+ SessionConstants.REQUESTTARGET + "=1");
+			// 发送消息的系统ID
+			sparkMessagerBean.setSystem_id(SparkSysIDEnum.GP);
+			// 消息内部用ID
+			sparkMessagerBean.setSign(orderId);
+			// 发送消息的消息类型ID
+			sparkMessagerBean.setMsg_id(SparkMsgIDEnum.GP_GP);
+			// 消息内部用ID
+			sparkMessagerBean.setSign(orderId);
+			// spark 消息类型
+			sparkMessagerBean.setStatus(MsgTypeEnum.UPDATE);
+			// 要发送的人员一览
+			sparkMessagerBean.setEmpid(new String[] { "0" });
+			// 消息的内容
+			sparkMessagerBean.setMsg_content(propMgr
+					.getMessage("yds.gps.info.0041", gpsOrderInfo.getOrderContent()));
+			SendMessage.asyncSend(sparkMessagerBean);
+		}
+		Map<String, String> parameter = new HashMap<String, String>();
+		parameter.put("orderId", orderId);
+		parameter.put("userId", SessionService.getLoginUserId());
+		
+		yd0060Dao.updateEndOrder(parameter);
+		return true;
+	}
+	
+	@Override
+	public boolean deleteGoodsOrder(GpsOrderDetail gpsOrderDetail,String goodsCateId,String[] orderString) throws Exception {
+		
+	    for (int i = 0; i < orderString.length; i++) {
+	    	//取个人账户ID
+		     gpsOrderDetail.setCustomerId(orderString[i]);
+		    // 删除订购者的转账处理
+			if(orderGoodsInfoService.isAccountPay(gpsOrderDetail.getOrderId())){
+				deleteOrderTrans(gpsOrderDetail,goodsCateId);
+			}
+			//删除订购者处理
+			deleteOrderGoods(gpsOrderDetail);
+			//更新gps_order_detail
+			yd0060Dao.deleteGoodsOrder(gpsOrderDetail);
+	    }
+		return true;
+	}
+	/**
+	 * 删除订购者的转账处理
+	 * @param gpsOrderDetail
+	 */
+	private void deleteOrderTrans(GpsOrderDetail gpsOrderDetail,String goodsCateId){
+		
+		GpsOrderInfo gpsOrderInfo =  yd0060Dao.getOrderInfo(gpsOrderDetail.getOrderId());
+		// 对公司账户进行处理（收入）
+		TansferCondA tansferCondA = new TansferCondA();
+		// 设置交易类型为现金
+		tansferCondA.setExType(GpsConstants.EX_CASH);
+		tansferCondA.setIoFlag(GpsConstants.INCOME);
+		tansferCondA.setInId(GpsConstants.CUSTOMERS_ACCOUNT);
+		tansferCondA.setExMoney(gpsOrderDetail.getCloseUnitPrice()
+				* Integer.parseInt(getDeleteCnt(gpsOrderDetail)));
+		// 设置备注
+		tansferCondA.setExRemarksI(propMgr.getMessage("yds.gps.info.0012",
+				getGoodsCateName(goodsCateId)));
+		tansferCondA.setOrderId(gpsOrderDetail.getOrderId());
+		// 进行转账处理
+		tansferService.tansfer(tansferCondA);
+
+		// 对个人账户进行处理
+		TansferCondA tansferCondA2 = new TansferCondA();
+		tansferCondA2.setInId(gpsOrderDetail.getCustomerId());
+		tansferCondA2.setOutId(GpsConstants.CUSTOMERS_ACCOUNT);
+		tansferCondA2.setExMoney(tansferCondA.getExMoney());
+		tansferCondA2.setExType(GpsConstants.EX_CUSTOMERS);
+		tansferCondA2.setIoFlag(GpsConstants.INCOME);
+		tansferCondA2.setExRemarksI(propMgr.getMessage("yds.gps.info.0012",
+				getGoodsCateName(goodsCateId)));
+		tansferCondA2.setExRemarksO(propMgr.getMessage("yds.gps.info.0012",
+				getGoodsCateName(goodsCateId)));
+		tansferCondA2.setOrderId(gpsOrderDetail.getOrderId());
+		// Spark信息的发送
+		SparkMessagerBean sparkMessagerBean = new SparkMessagerBean();
+		// 消息的链接
+		sparkMessagerBean.setMsg_url(ServerInfo.getURLPath()
+				+ GpsConstants.SYSTEM_NAME + "/yd0070Init?fromId=yd0050&orderId="
+				+ gpsOrderDetail.getOrderId() + "&"
+				+ SessionConstants.REQUESTTARGET + "=1");
+		// 发送消息的系统ID
+		sparkMessagerBean.setSystem_id(SparkSysIDEnum.GP);
+		// 发送消息的消息类型ID
+		sparkMessagerBean.setMsg_id(SparkMsgIDEnum.GP_GP);
+		// 消息内部用ID
+		sparkMessagerBean.setSign(gpsOrderDetail.getOrderId());
+		// spark 消息类型
+		sparkMessagerBean.setStatus(MsgTypeEnum.INSERT);
+		// 要发送的人员一览
+		sparkMessagerBean.setEmpid(new String[] { gpsOrderDetail
+				.getCustomerId() });
+		// 消息的内容
+		sparkMessagerBean.setMsg_content(propMgr.getMessage(
+				"yds.gps.info.0042", gpsOrderInfo.getOrderContent(),tansferCondA.getExMoney()));
+		SendMessage.asyncSend(sparkMessagerBean);
+		tansferService.tansfer(tansferCondA2);
+	}
+	/**
+	 * 删除订购者处理
+	 * @param gpsOrderDetail
+	 */
+	private void deleteOrderGoods(GpsOrderDetail gpsOrderDetail){
+		//进行份数处理
+		gpsOrderDetail.setOrderCnt(Integer.parseInt(getOrderCnt(gpsOrderDetail))
+				- Integer.parseInt(getDeleteCnt(gpsOrderDetail)));
+		//更新gps_order_goods
+		yd0060Dao.updateOrderGoods(gpsOrderDetail);
+		//进行份数处理
+		gpsOrderDetail.setOrderCnt(Integer.parseInt(getTotalOrderCnt(gpsOrderDetail.getOrderId()))
+				- Integer.parseInt(getDeleteCnt(gpsOrderDetail)));
+		//更新gps_order_info
+		yd0060Dao.updateGpsOrderInfo(gpsOrderDetail);
+	}
+	/**
+	 * 取得某种商品的订购份数
+	 * @param gpsOrderDetail
+	 * @return
+	 */
+	private String getOrderCnt(GpsOrderDetail gpsOrderDetail){
+		
+		return yd0060Dao.getOrderCnt(gpsOrderDetail);
+	}
+	/**
+	 * 取得总的订购份数
+	 * @param orderId
+	 * @return String
+	 */
+	private String getTotalOrderCnt(String orderId){
+		
+		return yd0060Dao.getTotalOrderCnt(orderId);
+	}
+	/**
+	 * 取得个人订购份数（进行删除操作用）
+	 * @param gpsOrderDetail
+	 * @return
+	 */
+	private String getDeleteCnt(GpsOrderDetail gpsOrderDetail){
+		
+		return yd0060Dao.getDeleteCnt(gpsOrderDetail);
+	}
+	
+	@Override
+	 public String getPesonRemain(String pesAccId){
+		
+		return yd0060Dao.getPesonRemain(pesAccId);
+	}
+	
+	@Override
+	public void updateAndDeleOrder(String orderId,String orderContent,TansferCondA tansferCondA,String goodsCateId) throws Exception {
+		//结束订单处理
+		updateEndOrder(orderId,orderContent,tansferCondA,goodsCateId,false);
+		//作废订单
+		deleteOrder(orderId);
+	}
+	
+	/**
+	 * @param yd0060Dao the yd0060Dao to set
+	 */
+	public void setYd0060Dao(Yd0060Dao yd0060Dao) {
+		this.yd0060Dao = yd0060Dao;
+	}
+
+	/**
+	 * @param tansferService the tansferService to set
+	 */
+	public void setTansferService(TansferService tansferService) {
+		this.tansferService = tansferService;
+	}
+
+	/**
+	 * @param orderGoodsInfoService the orderGoodsInfoService to set
+	 */
+	public void setOrderGoodsInfoService(OrderGoodsInfoService orderGoodsInfoService) {
+		this.orderGoodsInfoService = orderGoodsInfoService;
+	}
+}

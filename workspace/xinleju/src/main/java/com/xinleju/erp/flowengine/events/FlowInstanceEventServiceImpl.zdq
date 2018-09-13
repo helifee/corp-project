@@ -1,0 +1,137 @@
+package com.xinleju.erp.flowengine.events;
+
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
+
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.stereotype.Component;
+
+import com.xinleju.erp.base.utils.DateUtils;
+import com.xinleju.erp.flow.service.api.SmObjectService;
+import com.xinleju.erp.flowengine.dao.FlowInstanceDao;
+import com.xinleju.erp.flowengine.models.FlowInstance;
+import com.xinleju.erp.flowengine.service.FlowInstanceStepWorkTaskExtendService;
+import com.xinleju.erp.flowengine.utils.FlowInstanceConstant;
+import com.xinleju.erp.flowengine.utils.FlowInstanceStatus;
+import com.xinleju.erp.flowengine.utils.TaskTypeStatus;
+import com.xinleju.erp.flowengine.utils.TaskTypeStatus.TaskType;
+
+@Component
+public class FlowInstanceEventServiceImpl implements FlowInstanceEventService {
+
+	private static final Logger logger = Logger
+			.getLogger(FlowInstanceEventServiceImpl.class);
+
+	@Autowired
+	private ThreadPoolTaskExecutor taskExecutor;
+
+	@Autowired
+	private FlowInstanceDao flowInstanceDao;
+
+	@Autowired
+	private SmObjectService smObjectService;
+	
+	@Autowired
+	private FlowInstanceStepWorkTaskExtendService flowInstanceStepWorkTaskExtendService;
+
+	public void changeBeforeUpdateFlowInstanceEvent(final FlowInstance flowInstance) {
+	}
+
+	public void changeAfterUpdateFlowInstanceEvent(final FlowInstance flowInstance) {
+		
+		if (flowInstance == null) {
+			logger.error("流程实例为空");
+			return;
+		}
+		
+		try {
+			flowInstanceStepWorkTaskExtendService.saveFlowInstanceStepWorkTaskExtend(flowInstance.getGuid(), flowInstance.getStartUserId().toString(), TaskTypeStatus.TaskType.TX.getCode());
+		} catch (Exception e) {
+			logger.error("消息推送失败！"+e);
+		}
+		
+		taskExecutor.execute(new Runnable() {
+			@Override
+			public void run() {
+
+				String appCode = flowInstance.getAppCode();
+				Integer fiStatus = flowInstance.getStatus();
+				String bizId = flowInstance.getBizId();
+				String sodCode = flowInstanceDao.getSodCode(flowInstance.getBizType());
+				
+				logger.info("流程实例ID["+flowInstance.getGuid()+"],状态["+fiStatus+"],sodCode["+sodCode+"],appCode["+appCode+"],bizId["+bizId+"]");
+				logger.info("FINAL_SP_USER_NAME["+flowInstance.getCompleteUserName()+"],FINAL_SP_USER_ID["+flowInstance.getCompleteUserId()+"]");
+	
+				String currDate = DateUtils.formatDate(new Date(),"yyyy-MM-dd HH:mm:ss");
+
+				Map<String, Object> mapExtendParam = new HashMap<String, Object>();
+				mapExtendParam.put("FINAL_SP_USER_NAME",flowInstance.getCompleteUserName());
+				mapExtendParam.put("FINAL_SP_USER_ID",flowInstance.getCompleteUserId());
+				
+				try {
+
+					switch (fiStatus) {
+					case FlowInstanceStatus.STATUS_BACK: // 流程驳回
+						smObjectService.sendFiStatus(appCode,bizId, sodCode,FlowInstanceStatus.STATUS_COMPLETE,FlowInstanceConstant.BUSINESS_SYSTEM_STATUS_BH,
+															currDate, mapExtendParam);
+						//flowInstanceStepWorkTaskExtendService.saveFlowInstanceStepWorkTaskExtend(flowInstance.getGuid(), flowInstance.getStartUserId().toString(), TaskType.TX.getCode());
+						break;
+					case FlowInstanceStatus.STATUS_COMPLETE: // 流程完结
+						smObjectService.sendFiStatus(appCode,bizId, sodCode,FlowInstanceStatus.STATUS_COMPLETE,FlowInstanceConstant.BUSINESS_SYSTEM_STATUS_JS,
+															currDate, mapExtendParam);
+						//flowInstanceStepWorkTaskExtendService.saveFlowInstanceStepWorkTaskExtend(flowInstance.getGuid(), flowInstance.getStartUserId().toString(), TaskType.TX.getCode());
+						break;
+					case FlowInstanceStatus.STATUS_OVERDUE: // 流程作废
+						//mapExtendParam.put("PART_USERS",flowInstanceDao.getCurrentFlowUsers(flowInstance.getGuid(),FlowInstanceStatus.STATUS_RUNNING));
+						//smObjectService.sendFiStatus(appCode,bizId, sodCode,FlowInstanceStatus.STATUS_COMPLETE,FlowInstanceConstant.BUSINESS_SYSTEM_STATUS_ZF,currDate, mapExtendParam);
+						//flowInstanceStepWorkTaskExtendService.saveFlowInstanceStepWorkTaskExtend(flowInstance.getGuid(), flowInstance.getStartUserId().toString());
+						smObjectService.sendFiStatus(appCode,bizId, sodCode,FlowInstanceStatus.STATUS_COMPLETE,FlowInstanceConstant.BUSINESS_SYSTEM_STATUS_BH,
+								currDate, mapExtendParam);
+						//flowInstanceStepWorkTaskExtendService.saveFlowInstanceStepWorkTaskExtend(flowInstance.getGuid(), flowInstance.getStartUserId().toString(), TaskType.TX.getCode());
+					default:
+						break;
+					}
+
+				} catch (Exception ex) {
+					logger.error("流程状态改变通知业务系统失败！", ex);
+				}
+			}
+		});
+	}
+
+	@Override
+	public void changeBeforeSaveFlowInstanceEvent(FlowInstance flowInstance) {
+
+	}
+
+	// @After("execution(* com.xinleju.erp.flowengine.action.FlowInstanceApproveAction.submitForStart(..))&& (args(flowInstance))")
+	public void changeAfterSaveFlowInstanceEvent(final FlowInstance flowInstance) {
+		
+		if (flowInstance == null) {
+			logger.error("流程实例为空");
+			return;
+		}
+		
+		taskExecutor.execute(new Runnable() {
+			@Override
+			public void run() {
+
+				String appCode = flowInstance.getAppCode();
+				Integer fiStatus = flowInstance.getStatus();
+				String bizId = flowInstance.getBizId();
+				String sodCode = flowInstanceDao.getSodCode(flowInstance.getBizType());
+
+				try {
+					//flowInstanceStepWorkTaskExtendService.saveFlowInstanceStepWorkTaskExtend(flowInstance.getGuid(), flowInstance.getStartUserId().toString());
+					smObjectService.sendFiStatus(appCode,bizId, sodCode,fiStatus, null, null, null);
+				} catch (Exception ex) {
+					logger.error("流程状态改变通知业务系统失败！", ex);
+					ex.printStackTrace();
+				}
+			}
+		});
+	}
+}

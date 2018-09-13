@@ -1,0 +1,324 @@
+package com.xinleju.erp.ad.service;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+
+import javax.naming.NamingEnumeration;
+import javax.naming.NamingException;
+import javax.naming.directory.Attribute;
+import javax.naming.directory.Attributes;
+import javax.naming.directory.SearchControls;
+import javax.naming.directory.SearchResult;
+import javax.naming.ldap.LdapContext;
+import javax.transaction.Transactional;
+
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.erp.ad.config.AdConfigUtils;
+import com.xinleju.erp.ad.config.AdSetting;
+import com.xinleju.erp.ad.config.FileCatalog;
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.app.service.ICommonService;
+import com.xinleju.erp.frame.dao.CompanyDao;
+import com.xinleju.erp.frame.dao.PartyEntityDao;
+import com.xinleju.erp.frame.dao.PartyStructDao;
+import com.xinleju.erp.frame.models.Company;
+import com.xinleju.erp.frame.models.PartyEntity;
+import com.xinleju.erp.frame.models.PartyStruct;
+
+
+@Service
+@Transactional
+public class AdCompanyService {
+	private static final Logger logger = Logger
+			.getLogger(AdCompanyService.class);
+	@Autowired
+	private CompanyDao companyDao;
+	
+	@Autowired
+	private PartyEntityDao partyEntityDao;
+	
+	
+	@Autowired
+	private PartyStructDao partyStructDao;
+	
+	
+
+	/**
+	 * 同步
+	 * @throws NamingException 
+	 */
+	public boolean syncZbRoot(LdapContext ldapContext,AdSetting adSetting) throws NamingException{
+			// 实例化一个搜索器
+			SearchControls cons = new SearchControls();
+			// 搜索范围： 1、平级检索；2、树形检索
+			//cons.setSearchScope(SearchControls.SUBTREE_SCOPE);
+			cons.setSearchScope(SearchControls.ONELEVEL_SCOPE);
+			//设置为false时返回结果占用内存减少
+			cons.setReturningObjFlag(true);
+			// 执行查询
+			String   baseDN=AdConfigUtils.getBaseND(adSetting.getDomainName());
+			String   filter=AdConfigUtils.getFilter(null);
+			NamingEnumeration<SearchResult> sEnum = ldapContext.search(baseDN, filter, cons);
+			int size = 0;
+			List<FileCatalog> fileCatalogs=new ArrayList<FileCatalog>();
+			if(sEnum.hasMore()){
+				while(sEnum.hasMoreElements()){    
+							SearchResult sr = sEnum.nextElement();
+							String DN = sr.getName();
+							if(DN.indexOf(adSetting.getCatalogName())>0){
+							   
+								Attributes attrs = sr.getAttributes();
+								// 取到所有属性
+								NamingEnumeration<? extends Attribute> aEnum = attrs.getAll();
+								FileCatalog fileCatalog=AdConfigUtils.getFileCatalog(aEnum);
+								fileCatalogs.add(fileCatalog);
+								size ++ ;
+								System.out.println("---------------------------------------");
+							}
+				}
+				saveOrUpdateRoot(fileCatalogs);
+			}
+		     return true;
+		}
+	
+	
+	/**
+	 * 同步
+	 * @throws NamingException 
+	 */
+	public boolean SynCompany(LdapContext ldapContext,AdSetting adSetting) throws NamingException{
+			// 实例化一个搜索器
+			SearchControls cons = new SearchControls();
+			// 搜索范围： 1、平级检索；2、树形检索
+			//cons.setSearchScope(SearchControls.SUBTREE_SCOPE);
+			cons.setSearchScope(SearchControls.ONELEVEL_SCOPE);
+			//设置为false时返回结果占用内存减少
+			cons.setReturningObjFlag(true);
+			// 执行查询
+			String   baseDN=AdConfigUtils.getBaseND(adSetting.getDomainName());
+			baseDN="OU="+adSetting.getCatalogName()+","+baseDN;
+			String   filter=AdConfigUtils.getFilter(null);
+			System.out.println(ldapContext.getNameInNamespace());
+			NamingEnumeration<SearchResult> sEnum = ldapContext.search(baseDN, filter, cons);
+			int size = 0;
+			List<FileCatalog> fileCatalogs=new ArrayList<FileCatalog>();
+			if(sEnum.hasMore()){
+				while(sEnum.hasMoreElements()){    
+							SearchResult sr = sEnum.nextElement();
+							String DN = sr.getName();
+							Attributes attrs = sr.getAttributes();
+							// 取到所有属性
+							NamingEnumeration<? extends Attribute> aEnum = attrs.getAll();
+							FileCatalog fileCatalog=AdConfigUtils.getFileCatalog(aEnum);
+							fileCatalogs.add(fileCatalog);
+							size ++ ;
+							System.out.println("---------------------------------------");
+				}
+			}
+			
+			//得到配置对应的根Entity
+			List<PartyEntity> partyEntitys=partyEntityDao.getPartyEntityListByPartyEntityTypes(new String[]{"zb"});
+			PartyEntity partyRoot = getConfingZbEntity(partyEntitys, adSetting.getOrgPath());
+			
+		     saveOrUpdate(fileCatalogs, partyRoot, adSetting);
+		     return true;
+		}
+	
+	/**
+	 * 得到配置对应的根Entity
+	 * @param partyEntitys Entity列表
+	 * @param orgPath：配置的组织机构路径，以斜杠进行区分
+	 * @return
+	 */
+	private PartyEntity getConfingZbEntity(List<PartyEntity> partyEntitys, String orgPath){
+		PartyEntity entityReturn = null;
+		
+		if(partyEntitys != null && orgPath != null){
+			String[] splitStr = orgPath.split("/");
+			//父级节点：忽略空的节点
+			PartyEntity parentPartyEntity = null;
+			for(int i = 0; i < splitStr.length; i++){
+				if(!splitStr[i].equals("")){
+					for(int j = 0; j < partyEntitys.size(); j++){
+						PartyEntity entityTemp = partyEntitys.get(j);
+						if(parentPartyEntity == null){
+							if(entityTemp != null 
+									&& entityTemp.getPrefix().equals(entityTemp.getId() + "-")
+									&& entityTemp.getName().equalsIgnoreCase(splitStr[i]) ){
+								parentPartyEntity = entityTemp;
+								break;
+							}
+						}else if(entityTemp != null 
+									&& entityTemp.getPrefix().equals(parentPartyEntity.getPrefix() + entityTemp.getId() + "-")
+									&& entityTemp.getName().trim().equalsIgnoreCase(splitStr[i].trim())){
+								parentPartyEntity = entityTemp;
+								break;
+							
+						}
+					}
+				}
+			}
+			entityReturn = parentPartyEntity;
+		}
+		
+		return entityReturn;
+	}
+
+    /**
+     * 公司创建或者更新
+     * yangweijun 2016-4-25 修改
+     */
+    public void saveOrUpdate(List<FileCatalog> fileCatalogs, PartyEntity rootEntity,AdSetting adSetting){
+    	String random=String.valueOf((new Date()).getTime());
+    	ICommonService iCommonService=App.getBean(ICommonService.class,
+				"commonService");
+//    	List<PartyEntity> partyEntitys=partyEntityDao.getPartyEntityListByPartyEntityTypes(new String[]{"zb"});
+    	for(FileCatalog fileCatalog:fileCatalogs){
+    		Company company=new Company();
+    		//查找是否创建过该公司
+    		List<Company>  companys=iCommonService.findByHQL(Company.class, "from Company y where y.objectGuid =? and y.extend= ?" ,fileCatalog.getObjectGUID(),adSetting.getExtendName());
+    		if(companys!=null && companys.size()>0){
+    			company=companys.get(0);
+    			company.setName(fileCatalog.getDescription());
+        		company.setDistinguishedName(fileCatalog.getDistinguishedName());
+        		company.setCode(fileCatalog.getName());
+        		company.setObjectGuid(fileCatalog.getObjectGUID());
+        		company.setExtend(adSetting.getExtendName());
+        		company.setStatus(Company.STATUS_ENABLE);
+        		company.setEntityType(Company.ENTITY_TYPE);
+        		company.setAdFlag(random);
+        		companyDao.getDao().update(company);
+        		companyDao.getDao().flush();
+        		List<PartyEntity> relationPartyEntitys=partyEntityDao.getPartyEntityListByRefIdAndPartyEntityTypes(company.getId(), new String[]{"company"},true);
+        		if(relationPartyEntitys==null || relationPartyEntitys.size()<=0){
+        			
+//        			PartyEntity rootEntity=partyEntitys.get(0);
+        			PartyEntity partyEntity=new PartyEntity();
+            		partyEntity.setName(fileCatalog.getDescription());
+            		partyEntity.setShortName(fileCatalog.getDescription());
+            		partyEntity.setPartyTypeId(2L);
+            		partyEntity.setEntityType(PartyEntity.ENTITY_TYPE);
+            		partyEntity.setStatus(PartyEntity.STATUS_ENABLE);
+            		partyEntity.setRefId(company.getId());
+            		partyEntity.setNamePrefix(rootEntity.getNamePrefix()+fileCatalog.getDescription()+"-");
+            		partyEntityDao.getDao().save(partyEntity);
+            		partyEntityDao.getDao().flush();
+            		partyEntity.setPrefix(rootEntity.getPrefix()+partyEntity.getId()+"-");
+            		partyEntityDao.getDao().update(partyEntity);
+            		partyEntityDao.getDao().flush();
+            		//关系表
+            		PartyStruct partyStruct=new PartyStruct();
+            		partyStruct.setChildEntityId(partyEntity.getId());
+            		partyStruct.setParentEntityId(rootEntity.getId());
+            		partyStruct.setPartyStructTypeId(1L);
+            		partyStructDao.getDao().save(partyStruct);
+        		}else{
+        			//获取上级名称，对应修改名称
+//        			PartyEntity rootEntity=partyEntitys.get(0);
+        			PartyEntity relationPartyEntity=relationPartyEntitys.get(0);
+        			relationPartyEntity.setName(fileCatalog.getDescription());
+        			relationPartyEntity.setEntityType(PartyEntity.ENTITY_TYPE);
+        			relationPartyEntity.setStatus(PartyEntity.STATUS_ENABLE);
+        			relationPartyEntity.setShortName(fileCatalog.getDescription());
+        			relationPartyEntity.setNamePrefix(rootEntity.getNamePrefix()+fileCatalog.getDescription()+"-");
+        			partyEntityDao.getDao().update(relationPartyEntity);
+            		partyEntityDao.getDao().flush();
+        		}
+    		}else{
+    			company.setName(fileCatalog.getDescription());
+        		company.setDistinguishedName(fileCatalog.getDistinguishedName());
+        		company.setCode(fileCatalog.getName());
+        		company.setObjectGuid(fileCatalog.getObjectGUID());
+        		company.setExtend(adSetting.getExtendName());
+        		company.setEntityType(Company.ENTITY_TYPE);
+        		company.setStatus(Company.STATUS_ENABLE);
+        		companyDao.getDao().save(company);
+           		company.setAdFlag(random);
+//        		if(partyEntitys!=null&&partyEntitys.size()>0){
+        		if(rootEntity != null){
+        			//快捷表
+//        			PartyEntity rootEntity=partyEntitys.get(0);
+        			PartyEntity partyEntity=new PartyEntity();
+            		partyEntity.setName(fileCatalog.getDescription());
+            		partyEntity.setShortName(fileCatalog.getDescription());
+            		partyEntity.setPartyTypeId(2L);
+            		partyEntity.setStatus(PartyEntity.STATUS_ENABLE);
+            		partyEntity.setEntityType(PartyEntity.ENTITY_TYPE);
+            		partyEntity.setRefId(company.getId());
+            		partyEntity.setNamePrefix(rootEntity.getNamePrefix()+fileCatalog.getDescription()+"-");
+            		partyEntityDao.getDao().save(partyEntity);
+            		partyEntityDao.getDao().flush();
+            		partyEntity.setPrefix(rootEntity.getPrefix()+partyEntity.getId()+"-");
+            		partyEntityDao.getDao().update(partyEntity);
+            		partyEntityDao.getDao().flush();
+            		//关系表
+            		PartyStruct partyStruct=new PartyStruct();
+            		partyStruct.setChildEntityId(partyEntity.getId());
+            		partyStruct.setParentEntityId(rootEntity.getId());
+            		partyStruct.setPartyStructTypeId(1L);
+            		partyStructDao.getDao().save(partyStruct);
+        		}
+    		}
+    	}
+    	
+    	//处理以前在AD中存在现在删除的数据
+    	List<Company>  companys=iCommonService.findByHQL(Company.class, "from Company y where y.objectGuid  is not null  and y.objectGuid !='' and y.adFlag != ?  and y.extend = ?  " ,random,adSetting.getExtendName());
+    	if(companys!=null && companys.size()>0){
+    		for(Company c :companys){
+    			List<PartyEntity> relationPartyEntitys=partyEntityDao.getPartyEntityListByRefIdAndPartyEntityTypes(c.getId(), new String[]{"company"},true);
+    			if(relationPartyEntitys!=null&& relationPartyEntitys.size()>0){
+    				PartyEntity entity=relationPartyEntitys.get(0);
+    				entity.setStatus(PartyEntity.STATUS_DISABLE);
+        			partyEntityDao.getDao().update(entity);
+            		partyEntityDao.getDao().flush();
+    			}
+        		//禁用
+        		c.setStatus(Company.STATUS_DISABLE);
+        		companyDao.getDao().update(c);
+        		companyDao.getDao().flush();
+        		
+        	}
+    	}
+    	
+
+    }
+    /**
+     * zongbu建或者更新
+     */
+    public void saveOrUpdateRoot(List<FileCatalog> fileCatalogs){
+    	for(FileCatalog fileCatalog:fileCatalogs){
+    		List<PartyEntity> partyEntitys=partyEntityDao.getPartyEntityListByPartyEntityTypes(new String[]{"zb"});
+    		logger.info("公司：=="+fileCatalog.getDescription());
+    		if(partyEntitys!=null&&partyEntitys.size()>0){
+    			PartyEntity partyEntity=partyEntitys.get(0);
+    			logger.info("总部名称：=="+partyEntity.getName());
+        		partyEntity.setName(fileCatalog.getDescription());
+        		partyEntity.setShortName(fileCatalog.getDescription());
+        		partyEntity.setNamePrefix(fileCatalog.getDescription()+"-");
+        		partyEntity.setStatus(PartyEntity.STATUS_ENABLE);
+        		partyEntity.setEntityType(PartyEntity.ENTITY_TYPE);
+        		partyEntityDao.getDao().saveOrUpdate(partyEntity);
+        		partyStructDao.getDao().flush();
+    		}else{
+    			PartyEntity partyEntity=new PartyEntity();
+        		partyEntity.setName(fileCatalog.getDescription());
+        		partyEntity.setShortName(fileCatalog.getDescription());
+        		partyEntity.setPartyTypeId(1L);
+        		partyEntity.setNamePrefix(fileCatalog.getDescription()+"-");
+        		partyEntity.setStatus(PartyEntity.STATUS_ENABLE);
+        		partyEntity.setEntityType(PartyEntity.ENTITY_TYPE);
+        		logger.info("保存公司名称：=="+partyEntity.getName());
+        		partyEntityDao.getDao().save(partyEntity);
+    		}
+    		
+    	}
+    	
+    }
+}
+
+
+

@@ -1,0 +1,262 @@
+package com.xinleju.erp.finance.service;
+
+import java.text.DecimalFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.poi.hssf.usermodel.HSSFCell;
+import org.apache.poi.hssf.usermodel.HSSFRow;
+import org.apache.poi.hssf.usermodel.HSSFSheet;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.finance.models.FiAssDetailMapping;
+import com.xinleju.erp.finance.models.FiAssMapping;
+import com.xinleju.erp.finance.utils.ExcelHandlerUtil;
+import com.xinleju.erp.finance.utils.IExcelHandler;
+import com.xinleju.erp.form.utils.DbType;
+import com.xinleju.erp.sa.service.SyncFinaSaData;
+import com.xinleju.erp.sm.extend.dto.FinaData;
+import com.xinleju.erp.sm.extend.dto.FinaQueryParams;
+
+/**
+ * 辅助核算对照详情
+ * @author chc
+ */
+@Service
+public class FiAssMappingRoomService extends BaseService implements IExcelHandler{
+	@Autowired
+	private JdbcTemplate jt;
+	/**
+	 * excel页签名
+	 * @return
+	 */
+	@Override
+	public String getSheetName() {
+		// TODO Auto-generated method stub
+		return "辅助核算与业务对象对应详情";
+	}
+	/**
+	 * 导出的excel字段名称
+	 * @return
+	 */
+	@Override
+	public String[] getHeadItemsNameAry() {
+		// TODO Auto-generated method stub
+		//id,ass_item_code,ass_item_name,ass_mapping_id，object_item_code,object_item_name,object_id
+		String[] str = {"id","核算代码","核算名称","核算业务对应id","业务对象代码","业务对象名称","业务对象id"};
+		return str;
+	}
+
+	/**
+	 * 导出的excel字段属性名，class中必须存在此属性
+	 * @return
+	 */
+	@Override
+	public String[] getHeadItemsCodeAry() {
+		// TODO Auto-generated method stub
+		String[] str = {"id","assItemCode","assItemName","assMappingId","objectItemCode","objectItemName","objectId"};
+		return str;
+	}
+
+	/**
+	 * 导出的excel字段在表格中占的宽度，与code一一对应，默认100，如不想显示比如ID字段，可设置为0。
+	 * @return
+	 */
+	@Override
+	public Integer[] getHeadItemsLength() {
+		// TODO Auto-generated method stub
+		Integer[] lengths = { 100, 100, 100, 100, 100, 100, 100};
+		return lengths;
+	}
+
+	/**
+	 * 导出字段在excel中是否红色显示 <br/> true:是（字段值不导出），false：否，null：红色、且字段值导出
+	 * @return
+	 */
+	@Override
+	public Boolean[] getHeadItemsColor() {
+		// TODO Auto-generated method stub
+		Boolean[] bool = { false, false, false, false, false, false, false};
+		return bool;
+	}
+
+	/**
+	 * 导出的excel实体类名
+	 * @return
+	 */
+	@Override
+	public Class<?> getEntityClass() {
+		// TODO Auto-generated method stub
+		return FiAssDetailMapping.class;
+	}
+
+	/**
+	 * 根据账套ID、系统id、公司id获取辅助核算
+	 * @param accountSetId
+	 * @return
+	 */
+	public List<FiAssMapping> getFiAssMappings(long sysId,Long accountSetId,Long companyId){
+		List<FiAssMapping> result = getDao().findByHQL(FiAssMapping.class, "from FiAssMapping where accountSetId="+accountSetId + " and sysId= " + sysId + " and companyId=" + companyId + " order by sort asc");
+		return result;
+	}
+	/**
+	 * 根据辅助核算对照，返回对照明细
+	 * @param assId
+	 * @return
+	 */
+	public List<FiAssDetailMapping>  getFiAssDetailMappingByAssId(Long assId){
+		String hql = "FROM FiAssDetailMapping WHERE assMappingId = ?";
+		List<FiAssDetailMapping> list = this.getDao().findByHQL(FiAssDetailMapping.class, hql, assId);
+		return list;
+	}
+	
+	/**
+	 * 导出到excel的具体数据
+	 * @return
+	 */
+	@Override
+	public List<?> getEntityList(IExcelHandler handler,String accountSetCode,long sysId,Long accountSetId,Long companyId) {
+		// TODO Auto-generated method stub
+		try{
+			/*FiAssMappingRoomService fiAssMappingRoomService = (FiAssMappingRoomService)handler;
+			List<FiAssDetailMapping> fiFiAssMappingList = null;
+			if(StringUtils.isNotBlank(accountSetCode)){
+				fiFiAssMappingList = fiAssMappingRoomService.getFiAssDetailMappingByAssId(Long.valueOf(accountSetCode));
+			}*/
+			SyncFinaSaData syncFinaSaData = (SyncFinaSaData) App.getBean("syncFinaSaData");
+			FinaQueryParams params = new FinaQueryParams();
+			List<Long> projectidList = new ArrayList<Long>();
+			projectidList.add(sysId);
+			params.setCurrentPage(0);
+			params.setPayUnitIdList(projectidList);
+			List<FinaData> fds = syncFinaSaData.getRoomInfo(params).getResult().getItems();
+			List<FiAssDetailMapping> list = new ArrayList<FiAssDetailMapping>();
+			for (FinaData fd : fds) {
+				FiAssDetailMapping fdm = new FiAssDetailMapping();
+				fdm.setObjectItemCode((String) fd.get("code"));
+				fdm.setObjectItemName((String) fd.get("name"));
+				fdm.setObjectId(String.valueOf(fd.get("id")));
+				// 加核算数据====
+				FiAssDetailMapping fm = loadDetailByBizCodeAndName(Long.valueOf(accountSetCode), fdm.getObjectItemCode(), fdm.getObjectItemName());
+				if (fm != null) {
+					fdm.setAssItemCode(fm.getAssItemCode());
+					fdm.setAssItemName(fm.getAssItemName());
+					fdm.setAssMappingId(fm.getAssMappingId());
+					fdm.setId(fm.getId());
+				}
+				list.add(fdm);
+			}
+			return list;
+		}catch(Exception e){
+			e.printStackTrace();
+		}
+		return null;
+	}
+	
+	//根据业务code业务name取核算代码与名称
+	public FiAssDetailMapping loadDetailByBizCodeAndName(Long id,String code,String name){
+		String hql="from FiAssDetailMapping where assMappingId="+id+" and objectItemCode='"+code+"' and objectItemName='"+name+"'";
+		return getDao().findFirstByHQL(FiAssDetailMapping.class, hql);
+	}
+
+	/**
+	 * 表格最上方的提示列表，为String集合，多条提示逐行显示
+	 * @return
+	 */
+	@Override
+	public List<String> getTipsList() {
+		// TODO Auto-generated method stub
+		List<String> tips = new ArrayList<String>();
+		tips.add("说明：数据导出模板对格式有严格要求，请直接录入相关值，禁止增加或删除列，禁止删除此行及标题行，否则将导入失败！");
+		return tips;
+	}
+
+	@Override
+	public Map<String, Integer[]> getCellJoinMap() {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Class<?> getImpClass() {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public String[] getImportColumns() {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public String[] getImportHeadItemsName() {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Class<?>[] getImportColumnsType() {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Boolean[] getColsIsImp() {
+		// TODO Auto-generated method stub
+		return null;
+	}
+	
+	@Override
+	public int importPr(String accountSetCode,String sysId,String companyCode,String accountSetId,HSSFSheet sheet,Long companyId){
+		int rowNum = sheet.getLastRowNum();// 行  
+    	try{
+    		String oldAssId = "";
+			for(int k=2;k<=rowNum;k++){
+	    		HSSFRow hssfRow = sheet.getRow(k);
+	    		if (hssfRow == null) {
+					continue;
+				}
+	    		String cellValue = "";
+	    	    DecimalFormat df = new DecimalFormat("0"); 
+	    	    if(hssfRow.getCell(1)!=null){
+	    	    switch (hssfRow.getCell(1).getCellType()) {  
+                	case HSSFCell.CELL_TYPE_NUMERIC: // 数字 
+                		cellValue = df.format(hssfRow.getCell(1).getNumericCellValue());  
+                        break;
+                    default:
+                    	cellValue = ExcelHandlerUtil.getValue(hssfRow.getCell(1))+"";
+                    	break;
+	    	    }
+	    	    }
+	    		/*oldAssId = hssfRow.getCell(3)+"";
+	    		if(oldAssId.equals(accountSetCode) )
+	    			return 1;*/
+//	    		if(StringUtils.isNotBlank(ExcelHandlerUtil.getValue(hssfRow.getCell(1))+"")&&StringUtils.isNotBlank(ExcelHandlerUtil.getValue(hssfRow.getCell(2))+"")){
+		    		//"id","assItemCode","assItemName","assMappingId","objectItemCode","objectItemName","objectId"
+	    			FiAssDetailMapping fm = loadDetailByBizCodeAndName(Long.valueOf(accountSetCode), hssfRow.getCell(4)+"", hssfRow.getCell(5)+"");
+					if (fm != null) {
+						String sql = "update fi_ass_detail_mapping set ass_item_code=?,ass_item_name=?,edit_date=? where id=?";
+						getDao().executeSQL(sql,cellValue,ExcelHandlerUtil.getValue(hssfRow.getCell(2))+"",new Date(),fm.getId());
+					}else{
+			    		String sql = "insert into fi_ass_detail_mapping(ass_item_code,ass_item_name,ass_mapping_id,object_item_code,object_item_name,object_id,create_date,status) VALUES (?,?,?,?,?,?,?,?)";
+			    		getDao().executeSQL(sql, cellValue,
+			    				ExcelHandlerUtil.getValue(hssfRow.getCell(2))+"",accountSetCode,ExcelHandlerUtil.getValue(hssfRow.getCell(4))+"",ExcelHandlerUtil.getValue(hssfRow.getCell(5))+"",
+			    				ExcelHandlerUtil.getValue(hssfRow.getCell(6))+"",new Date(),0);
+					}
+//	    		}
+	    	} 
+			return 2;
+    	}catch(Exception e){
+    		e.printStackTrace();
+    		return 3;
+    	}
+	}
+}

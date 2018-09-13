@@ -1,0 +1,426 @@
+package com.xinleju.platform.flow.model;
+
+import java.sql.Timestamp;
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang.builder.ReflectionToStringBuilder;
+import org.apache.commons.lang.builder.ToStringStyle;
+
+import com.xinleju.platform.flow.entity.SysNoticeMsg;
+import com.xinleju.platform.flow.enumeration.TaskStatus;
+
+public class InstanceUnit {
+
+	private String id;
+	private String code;
+	private String name;
+	private String status;
+	private String appId;
+	private String businessObjectId;
+	private String businessObjectCode;
+	private String businessId;
+	private String flId;
+	private String flCode;
+	private String customFormId;
+	private String customFormURL;			//流程内嵌表单URL
+	
+	private boolean retract;				//发起人是否可撤回
+	private String approverNullStrategy;	//审批人为空策略
+	private String postNull;				//岗位为空能否提交策略
+	private String postMultiPerson;			//同岗多人审批策略
+	private String approverRepaet;			//审批人重复策略
+	private Boolean doArchive;				//是否归档
+	
+	private String businessCorpId;			//业务单据公司ID
+	private String businessDeptId;			//业务单据部门ID
+	private String businessProjectId;		//业务单据项目ID
+	private String businessProjectStage;	//业务单据项目分散ID
+	private String tendId;					//租户ID
+	private Timestamp startDate;			//发起时间
+	private Timestamp endDate;				//结束时间
+	
+	private String flowBusinessCompanyName;
+	private String flowBusinessDeptName;
+	private String flowBusinessProjectName;
+	private String flowBusinessProjectBranchName;
+	private String startUserName;
+	private String returnRepeatApproval;	//打回重新审批 1.是  0.否
+	
+	List<ACUnit> acList;					//下属的环节 
+	
+	private boolean change = false;			//标识数据在审批过程中是否变化
+	
+	private List<SysNoticeMsg> messages = new ArrayList<SysNoticeMsg>();	//待发送消息
+	private List<String> messagesToDel = new ArrayList<String>();			//待撤回消息
+	private List<String> messagesToChange = new ArrayList<String>();		//待变更消息
+	
+	private List<String> currentApprovers;	//当前审批人集合
+	private List<String> currentApproverIds;//当前审批人集合
+	private Timestamp flUpdateDate;//流程模板修改时间用于打回判断是否重走
+	/////////////////////////////////////////////////////////////////////
+	
+	public Timestamp getFlUpdateDate() {
+		return flUpdateDate;
+	}
+
+	public void setFlUpdateDate(Timestamp flUpdateDate) {
+		this.flUpdateDate = flUpdateDate;
+	}
+
+	/**
+	 * 查找当前审批人
+	 * @return
+	 */
+	public List<ApproverUnit> getCurrentApprover() {
+		List<ApproverUnit> approverList = new ArrayList<ApproverUnit>();
+		for(ACUnit acUnit : acList) {
+			List<PostUnit> posts = acUnit.getPosts();
+			if(CollectionUtils.isEmpty(posts)) {
+				continue;
+			}
+			for(PostUnit postUnit : posts) {
+				List<ApproverUnit> approvers = postUnit.getApprovers();
+				if(CollectionUtils.isEmpty(approvers)) {
+					continue;
+				}
+				for(ApproverUnit approver : approvers) {
+					TaskUnit task = approver.getTask();
+					if(task != null && TaskStatus.RUNNING.getValue().equals(task.getTaskStatus())) {
+						approverList.add(approver);
+					}
+				}
+			}
+		}
+		return approverList;
+	}
+	
+	/////////////////////////////////////////////////////////////////////
+
+	public String getId() {
+		return id;
+	}
+
+	public void setId(String id) {
+		this.id = id;
+	}
+
+	public String getCode() {
+		return code;
+	}
+
+	public void setCode(String code) {
+		this.code = code;
+	}
+
+	public String getName() {
+		return name;
+	}
+
+	public void setName(String name) {
+		this.name = name;
+	}
+
+	public String getStatus() {
+		return status;
+	}
+
+	public void setStatus(String status) {
+		this.status = status;
+		this.setChange(true);
+	}
+
+	public String getAppId() {
+		return appId;
+	}
+
+	public void setAppId(String appId) {
+		this.appId = appId;
+	}
+
+	public String getBusinessObjectId() {
+		return businessObjectId;
+	}
+
+	public void setBusinessObjectId(String businessObjectId) {
+		this.businessObjectId = businessObjectId;
+	}
+
+	public String getBusinessId() {
+		return businessId;
+	}
+
+	public void setBusinessId(String businessId) {
+		this.businessId = businessId;
+	}
+
+	public String getFlId() {
+		return flId;
+	}
+
+	public void setFlId(String flId) {
+		this.flId = flId;
+	}
+
+	public boolean isRetract() {
+		return retract;
+	}
+
+	public void setRetract(boolean retract) {
+		this.retract = retract;
+	}
+
+	public String getApproverNullStrategy() {
+		return approverNullStrategy;
+	}
+
+	public void setApproverNullStrategy(String approverNullStrategy) {
+		this.approverNullStrategy = approverNullStrategy;
+	}
+
+	public String getPostMultiPerson() {
+		return postMultiPerson;
+	}
+
+	public void setPostMultiPerson(String postMultiPerson) {
+		this.postMultiPerson = postMultiPerson;
+	}
+
+	public String getApproverRepaet() {
+		return approverRepaet;
+	}
+
+	public void setApproverRepaet(String approverRepaet) {
+		this.approverRepaet = approverRepaet;
+	}
+
+	public String getPostNull() {
+		return postNull;
+	}
+
+	public void setPostNull(String postNull) {
+		this.postNull = postNull;
+	}
+
+	public String getBusinessCorpId() {
+		return businessCorpId;
+	}
+
+	public void setBusinessCorpId(String businessCorpId) {
+		this.businessCorpId = businessCorpId;
+	}
+
+	public String getBusinessDeptId() {
+		return businessDeptId;
+	}
+
+	public void setBusinessDeptId(String businessDeptId) {
+		this.businessDeptId = businessDeptId;
+	}
+
+	public String getBusinessProjectId() {
+		return businessProjectId;
+	}
+
+	public void setBusinessProjectId(String businessProjectId) {
+		this.businessProjectId = businessProjectId;
+	}
+
+	public String getBusinessProjectStage() {
+		return businessProjectStage;
+	}
+
+	public void setBusinessProjectStage(String businessProjectStage) {
+		this.businessProjectStage = businessProjectStage;
+	}
+
+	public String getTendId() {
+		return tendId;
+	}
+
+	public void setTendId(String tendId) {
+		this.tendId = tendId;
+	}
+
+	public List<ACUnit> getAcList() {
+		return acList;
+	}
+
+	public void setAcList(List<ACUnit> acList) {
+		this.acList = acList;
+	}
+	
+	@Override
+	public String toString() {
+		return ReflectionToStringBuilder.toString(this, ToStringStyle.MULTI_LINE_STYLE);
+	}
+
+	public boolean isChange() {
+		return change;
+	}
+
+	public void setChange(boolean change) {
+		this.change = change;
+	}
+
+	public Timestamp getStartDate() {
+		return startDate;
+	}
+
+	public void setStartDate(Timestamp startDate) {
+		this.startDate = startDate;
+	}
+
+	public Timestamp getEndDate() {
+		return endDate;
+	}
+
+	public void setEndDate(Timestamp endDate) {
+		this.endDate = endDate;
+		this.setChange(true);
+	}
+
+	public List<SysNoticeMsg> getMessages() {
+		return messages;
+	}
+
+	public void setMessages(List<SysNoticeMsg> messages) {
+		this.messages = messages;
+	}
+
+	public List<String> getCurrentApprovers() {
+		return currentApprovers;
+	}
+
+	public void setCurrentApprovers(List<String> currentApprovers) {
+		this.currentApprovers = new ArrayList<String>();
+		if(CollectionUtils.isNotEmpty(currentApprovers)) {
+			for(String approverName : currentApprovers) {
+				if(StringUtils.isNotEmpty(approverName) && approverName.contains("\\")) {
+					approverName = approverName.replaceAll("\\\\", "");
+				}
+				this.currentApprovers.add(approverName);
+			}
+		}
+		this.setChange(true);
+	}
+
+	public Boolean isDoArchive() {
+		return doArchive;
+	}
+
+	public void setDoArchive(Boolean doArchive) {
+		this.doArchive = doArchive;
+	}
+
+	public String getFlowBusinessCompanyName() {
+		return flowBusinessCompanyName;
+	}
+
+	public void setFlowBusinessCompanyName(String flowBusinessCompanyName) {
+		this.flowBusinessCompanyName = flowBusinessCompanyName;
+	}
+
+	public String getFlowBusinessDeptName() {
+		return flowBusinessDeptName;
+	}
+
+	public void setFlowBusinessDeptName(String flowBusinessDeptName) {
+		this.flowBusinessDeptName = flowBusinessDeptName;
+	}
+
+	public String getFlowBusinessProjectName() {
+		return flowBusinessProjectName;
+	}
+
+	public void setFlowBusinessProjectName(String flowBusinessProjectName) {
+		this.flowBusinessProjectName = flowBusinessProjectName;
+	}
+
+	public String getFlowBusinessProjectBranchName() {
+		return flowBusinessProjectBranchName;
+	}
+
+	public void setFlowBusinessProjectBranchName(String flowBusinessProjectBranchName) {
+		this.flowBusinessProjectBranchName = flowBusinessProjectBranchName;
+	}
+
+	public String getStartUserName() {
+		return startUserName;
+	}
+
+	public void setStartUserName(String startUserName) {
+		this.startUserName = startUserName;
+	}
+
+	public List<String> getCurrentApproverIds() {
+		return currentApproverIds;
+	}
+
+	public void setCurrentApproverIds(List<String> currentApproverIds) {
+		this.currentApproverIds = currentApproverIds;
+	}
+
+	public String getBusinessObjectCode() {
+		return businessObjectCode;
+	}
+
+	public void setBusinessObjectCode(String businessObjectCode) {
+		this.businessObjectCode = businessObjectCode;
+	}
+
+	public String getCustomFormId() {
+		return customFormId;
+	}
+
+	public void setCustomFormId(String customFormId) {
+		this.customFormId = customFormId;
+	}
+
+	public List<String> getMessagesToDel() {
+		return messagesToDel;
+	}
+
+	public void setMessagesToDel(List<String> messagesToDel) {
+		this.messagesToDel = messagesToDel;
+	}
+
+	public List<String> getMessagesToChange() {
+		return messagesToChange;
+	}
+
+	public void setMessagesToChange(List<String> messagesToChange) {
+		this.messagesToChange = messagesToChange;
+	}
+
+	public String getCustomFormURL() {
+		return customFormURL;
+	}
+
+	public void setCustomFormURL(String customFormURL) {
+		this.customFormURL = customFormURL;
+	}
+
+	public String getFlCode() {
+		return flCode;
+	}
+
+	public void setFlCode(String flCode) {
+		this.flCode = flCode;
+	}
+
+	public Boolean getDoArchive() {
+		return doArchive;
+	}
+
+	public String getReturnRepeatApproval() {
+		return returnRepeatApproval;
+	}
+
+	public void setReturnRepeatApproval(String returnRepeatApproval) {
+		this.returnRepeatApproval = returnRepeatApproval;
+	}
+	
+}

@@ -1,0 +1,181 @@
+package com.xinleju.platform.base.utils;
+
+import java.io.Serializable;
+import java.sql.Timestamp;
+
+
+
+
+
+/**
+ * @author admin
+ * 
+ *
+ */
+public class SecurityOrganizationDto implements Serializable{
+
+	private static final long serialVersionUID = 1L;
+	//主键
+	private String id;
+	
+	//名称
+	private String name;
+    
+  		
+	//全称
+	private String fullName;
+    
+  		
+	//领导岗位
+	private String leaderId;
+    
+  		
+	//上级领导岗位
+	private String upLeaderId;
+    
+  		
+	//上级
+	private String parentId;
+  		
+	//类型
+	private String type;
+    
+  		
+	//目录id
+	private String rootId;
+    
+  		
+	//排序
+	private Long sort;
+    
+  		
+	//图标
+	private String icon;
+    
+  		
+	//状态
+	private String status;
+    
+  		
+	//说明
+	private String remark;
+	
+	//组织机构代码
+	private String code;
+    
+	//全路径名称
+	  private String prefixName;
+	  //全路径Id
+	  private String prefixId;
+		
+	public String getCode() {
+		return code;
+	}
+	public void setCode(String code) {
+		this.code = code;
+	}
+	public String getName() {
+		return name;
+	}
+	public void setName(String name) {
+		this.name = name;
+	}
+    
+  		
+	public String getFullName() {
+		return fullName;
+	}
+	public void setFullName(String fullName) {
+		this.fullName = fullName;
+	}
+    
+  		
+	public String getLeaderId() {
+		return leaderId;
+	}
+	public void setLeaderId(String leaderId) {
+		this.leaderId = leaderId;
+	}
+    
+  		
+	public String getUpLeaderId() {
+		return upLeaderId;
+	}
+	public void setUpLeaderId(String upLeaderId) {
+		this.upLeaderId = upLeaderId;
+	}
+    
+  		
+	public String getParentId() {
+		return parentId;
+	}
+	public void setParentId(String parentId) {
+		this.parentId = parentId;
+	}
+    
+	public String getType() {
+		return type;
+	}
+	public void setType(String type) {
+		this.type = type;
+	}
+    
+  		
+	public String getRootId() {
+		return rootId;
+	}
+	public void setRootId(String rootId) {
+		this.rootId = rootId;
+	}
+    
+  		
+	public Long getSort() {
+		return sort;
+	}
+	public void setSort(Long sort) {
+		this.sort = sort;
+	}
+    
+  		
+	public String getIcon() {
+		return icon;
+	}
+	public void setIcon(String icon) {
+		this.icon = icon;
+	}
+    
+  		
+	public String getStatus() {
+		return status;
+	}
+	public void setStatus(String status) {
+		this.status = status;
+	}
+    
+  		
+	public String getRemark() {
+		return remark;
+	}
+	public void setRemark(String remark) {
+		this.remark = remark;
+	}
+	public String getPrefixName() {
+		return prefixName;
+	}
+	public void setPrefixName(String prefixName) {
+		this.prefixName = prefixName;
+	}
+	public String getPrefixId() {
+		return prefixId;
+	}
+	public void setPrefixId(String prefixId) {
+		this.prefixId = prefixId;
+	}
+	public String getId() {
+		return id;
+	}
+	public void setId(String id) {
+		this.id = id;
+	}
+  		
+}

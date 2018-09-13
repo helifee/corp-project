@@ -1,0 +1,1416 @@
+package com.xinleju.erp.flow.service;
+
+import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.Order;
+import org.hibernate.criterion.Restrictions;
+import org.hibernate.sql.JoinType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.base.utils.CollectionUtils;
+import com.xinleju.erp.base.utils.EncodeUtils;
+import com.xinleju.erp.base.utils.StringHelper;
+import com.xinleju.erp.flow.bean.IdName;
+import com.xinleju.erp.flow.dao.impl.BizDataDAO;
+import com.xinleju.erp.flow.dao.impl.FlDAO;
+import com.xinleju.erp.flow.dao.impl.GvDAO;
+import com.xinleju.erp.flow.dao.impl.WiDAO;
+import com.xinleju.erp.flow.flowutils.bean.BizDataDTO;
+import com.xinleju.erp.flow.flowutils.bean.CompleteWiResult;
+import com.xinleju.erp.flow.flowutils.bean.FiStepsBean;
+import com.xinleju.erp.flow.flowutils.bean.FlowResult;
+import com.xinleju.erp.flow.flowutils.bean.GiveBackResult;
+import com.xinleju.erp.flow.flowutils.bean.GvBean;
+import com.xinleju.erp.flow.flowutils.bean.Gvs;
+import com.xinleju.erp.flow.flowutils.bean.OpRelationInsBean;
+import com.xinleju.erp.flow.flowutils.bean.SimpleResult;
+import com.xinleju.erp.flow.flowutils.bean.StartFiResult;
+import com.xinleju.erp.flow.flowutils.bean.ToDoWorkBean;
+import com.xinleju.erp.flow.flowutils.bean.UploadBean;
+import com.xinleju.erp.flow.flowutils.bean.WiBean;
+import com.xinleju.erp.flow.flowutils.bean.WpBean;
+import com.xinleju.erp.flow.flowutils.utils.OpType;
+import com.xinleju.erp.flow.flowutils.utils.WsConstant;
+import com.xinleju.erp.flow.frameapi.domain.User;
+import com.xinleju.erp.flow.models.Fi;
+import com.xinleju.erp.flow.models.Upload;
+import com.xinleju.erp.flow.models.Wi;
+import com.xinleju.erp.flow.models.Wp;
+import com.xinleju.erp.flow.service.api.FlowServerService;
+import com.xinleju.erp.flow.service.api.OrgnAPIService;
+import com.xinleju.erp.flow.service.api.SmBizDataService;
+import com.xinleju.erp.flow.service.api.SmObjectService;
+import com.xinleju.erp.flow.service.api.extend.OrgnService;
+import com.xinleju.erp.flow.service.api.extend.dto.CompanyDTO;
+import com.xinleju.erp.flow.service.api.extend.dto.DeptDTO;
+import com.xinleju.erp.flow.service.api.extend.dto.RoleDTO;
+import com.xinleju.erp.flow.service.api.extend.dto.UserDTO;
+import com.xinleju.erp.flow.service.api.utils.ApiUtils;
+import com.xinleju.erp.flow.service.api.utils.RoleUtils;
+import com.xinleju.erp.flow.utils.FlowConstant;
+import com.xinleju.erp.flow.utils.FlowExceptionUtils;
+import com.xinleju.erp.flow.utils.IdNameUtils;
+import com.xinleju.erp.form.utils.DbType;
+import com.xinleju.erp.frame.dao.RoleDao;
+import com.xinleju.erp.frame.dao.UserDao;
+import com.xinleju.erp.frame.models.PartyType;
+import com.xinleju.erp.frame.models.Role;
+
+/**
+ * 
+ * 版权：(C) 版权所有 2000-2014 上海天好电子商务有限公司苏州分公司
+ * 流程操作接口
+ * @author   zhongjun
+ * @version  $Id$
+ * @since
+ * @see
+ */
+@Service
+public class FormFlowService extends BaseService {
+	/**日志*/
+	Logger logger=LoggerFactory.getLogger(getClass());
+    /**
+     * 流程DAO
+     */
+    @Autowired
+    private FlDAO flDAO;
+    
+    /**
+     * 工作组WiDAO
+     */
+    @Autowired
+    private WiDAO wiDAO;
+    
+    /**
+     * 全局变量DAO
+     */
+    @Autowired
+    private GvDAO gvDAO;
+    
+    /**
+     * 全局变量DAO
+     */
+    @Autowired
+    private BizDataDAO bizDataDAO;
+
+    /**
+     * 公共 jdbcTemplate
+     */
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+    
+    /**
+     * 组织架构Service
+     */
+    @Autowired
+    private OrgnAPIService orgnAPIService;
+
+    /**
+     * 流程Service
+     */
+    @Autowired
+    private FlowService flowService;
+    
+    /**
+     * 流程Service
+     */
+    @Autowired
+    private FlowServerService flowServerService;
+
+    /**
+     * 环节实例Service
+     */
+    @Autowired
+    private AiService aiService;
+    
+    /**
+     * 流程日志
+     */
+    @Autowired 
+    private AlService alService;
+    
+	@Autowired
+	@Qualifier("orgnServiceProvider")
+	private OrgnService orgnService;
+    /**
+     * 根据流程模板编码和业务id得到尚未提交的流程（多条取第一条，但是正常最多只有一条）
+     * @author jun
+     * @param flowCode 流程模板编码
+     * @param bizId 业务id
+     * @return
+     */
+    public Fi getNotSubmitFiByFlIdAndBizId(Long flId, String bizId){
+        String statusLimitSql = " not exists(select 'y' from tf_wi w where w.fi_id = {alias}.id and w.status = " + Wi.STATUS_COMPLETE + " )";
+        DetachedCriteria dc = DetachedCriteria.forClass(Fi.class);
+        dc.createAlias("fl", "fl", JoinType.INNER_JOIN);
+        dc.add(Restrictions.eq("bizId", bizId));
+        dc.add(Restrictions.eq("fl.id", flId));
+        dc.add(Restrictions.in("status", new Object[]{Fi.STATUS_RUNNING}));
+        dc.add(Restrictions.sqlRestriction(statusLimitSql));
+        dc.addOrder(Order.desc("id"));
+        List<Fi> notSubmitFiList = getDao().findByCriteria(dc);
+        if (null !=  notSubmitFiList && notSubmitFiList.size() > 0){
+            return notSubmitFiList.get(0);
+        } else {
+            return null;
+        }
+    }
+    /**
+     * 根据流程模板编码和业务id得到尚未提交的流程（多条取第一条，但是正常最多只有一条）  存在2中情况，已经提交，或者曾经提交过，被退回
+     * @author jun
+     * @param flowCode 流程模板编码
+     * @param bizId 业务id
+     * @return
+     */
+    public Fi getNotSubmitFiByFlowCodeAndBizId(String flowCode, String bizId){
+        String statusLimitSql = " not exists(select 'y' from tf_wi w where w.fi_id = {alias}.id and w.status = " + Wi.STATUS_COMPLETE + " )";
+        DetachedCriteria dc = DetachedCriteria.forClass(Fi.class);
+        dc.createAlias("fl", "fl", JoinType.INNER_JOIN);
+        dc.add(Restrictions.eq("bizId", bizId));
+        dc.add(Restrictions.eq("fl.flowCode", flowCode));  //第一个节点也会产生wi
+        dc.add(Restrictions.in("status", new Object[]{Fi.STATUS_RUNNING}));  //打开流程已经处于运行状态
+        dc.add(Restrictions.sqlRestriction(statusLimitSql));
+        dc.addOrder(Order.desc("id"));
+        List<Fi> notSubmitFiList = getDao().findByCriteria(dc);
+        if (null !=  notSubmitFiList && notSubmitFiList.size() > 0){
+            return notSubmitFiList.get(0);
+        } else {
+            return null;
+        }
+    }
+    /**
+     * 根据流程模板编码和业务id得到尚未提交的被退回的流程（多条取第一条，但是正常最多只有一条）
+     * @author jun
+     * @param flowCode 流程模板编码
+     * @param bizId 业务id
+     * @return
+     */
+    public Fi getNotSubmitBackedFiByFlowCodeAndBizId(String flowCode, String bizId){
+        String statusLimitSql = " not exists(select 'y' from tf_fi f2 where f2.status != " + Wi.STATUS_COMPLETE + " and "+DbType.getType()+"find_in_set(f2.id,"+DbType.getType()+"concat("+DbType.getType()+"concat("+DbType.getType()+"ifnull({alias}.related_fi_ids,''),','),{alias}.id)) > 0)";
+        DetachedCriteria dc = DetachedCriteria.forClass(Fi.class);
+        dc.createAlias("fl", "fl", JoinType.INNER_JOIN);
+        dc.add(Restrictions.eq("bizId", bizId));
+        dc.add(Restrictions.eq("fl.flowCode", flowCode));
+        dc.add(Restrictions.in("status", new Object[]{WsConstant.STATUS_COMPLETE}));
+        dc.add(Restrictions.eq("isTerminate", FlowConstant.INT_TRUE));
+        dc.add(Restrictions.eq("terminateCode", WsConstant.FLOW_TERMINATE_CODE_CH));
+        dc.add(Restrictions.sqlRestriction(statusLimitSql));
+        dc.addOrder(Order.desc("id"));
+        List<Fi> notSubmitFiList = getDao().findByCriteria(dc);
+        if (null !=  notSubmitFiList && notSubmitFiList.size() > 0){
+            return notSubmitFiList.get(0);
+        } else {
+            return null;
+        }
+    }
+    /**
+     * 根据业务对象id得到默认流程编码
+     * @param sodId
+     * @return
+     */
+    public String getDefaultFlowCodeBySodIdAndBizId(Long sodId){
+    	String flowCode = null;
+    	if (null != sodId){
+    		flowCode = getDao().findString("select max(flowCode) from Fl where serviceObjectDefineId = ? and isDefault = ? ", sodId, 1);
+    	}
+    	return flowCode;
+    }
+    
+    /**
+     * 获取流程发起节点任务
+     * @param fiId
+     * @return
+     */
+    public Wi getStartWiByFiId(Long fiId){
+    	return wiDAO.getStartWiByFiId(fiId);
+    }
+    
+    /**
+     *  根据流程模板编码和业务id得到流程id
+     * @param flowCode
+     * @param bizId
+     * @return
+     */
+    public Long getFiIdByFlowCodeAndBizId(String flowCode, String bizId){
+    	Long fiId = null;
+    	if (StringUtils.isNotBlank(flowCode) && StringUtils.isNotBlank(bizId)){
+    		Integer result = getDao().findIntBySQL("select  max(f.id) from tf_fi f ,tf_fl l where f.fl_id=l.id and f.biz_id= ? and l.flow_code= ?  ", bizId, flowCode);
+            fiId=result.longValue();
+    	}
+    	return fiId;
+    }
+    
+    public Long getFiIdBySodIdAndBizId(Long sodId, String bizId){
+    	
+		Integer result = getDao().findIntBySQL("select max(f.id) from tf_fi f where f.biz_id= ? and f.service_object_define_id = ?  ", bizId, sodId);
+		Long fiId=result.longValue();
+
+    	return fiId;
+    }
+    
+    /**
+     *  根据流程模板编码和业务id得到流程id
+     * @param flowCode
+     * @param bizId
+     * @return
+     */
+    public List<Long> getFiIdByFlowCodeAndBizIds(String[] flowCodes, String[] bizIds){
+    	String hql1 = "select   id  from Fi where bizId in ( '"+StringHelper.join(bizIds, "','")+"') and fl.flowCode in( '"+StringHelper.join(flowCodes, "','")+"')";
+    	List<Long> psList = getDao().findByHQL(Long.class, hql1);
+    	return psList;
+    }
+    
+    
+	 
+    /**
+     * 获取流程编码
+     * @param flowCode
+     * @param bizId
+     * @return
+     */
+    public Fi getFiByFlowCodeAndBizId(String flowCode, String bizId){
+        Fi fi = null;
+        if (StringUtils.isNotBlank(flowCode) && StringUtils.isNotBlank(bizId)){
+            fi = getDao().findFirstByHQL(Fi.class, "from Fi where bizId = ? and fl.flowCode = ? order by id desc", bizId, flowCode);
+        }
+        return fi;
+    }
+    
+    /**
+     * 获取流程信息
+     * @param fiId
+     * @return
+     */
+    public Fi getFiByFiId(Long fiId){
+        Fi fi = null;
+        if (null != fiId){
+            fi = getDao().getById(Fi.class, fiId, "fl");
+        }
+        if (null == fi){
+        	fi = new Fi();
+        }
+        return fi;
+    }
+    
+    /**
+     * 获取用户默认部门
+     * @param loginName
+     * @param wiId
+     * @return
+     */
+    public Long getDeptOrgnIdByLoginNameAndWiId(String loginName, Long wiId){
+    	Long deptOrgnId = 0L;
+    	if (null != wiId){
+    		Wi wi = this.getWi(wiId);
+    		if (null != wi && StringUtils.isNotBlank(wi.getPrefix())){
+    		    deptOrgnId = orgnAPIService.getObjectIdByPePrefix(wi.getPrefix(), PartyType.TYPE_DEPARTMENT);
+    		    if (null == deptOrgnId || 1 > deptOrgnId) {
+                    Fi fi = this.getFiByFiId(wi.getFiId());
+                    if (null != fi && null != fi.getStartRoleId()){
+                        deptOrgnId = orgnAPIService.getObjectIdByPePrefix(getDao().findString("select min(px.prefix) from PartyEntity pe where id = ? and pe.partyType.type = ? ", fi.getStartRoleId(), PartyType.TYPE_ROLE), PartyType.TYPE_DEPARTMENT);
+                    }
+                }
+    		}
+    	}
+    	if ((null == deptOrgnId || 1 > deptOrgnId) && StringUtils.isNotBlank(loginName)) {
+    	    User user = orgnAPIService.getUserByLoginName(loginName);
+    	    if (null != user && StringUtils.isNotBlank(user.getPrefix())){
+    	        deptOrgnId = orgnAPIService.getObjectIdByPePrefix(user.getPrefix(), PartyType.TYPE_DEPARTMENT);
+    	    }
+    	}
+    	return deptOrgnId;
+    }
+    /**
+     * 检测完成当前任务时传入的参数
+     * @param spGwId
+     * @param wiId
+     * @param opCode
+     * @param opName
+     * @param userNote
+     * @param dealUsersIds
+     * @param backToWpId
+     * @param backSkip
+     * @param flowInsName
+     * @param userDtoId
+     * @return
+     */
+    public Map<String,Object> checkCompleteWork(Long spGwId, Long wiId, String opCode, String opName, String userNote, String dealUsersIds, Long backToWpId, String backSkip, String flowInsName,Long userDtoId) {
+    	Map<String,Object> jsonMap = new HashMap<String, Object>();
+    	boolean isSuccess = true;
+    	String msg = "";
+    	if (null == userDtoId){
+    		isSuccess = false;
+    		msg = "操作人不能为空！";
+    	}
+    	if (null == wiId){
+    		isSuccess = false;
+    		msg = "任务不能为空！";
+    	}
+    	if (StringUtils.isBlank(opCode)){
+    		isSuccess = false;
+    		msg = "操作类型不能为空！";
+    	}
+    	// 转办
+        if (OpType.ZB.equals(opCode)) {
+            if (!StringUtils.isNotBlank(dealUsersIds)) {
+            	isSuccess = false;
+        		msg = "被转办人不能为空！";
+            } else if (!StringUtils.isNumeric(dealUsersIds)) {
+            	isSuccess = false;
+        		msg = "不能转办多人！";
+            }
+        // 发起协办
+        } else if (OpType.XB.equals(opCode)) {
+            //操作人处理
+            if(StringUtils.isBlank(dealUsersIds)){
+            	isSuccess = false;
+        		msg = "协办人不能为空！";
+            }
+        // 沟通发起人
+        } else if (OpType.GTFQR.equals(opCode)) {
+        	
+        // 沟通发起人页面的同意不同意操作
+        } else if (OpType.JS.equals(opCode) || OpType.BJS.equals(opCode)) {
+            
+        // 驳回
+        } else if (OpType.BH.equals(opCode)) {
+            if (null == backToWpId) {
+            	isSuccess = false;
+        		msg = "退回到的节点不能为空！";
+            }
+        // 其他
+        } else {
+            //第一次提交记录提交时间
+            if (OpType.TJSP.equals(opCode)){
+            	if (null == spGwId) {
+                	isSuccess = false;
+            		msg = "发起岗位不能为空！";
+                }
+            }
+        }
+        jsonMap.put("success", isSuccess);
+        jsonMap.put("msg", msg);
+    	return jsonMap;
+    }
+    
+    /**
+     * @param spGwId  发起人对应提交岗位
+     * @param wiId     当前任务Id
+     * @param opCode   操作编号
+     * @param opName
+     * @param userNote
+     * @param dealUsersIds
+     * @param backToWpId
+     * @param backSkip
+     * @param flowInsName
+     * @param userDto
+     * @return
+     * @throws Exception
+     */
+    public Map<String,Object> completeWork(Long spGwId, Long wiId, String opCode, String opName, String userNote, String dealUsersIds, Long backToWpId, String backSkip, String flowInsName,UserDTO userDto) throws Exception{
+    	FlowResult<StartFiResult> sfr = new FlowResult<StartFiResult>();
+    	Map<String,Object> jsonMap = new HashMap<String, Object>();
+    	Gvs gvs = Gvs.create();
+        gvs.add(WsConstant.WI_OP_ROLE, Long.valueOf(null != spGwId ? spGwId : 0),"");
+        Wi wbe = this.getWi(wiId);
+        //是否重新发起
+        boolean isReSubmit = getDao().isExist(Fi.class, " id = ? and relatedFiIds is not null", wbe.getFiId());
+        // 转办
+        if (OpType.ZB.equals(opCode)) {
+            if (!StringUtils.isNotBlank(dealUsersIds)) {
+            	sfr.faliure();
+            	sfr.getDebugInfo().addErrDesc("被转办人不能为空！");
+            } else if (!StringUtils.isNumeric(dealUsersIds)) {
+            	sfr.faliure();
+            	sfr.getDebugInfo().addErrDesc("不能转办多人！");
+            }
+            if (sfr.isSuccess()){
+            	// 转移工作
+            	FlowResult<SimpleResult> r = flowServerService.zhuanyiWi(wiId, Long.valueOf(dealUsersIds), true, userDto.getId(), this.getOpName(opCode, opName, dealUsersIds, wbe, isReSubmit), userNote);
+            	sfr.setSuccess(r.isSuccess());
+            	sfr.setDebugInfo(r.getDebugInfo());
+            }
+        // 发起协办
+        } else if (OpType.XB.equals(opCode)) {
+        	//是否任务需要新建WP
+            gvs.add(WsConstant.SIGNAL_WP_OPERATOR, WsConstant.SIGNAL_WP_OPERATOR_GO_SUB, "");
+            //分发方式
+            gvs.add(WsConstant.WP_ASSIGNTYPE, WsConstant.WP_ASSIGNTYPE_BINGXING, "");
+            //新建WP，完成方式，
+            gvs.add(WsConstant.WP_FINISHCTRL, WsConstant.WP_FINISHCTRL_AND, "");
+            
+            
+            String participantStringVar = "";
+            //操作人处理
+            //协办人dealUsersIds
+            if(StringUtils.isNotBlank(dealUsersIds)){
+                IdName idName = null;
+                for(String part : dealUsersIds.split(",")){
+                    idName = getDao().findFirstByHQL(IdName.class, "select new com.xinleju.erp.flow.bean.IdName(u.id,u.realName,'User_') from com.xinleju.erp.frame.models.User u where u.id = ?", Long.valueOf(part));
+                    participantStringVar += idName.toPlanString() + ";";
+                }
+                if(StringUtils.isNotBlank(participantStringVar)){
+                    participantStringVar = URLEncoder.encode(participantStringVar, "UTF-8");
+                }
+            }
+            if (StringUtils.isBlank(participantStringVar)){
+            	sfr.faliure();
+            	sfr.getDebugInfo().addErrDesc("不能转办多人！");
+            } else {
+            	FlowResult<CompleteWiResult> r = flowServerService.completeWi(wiId, userDto.getId(), userNote, this.getOpName(opCode, opName, dealUsersIds, wbe, isReSubmit), participantStringVar, gvs.toJSONString());
+            	sfr.setSuccess(r.isSuccess());
+            	sfr.setDebugInfo(r.getDebugInfo());
+            }
+        // 沟通发起人
+        } else if (OpType.GTFQR.equals(opCode)) {
+        	
+            gvs.add(WsConstant.SIGNAL_WP_OPERATOR, WsConstant.SIGNAL_WP_OPERATOR_GO_SUB, "");
+            
+            gvs.add(WsConstant.WP_ASSIGNTYPE, WsConstant.WP_ASSIGNTYPE_BINGXING, "");
+            
+            gvs.add(WsConstant.WP_FINISHCTRL, WsConstant.WP_FINISHCTRL_AND, "");
+            
+            IdName idName = new IdName(wbe.getFi().getStartUserId(), wbe.getFi().getStartUserName(), wbe.getFi().getStartUserLoginName(), IdName.USER_PREFIX);
+            
+            FlowResult<CompleteWiResult> r = flowServerService.completeWi(wiId, userDto.getId(), userNote, this.getOpName(opCode, opName, idName.getId() + "", wbe, isReSubmit), idName.toPlanString(), gvs.toJSONString());
+           
+            sfr.setSuccess(r.isSuccess());
+            
+        	sfr.setDebugInfo(r.getDebugInfo());
+            // 沟通发起人页面的同意不同意操作
+        } else if (OpType.JS.equals(opCode) || OpType.BJS.equals(opCode)) {
+        	
+            gvs.add(WsConstant.SIGNAL_WHEN_WP_BACK, WsConstant.SIGNAL_WHEN_WP_BACK_PASS_PARENT, "");
+            
+            FlowResult<CompleteWiResult> r = flowServerService.completeWi(wiId, userDto.getId(), userNote, this.getOpName(opCode, opName, "", wbe, isReSubmit), "", gvs.toJSONString());
+            sfr.setSuccess(r.isSuccess());
+        	sfr.setDebugInfo(r.getDebugInfo());
+        // 驳回
+        } else if (OpType.BH.equals(opCode)) {
+            if (null == backToWpId) {
+            	sfr.faliure();
+            	sfr.getDebugInfo().addErrDesc("请指定需要退回到的节点！");
+            }
+            if (sfr.isSuccess()){
+            	if(StringUtils.isBlank(backSkip)){
+            		backSkip = FlowConstant.STR_TRUE;
+            	}
+            	// 暂时默认退回到首节点,是否跳过中间环节根据用户选择
+            	boolean skip = false;
+            	if(FlowConstant.STR_TRUE.equals(backSkip)){
+            		skip = true;
+            	}
+            	FlowResult<GiveBackResult> r = flowServerService.giveBack(wiId, backToWpId, userDto.getId(), userNote, this.getOpName(opCode, opName, "", wbe, isReSubmit, backToWpId, backSkip), skip, true, WsConstant.FLOW_TERMINATE_CODE_BH);
+            	sfr.setSuccess(r.isSuccess());
+            	sfr.setDebugInfo(r.getDebugInfo());
+            }
+        // 其他
+        } else {
+            //第一次提交记录提交时间
+            if (OpType.TJSP.equals(opCode)){
+                if (StringUtils.isNotBlank(flowInsName)){
+                	 Fi fi = getDao().getById(Fi.class, wbe.getFiId());
+                	 fi.setFiName(flowInsName);
+						// 根据岗位获得公司
+                	 /**
+					FlowResult<DeptDTO> deptFr = orgnService.getDeptByPostId(spGwId);
+					if (deptFr.isSuccess() && deptFr.getResult() != null) {
+						FlowResult<CompanyDTO> comFr = orgnService.getCompanyByDeptId(deptFr.getResult().getId());
+						if (comFr.isSuccess()&&comFr.getResult()!= null) {
+							CompanyDTO companyDTO = comFr.getResult();
+								fi.setCompanyId(companyDTO.getId());
+						}else{
+							 logger.info("======流程实例Id-"+wbe.getFi().getId()+"。岗位对应的部门没有对应的公司！");
+						}
+					}else{
+						logger.info("======流程实例Id-"+wbe.getFi().getId()+"。岗位没有对应的部门！");
+					}**/
+                	String sqlString="SELECT	max(y.ref_id) FROM sm_party_entity y,sm_party_entity yy,sm_party_type t,sm_party_type ty	WHERE ty.type = ? AND ty.id = yy.party_type_id AND t.type = ?"
+                   + " AND "+DbType.getType()+"locate(y.prefix, yy.prefix) > 0 AND y.party_type_id = t.id AND yy.ref_id = ?";
+                    Integer companyId = getDao().findIntBySQL(sqlString, PartyType.TYPE_ROLE,PartyType.TYPE_COMPANY, spGwId);
+					fi.setCompanyId(companyId!=null?Long.valueOf(companyId.toString()):null);
+                	getDao().update(fi);
+                }
+                //刷新数据
+                try {
+                	Map<String, Object> map = App.getBean(SmObjectService.class).queryDetail(wbe.getFl().getFlowCode(), wbe.getFi().getBizId());
+                	if (null != map && map.size() > 0){
+                    	Gvs gvsNew = Gvs.create();
+                    	for (Map.Entry<String, Object> e:  map.entrySet()){
+                    		GvBean gb = new GvBean( e.getKey(),e.getValue(),"");
+                    		gvsNew.add(gb);
+                    	}
+                    	// 发布全局变量
+                        gvDAO.putGvs(wbe.getFiId(), gvsNew);
+                	}
+                	List<BizDataDTO> bizDataDTOList = App.getBean(SmBizDataService.class).queryBizData(wbe.getFl().getFlowCode(), wbe.getFi().getBizId(), wbe.getFi().getBizVersion());
+                	bizDataDAO.putBizDatas(wbe.getFiId(), bizDataDTOList);
+                } catch (Exception e) {
+                	sfr.faliure();
+                	sfr.getDebugInfo().addErrDesc(FlowExceptionUtils.getExceptionMsg(e));
+                }
+            }
+            if (sfr.isSuccess()){
+            	
+            	FlowResult<CompleteWiResult> r = null;
+				try {
+					r = flowServerService.completeWi(wiId, userDto.getId(), userNote, this.getOpName(opCode, opName, "", wbe, isReSubmit), "", gvs.toJSONString());
+				} catch (Exception e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+            	sfr.setSuccess(r.isSuccess());
+            	sfr.setDebugInfo(r.getDebugInfo());
+            }
+        }
+        if (sfr.isSuccess()){
+            jsonMap.put("success", true);
+            jsonMap.put("dealSpCallBack", true);
+            jsonMap.put("msg", "操作成功！");
+        } else {
+            jsonMap.put("success", false);
+            jsonMap.put("dealSpCallBack", false);
+            String errorMsg = FlowExceptionUtils.getExceptionMsg(sfr.getDebugInfo());
+            jsonMap.put("msg", StringUtils.isNotBlank(errorMsg) ? errorMsg : "操作失败！");
+        }
+        return jsonMap;
+    }
+    
+    /**
+     * 获取工作组
+     * @author jun
+     * @param wpId 工作组id
+     * @return 工作组
+     */
+    public Wp getWp(Long wpId) {
+        if (null != wpId){
+            return getDao().getById(Wp.class, wpId, "ai", "ai.ac", "pwi");
+        } else {
+            return null;
+        }
+    }
+    
+    /**
+     * 获取任务wi
+     * @author jun
+     * @param wiId 任务id
+     * @return
+     */
+    public Wi getWi(Long wiId) {
+        if (null != wiId){
+            return getDao().getById(Wi.class, wiId, "ai", "ai.ac", "wp", "wp.pwi", "fi");
+        } else {
+            return null;
+        }
+    }
+    /**
+     * 是否是经办人
+     * @author jun
+     * @param fiId 流程id
+     * @param userId 操作人员
+     * @return
+     */
+    public boolean isJbrByFiIdAndUserId(Long fiId, Long userId){
+        boolean isJbr = false;
+        if(fiId !=null && null != userId){
+            isJbr = getDao().isExist(Fi.class, " id = ? and createUserId = ? ", fiId, userId);
+        }
+        return isJbr;
+    }
+    
+    /**
+     * 存在正在运行的协办
+     * @param loginName
+     * @param currentWiId
+     * @return
+     */
+    public boolean isExistRuningXB(String loginName, Long currentWiId){
+    	String sql="select count(w.id) from tf_wi w,tf_wp p where w.wp_id=p.id and (p.pwi_id ,p.pwp_id) in (select i.id,i.wp_id from tf_wi i where i.wp_id= "+currentWiId+" and op_code like '%XB%' and complete_user_login_name = '"+loginName+"' ) and w.status!=2 ";
+        boolean flag = false;
+        if(loginName !=null && null != currentWiId){
+            int result = getDao().executeSQL(sql);
+            if(result>0){
+            	flag=true;
+            }
+        }
+        return flag;
+    }
+    
+    
+    
+    public void updateFiName(String fiName, Long fiId){
+        if (null != fiId){
+            getDao().execute("update Fi set fiName = ? where id = ?", StringUtils.isNotBlank(fiName) ? fiName.trim() : "", fiId);
+            getDao().flush();
+        }
+    }
+    /**
+     * 催办用户
+     * @param wiId 需要被催办的任务id
+     * @param userIds 催办需要发送到的用户id，多个用","隔开
+     * @return
+     */
+    public String cuiBanUsers(Long wiId,String userIds){
+        String errorMsg = "";
+        if (null != wiId && wiId.intValue() > 0 && StringUtils.isNotBlank(userIds)){
+	    	WiBean wb = flowServerService.getWi(wiId).getResult();
+	    	if (null != wb && null != wb.getFiId()){
+	    		Fi fi = getDao().getById(Fi.class, wb.getFiId(), "fl");
+	    		Long firstFiId = 0L;
+        		if (null != fi){
+        			firstFiId = FormFlowService.idsStrToLongArray((StringUtils.isNotBlank(fi.getRelatedFiIds()) ? fi.getRelatedFiIds() + "," : "") + fi.getId(), ",", false)[0];
+        		}
+        		FlowResult<WiBean> r = flowServerService.getStartWiBean(firstFiId);
+        		if (r.isSuccess()){
+        			FlowResult<SimpleResult> r2 = flowServerService.cuiBanUsers(r.getResult().getWiId(), wiId, userIds);
+                    if (!r2.isSuccess()){
+                    	errorMsg =  FlowExceptionUtils.getExceptionMsg(r2.getDebugInfo());
+                    }
+        		} else {
+                	errorMsg = "催办失败！";
+        		}
+	    	} else if (StringUtils.isBlank(userIds)){
+            	errorMsg = "被催办人员信息丢失，催办失败！";
+            } else {
+            	errorMsg = "被催办的任务id丢失，催办失败！";
+            }
+        }
+        System.out.println("wiId="+wiId+",userIds="+userIds+",errorMsg===============" + errorMsg + "\r\n\r\n");
+        return errorMsg;
+    }
+
+    
+    /**
+     * 传阅
+     * @param fiId 流程id
+     * @param userIds 需要发送传阅的用户id，多个用","隔开
+     * @return
+     */
+    public String chuanyueUsers(Long fiId,String userIds){
+    	String participantString = "";
+    	if (StringUtils.isNotBlank(userIds)){
+    		participantString = IdNameUtils.encode(IdNameUtils.toIdNameList(orgnAPIService.getUserListByUserIds(userIds)));
+    	}
+    	String errorMsg = "";
+        try {
+            if (null != fiId && fiId.intValue() > 0 && StringUtils.isNotBlank(participantString)){
+                Fi fi = getDao().getById(Fi.class, fiId, "fl");
+                Long firstFiId = 0L;
+                if (null != fi){
+                    firstFiId = FormFlowService.idsStrToLongArray((StringUtils.isNotBlank(fi.getRelatedFiIds()) ? fi.getRelatedFiIds() + "," : "") + fi.getId(), ",", false)[0];
+                }
+                if (null != firstFiId && firstFiId.intValue() > 0){
+                    WiBean wb = flowServerService.getStartWiBean(firstFiId).getResult();
+                    if (null != wb && null != wb.getWiId()){
+                        FlowResult<SimpleResult> fr = flowServerService.chuanYueUser(wb.getWiId(), participantString);
+                        errorMsg = fr.isSuccess() ? "" : FlowExceptionUtils.getExceptionMsg(fr.getDebugInfo());
+                    } else {
+                        errorMsg = "传阅失败！";
+                    }
+                } else {
+                    errorMsg = "不存在id为" + fiId + "的流程实例，传阅失败！";
+                }
+            } else if (StringUtils.isBlank(participantString)){
+                errorMsg = "被传阅人员信息丢失，传阅失败！";
+            } else {
+                errorMsg = "流程id丢失，传阅失败！";
+            }
+        } catch (Exception e) {
+            errorMsg = "传阅失败！";
+        }
+        return errorMsg;
+    }
+    
+    /**
+     * 传阅
+     * @param fiId 流程id
+     * @param participantString 参与人
+     * @return
+     */
+    public String chuanyue(Long fiId, String participantString){
+        String errorMsg = "";
+        try {
+            if (null != fiId && fiId.intValue() > 0 && StringUtils.isNotBlank(participantString)){
+            	Fi fi = getDao().getById(Fi.class, fiId, "fl");
+        		Long firstFiId = 0L;
+        		if (null != fi){
+        			firstFiId = FormFlowService.idsStrToLongArray((StringUtils.isNotBlank(fi.getRelatedFiIds()) ? fi.getRelatedFiIds() + "," : "") + fi.getId(), ",", false)[0];
+        		}
+        		if (null != firstFiId && firstFiId.intValue() > 0){
+        			WiBean wb = flowServerService.getStartWiBean(firstFiId).getResult();
+        			if (null != wb && null != wb.getWiId()){
+        				FlowResult<SimpleResult> fr = flowServerService.chuanYue(wb.getWiId(), participantString);
+        				errorMsg = fr.isSuccess() ? "" : FlowExceptionUtils.getExceptionMsg(fr.getDebugInfo());
+        			} else {
+        				errorMsg = "传阅失败！";
+        			}
+        		} else {
+        			errorMsg = "不存在id为" + fiId + "的流程实例，传阅失败！";
+        		}
+            } else if (StringUtils.isBlank(participantString)){
+            	errorMsg = "被传阅人员信息丢失，传阅失败！";
+            } else {
+            	errorMsg = "流程id丢失，传阅失败！";
+            }
+        } catch (Exception e) {
+        	errorMsg = "传阅失败！";
+        }
+        return errorMsg;
+    }
+    
+    /**
+     * 组装操作名称
+     * @author jun
+     * @param opCode
+     * @param opName
+     * @param userIds
+     * @param wbe
+     * @param isReSubmit
+     * @param parameters
+     * @return
+     */
+    public String getOpName(String opCode, String opName, String userIds, Wi wbe, boolean isReSubmit, Object... parameters) {
+        String opNameStr = opCode + ";" + opName;
+        StringBuffer stringBuffer =new StringBuffer();
+//        List<String> strList = getDao().findByHQL(String.class, "select distinct real_name from sm_user where id in (?) ", new Object[] {userIds});
+        String sql="select distinct real_name from sm_user where id in (?) ";
+        List<String> strList = App.getBean(JdbcTemplate.class).queryForList(sql, new Object[]{userIds}, String.class);
+		if(!strList.isEmpty()){
+			 for (String string : strList) {
+				 stringBuffer.append(string+",");
+			}
+			
+		}
+		if(!StringUtils.isEmpty(stringBuffer)){
+			stringBuffer=stringBuffer.deleteCharAt(stringBuffer.length()-1);
+		}
+        // 转办
+        if (OpType.ZB.equals(opCode)) {
+            opNameStr = opCode
+                        + ";"
+                        + opName
+                        + " : "
+                        + stringBuffer.toString() + "";
+            // 发起协办和沟通发起人
+        } else if (OpType.XB.equals(opCode)) {
+            opNameStr = opCode
+                        + ";"
+                        + opName
+                        + " : "
+                        + stringBuffer.toString()+ "";
+        } else if (OpType.GTFQR.equals(opCode)) {
+            opNameStr = opCode
+                        + ";"
+                        + opName
+                        + " : "
+                        + stringBuffer.toString() + "";
+            // 沟通发起人页面的同意不同意操作
+        } else if (OpType.JS.equals(opCode) || OpType.BJS.equals(opCode)) {
+            if (null != wbe && null != wbe.getWp() && null != wbe.getWp().getPwi()
+                && null != wbe.getWp().getPwi().getCompleteUserName()) {
+                opNameStr = opCode + ";<font color=\"red\">" + opName + " : "
+                            + wbe.getWp().getPwi().getCompleteUserName() + "</font>";
+            } else {
+                opNameStr = opCode + ";<font color=\"red\">" + opName + "</font>";
+            }
+            // 回复
+        } else if (OpType.HF.equals(opCode)) {
+            if (null != wbe && null != wbe.getWp() && null != wbe.getWp().getPwi()
+                && null != wbe.getWp().getPwi().getCompleteUserName()) {
+                opNameStr = opCode + ";" + opName + " : "
+                            + wbe.getWp().getPwi().getCompleteUserName() + "";
+            } else {
+                opNameStr = opCode + ";" + opName;
+            }
+            // 驳回
+        } else if (OpType.BH.equals(opCode)) {
+            String toWpStr = "";
+            if (null != parameters && parameters.length > 1) {
+                Wp wpb = this.getWp((Long) parameters[0]);
+                if (null != wpb) {
+                    toWpStr = "至" + wpb.getDisplayName() + ":" + getWpParticipantsDisplayName(wpb) + "";
+                    if ("true".equals((String) parameters[1])) {
+                        toWpStr += "";//(中间环节跳过)
+                    } else {
+                        toWpStr += "";//(中间环节需审批)
+                    }
+                }
+            }
+            opNameStr = opCode + ";" + opName + toWpStr;
+        //重新发起审批
+        } else if (OpType.TJSP.equals(opCode)) {
+            if (null != wbe && isReSubmit) {
+                opNameStr = opCode + ";重新" + opName;
+            }
+        } else if (OpType.WYY.equals(opCode)) {
+            opNameStr = opCode + ";<font color=\"red\">" + opName + "</font>";
+        }
+        try {
+            opNameStr = URLEncoder.encode(StringUtils.isNotBlank(opNameStr) ? opNameStr : "", "UTF-8");
+        } catch (UnsupportedEncodingException e1) {
+//            e1.printStackTrace();
+        }
+        return opNameStr;
+    }
+    
+    /**
+     * 获取最新的流程实例id
+     * @param fiId
+     * @return
+     */
+    public Long findFinaleFiIdByFiId(Long fiId){
+    	Long finaleFiId = null;
+    	if (null != fiId){
+    	    Object object = getDao().getFirstBySQL("select f.id from tf_fi f where f.related_fi_ids is not null and "+DbType.getType()+"locate("+DbType.getType()+"concat(',', " + fiId + ", ','),"+DbType.getType()+"concat(',', f.related_fi_ids,',')) > 0 order by f.id desc");
+    	    finaleFiId = null != object ? Long.valueOf(object.toString()) : null;
+    		if (null == finaleFiId){
+        		finaleFiId = fiId;
+        	}
+    	}
+    	if (null == finaleFiId){
+    		finaleFiId = 0L;
+    	}
+    	return finaleFiId;
+    }
+    
+    /**
+     * 得到工作组对应操作人名称（可能包括多个）
+     * @author jun
+     * @param wp
+     * @return
+     */
+    public static String getWpParticipantsDisplayName(Wp wp){
+        if (null != wp){
+            List<IdName> idNameList = null;
+            if (StringUtils.isNotBlank(wp.getParticipants())){
+                idNameList = IdNameUtils.decode(wp.getParticipants());
+            } else if (StringUtils.isNotBlank(wp.getParticipantsSelected())){
+                idNameList = IdNameUtils.decode(wp.getParticipantsSelected());
+            } else if (StringUtils.isNotBlank(wp.getParticipantsDefine())){
+                idNameList = IdNameUtils.decode(wp.getParticipantsDefine());
+            }
+            if (null != idNameList && idNameList.size() > 0){
+                return CollectionUtils.collectAsString(idNameList, "name", ",");
+            } else if (null == wp.getId()){
+                return "<font color=red>待选择</font>";
+            }
+        }
+        return "";
+    }
+    
+    /**
+     * 将ids字符串转换为Long数组
+     * @author jun
+     * @param idsStr ids字符串
+     * @param splitStr 分割符，不传时为“,”
+     * @return
+     */
+    public static Long[] idsStrToLongArray(String idsStr, String splitStr, boolean needTurnOver){
+        Long[] idArray = null;
+        if (StringUtils.isNotBlank(idsStr)){
+            if (StringUtils.isBlank(splitStr)){
+                splitStr = ",";
+            }
+            String[] idStrArray = idsStr.split(splitStr);
+            if (needTurnOver){
+                idArray = new Long[idStrArray.length];
+                for(int i = 0;i < idStrArray.length ; i++){
+                    idArray[idArray.length - 1 - i] = Long.valueOf(idStrArray[i]);
+                }
+            } else {
+            	if(idStrArray!=null){
+            		 idArray = new Long[idStrArray.length];
+                     for(int i = 0;i < idStrArray.length ; i++){
+                    	 if(idStrArray[i]!=null&&!"".equals(idStrArray[i])){
+                    		 idArray[i] = Long.valueOf(idStrArray[i]);
+                    	 }   
+                     }
+            	}
+            	
+            }
+        }
+        return idArray;
+    }
+    /**
+     * 组装审批历程
+     */
+    
+    @SuppressWarnings("unchecked")
+    public List<WpBean> filterSpHis(List<FiStepsBean> fiStepsBeanList, Long[] fiIds, boolean exclude_created_node_if_not_in_goods_of_backed_fi) {
+        List<WpBean> wpBeanList = new ArrayList<WpBean>();
+        if (null != fiStepsBeanList && fiStepsBeanList.size() > 0 && null != fiIds && fiIds.length > 0){
+            Map<Long, FiStepsBean> stepMap = CollectionUtils.collectAsMap(fiStepsBeanList, "fiId");
+            for(Long fiId : fiIds){
+                wpBeanList.addAll(this.filterSpHis(stepMap.get(fiId), exclude_created_node_if_not_in_goods_of_backed_fi));
+            }
+        }
+        return wpBeanList;
+    }
+    
+    /**
+     * 组装审批历程
+     * @author jun
+     * @param fiStepsBean
+     * @return
+     */
+    
+    private List<WpBean> filterSpHis(FiStepsBean fiStepsBean, boolean exclude_created_node_if_not_in_goods_of_backed_fi){
+        List<WpBean> result = new ArrayList<WpBean>();
+        if (null != fiStepsBean){
+            List<WpBean> wps = fiStepsBean.getWps();
+            boolean isBackedFi = fiStepsBean.getFib().getIsBackedFi()!=null && fiStepsBean.getFib().getIsBackedFi().intValue() == 1;
+            if(exclude_created_node_if_not_in_goods_of_backed_fi && isBackedFi){
+                List<String> goodNodeIds = fiStepsBean.getFib().getGoodNodeIds();
+                for(WpBean wpBean : wps){
+                    //运行状态的Wp就不用过滤了
+                    if(wpBean.getStatus() == 0){
+                        if(goodNodeIds.contains(wpBean.getNodeId())){
+                            result.add(wpBean);
+                        }
+                    }
+                    else{
+                        result.add(wpBean);
+                    }
+                }
+                
+            }
+            else{
+                result = wps;
+            }
+        }
+        return result;
+    }
+    /**
+     * 得到操作按钮
+     * @author jun
+     * @param wiBean
+     * @param opRelationInsBeanListMap
+     * @return
+     */
+    public List<OpRelationInsBean> getSpButtons(Wi wi, Map<String, List<OpRelationInsBean>> opRelationInsBeanListMap){
+        List<OpRelationInsBean> opRelationInsBeans = new ArrayList<OpRelationInsBean>();
+        opRelationInsBeans = opRelationInsBeanListMap.get(this.getWiOpUserType(wi));
+        return opRelationInsBeans;
+    }
+    /**
+     * 得到操作按钮
+     * @author jun
+     * @param opRelationInsBeanList
+     * @return
+     */
+    public Map<String, List<OpRelationInsBean>> dealSpButtons(List<OpRelationInsBean> opRelationInsBeanList){
+        Map<String, List<OpRelationInsBean>> dealSpButtons = new HashMap<String, List<OpRelationInsBean>>();
+        if(null != opRelationInsBeanList && opRelationInsBeanList.size() > 0){
+            List<OpRelationInsBean> dealSpButtonsListDb = new ArrayList<OpRelationInsBean>();
+            List<OpRelationInsBean> dealSpButtonsListYb = new ArrayList<OpRelationInsBean>();
+            for(OpRelationInsBean opRelationInsBean : opRelationInsBeanList){
+                if (OpRelationInsBean.SHOW_TYPE_DB.equals(opRelationInsBean.getShowType())){
+                    dealSpButtonsListDb.add(opRelationInsBean);
+                } else {
+                    dealSpButtonsListYb.add(opRelationInsBean);
+                }
+            }
+            dealSpButtons.put(OpRelationInsBean.SHOW_TYPE_DB, dealSpButtonsListDb);
+            dealSpButtons.put(OpRelationInsBean.SHOW_TYPE_YB, dealSpButtonsListYb);
+        }
+        return dealSpButtons;
+    }
+    
+    /**
+     * 操作人类型
+     * @author jun
+     * @param wi
+     * @return
+     */
+    public String getWiOpUserType(Wi wi){
+        //操作类型
+        String opUserType = OpRelationInsBean.OP_USER_TYPE_CLR;
+        //是否协办任务
+        boolean isXbWi = false;
+        //是否沟通任务
+        boolean isGtWi = false;
+        if(null != wi && null != wi.getWp() && null != wi.getWp().getPwiId()){
+            Wi pWi = wi.getWp().getPwi();
+            if (null == pWi){
+                pWi = getDao().getById(Wi.class, wi.getWp().getPwiId());
+            }
+            if (null != pWi && StringUtils.isNotBlank(pWi.getOpCode())){
+                if(pWi.getOpCode().startsWith(OpType.XB + ";")){
+                    isXbWi = true;
+                }else if(pWi.getOpCode().startsWith(OpType.GTFQR + ";")){
+                    isGtWi = true;
+                }
+            }
+        }
+        //沟通发起人
+        if(isGtWi){
+            opUserType = OpRelationInsBean.OP_USER_TYPE_QCR;
+        }else if(isXbWi){
+            opUserType = OpRelationInsBean.OP_USER_TYPE_XBR;
+        }else{
+            opUserType = OpRelationInsBean.OP_USER_TYPE_CLR;
+        }
+        return opUserType;
+    }
+    
+    /**
+     * 组装历程列表
+     * @param spStepMap
+     * @return
+     */
+    public List<ToDoWorkBean> fixToDoWorkBeanList(List<WpBean> spStepMap, Fi fi, String category){
+    	List<ToDoWorkBean> toDoWorkBeanList = new ArrayList<ToDoWorkBean>();
+    	if (null != spStepMap){
+    		WpBean wst = null;
+    		for (int i = 0;i < spStepMap.size();i++){
+    			wst = spStepMap.get(i);
+    			if ((WsConstant.STATUS_RUNNING == wst.getStatus() || WsConstant.STATUS_COMPLETE == wst.getStatus()) && wst.getAllWiSize() > 0){
+    				if ((null != wst.getCompleteWiList() && wst.getCompleteWiList().size() > 0) || wst.getNoWisWpSizeComplete() > 0){
+    					if (null != wst.getChWps() && wst.getChWps().size() > 0){
+    						for (WpBean chWp : wst.getChWps()){
+    							if (null != chWp.getCompleteWiList() && chWp.getCompleteWiList().size() > 0){
+    								for (WiBean cwi : chWp.getCompleteWiList()){
+    									toDoWorkBeanList.addAll(this.dealWi(cwi, category, wst.getOpGroupsName(), chWp.getRolePath()));
+//    									存在协办沟通的情况
+    									toDoWorkBeanList.addAll(this.dealWis(cwi.getXbGtWis(), category, wst.getOpGroupsName(), chWp.getRolePath()));
+    								}
+    							} else if (WsConstant.STATUS_COMPLETE == chWp.getStatus() && (null == chWp.getParticipantUsers() || 1 > chWp.getParticipantUsers().size())){
+    								toDoWorkBeanList.addAll(this.buildToDoWorkBean(chWp.getCompleteDate(), new User(0L, "", chWp.getDefinededUsersNames()), chWp.getFinishCtrl(), wst.getDisplayName(), new User(0L, "", ""), "", chWp.getStatus(), "(责任人为空,系统自动通过)", "", null, wst.getDisplayName(), "", "TG;通过", chWp));
+    							}
+    						}
+    					} else if (null != wst.getCompleteWiList()){
+							for (WiBean cwi : wst.getCompleteWiList()){
+								toDoWorkBeanList.addAll(this.dealWi(cwi, category, wst.getOpGroupsName(), wst.getRolePath()));
+//								存在协办沟通的情况
+								toDoWorkBeanList.addAll(this.dealWis(cwi.getXbGtWis(), category, wst.getOpGroupsName(), wst.getRolePath()));
+							}
+    					}
+    				}
+    				if (wst.getFiId().equals(fi.getId()) && ((null != wst.getRunningWiList() && wst.getRunningWiList().size() > 0) || wst.getNoWisWpSizeRunning() > 0)){
+    					if (null != wst.getChWps() && wst.getChWps().size() > 0){
+    						for (WpBean chWp : wst.getChWps()){
+    							if (null != chWp.getRunningWiList() && chWp.getRunningWiList().size() > 0){
+    								toDoWorkBeanList.addAll(this.dealWis(chWp.getRunningWiList(), category, wst.getOpGroupsName(), chWp.getRolePath()));
+    							} else if ((WsConstant.STATUS_CREATED == chWp.getStatus()|| WsConstant.STATUS_RUNNING == chWp.getStatus()) && (null == chWp.getCompleteWiList() || 1 > chWp.getCompleteWiList().size()) && StringUtils.isBlank(chWp.getFirstCompleteWiDate())){
+    								toDoWorkBeanList.addAll(this.buildToDoWorkBean(chWp.getCompleteDate(), new User(0L, "", chWp.getDefinededUsersNames()), chWp.getFinishCtrl(), wst.getDisplayName(), new User(0L, "", ""), "", chWp.getStatus(), "", "", null, wst.getDisplayName(), "", "", chWp));
+    							}
+    						}
+    					} else {
+    						toDoWorkBeanList.addAll(this.dealWis(wst.getRunningWiList(), category, wst.getOpGroupsName(), wst.getRolePath()));
+    					}
+    				}
+    			} else {
+    				if (WsConstant.STATUS_COMPLETE == wst.getStatus()){
+    					if (null != wst.getChWps() && wst.getChWps().size() > 0){
+    						for (WpBean chWp : wst.getChWps()){
+    							if (StringUtils.isNotBlank(chWp.getParticipantUsersNames())){
+    								toDoWorkBeanList.addAll(this.buildToDoWorkBean(chWp.getCompleteDate(), new User(0L, "", chWp.getParticipantUsersNames()), chWp.getFinishCtrl(), wst.getDisplayName(), new User(0L, "", ""), "", chWp.getStatus(), "(责任人为空,系统自动通过)", "", null, wst.getDisplayName(), "", "TG;通过", chWp));
+    							} else {
+    								toDoWorkBeanList.addAll(this.buildToDoWorkBean(chWp.getCompleteDate(), new User(0L, "", chWp.getDefinededUsersNames()), chWp.getFinishCtrl(), wst.getDisplayName(), new User(0L, "", ""), "", chWp.getStatus(), "(责任人为空,系统自动通过)", "", null, wst.getDisplayName(), "", "TG;通过", chWp));
+    							}
+    						}
+    					} else {
+    						if (StringUtils.isNotBlank(wst.getParticipantUsersNames())){
+    							toDoWorkBeanList.addAll(this.buildToDoWorkBean(wst.getCompleteDate(), new User(0L, "", wst.getParticipantUsersNames()), wst.getFinishCtrl(), wst.getDisplayName(), new User(0L, "", ""), "", wst.getStatus(), "", "", null, wst.getDisplayName(), "", "TG;" + wst.getWpTypeName(), wst));
+    						} else {
+    							toDoWorkBeanList.addAll(this.buildToDoWorkBean(wst.getCompleteDate(), new User(0L, "", wst.getDefinededUsersNames()), wst.getFinishCtrl(), wst.getDisplayName(), new User(0L, "", ""), "", wst.getStatus(), "", "", null, wst.getDisplayName(), "", "TG;" + wst.getWpTypeName(), wst));
+    						}
+    					}
+    				} else if (wst.getFiId().equals(fi.getId())){
+    					if (null != wst.getChWps() && wst.getChWps().size() > 0){
+    						for (WpBean chWp : wst.getChWps()){
+    							if (StringUtils.isNotBlank(chWp.getParticipantUsersNames())){
+    								toDoWorkBeanList.addAll(this.buildToDoWorkBean(null, new User(0L, "", ""), chWp.getFinishCtrl(), wst.getDisplayName(), new User(0L, "", chWp.getParticipantUsersNames()), "", chWp.getStatus(), "", "", null, wst.getDisplayName(), "", "", chWp));
+    							} else {
+    								toDoWorkBeanList.addAll(this.buildToDoWorkBean(null, new User(0L, "", ""), chWp.getFinishCtrl(), wst.getDisplayName(), new User(0L, "", chWp.getDefinededUsersNames()), "", chWp.getStatus(), "", "", null, wst.getDisplayName(), "", "", chWp));
+    							}
+    						}
+    					} else {
+    						if (StringUtils.isNotBlank(wst.getParticipantUsersNames())){
+    							toDoWorkBeanList.addAll(this.buildToDoWorkBean(null, new User(0L, "", ""), wst.getFinishCtrl(), wst.getDisplayName(), new User(0L, "", wst.getParticipantUsersNames()), "", wst.getStatus(), "", "", null, wst.getDisplayName(), "", "", wst));
+    						} else {
+    							toDoWorkBeanList.addAll(this.buildToDoWorkBean(null, new User(0L, "", ""), wst.getFinishCtrl(), wst.getDisplayName(), new User(0L, "", wst.getDefinededUsersNames()), "", wst.getStatus(), "", "", null, wst.getDisplayName(), "", "", wst));
+    						}
+    					}
+    				}
+    			}
+    			if (i == spStepMap.size() - 1 && WsConstant.STATUS_COMPLETE == fi.getStatus()){
+    				toDoWorkBeanList.addAll(this.buildToDoWorkBean(wst.getCompleteDate(), new User(0L, "", ""), "", "结束", new User(0L, "", ""), "", WsConstant.STATUS_COMPLETE, "", "", null, "结束", "", "", wst));
+    			}
+    		}
+    	}
+    	return toDoWorkBeanList;
+    }
+    /**
+     * 组装非正常消息
+     * @param userName
+     * @param userNote
+     * @param opName
+     * @param displayName
+     * @param creatDate
+     * @param endDate
+     * @param status
+     * @return
+     */
+    private List<ToDoWorkBean> buildToDoWorkBean(String completeTime, User completeUser, String finishCtrl
+    		, String opRole, User participant, String startTime, int status, String userNote, String wiCode
+    		, Long wiId, String wiName, String wiType, String opCode, WpBean wpBean){
+    	List<ToDoWorkBean> toDoWorkBeanList = new ArrayList<ToDoWorkBean>();
+    	WiBean wb = new WiBean();
+    	wb.setCompleteTime(completeTime);
+    	wb.setCompleteUser(completeUser);
+    	wb.setFinishCtrl(finishCtrl);
+    	wb.setOpRole(opRole);
+    	wb.setOpCode(opCode);
+    	wb.setParticipant(participant);
+    	wb.setStartTime(startTime);
+    	wb.setStatus(status);
+    	wb.setUserNote(userNote);
+    	wb.setWiCode(wiCode);
+    	wb.setWiId(wiId);
+    	wb.setWiName(wiName);
+    	wb.setWiType(wiType);
+    	wb.setWp(wpBean);
+    	toDoWorkBeanList.add(ApiUtils.buildToDoWorkBean(wb, null, wpBean.getOpGroupsName(), wpBean.getRolePath()));
+    	return toDoWorkBeanList;
+    }
+    
+    /**
+     * 处理任务
+     * @param wis
+     * @param category
+     * @return
+     */
+    private List<ToDoWorkBean> dealWis(List<WiBean> wis, String category, String spType, String rolePath){
+    	List<ToDoWorkBean> toDoWorkBeanList = new ArrayList<ToDoWorkBean>();
+    	if (null != wis && wis.size() > 0){
+    		for (WiBean wi : wis){
+    			toDoWorkBeanList.addAll(this.dealWi(wi, category, spType, rolePath));
+    		}
+    	}
+    	return toDoWorkBeanList;
+    }
+    /**
+     * 处理任务
+     * @param wi
+     * @param category
+     * @return
+     */
+    private List<ToDoWorkBean> dealWi(WiBean wi, String category, String spType, String rolePath){
+    	List<ToDoWorkBean> toDoWorkBeanList = new ArrayList<ToDoWorkBean>();
+    	if (null != wi){
+    		ToDoWorkBean toDoWorkBean = ApiUtils.buildToDoWorkBean(wi, this.fillUploadFiles(wi.getWiId(), category), spType, rolePath);
+    		if (null != toDoWorkBean){
+    			toDoWorkBeanList.add(toDoWorkBean);
+    		}
+    	}
+    	return toDoWorkBeanList;
+    }
+
+    /**
+     * 替换参与人
+     * @param opWiId
+     * @param wpId
+     * @param subWpId
+     * @param wiId
+     * @param userId
+     * @param paticipantString
+     * @return
+     */
+    public String changeWpsUsers(Long opWiId, Long wpId, Long subWpId, Long wiId, Long userId, String paticipantString) {
+    	FlowResult<SimpleResult> fr = flowServerService.changeWpUsers(opWiId, wpId, subWpId, wiId, userId, EncodeUtils.urlEncode(null != paticipantString ? paticipantString : "", "UTF-8"));
+    	return fr.isSuccess() ? "" : FlowExceptionUtils.getExceptionMsg(fr.getDebugInfo());
+    }
+    
+    /**
+     * 替换参与人
+     * @param opWiId
+     * @param wpId
+     * @param subWpId
+     * @param wiId
+     * @param userId
+     * @return
+     */
+    public String deleteParticipant(Long opWiId, Long wpId, Long subWpId, Long wiId, Long userId) {
+    	FlowResult<SimpleResult> fr = flowServerService.deleteParticipant(opWiId, wpId, subWpId, wiId, userId);
+    	return fr.isSuccess() ? "" : FlowExceptionUtils.getExceptionMsg(fr.getDebugInfo());
+    }
+    
+    /**
+     * 重写参与人
+     * @param wpId
+     * @param selectUserIds
+     */
+    public String overrideParticipants(Long wpId, String selectUserIds){
+    	String errorMsg = "";
+    	String participants = "";
+        if(StringUtils.isNotBlank(selectUserIds)){
+            participants = IdNameUtils.encode(IdNameUtils.toIdNameList(orgnAPIService.getUserListByUserIds(selectUserIds)));
+        }
+        FlowResult<SimpleResult> fResult = flowServerService.overrideParticipants(wpId, EncodeUtils.urlEncode(participants, "UTF-8"));
+        if (fResult == null || !fResult.isSuccess()) {
+            errorMsg = FlowExceptionUtils.getExceptionMsg(fResult.getDebugInfo());
+        }
+        return errorMsg;
+    }
+    
+	public List<UploadBean> fillUploadFiles(Long wiId, String category) {
+		List<UploadBean> uploadBeanLst = new ArrayList<UploadBean>();
+		// 读取上传的附件信息
+        Wi wi = getDao().getById(Wi.class, wiId);
+        Long fiId = wi.getFiId();
+		String ownerId = "fiId_" + fiId + "_wiId_" + wiId;
+		DetachedCriteria dc = DetachedCriteria.forClass(Upload.class);
+		if(StringUtils.isNotEmpty(category)){
+			dc.add(Restrictions.eq("category", category));
+		}
+		if(StringUtils.isNotEmpty(ownerId)){
+			dc.add(Restrictions.eq("ownerId", ownerId));
+		}
+		List<Upload> files = getDao().findByCriteria(dc);
+        for ( Upload file: files ) {
+        	uploadBeanLst.add(ApiUtils.buildUploadBean(file));
+        }
+        return uploadBeanLst;
+	}
+	
+	public List<UploadBean> fillBizUploadFiles(List<String> ls) {
+		List<UploadBean> uploadBeanLst = new ArrayList<UploadBean>();
+		if(ls!=null&&ls.size()>0){
+			for(String ownerId:ls){
+				// 读取上传的附件信息
+				DetachedCriteria dc = DetachedCriteria.forClass(Upload.class);
+				if(StringUtils.isNotEmpty(ownerId)){
+					dc.add(Restrictions.eq("ownerId", ownerId));
+				}
+				List<Upload> files = getDao().findByCriteria(dc);
+		        for ( Upload file: files ) {
+		        	uploadBeanLst.add(ApiUtils.buildUploadBean(file));
+		        }
+			}
+		}
+        return uploadBeanLst;
+	}
+	
+	
+	
+    /**
+     * 得到即将流向的wp
+     * @author jun
+     * @param curRunningWbe 当前运行的wp
+     * @param curWi 当前运行的wi
+     * @param wpbList wpbList
+     * @return
+     */
+    public WpBean getNextWp(Wi curWi, WpBean curRunningWbe, List<WpBean> wpbList, boolean isStartWp) {
+        WpBean nextWp = null;
+        //参与人可修改类型
+        Integer changeParticipantsType = WpBean.CHANGE_PARTICIPANTS_TYPE_NOT;
+        //需要修改的节点id
+        String participantsSelectAt = "";
+        //必须修改的节点id
+        String participantsMustSelectAt = "";
+        String opUserName = this.getWiOpNote(curWi);
+        if(StringUtils.isNotBlank(opUserName)){
+            nextWp = new WpBean();
+            nextWp.setDisplayName(opUserName);
+        }else{
+            if(null != curRunningWbe && null != curRunningWbe.getFiId() && null != wpbList){
+                boolean isNext = false;
+                for(WpBean wbe : wpbList){
+                    if (isNext && (null != curRunningWbe.getJump2WpId() && curRunningWbe.getJump2WpId() > 0 ? wbe.getWpId().intValue() == curRunningWbe.getJump2WpId().intValue() : true)){
+                        nextWp = wbe;
+                        break;
+                    } else if(curRunningWbe.getFiId().intValue() == wbe.getFiId().intValue() && curRunningWbe.getNodeId().equals(wbe.getNodeId())){
+                        isNext = true;
+                    }
+                }
+                if(StringUtils.isNotBlank(curRunningWbe.getParticipantsSelectAt())){
+                    participantsSelectAt = curRunningWbe.getParticipantsSelectAt();
+                }
+                if(StringUtils.isNotBlank(curRunningWbe.getParticipantsMustSelectAt())){
+                    participantsMustSelectAt = curRunningWbe.getParticipantsMustSelectAt();
+                }
+            }
+        }
+        if(null == nextWp){
+            nextWp = new WpBean();
+            if (isStartWp){
+                nextWp.setDisplayName("待定");
+            } else {
+                nextWp.setDisplayName("结束");
+            }
+        }else if(StringUtils.isNotBlank(nextWp.getNodeId())){
+            if((participantsMustSelectAt + ",").contains(nextWp.getNodeId())){
+                changeParticipantsType = WpBean.CHANGE_PARTICIPANTS_TYPE_MUST;
+            }else if((participantsSelectAt + ",").contains(nextWp.getNodeId())){
+                changeParticipantsType = WpBean.CHANGE_PARTICIPANTS_TYPE_NEED;
+            }
+        }
+        nextWp.setChangeParticipantsType(changeParticipantsType);
+        return nextWp;
+    }
+    
+    public List<RoleDTO> getUserRolesByLoginName(String userLoginName){
+        List<RoleDTO> roleDtoList = new ArrayList<RoleDTO>();
+        if (StringUtils.isNotBlank(userLoginName)){
+            RoleDao roleDao = App.getBean(RoleDao.class);
+            List<Long> roleIdList = App.getBean(UserDao.class).getRoleIds(userLoginName.trim());
+            if (null != roleIdList && roleIdList.size() > 0){
+                OrgnAPIService orgnAPIService = App.getBean(OrgnAPIService.class);
+                List<Role> roleList = roleDao.getRoleListByIds(CollectionUtils.collectAsString(roleIdList, ","));
+                for (Role role : roleList){
+                    role.setNamefix(orgnAPIService.getPostPathWithStartFix(role.getId(), false));
+                }
+                roleDtoList.addAll(RoleUtils.buildRoleDtoList(roleList));
+            }
+        }
+        return roleDtoList;
+    }
+    
+    public List<RoleDTO> getUserRolesByUserId(Long userId){
+        List<RoleDTO> roleDtoList = new ArrayList<RoleDTO>();
+        if (null != userId){
+            roleDtoList.addAll(this.getUserRolesByLoginName(App.getBean(UserDao.class).findUserLoginNameByUserId(userId)));
+        }
+        return roleDtoList;
+    }
+    
+    /**
+     * 得到当前任务对应的操作名称（如：回复：XX等）
+     * @author jun
+     * @param wi wi
+     * @return
+     */
+    public String getWiOpNote(Wi wi){
+        //操作类型
+        String opName = "";
+        if(null != wi && null != wi.getWp() && null != wi.getWp().getPwiId()){
+            Wi pWi = wi.getWp().getPwi();
+            if(null != pWi && OpType.XB.equals(pWi.getOpCode())){
+                opName = "回复：" + pWi.getCompleteUserName();
+                //沟通发起人
+            }else if(null != pWi && OpType.GTFQR.equals(pWi.getOpCode())){
+                opName = "回复：" + pWi.getCompleteUserName();
+            }
+        }
+        return opName;
+    }
+    public FlowResult<SimpleResult> compleateFi(Long fiId, Long participantId, String userNote, String opCode) {
+        return flowServerService.completeFi(fiId, participantId, EncodeUtils.urlEncode(null != userNote ? userNote : "", "UTF-8"), EncodeUtils.urlEncode(null != opCode ? opCode : "", "UTF-8"));
+    }
+}

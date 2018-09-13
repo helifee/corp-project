@@ -1,0 +1,42 @@
+package com.xinleju.platform.sys.base.dao.impl;
+
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.platform.base.dao.impl.BaseDaoImpl;
+import com.xinleju.platform.sys.base.dao.BaseCorporationAccontDao;
+import com.xinleju.platform.sys.base.dto.BaseCorporationAccontDto;
+import com.xinleju.platform.sys.base.dto.BaseSupplierAccontDto;
+import com.xinleju.platform.sys.base.entity.BaseCorporationAccont;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Repository
+public class BaseCorporationAccontDaoImpl extends BaseDaoImpl<String,BaseCorporationAccont> implements BaseCorporationAccontDao{
+
+	public BaseCorporationAccontDaoImpl() {
+		super();
+	}
+
+	@Override
+	public List<Map<String,Object>> getBaseCorporationAccontByCorporationId(
+			String paramater) {
+		List<Map<String,Object>> list = getSqlSession().selectList("com.xinleju.platform.sys.base.entity.BaseCorporationAccont.queryListByCorporationId", paramater);
+		return list;
+	}
+	@Override
+	public List<BaseCorporationAccont> getBaseCorporationAccontListByCorporationId(
+			String paramater) {
+		List<BaseCorporationAccont> list = getSqlSession().selectList("com.xinleju.platform.sys.base.entity.BaseCorporationAccont.queryAccontListByCorporationId", paramater);
+		return list;
+	}
+
+	
+	
+}

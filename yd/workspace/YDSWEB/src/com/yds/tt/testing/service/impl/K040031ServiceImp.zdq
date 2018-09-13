@@ -1,0 +1,204 @@
+/*
+ * @(#) K040031Dao.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 教育考试系统
+ *    SubSystem: 考试子系统
+ */
+package com.yds.tt.testing.service.impl;
+
+import java.text.DateFormat;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+
+import net.sf.json.JSONObject;
+
+import org.springframework.stereotype.Service;
+import com.yds.base.service.AbstractBaseService;
+import com.yds.tt.manager.service.TtCommonService;
+import com.yds.tt.manager.service.TtCommonUtil;
+import com.yds.tt.manager.service.TtConstants;
+import com.yds.tt.manager.service.TtExclusiveException;
+import com.yds.tt.testing.bean.AnswerInfo;
+import com.yds.tt.testing.bean.AnswerPointInfo;
+import com.yds.tt.testing.bean.QuestionLibrary;
+import com.yds.tt.testing.dao.K040031Dao;
+import com.yds.tt.testing.service.K040031Service;
+
+/**
+ * @see com.yds.tt.testing.service.K040031Service
+ */
+@Service("k040031Service")
+public class K040031ServiceImp extends AbstractBaseService implements K040031Service {
+	private K040031Dao k040031Dao;
+	private TtCommonService ttCommonService;	
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@SuppressWarnings("unchecked")
+	@Override
+	public List<QuestionLibrary> getQuestionLibraryInfoList(
+			JSONObject questionIdJsonObj) {
+		List<String> questionIdList = new ArrayList<String>();
+		
+		// 接口参数传化成List
+		Iterator<String> iterator = questionIdJsonObj.keySet().iterator();
+		while (iterator.hasNext()) {
+			questionIdList.add(iterator.next().trim());
+		}
+
+		return this.k040031Dao.getQuestionLibraryInfoList(questionIdList);
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public List<String> getKeyWordInfo(Integer category1Id) {
+		Map<String, Integer> categoryId = new HashMap<String, Integer>();
+		categoryId.put("category1Id", category1Id);
+		return this.k040031Dao.getKeyWordInfo(categoryId);
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@SuppressWarnings("unchecked")
+	@Override
+	public int updateTestQuestions(QuestionLibrary questionLibrary, 
+								JSONObject questionJson, JSONObject updtTimeJson) {
+		
+		// 定义的变量初始值为0更新出错时候赋值-1更新正常时赋值1
+		int updateError = 0;
+		
+		List<String> questionIdList = new ArrayList<String>();
+		
+		// 把试题ID的JSON转化成List
+		Iterator iterator = questionJson.values().iterator();
+		while (iterator.hasNext()) {
+			questionIdList.add(iterator.next().toString());
+		}
+		
+		// 把时间的JSON转化成List
+		Iterator updateTimeIterator = updtTimeJson.values().iterator();
+		List<String> updateTimeList = new ArrayList<String>();
+		while (updateTimeIterator.hasNext()) {
+			updateTimeList.add(updateTimeIterator.next().toString());
+		}
+		for (int i = 0; i < updateTimeList.size(); i++){
+			DateFormat dateFormat= new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+			try {
+				
+				// 时间存入session中
+				this.ttCommonService.setTimestamp(TtConstants.PageId.K040031, dateFormat.parse(updateTimeList.get(i)));
+			} catch (ParseException e) {
+				e.printStackTrace();
+			}
+			
+			// 检查更新时间
+			if (ttCommonService.checkTimeStamp(TtConstants.PageId.K040031,  
+					this.k040031Dao.getUpateTime(questionIdList.get(i))) == false){
+				throw new TtExclusiveException();
+			}			
+		
+		}
+		
+		// 根据前台传过来的试题ID取得试题信息
+		List<QuestionLibrary> questionLibraryInfoList = this.k040031Dao.getQuestionLibraryInfoList(questionIdList);
+		for (QuestionLibrary questionLibraryInfo : questionLibraryInfoList) {
+			
+			// 试题是已核对情况下
+			if (2 == questionLibraryInfo.getCheckFlg()) {
+				
+				// 取得答案信息
+				List<AnswerInfo> answerInfoList = this.k040031Dao.getAnswerInfoList(questionLibraryInfo);
+				for (AnswerInfo answerInfo : answerInfoList) {
+					
+					//将答案版本号升级
+					answerInfo.setQuestionVersionNo(answerInfo.getQuestionVersionNo() + 1);
+					
+					// 插入答案信息
+					this.k040031Dao.insertAnswerInfo(answerInfo);
+				}
+				
+				// 取得 得分信息
+				List<AnswerPointInfo> answerPointInfoList = this.k040031Dao.getAnswerPointInfoList(questionLibraryInfo);
+				for (AnswerPointInfo answerPointInfo : answerPointInfoList) {
+					
+					// 将得分版本号升级
+					answerPointInfo.setQuestionVersionNo(answerPointInfo.getQuestionVersionNo() + 1);
+					
+					// 插入得分信息
+					this.k040031Dao.insertAnswerPointInfo(answerPointInfo);
+				}
+				
+				// 修改最新状态
+				this.k040031Dao.updateNewFlag(questionLibraryInfo.getQuestionId());	
+	
+				// 设置核对状态
+				questionLibraryInfo.setCheckFlg(1);
+				
+				// 版本号升级
+				questionLibraryInfo.setQuestionVersionNo(questionLibraryInfo.getQuestionVersionNo() + 1);
+				
+				// 插入试题信息
+				this.k040031Dao.insertTestQuestions(questionLibraryInfo);
+			}
+		}
+		
+		// 从session中得到登录者
+		String userId = TtCommonUtil.getLoginUserId();
+		
+		// 取得最新的试题信息
+		List<QuestionLibrary> questionLibraryNewList = this.k040031Dao.getQuestionLibraryInfoList(questionIdList);		
+		for (QuestionLibrary questionLibraryNewInfo : questionLibraryNewList) {
+			if (2 == questionLibraryNewInfo.getNewFlg()) {
+				
+				// 设置更新者
+				questionLibrary.setUpdateUserId(userId);
+				
+				// 设置考试ID
+				questionLibrary.setQuestionId(questionLibraryNewInfo.getQuestionId());
+				
+				// 设置试题数
+				questionLibrary.setQuestionNumber(questionLibraryNewInfo.getQuestionNumber());
+				
+				// 更新试题信息
+				if (this.k040031Dao.updateTestQuestions(questionLibrary) > 0){
+					updateError = 1;
+				} else {
+					updateError = -1;
+				}
+				
+			}
+		}
+		return updateError;		
+	}
+
+	/**
+	 * @param dao the k040031Dao to set
+	 */
+	public void setK040031Dao(K040031Dao dao) {
+		k040031Dao = dao;
+	}
+
+	/**
+	 * @return the ttCommonService
+	 */
+	public TtCommonService getTtCommonService() {
+		return ttCommonService;
+	}
+
+	/**
+	 * @param ttCommonService the ttCommonService to set
+	 */
+	public void setTtCommonService(TtCommonService ttCommonService) {
+		this.ttCommonService = ttCommonService;
+	}
+}

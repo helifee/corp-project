@@ -1,0 +1,16 @@
+var FUN_TYPE_QJBZ = 55;   // 全景计划编制
+var FUN_TYPE_QJBZ_NAME = "全景计划编制";
+var FUN_TYPE_QJHB = 56;   // 全景业务项汇报
+var FUN_TYPE_QJHB_NAME = "全景业务项汇报";
+var FUN_TYPE_ZXBZ = 57;   // 专项计划编制
+var FUN_TYPE_ZXBZ_NAME = "专项计划编制";
+var FUN_TYPE_ZXHB = 58;   // 专项业务项汇报
+var FUN_TYPE_ZXHB_NAME = "专项业务项汇报";
+var FUN_TYPE_BMBZ = 59;   // 部门计划编制
+var FUN_TYPE_BMBZ_NAME = "部门计划编制";
+var FUN_TYPE_BMHB = 60;   // 部门业务项汇报
+var FUN_TYPE_BMHB_NAME = "部门业务项汇报";
+var FUN_TYPE_XXBZ = 900505;//销项计划编制
+var FUN_TYPE_XXBZ_NAME = "销项计划编制";
+var FUN_TYPE_XXHB = 900506;//销项业务项汇报
+var FUN_TYPE_XXHB_NAME = "销项业务项汇报";

@@ -1,0 +1,22 @@
+package com.xinleju.platform.flow.service;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.flow.entity.CalendarDetail;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface CalendarDetailService extends  BaseService <String,CalendarDetail>{
+
+	void deleteDataForInitAction(Map<String, Integer> map);
+
+	void updateDetailList(List<CalendarDetail> detailList);
+
+	
+}

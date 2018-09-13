@@ -1,0 +1,386 @@
+/*
+ * @(#)Ye0020ServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 共通系统
+ */
+package com.yds.att.service.impl;
+
+import java.util.*;
+
+import org.springframework.stereotype.Service;
+
+import com.yds.base.service.AbstractBaseService;
+import com.yds.common.bean.UserInfo;
+import com.yds.common.service.SessionConstants;
+import com.yds.util.service.DateUtil;
+import com.yds.util.service.Session;
+import com.yds.att.service.AttConstants;
+import com.yds.att.service.Ye0020Service;
+import com.yds.att.service.AttConstants.AppCategory;
+import com.yds.att.service.AttConstants.AppStatus;
+import com.yds.att.service.AttConstants.RestDayType;
+import com.yds.att.service.AttConstants.VacationType;
+import com.yds.att.bean.AttExamin;
+import com.yds.att.bean.AttExrestInfo;
+import com.yds.att.bean.AttInfo;
+import com.yds.att.bean.AttInfoCondA;
+import com.yds.att.bean.AttRestApp;
+import com.yds.att.bean.OrgInfo;
+import com.yds.att.bean.Ye0020AttInfo;
+import com.yds.att.common.service.AttComService;
+import com.yds.att.common.service.AttInfoService;
+import com.yds.att.common.service.OrgRelationService;
+import com.yds.att.dao.Ye0020Dao;
+
+/**
+ * @see com.yds.att.service.Ye0020Service
+ */
+@Service("ye0020Service")
+public class Ye0020ServiceImpl extends AbstractBaseService implements Ye0020Service{
+
+	/** 注入Dao. */
+	private Ye0020Dao ye0020Dao;
+	/** 组织关系Service. */
+	private AttComService attComService;
+	/** 组织关系Service. */
+	private OrgRelationService orgRelationService;
+	/** 处理考勤信息表数据. */
+	private AttInfoService attInfoService;
+	/** 
+	 *  {@inheritDoc}
+	 * @throws Exception 
+	 */
+	@Override
+	public void insertAttRestApp(Ye0020AttInfo ye0020AttInfo) throws Exception {
+		
+		//取得审批流程
+		List<List<OrgInfo>> orgList = orgRelationService.getFlowForLeave(ye0020AttInfo.getUserId(),(float) ye0020AttInfo.getLeaveDays(),ye0020AttInfo.getRestStartDate());
+		List<OrgInfo> orgInfoList = orgList.get(ye0020AttInfo.getFlowForLeave()-1);
+		
+		//直属组织ID
+		String restOrganizationId = orgInfoList.get(0).getOrgId();
+		
+		//申请编号采番
+		String appId = attComService.getAppId(AppCategory.VACATION);
+		AttExamin attExaminInfo;
+		int i = 0;
+		
+		for (OrgInfo orgInfo : orgInfoList){
+			
+			attExaminInfo = new AttExamin();
+			i++;
+			attExaminInfo.setAppId(appId);
+			attExaminInfo.setExaAppOrder(i);
+			attExaminInfo.setExaAppEnd(orgInfoList.size());
+			attExaminInfo.setExaOrganizationId(orgInfo.getOrgId());
+			//attExaminInfo.setExaId(orgInfo.getOrgMnger());
+			attExaminInfo.setExaSuggestion("");
+			attExaminInfo.setExaResult("");
+			ye0020Dao.insertAttExamin(attExaminInfo);
+		}
+		
+		Date now = new Date();
+		UserInfo userInfo = (UserInfo) Session.get(SessionConstants.USERINFO);
+		AttRestApp attRestApp = new AttRestApp();
+		attRestApp.setAppId(appId);
+		attRestApp.setRestPerId(ye0020AttInfo.getUserId());
+		attRestApp.setRestStartDate(ye0020AttInfo.getRestStartDate());
+		
+		if(RestDayType.HALF.value().equals(ye0020AttInfo.getRestDayType())){
+			attRestApp.setRestType(ye0020AttInfo.getRestType() + ye0020AttInfo.getRestHalfDayType());
+			attRestApp.setRestEndDate(ye0020AttInfo.getRestStartDate());
+		}else if(RestDayType.SINGLE.value().equals(ye0020AttInfo.getRestDayType())){
+			attRestApp.setRestType(ye0020AttInfo.getRestType());
+			attRestApp.setRestEndDate(ye0020AttInfo.getRestStartDate());
+		}else if(RestDayType.MULTI.value().equals(ye0020AttInfo.getRestDayType())){
+			attRestApp.setRestType(ye0020AttInfo.getRestType());
+			attRestApp.setRestEndDate(ye0020AttInfo.getRestEndDate());
+		}
+		
+		attRestApp.setRestOrganizationId(restOrganizationId);
+		attRestApp.setRestReason(ye0020AttInfo.getRestReason());
+		attRestApp.setAppStatus(AppStatus.PENDING.value());
+		attRestApp.setUpdateTime(now);
+		attRestApp.setUpdateUser(userInfo.getUserId());
+		ye0020Dao.insertAttRestApp(attRestApp);
+		
+		//处理考勤信息表数据
+		AttInfoCondA attInfoCondA = new AttInfoCondA();
+		
+		attInfoCondA.setAppId(appId);
+		attInfoCondA.setAppStatus(AppStatus.PENDING.value());
+		attInfoCondA.setEmpId(attRestApp.getRestPerId());
+		attInfoCondA.setLeaveDateFrom(attRestApp.getRestStartDate());
+		attInfoCondA.setLeaveDateTo(attRestApp.getRestEndDate());
+		attInfoCondA.setRestType(attRestApp.getRestType());
+		
+		attInfoService.updateAttInfo(attInfoCondA);
+	}
+
+
+	/** 
+	 *  {@inheritDoc}
+	 */
+	@Override
+	public List<AttInfo> getAttInfoList(AttInfo attInfo) {
+
+		return ye0020Dao.getAttInfoList(attInfo);
+	}
+	
+
+	/** 
+	 *  {@inheritDoc}
+	 */
+	@Override
+	public Long getAttInfoCount(AttInfo attInfo) {
+
+		return ye0020Dao.getAttInfoCount(attInfo);
+	}
+	
+	/** 
+	 *  {@inheritDoc}
+	 */
+	@Override
+	public AttRestApp getAttRestAppByPk(AttRestApp attRestApp) {
+
+		return ye0020Dao.getAttRestAppByPk(attRestApp);
+	}	
+	
+	
+	/**
+	 *  {@inheritDoc}
+	 */
+	@Override
+	public void insertAttInfo(AttInfo attInfo) {
+		
+		ye0020Dao.insertAttInfo(attInfo);
+	}
+	
+	/**
+	 *  {@inheritDoc}
+	 */
+	@Override
+	public int updateAttInfo(AttInfo attInfo) {
+		
+		return ye0020Dao.updateAttInfo(attInfo);
+	}
+
+	/**
+	 *  {@inheritDoc}
+	 */
+	@Override
+	public int deleteAttInfo(AttInfo attInfo) {
+		
+		return ye0020Dao.deleteAttInfo(attInfo);
+	}
+	
+	/** 
+	 *  {@inheritDoc}
+	 */
+	public List<AttExamin> getAttExaminInfoList(String appId) {
+		AttExamin attExamin = new AttExamin();
+		attExamin.setAppId(appId);
+		return ye0020Dao.getAttExaminInfoList(attExamin);
+	}
+	
+	/** 
+	 *  {@inheritDoc}
+	 */
+	public void deleteAttRestApp(AttRestApp attRestApp) {
+		UserInfo userInfo = (UserInfo) Session.get(SessionConstants.USERINFO);
+		AttInfo attInfo;
+		if(!AppStatus.PENDING.value().equals(attRestApp.getAppStatus())){
+			//休假请假表
+			attRestApp.setAppStatus(AppStatus.REVOKEED.value());
+			attRestApp.setUpdateTime(new Date());
+			attRestApp.setUpdateUser(userInfo.getUserId());
+			ye0020Dao.updateAttRestApp(attRestApp);
+			
+			//换休明细表
+			if(AppStatus.APPROVED.value().equals(attRestApp.getAppStatus())
+					&&VacationType.FOR_HUGH.value().equals(attRestApp.getRestType())){
+				AttExrestInfo attExrestInfo = new AttExrestInfo();
+				attExrestInfo.setAppId(attRestApp.getAppId());
+				ye0020Dao.deleteAttExrestInfo(attExrestInfo);
+			}
+			
+			//考勤信息表
+			attInfo = new AttInfo();
+			attInfo.setAppId(attRestApp.getAppId());
+			attInfo.setUpdateTime(new Date());
+			attInfo.setUpdateUser(userInfo.getUserId());
+			if(ye0020Dao.getAttInfoCount(attInfo) > 0){
+				attInfo.setAppStatus(AppStatus.REVOKEED.value());
+				ye0020Dao.updateAttInfoPending(attInfo);
+			}else{
+				attInfo.setAppId(null);
+				attInfo.setAppIdAddi(attRestApp.getAppId());
+				attInfo.setAppStatusAddi(AppStatus.REVOKEED.value());
+				ye0020Dao.updateAttInfoPending(attInfo);
+			}
+		}else{
+			//休假请假表
+			ye0020Dao.deleteAttRestApp(attRestApp);
+			
+			//审批过程表
+			AttExamin attExamin = new AttExamin();
+			attExamin.setAppId(attRestApp.getAppId());
+			ye0020Dao.deleteAttExamin(attExamin);
+			
+			//考勤信息表
+			attInfo = new AttInfo();
+			attInfo.setAppId(attRestApp.getAppId());
+			attInfo.setUpdateTime(new Date());
+			attInfo.setUpdateUser(userInfo.getUserId());
+			if(ye0020Dao.getAttInfoCount(attInfo) > 0){
+				ye0020Dao.updateAttInfo(attInfo);
+			}else{
+				attInfo.setAppId(null);
+				attInfo.setAppIdAddi(attRestApp.getAppId());
+				ye0020Dao.updateAttInfo(attInfo);
+			}
+		}
+		// TODO Auto-generated method stub
+		
+	}
+	
+	/**
+	 * @param ye0020Dao
+	 *            the ye0020Dao to set
+	 */
+	public void setYe0020Dao(Ye0020Dao dao) {
+		this.ye0020Dao = dao;
+	}
+
+	
+	/**
+	 * @param attComService the attComService to set
+	 */
+	public void setAttComService(AttComService attComService) {
+		this.attComService = attComService;
+	}
+
+	/**
+	 * @return the orgRelationService
+	 */
+	public OrgRelationService getOrgRelationService() {
+		return orgRelationService;
+	}
+
+	/**
+	 * @param orgRelationService the orgRelationService to set
+	 */
+	public void setOrgRelationService(OrgRelationService orgRelationService) {
+		this.orgRelationService = orgRelationService;
+	}
+
+
+	/**
+	 * @param attInfoService the attInfoService to set
+	 */
+	public void setAttInfoService(AttInfoService attInfoService) {
+		this.attInfoService = attInfoService;
+	}
+
+
+	/**
+	 * @return the attInfoService
+	 */
+	public AttInfoService getAttInfoService() {
+		return attInfoService;
+	}
+
+
+	@Override
+	public boolean cancelAttRestAppCheck(AttRestApp attRestApp) {
+		
+		// 请假日（判断用）
+		Date restDate = attRestApp.getRestStartDate();
+		Date today = new Date();
+		int monthDiff = 0;
+
+		//请假日在当前日之后，可以撤销
+		if(restDate.compareTo(today) == 1){
+			return true;
+		}else{
+			//年相同
+			if(DateUtil.getYear(restDate) == DateUtil.getYear(today)){
+				monthDiff = DateUtil.getMonth(today) - DateUtil.getMonth(restDate);
+				return cancelAttRestAppCheckMonth(today,monthDiff);
+				
+			}else if(DateUtil.getYear(today) - DateUtil.getYear(restDate) == 1){
+				monthDiff = DateUtil.getMonth(today) + 12 - DateUtil.getMonth(restDate);
+				return cancelAttRestAppCheckMonth(today,monthDiff);
+			}else{
+				return false;
+			}
+		}
+	}
+	public boolean cancelAttRestAppCheckMonth(Date today,int monthDiff){
+		//请假日在当前日2个月前，不可撤销
+		if(monthDiff > 1){
+			return false;
+		//请假日在当前日一个月前
+		}else if(monthDiff == 1){
+			//当前日大于10日，不可撤销
+			if(DateUtil.getDay(today) > 10){
+				return false;
+			//当前日小于等于10日，可以撤销
+			}else{
+				return true;
+			}
+		//同月
+		}else{
+			return true;
+		}
+	}
+
+
+	@Override
+	public boolean oneDayTwoAppCheck(Ye0020AttInfo ye0020AttInfo) {
+		AttRestApp attRestApp = new AttRestApp();
+		attRestApp.setRestStartDate(ye0020AttInfo.getRestStartDate());
+		attRestApp.setRestPerId(ye0020AttInfo.getUserId());
+		if(AttConstants.LEAVE_AM.equals(ye0020AttInfo.getRestHalfDayType())){
+			attRestApp.setRestType(ye0020AttInfo.getRestType() + AttConstants.LEAVE_PM);
+		}else{
+			attRestApp.setRestType(ye0020AttInfo.getRestType() + AttConstants.LEAVE_AM);
+		}
+		if(ye0020Dao.getAttRestAppHalf(attRestApp) > 0){
+			return false;
+		}else{
+			return true;
+		}
+	}
+
+
+	@Override
+	public boolean repeatCheck(Ye0020AttInfo ye0020AttInfo) {
+		
+		AttRestApp attRestApp = new AttRestApp();
+		attRestApp.setRestStartDate(ye0020AttInfo.getRestStartDate());
+		attRestApp.setRestPerId(ye0020AttInfo.getUserId());
+		
+		if(RestDayType.HALF.value().equals(ye0020AttInfo.getRestDayType())){
+			attRestApp.setRestType(ye0020AttInfo.getRestType() + ye0020AttInfo.getRestHalfDayType());
+			if(ye0020Dao.getAttRestAppHalf(attRestApp) > 0){
+				return false;
+			}else{
+				return true;
+			}
+		}else{
+			if(null == ye0020AttInfo.getRestEndDate()){
+				attRestApp.setRestEndDate(ye0020AttInfo.getRestStartDate());
+			}else{
+				attRestApp.setRestEndDate(ye0020AttInfo.getRestEndDate());
+			}
+			if(ye0020Dao.getAttRestAppRepeat(attRestApp) > 0){
+				return false;
+			}else{
+				return true;
+			}
+		}
+	}
+}

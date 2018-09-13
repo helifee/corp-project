@@ -1,0 +1,126 @@
+/*
+ * @(#)PageArrangesInterceptor.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 共通系统
+ */
+
+package com.yds.common.interceptor;
+
+import java.lang.reflect.Method;
+import org.springframework.stereotype.Component;
+import com.opensymphony.xwork2.ActionInvocation;
+import com.opensymphony.xwork2.interceptor.AbstractInterceptor;
+import com.yds.base.action.PageLockInter;
+import com.yds.common.bean.CheckAndLockInfo;
+import com.yds.common.service.SessionConstants;
+import com.yds.common.service.CommonConstants;
+import com.yds.common.service.SessionService;
+import com.yds.common.service.PageArrangesService;
+
+/**
+ * 登录和权限检查拦截器
+ * 
+ * @author fengliang
+ * @version 1.00 2010/05/25
+ */
+@Component("pageArrangesInterceptor")
+public class PageArrangesInterceptor extends AbstractInterceptor{
+
+	private static final long serialVersionUID = 1509960709117790023L;
+	private PageArrangesService pageArrangesService;
+	private String proType; // 执行的代码段：initCheck:刚进入页面;updateCheck:在页面中进行的操作;autoCheck:定时检查是否被踢掉
+	private String lockId = "NotPageArrange";
+	private String pageName;
+	
+	/**
+	 * 检查是否需要页面排他
+	 * 
+	 * @param invocation
+	 *            invocation
+	 * @return invocation.invoke():向下执行；"userName":返回用户名称
+	 */
+	@Override
+    public String intercept(ActionInvocation invocation) throws Exception {
+				
+		// 保存返回字符串
+		String  strResult = CommonConstants.PAGElOCK_SUCCESS;
+		
+		Object action = invocation.getAction();
+		
+		// 只有实现了PageLockInter排他接口的action，才进行页面排他
+		if (action instanceof PageLockInter) {
+			
+			// 取得锁ID
+			lockId = ((PageLockInter)action).getLockId();
+			// 取得要执行的代码段：initCheck:刚进入页面;updateCheck:在页面中进行的操作;autoCheck:定时检查是否被踢掉
+			proType = ((PageLockInter)action).getProType();
+			// 排他页面的名称
+			pageName = ((PageLockInter)action).getPageName();
+			
+			// 如果用户没有或忘记指定lockId或者proType
+			if(lockId == null || proType == null){
+				return CommonConstants.PAGElOCK_ERROR;
+			}
+			
+			strResult = pageCheckAndLockInter(invocation);
+			
+			return strResult;
+		}
+				
+		return invocation.invoke();
+		
+	}
+	
+	private  String pageCheckAndLockInter(ActionInvocation invocation ) throws Exception{
+
+		// 取得session中的信息 
+		// checkAndLockInfoBefore：记录要踢掉的锁记录
+		CheckAndLockInfo checkAndLockInfoBefore = (CheckAndLockInfo)SessionService.get(SessionConstants.PAGELOCK);	
+		if(CommonConstants.PAGElOCK_INIT_CHECK.equals(proType) == true){
+			checkAndLockInfoBefore = null;
+			SessionService.set(SessionConstants.PAGELOCK, null);
+		}
+		String strMessage = pageArrangesService.updateArranges(lockId, proType, pageName, checkAndLockInfoBefore);
+		Object action = invocation.getAction();
+		
+		// 没有其他人正在登陆，或者当前用户每有被别人踢掉
+		if(CommonConstants.PAGElOCK_SUCCESS.equals(strMessage) == true){
+			// 如果当前请求是页面内的操作，而且check成功，则执行下面的代码段
+			if(CommonConstants.PAGElOCK_UPDATE_CHECK.equals(proType) == true){
+				// 执行请求action中的页面操作的方法
+				Method methodActionUpdate = action.getClass().getMethod(invocation.getProxy().getMethod(),new Class[0]);
+				return (String)methodActionUpdate.invoke(action);
+			}else{
+				// 如果当前请求定时检查排他表的操作，而且check成功，则执行下面的代码段
+				if(CommonConstants.PAGElOCK_AUTO_CHECK.equals(proType) == true){				
+					return CommonConstants.PAGElOCK_SUCCESS;
+				}else{
+					 // 当前操作时初次进入页面，check成功，进入要执行的action
+					 return invocation.invoke();		
+				}
+			}
+			
+		   		
+		}else{
+			// session超时
+			if(CommonConstants.PAGElOCK_ERROR.equals(strMessage) == true){
+				return CommonConstants.PAGElOCK_ERROR;
+			}
+		    if(checkAndLockInfoBefore == null){ // 有其他人正在登陆，则返回正在登陆的用户名称  	
+				String pLUserName = strMessage;			
+				Method method = action.getClass().getMethod("setPageLockUserName",new Class[]{String.class});
+				method.invoke(action, pLUserName);
+				return CommonConstants.PAGElOCK_USERNAME;	
+		    }else{ // 有其他人登陆，而且，当前已经登陆用户不是原来计划要踢掉的用户，则调用pageCheckAndLockInter()方法，重新检测
+		    	return pageCheckAndLockInter(invocation);
+		    }    
+		}
+	}
+	
+	public void setPageArrangesService(PageArrangesService pageArrangesService) {
+		this.pageArrangesService = pageArrangesService;
+	}
+		
+}

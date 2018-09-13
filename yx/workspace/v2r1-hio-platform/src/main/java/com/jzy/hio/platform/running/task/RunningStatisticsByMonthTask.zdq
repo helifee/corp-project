@@ -1,0 +1,116 @@
+/**
+ * 
+ */
+package com.jzy.hio.platform.running.task;
+
+import java.text.SimpleDateFormat;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.List;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+
+import com.jzy.hio.entity.RunningMonthStatistics;
+import com.jzy.hio.entity.TenantCompanyInfo;
+import com.jzy.hio.entity.TendUserInfo;
+import com.jzy.hio.platform.running.service.RunningMonthStatisticsService;
+import com.jzy.hio.platform.running.service.RunningPraiseService;
+import com.jzy.hio.platform.running.service.RunningStatisticsService;
+import com.jzy.hio.platform.tenantcompanyinfo.service.TenantCompanyInfoService;
+import com.jzy.hio.platform.tenduser.service.TendUserInfoService;
+import com.jzy.hio.redis.RedisService;
+
+/**
+ * 运动按月自动统计任务
+ * @author 马长习
+ * @date 2017年11月1日
+ */
+@Component("runningStatisticsByMonthTask")
+public class RunningStatisticsByMonthTask {
+	
+	private Logger logger = LoggerFactory.getLogger(RunningStatisticsByMonthTask.class);
+	
+	@Autowired
+	private RunningStatisticsService runningStatisticsService;
+	
+	@Autowired
+	private RunningMonthStatisticsService runningMonthStatisticsService;
+	
+	@Autowired
+	private RunningPraiseService runningPraiseService;
+	
+	@Autowired
+	private TenantCompanyInfoService tenantCompanyInfoService;
+	
+	@Autowired
+	private TendUserInfoService tendUserInfoService;
+	
+	@Autowired
+    private RedisService redisService;
+	
+	private static final String redis_key = "runningMonthTask";
+	
+	// 每月第一天1点0分执行
+	@Scheduled(cron = "0 0 1 1 * ?")
+	public void statisticsRunningByDay()throws Exception{
+		logger.info("运动按月统计定时任务开始===============");
+		//在分布式环境下，防止重发查询发消息
+		if(redisService.addRedisSetnx(redis_key,redis_key)) {
+			Date date = new Date();//获取当前时间    
+			Calendar calendar = Calendar.getInstance();    
+			calendar.setTime(date);    
+			calendar.add(Calendar.MONTH, -1);//当前时间前去一个月，即一个月前的时间    
+			
+			SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+			String runDate = sdf.format(calendar.getTime());
+			String runMonth = runDate.substring(0, 7);
+			
+			calendar.add(Calendar.MONTH, -5);//当前时间前去5个月，即6个月前的时间
+			String delDate = sdf.format(calendar.getTime());
+			String delMonth = delDate.substring(0, 7);
+			// 获取到所有企业
+			List<TenantCompanyInfo> enterpriseList = tenantCompanyInfoService.findAllTenantCompany();
+			if(enterpriseList != null && enterpriseList.size() > 0){
+				// 遍历企业，把所有企业下人员的运动数据存储到运动月表中
+				for(TenantCompanyInfo enterprise : enterpriseList){
+					List<TendUserInfo> userList = tendUserInfoService.queryTendUserInfosByTendId(enterprise.getTendId());
+					if(userList != null && userList.size() > 0){
+						for(TendUserInfo user : userList){
+							Integer steps = runningStatisticsService.findRunStepsByMonth(enterprise.getId(), user.getUid(), runMonth);
+							Integer praiseCount = runningStatisticsService.findPraiseCountByMonth(enterprise.getId(), user.getUid(), runMonth);
+							Integer kilometre = runningStatisticsService.findRunKilometreByMonth(enterprise.getId(), user.getUid(), runMonth);
+							if(steps == null){
+								steps = 0;
+							}
+							if(praiseCount == null){
+								praiseCount = 0;
+							}
+							if(kilometre == null){
+								kilometre = 0;
+							}
+							RunningMonthStatistics rs = new RunningMonthStatistics();
+							rs.setUid(user.getUid());
+							rs.setEnterpriseId(enterprise.getId());
+							rs.setRunMonth(runMonth);
+							rs.setPraiseCount(praiseCount);
+							rs.setRunKilometre(kilometre);
+							rs.setRunSteps(steps);
+							runningMonthStatisticsService.saveRunStatisticsByMonth(rs);
+						}
+					}
+				}
+			}
+			// 删除已经过期的运动记录（六个月前的）
+			runningStatisticsService.deleteRunSteps(delMonth);
+			// 删除已经过期的点赞（六个月前的）
+			runningPraiseService.deleteExpiredPraise(runMonth);
+		}
+		// 释放分布式锁
+		redisService.releaseRedisSetnx(redis_key);
+		logger.info("运动按月统计定时任务结束===============");
+	}
+}

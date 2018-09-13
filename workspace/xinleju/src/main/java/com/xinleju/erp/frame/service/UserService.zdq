@@ -1,0 +1,333 @@
+package com.xinleju.erp.frame.service;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.commons.lang3.StringUtils;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.erp.base.app.bean.Page;
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.app.service.ICommonService;
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.base.utils.StringHelper;
+import com.xinleju.erp.flow.service.api.ApiConstant;
+import com.xinleju.erp.flow.service.api.extend.BaseAPI;
+import com.xinleju.erp.flow.service.api.extend.dto.CompanyDTO;
+import com.xinleju.erp.flow.service.api.extend.dto.DeptDTO;
+import com.xinleju.erp.flow.service.api.extend.dto.ScopeDTO;
+import com.xinleju.erp.flow.service.api.extend.dto.UserDTO;
+import com.xinleju.erp.flow.service.api.utils.CompanyUtils;
+import com.xinleju.erp.flow.service.api.utils.ScopeUtils;
+import com.xinleju.erp.flow.service.api.utils.UserUtils;
+import com.xinleju.erp.frame.dao.BizDataRoleDao;
+import com.xinleju.erp.frame.dao.CompanyDao;
+import com.xinleju.erp.frame.dao.PartyEntityDao;
+import com.xinleju.erp.frame.dao.PartyStructDao;
+import com.xinleju.erp.frame.dao.UserDao;
+import com.xinleju.erp.frame.models.Company;
+import com.xinleju.erp.frame.models.PartyEntity;
+import com.xinleju.erp.frame.models.PartyStruct;
+import com.xinleju.erp.frame.models.PartyType;
+import com.xinleju.erp.frame.models.User;
+import com.xinleju.erp.frame.models.UserRepo;
+
+import com.xinleju.erp.flow.flowutils.bean.FlowResult;
+import com.xinleju.erp.flow.flowutils.bean.PageBean;
+
+@Service
+@Transactional
+public class UserService extends BaseService{
+
+	@Autowired
+	private UserDao userDao;
+	@Autowired
+	private PartyStructDao partyStructDao;
+	@Autowired
+	private PartyEntityDao partyEntityDao;
+	@Autowired
+	private RoleService roleService;
+	@Autowired
+	private PartyEntityService partyEntityService;
+	@Autowired
+	private PartyStructService partyStructService;
+
+	@Value("#{appProperties['auth_user_num']}")
+	private Long userNum;
+	
+	public Boolean haveUserAuth(){
+		Long cu =  App.getBean(ICommonService.class,"commonService").findLong("select count(id) from User u where u.status = 0");
+		return cu > userNum ? false : true;
+	}
+	
+	/**
+	 * @return
+	 */
+	public Page getDeptUsersByloginName(String loginName, int start, int limit) {
+		List<DeptDTO> deptList = App.getBean(BaseAPI.class,ApiConstant.BEAN_CODE).getUserDepts(loginName).getResult();
+		List<Long> idList = new ArrayList<Long>();
+		for (DeptDTO d : deptList) {
+			idList.add(d.getId());
+		}
+		PartyType dpartyType = getDao().findFirstByHQL(PartyType.class, "from PartyType p where p.type=?", "department");
+
+		PartyType udartyType = getDao().findFirstByHQL(PartyType.class, "from PartyType p where p.type=?", "user");
+
+		//根据dept找出pe
+		List<PartyEntity> partyEntities = new ArrayList<PartyEntity>();
+		if(idList.size()>0){
+			partyEntities = getDao().findByHQL(PartyEntity.class, "from PartyEntity p where p.refId in (" + StringHelper.join(idList, ",") +")" + " and p.partyTypeId=?",	dpartyType.getId());
+		}
+				
+		List<String> parentPrefixList=new ArrayList<String>();
+		
+		for(PartyEntity pe:partyEntities){
+			parentPrefixList.add(pe.getPrefix());
+		}
+		//父节点下所有子节点
+		List<PartyEntity> peChildList=new ArrayList<PartyEntity>();
+		
+		for(String prefix:parentPrefixList){
+			List<PartyEntity> peList = getDao().findByHQL(PartyEntity.class, "from PartyEntity p where p.prefix like ?",prefix+"%");
+			peChildList.addAll(peList);
+		}
+		
+		//子peId
+		List<Long> peIdList=new ArrayList<Long>();
+		for(PartyEntity pe:peChildList){
+			peIdList.add(pe.getId());
+		}
+		
+		//真正符合条件的pe
+		List<PartyEntity> partyEntityList =new ArrayList<PartyEntity>();
+		if(peIdList.size()>0){
+			partyEntityList = getDao().findByHQL(PartyEntity.class,
+					"from PartyEntity p where p.id in(" + StringHelper.join(peIdList, ",") + ")" + " and p.partyTypeId=?",udartyType.getId());
+		}
+		
+		List<Long> userIdList=new ArrayList<Long>();
+		for(PartyEntity pe:partyEntityList){
+			userIdList.add(pe.getRefId());
+		}
+		
+		DetachedCriteria dc = DetachedCriteria.forClass(User.class);
+		if(userIdList.size()>0){
+			dc.add(Restrictions.in("id", userIdList));
+		}else{
+			dc.add(Restrictions.in("id", new Object[]{-1L}));
+		}
+		
+		Page userpage = getDao().findPage(dc, start, limit);
+		return userpage;
+	}
+	
+	/**
+	 * 维护用户的prefix
+	 * @author jdq
+	 * @param userId
+	 * @param prefix
+	 */
+	public void maintUserPrefix(Long userId,String prefix){
+
+		User user = getDao().getById(User.class, userId);
+		String f = "";
+		if(StringUtils.isNotBlank(user.getPrefix())){
+			f = user.getPrefix()+";";
+		}
+		user.setPrefix(f+prefix);
+		getDao().saveOrUpdate(user);
+	}
+
+
+	/**
+	 * 得到用户主岗的全名   
+	 * @author jdq
+	 * @param user
+	 * @return
+	 */
+	public String getUserMainRoleFullName(User user){
+		String result = "";
+		if(user.getMainRoleId()!=null&&user.getMainRoleId()!=0){
+			PartyEntity pe = partyEntityService.findEntityByRefId(user.getMainRoleId(), PartyType.TYPE_ROLE);
+			if (null != pe){
+			    result = partyEntityService.prefix2fullname(pe.getPrefix());
+			}
+		}
+		return result;
+	}
+	/**
+	 * 通过明源系统角色id   查找role
+	 * @author jdq
+	 * @param unitId
+	 * @return
+	 */
+	public User getUserByUnitId(String unitId){
+		return getDao().findFirstByHQL(User.class, "select r from User r where r.myUnitId = ?", unitId);
+	}
+
+	public List<User> findUserListByIds(List<Long> userIds,String name){
+		DetachedCriteria c = DetachedCriteria.forClass(User.class);
+		if(StringUtils.isNotBlank(name)){
+			c.add(Restrictions.like("realName", "%"+name+"%"));
+		}
+		c.add(Restrictions.in("id", userIds));
+		List<User> userList = getDao().findByCriteria(c);
+		return userList;
+	}
+
+	public User getById(Long id){
+		return getDao().getById(User.class, id);
+	}
+
+	public void processUserRepo(Long userId,String[] repoIds){
+		for(String repoId:repoIds){
+			Long userRepoId = getDao().findLong("select ur.id from UserRepo ur left join ur.user u left join ur.repo r where u.id = ? and r.id = ?", userId, Long.valueOf(repoId));
+			if(userRepoId==null || userRepoId==0){
+				UserRepo userRepo = new UserRepo();
+				userRepo.setUserId(userId);
+				userRepo.setRepoId(Long.valueOf(repoId));
+				getDao().saveOrUpdate(userRepo);
+			}
+		}
+
+	}
+
+	public void changeStatus(Long userId,Integer status) {
+		getDao().execute("update User set status = ? where id= ?", status, userId);
+	}
+	
+
+	public void changePrefix(Long userId,String perfix) {
+		getDao().execute("update User set prefix = ? where id= ?", perfix, userId);
+	}
+
+
+	public void save(User user,Long parentEntityId,Long partyStructTypeId){
+
+		boolean isNew = false;
+		if(user.getId()==null||user.getId()==0){
+			isNew = true;
+		}
+		Long psid=0L;
+		
+		if(isNew==false){
+			Long oldMainRoleId = 0L;
+			if(user.getId()!=null && user.getId()!=0){
+				oldMainRoleId = getDao().findLong("select mainRoleId from User where id = ?", user.getId());
+			}
+			
+			if( user.getMainRoleId()!=null && user.getMainRoleId()!=0 && (oldMainRoleId==null || oldMainRoleId==0 || !oldMainRoleId.equals(user.getMainRoleId()) )){
+				if(oldMainRoleId!=null && oldMainRoleId!=0){
+					// 删除老的组织架构关系
+					PartyEntity oldMainRolePe = partyEntityService.findEntityByRefId(oldMainRoleId, PartyType.TYPE_ROLE);
+					if(oldMainRolePe!=null){
+						//System.out.println(oldMainRolePe.getId() +"==="+user.getId());
+						PartyStruct oldPartyStruct = partyStructDao.getStructByChildRefId(oldMainRolePe.getId() ,user.getId());
+						if(oldPartyStruct!=null)
+							psid=oldPartyStruct.getId();
+					}
+				}
+				//解除用户直接与总部、公司、部门、团队之间的关系
+				partyEntityService.deleteEntityByRefId(user.getId());
+			} 
+		}
+			
+		
+		// 删除用户与老的主岗关系
+		String newprefix = partyStructService.processOldMainRoleStruct(user);
+		if(StringUtils.isNotBlank(newprefix)){
+			user.setPrefix(newprefix);
+		}
+		//user.setPrefix(null);
+		getDao().saveOrUpdate(user);
+		if(isNew==true){
+			// 维护和组织架构关系
+			if (user.getMainRoleId() == null) {
+				partyStructService.processUserPartyStruct(user, parentEntityId, partyStructTypeId);
+			}
+		} else {
+			partyStructService.updateUserPartyStruct(user, parentEntityId, partyStructTypeId);
+			
+		}
+		// 维护和主岗关系
+		partyStructService.processUserAndMainRole(user,partyStructTypeId);
+		
+		if(true){
+			User u = getDao().getById(User.class, user.getId());
+			String newPre="";
+			String newPre2="";
+			if(u!=null&&u.getPrefix()!=null){
+				String[] pres=u.getPrefix().split(";");
+				if(pres!=null&&pres.length>0){
+					//去掉重复的老prefix
+					//错误逻辑 zx
+//					for(String str:pres){
+//						//System.out.println("str====="+str);
+//						//System.out.println("-"+psid+"-");
+//						if(!str.contains("-"+psid+"-")){
+//							if("".equals(newPre)){
+//								newPre=str;
+//							}else{
+//								newPre=newPre+";"+str;
+//							}
+//						}
+//					}
+					//去重复的
+					String[] pres2=pres;
+					Map<String,String> tempMap = new HashMap<String,String>();
+					if(pres2!=null&&pres2.length>2){
+						for(String str:pres2){
+							tempMap.put(str,str);
+						}
+
+						for (String key : tempMap.keySet()) {
+							if("".equals(newPre2)){
+								newPre2=key;
+							}else{
+								newPre2=newPre2+";"+key;
+							}
+						}
+					}else{
+						newPre2=newPre;
+					}
+
+					changePrefix(user.getId(),newPre2);
+				}
+			}
+		}
+	}
+	
+	public FlowResult<PageBean<UserDTO>> getUserList(Long orgnId, String name,
+			Integer start, Integer limit, Boolean includeAllSubOrgns,
+			Map<String, Object> extParm) {
+		FlowResult<PageBean<UserDTO>> result = new FlowResult<PageBean<UserDTO>>();
+		Page page = userDao.findUserByOrgnId(orgnId, name, start, limit, includeAllSubOrgns);
+		List<UserDTO> dtos = UserUtils.buildUserDtoList(page.getItems());
+		result.setResult(new PageBean<UserDTO>(start, limit, page.getTotal(), dtos));
+		return result;
+	}
+	
+	/**
+	 * 得到用户所在部门
+	 * 
+	 * @param loginName
+	 * @return
+	 */
+	public PartyEntity getUserDept(String loginName) {
+		PartyEntity pe = null;
+		if (loginName != null && !"".equals(loginName)) {
+			pe = partyEntityService.findEntityByLoginName(loginName);
+		}
+		return pe;
+	}	
+}

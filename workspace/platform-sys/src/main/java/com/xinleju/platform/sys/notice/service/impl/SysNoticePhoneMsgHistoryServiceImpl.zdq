@@ -1,0 +1,26 @@
+package com.xinleju.platform.sys.notice.service.impl;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.sys.notice.dao.SysNoticePhoneMsgHistoryDao;
+import com.xinleju.platform.sys.notice.entity.SysNoticePhoneMsgHistory;
+import com.xinleju.platform.sys.notice.service.SysNoticePhoneMsgHistoryService;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class SysNoticePhoneMsgHistoryServiceImpl extends  BaseServiceImpl<String,SysNoticePhoneMsgHistory> implements SysNoticePhoneMsgHistoryService{
+	
+
+	@Autowired
+	private SysNoticePhoneMsgHistoryDao sysNoticePhoneMsgHistoryDao;
+	
+
+}

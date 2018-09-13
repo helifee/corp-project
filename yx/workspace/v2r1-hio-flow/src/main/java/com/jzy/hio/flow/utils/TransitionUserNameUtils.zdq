@@ -1,0 +1,422 @@
+package com.jzy.hio.flow.utils;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.flow.entity.FlowInstanceApprovalRecord;
+import com.jzy.hio.flow.entity.dto.ApprovalDto;
+import com.jzy.hio.flow.entity.dto.InstanceAcRecordDto;
+import com.jzy.hio.flow.entity.dto.InstanceApproverRecordDto;
+import com.jzy.hio.flow.entity.dto.InstanceDetailsDto;
+import com.jzy.hio.flow.entity.enums.FlowStateEnum;
+import com.jzy.hio.flow.entity.enums.InstanceApproverState;
+import com.jzy.hio.flow.mapper.FlowInstanceApprovalRecordDao;
+import com.jzy.hio.flow.service.impl.FlowInstanceServiceImpl;
+import com.jzy.hio.platform.dto.userinfo.ImUserInfoDto;
+import com.jzy.hio.platform.redis.PlatformRedis;
+import com.jzy.hio.sys.organization.dto.FlowPositionDto;
+import com.jzy.hio.sys.organization.dto.FlowUserDto;
+import com.jzy.hio.sys.organization.param.SkyDriveParam;
+import com.jzy.hio.sys.user.dto.OAUserDto;
+import com.jzy.hio.sys.user.param.OAUserParam;
+import com.jzy.hio.utils.JacksonUtils;
+
+@Component
+public class TransitionUserNameUtils {
+
+	@Autowired
+	private SysFeignService sysFeignService;
+
+	@Autowired
+	private FlowInstanceApprovalRecordDao flowInstanceApprovalRecordDao;
+
+	@Autowired
+	private PlatformRedis platformRedis;
+
+	private Logger logger = LoggerFactory.getLogger(FlowInstanceServiceImpl.class);
+
+	public List<ApprovalDto> getList(List<ApprovalDto> list, String tendId) {
+
+		for (ApprovalDto approvalDto : list) {
+			if (approvalDto.getState() != FlowStateEnum.RUN.getState()) {
+				approvalDto.setApprovalPerson(null);
+			}
+		}
+
+		List<String> createPersonIds = list.stream().map(ApprovalDto::getCreatePerson).collect(Collectors.toList());
+		List<String> approvalPersonIds = list.stream()
+				.filter(approvalDto -> StringUtils.isNotBlank(approvalDto.getApprovalPerson()))
+				.map(ApprovalDto::getApprovalPerson).collect(Collectors.toList());
+		approvalPersonIds.addAll(createPersonIds);
+		// 加入内外部联系人名称
+		updateIdsTransitionNames(approvalPersonIds, list, tendId);
+
+		return list;
+	}
+
+	public void updateIdsTransitionNames(List<String> userIds, List<ApprovalDto> list, String tendId) {
+
+		SkyDriveParam skyDriveParam = new SkyDriveParam();
+		skyDriveParam.setUserIds(userIds);
+		skyDriveParam.setTendId(tendId);
+		skyDriveParam.setStatus(BaseConstants.ALL_USER);
+		ApiFeignResponse<List<FlowUserDto>> usersInfoResult = sysFeignService.queryPositionNameByUserIds(skyDriveParam);
+		int status = usersInfoResult.getStatus();
+		if (status == 200) {
+			List<FlowUserDto> userInfoList = usersInfoResult.getResult();
+			for (ApprovalDto approvalDto : list) {
+				int count = 0;
+				for (FlowUserDto flowUserDto : userInfoList) {
+					String createPerson = approvalDto.getCreatePerson();
+					if (createPerson.equals(flowUserDto.getUserId())) {
+						approvalDto.setCreatePersonName(flowUserDto.getUserName());
+						count += 1;
+						if (approvalDto.getState() == FlowStateEnum.DRAFT.getState()) {
+							break;
+						}
+					}
+					if (StringUtils.isNoneBlank(approvalDto.getApprovalPerson())
+							&& approvalDto.getApprovalPerson().equals(flowUserDto.getUserId())) {
+						approvalDto.setApprovalPersonName(flowUserDto.getUserName());
+						count += 1;
+					}
+					if (count == 2) {
+						break;
+					}
+
+				}
+			}
+		}
+	}
+
+	/**
+	 * 给集合插入id对应的名称
+	 * 
+	 * @param list
+	 * @param tendId
+	 */
+	public void updateIdsTransitionNames(List<InstanceAcRecordDto> list, String tendId,
+			InstanceDetailsDto instanceDetailsDto) {
+
+		List<String> ids = new ArrayList<>();
+		String createPersonId = instanceDetailsDto.getCreatePersonId();
+		ids.add(createPersonId);
+		if (CollectionUtils.isNotEmpty(list)) {
+			for (InstanceAcRecordDto instanceAcRecordDto : list) {
+				List<InstanceApproverRecordDto> approverList = instanceAcRecordDto.getApproverList();
+				Set<String> approverUserIds = approverList.stream().map(InstanceApproverRecordDto::getApprovalUser)
+						.collect(Collectors.toSet());
+				ids.addAll(approverUserIds);
+				Set<String> adminIds = approverList.stream()
+						.filter(approver -> StringUtils.isNotBlank(approver.getAdminId()))
+						.map(InstanceApproverRecordDto::getAdminId).collect(Collectors.toSet());
+				approverUserIds.addAll(adminIds);
+				ids.addAll(adminIds);
+			}
+		}
+		SkyDriveParam skyDriveParam = new SkyDriveParam();
+		skyDriveParam.setUserIds(ids);
+		skyDriveParam.setTendId(tendId);
+		skyDriveParam.setStatus(BaseConstants.ALL_USER);
+		ApiFeignResponse<List<FlowUserDto>> result = sysFeignService.queryPositionNameByUserIds(skyDriveParam);
+		int status = result.getStatus();
+		if (status == 200) {
+			logger.info("审批详情查询 调用feign接口 成功,开始循环匹配");
+			List<FlowUserDto> users = result.getResult();
+			if (CollectionUtils.isNotEmpty(list)) {
+				list.forEach(instanceAcRecordDto -> {
+					instanceAcRecordDto.getApproverList().forEach(approverInfo -> {
+						users.forEach(flowUserDto -> {
+							String approvalUser = approverInfo.getApprovalUser();
+							String imUserId = flowUserDto.getImUserId();
+
+							ImUserInfoDto imUser = platformRedis.getImUser(imUserId);
+							Integer sex = imUser.getSex();
+							String resourceImgUrl = imUser.getResourceImgUrl();
+
+							if (approvalUser.equals(flowUserDto.getUserId())) {
+								boolean userExist = userExist(flowUserDto);
+								approverInfo.setUserExist(userExist);
+								approverInfo.setApprovalUserName(flowUserDto.getUserName());
+								approverInfo.setSex(sex);
+								approverInfo.setApprovalUserPhoto(resourceImgUrl);
+								List<FlowPositionDto> positions = flowUserDto.getPositions();
+								String positionName = positions.stream().filter(postionInfo -> postionInfo.isDefault())
+										.map(FlowPositionDto::getPositionName).collect(Collectors.toList()).get(0);
+
+								if (StringUtils.isNotEmpty(positionName)) {
+									approverInfo.setPostName(positionName);
+								}
+
+								approverInfo.setExternal(
+										flowUserDto.getUserType() == BaseConstants.MYSQL_USER_TYPE_EXTERNAL ? true
+												: false);
+								approverInfo.setImUserId(imUserId);
+							}
+							if (createPersonId.equals(flowUserDto.getUserId())) {
+								instanceDetailsDto.setCreatePersonName(flowUserDto.getUserName());
+								List<FlowPositionDto> positions = flowUserDto.getPositions();
+								List<String> depts = positions.stream().filter(position -> position.isDefault())
+										.map(FlowPositionDto::getOrganizationName).collect(Collectors.toList());
+								List<String> positionNames = positions.stream().filter(position -> position.isDefault())
+										.map(FlowPositionDto::getPositionName).collect(Collectors.toList());
+								boolean userExist = userExist(flowUserDto);
+
+								instanceDetailsDto.setUserExist(userExist);
+								instanceDetailsDto.setCreatePersonSex(sex);
+								instanceDetailsDto.setCreatePersonImId(imUserId);
+								instanceDetailsDto.setUserPhoto(resourceImgUrl);
+								if (CollectionUtils.isNotEmpty(depts)) {
+									instanceDetailsDto.setDept(depts.get(0));
+								}
+								if (CollectionUtils.isNotEmpty(positionNames)) {
+
+									instanceDetailsDto.setUserPosition(positionNames.get(0));
+								}
+							}
+							String adminId = approverInfo.getAdminId();
+							if (StringUtils.isNoneBlank(adminId) && adminId.equals(flowUserDto.getUserId())) {
+								approverInfo.setAdminId(flowUserDto.getUserName());
+								approverInfo.setImUserId(flowUserDto.getImUserId());
+							}
+							String acCreatePerson = instanceAcRecordDto.getAcCreatePerson();
+							if (StringUtils.isNotEmpty(acCreatePerson)
+									&& acCreatePerson.equals(flowUserDto.getUserId())) {
+								instanceAcRecordDto.setAcCreatePerson(flowUserDto.getUserName());
+							}
+
+						});
+
+					});
+				});
+			} else {
+				users.forEach(flowUserDto -> {
+					if (createPersonId.equals(flowUserDto.getUserId())) {
+
+						String imUserId = flowUserDto.getImUserId();
+						ImUserInfoDto imUser = platformRedis.getImUser(imUserId);
+						Integer sex = imUser.getSex();
+						String resourceImgUrl = imUser.getResourceImgUrl();
+						instanceDetailsDto.setCreatePersonName(flowUserDto.getUserName());
+						instanceDetailsDto.setCreatePersonSex(sex);
+						instanceDetailsDto.setUserPhoto(resourceImgUrl);
+						boolean userExist = userExist(flowUserDto);
+						instanceDetailsDto.setUserExist(userExist);
+						List<FlowPositionDto> positions = flowUserDto.getPositions();
+						List<String> depts = positions.stream().filter(position -> position.isDefault())
+								.map(FlowPositionDto::getOrganizationName).collect(Collectors.toList());
+						List<String> positionNames = positions.stream().filter(position -> position.isDefault())
+								.map(FlowPositionDto::getPositionName).collect(Collectors.toList());
+						if (CollectionUtils.isNotEmpty(depts)) {
+							instanceDetailsDto.setDept(depts.get(0));
+						}
+						if (CollectionUtils.isNotEmpty(positionNames)) {
+
+							instanceDetailsDto.setUserPosition(positionNames.get(0));
+						}
+					}
+				});
+			}
+		} else {
+			logger.error("审批详情查询 调用feign接口 失败");
+		}
+
+	}
+
+	private boolean userExist(FlowUserDto flowUserDto) {
+		boolean userExist = true;
+
+		Integer delflag = flowUserDto.getDelflag();
+		if (BaseConstants.MYSQL_DELFLAG_NORMAL == delflag) {
+			String workStatus = flowUserDto.getWorkStatus();
+			userExist = false;
+			if (flowUserDto.getUserType() == BaseConstants.MYSQL_USER_TYPE_COMMON
+					&& workStatus.equals(BaseConstants.UserWorkStatus.LEAVE.getWorkStatus())) {
+				userExist = true;
+			}
+		}
+		return userExist;
+	}
+
+	/**
+	 * 查询人员名称和部门名称
+	 * 
+	 * @param
+	 * @param tendId
+	 */
+	public Map<String, FlowUserDto> idsTransitionName(List<String> ids, String tendId) {
+
+		Map<String, FlowUserDto> map = new HashMap<>(10);
+		if (CollectionUtils.isNotEmpty(ids)) {
+			SkyDriveParam skyDriveParam = new SkyDriveParam();
+			skyDriveParam.setUserIds(ids);
+			skyDriveParam.setTendId(tendId);
+			ApiFeignResponse<List<FlowUserDto>> result = sysFeignService.queryPositionNameByUserIds(skyDriveParam);
+			if (result.getStatus() == 200) {
+				logger.info("审批相关列表查询 调用feign接口 成功");
+				List<FlowUserDto> users = result.getResult();
+				for (FlowUserDto flowUserDto : users) {
+					for (String userId : ids) {
+						if (userId.equals(flowUserDto.getUserId())) {
+							map.put(userId, flowUserDto);
+							break;
+						}
+					}
+				}
+				return map;
+			}
+			logger.error("流程预览 调用feign接口 失败");
+			throw new HioException(FlowConstants.FLOW_INVOKING_SERVICE_FAILURE_BY_SYS.getMessage(),
+					FlowConstants.FLOW_INVOKING_SERVICE_FAILURE_BY_SYS.getStatus());
+		}
+		return map;
+	}
+
+	/**
+	 * 查询人员名称和部门名称(新加 UserId 查询内部外部联系人)(**新加**)
+	 *
+	 * @param
+	 * @param tendId
+	 */
+	public Map<String, FlowUserDto> getIdsTransitionName(List<String> userIds, String tendId) {
+
+		SkyDriveParam skyDriveParamApprover = new SkyDriveParam();
+		skyDriveParamApprover.setUserIds(userIds);
+		skyDriveParamApprover.setTendId(tendId);
+		skyDriveParamApprover.setStatus(3);
+
+		ApiFeignResponse<List<FlowUserDto>> approverResult = sysFeignService
+				.queryPositionNameByUserIds(skyDriveParamApprover);
+
+		if (approverResult.getStatus() == 500) {
+			logger.error("调用Feign接口失败");
+			throw new HioException("查询失败！");
+		} else {
+			logger.info("调用Feign接口返回" + JacksonUtils.toJson(approverResult));
+		}
+		Map<String, FlowUserDto> userMap = new HashMap<>(10);
+		approverResult.getResult().forEach(flowUserDto -> {
+			userMap.put(flowUserDto.getUserId(), flowUserDto);
+		});
+		return userMap;
+	}
+
+	public void queryUserNameInfoByIds(List<String> copyUserIds, String tendId, InstanceDetailsDto instanceDetailsDto) {
+		if (CollectionUtils.isNotEmpty(copyUserIds)) {
+			OAUserParam oaUserParam = new OAUserParam();
+			oaUserParam.setUserIds(copyUserIds);
+			oaUserParam.setTendId(tendId);
+			ApiFeignResponse<List<OAUserDto>> result = sysFeignService.queryUserByOrgAndRoleAndUser(oaUserParam);
+			int status = result.getStatus();
+			if (status == 200) {
+				logger.info("审批详情查询 抄送人 名称信息  调用feign接口 成功");
+				instanceDetailsDto.setCopyUserInfoList(result.getResult());
+			} else {
+				logger.error("审批详情查询 抄送人 名称信息  调用feign接口 失败");
+				instanceDetailsDto.setCopyUserInfoList(null);
+			}
+		}
+
+	}
+
+	public void arrivalTimeCalculation(List<ApprovalDto> list) {
+		long endDateTime = new Date().getTime();
+		list.forEach(approvalDto -> {
+			Date createDate = approvalDto.getCreateDate();
+			if (createDate != null) {
+				String datePoor = getDatePoor(createDate.getTime(), endDateTime);
+				approvalDto.setDatePoor(datePoor);
+			}
+		});
+	}
+
+	public void extractApprover(List<ApprovalDto> list) {
+		List<String> instanceList = list.stream()
+				.filter(approver -> approver.getState() == FlowStateEnum.RUN.getState()).map(ApprovalDto::getId)
+				.collect(Collectors.toList());
+		
+		if (CollectionUtils.isNotEmpty(instanceList)) {
+			List<FlowInstanceApprovalRecord> approverList = flowInstanceApprovalRecordDao
+					.queryListByInstanceIds(instanceList);
+			if (CollectionUtils.isNotEmpty(approverList)) {
+
+				Map<String, List<FlowInstanceApprovalRecord>> approverMap = approverList.stream()
+						.filter(approver -> approver.getState() == InstanceApproverState.NO_APPROVAL.getState())
+						.collect(Collectors.groupingBy(FlowInstanceApprovalRecord::getFlowInstanceId));
+
+				if (approverMap.size() > 0 && approverMap != null) {
+					list.forEach(item -> {
+						if (item.getState() == FlowStateEnum.RUN.getState()) {
+
+							List<FlowInstanceApprovalRecord> recordList = approverMap.get(item.getId());
+							if (CollectionUtils.isNotEmpty(recordList)) {
+
+								List<FlowInstanceApprovalRecord> noApprovalList = recordList.stream()
+										.filter(approverRecord -> approverRecord
+												.getState() == InstanceApproverState.NO_APPROVAL.getState())
+										.collect(Collectors.toList());
+
+								if (CollectionUtils.isNotEmpty(noApprovalList)) {
+
+									String approvalUser = noApprovalList.get(0).getApprovalUser();
+									item.setApprovalPerson(approvalUser);
+								} else {
+									Collections.sort(recordList,
+											(o1, o2) -> (o2.getApprovalTime().compareTo(o1.getApprovalTime())));
+									FlowInstanceApprovalRecord flowInstanceApprovalRecord = recordList.get(0);
+									item.setApprovalPerson(flowInstanceApprovalRecord.getApprovalUser());
+								}
+							}
+						}
+
+					});
+				}
+			}
+		}
+	}
+
+	public String getDatePoor(long startDate, long endDateTime) {
+
+		long nd = 1000 * 24 * 60 * 60;
+		long nh = 1000 * 60 * 60;
+		long nm = 1000 * 60;
+		// long ns = 1000;
+		// 获得两个时间的毫秒时间差异
+		long diff = endDateTime - startDate;
+		// 计算差多少天
+		long day = diff / nd;
+		// 计算差多少小时
+		long hour = diff % nd / nh;
+		// 计算差多少分钟
+		long min = diff % nd % nh / nm;
+		// 计算差多少秒//输出结果
+		// long sec = diff % nd % nh % nm / ns;
+
+		if (day != 0) {
+
+			return day + "天" + hour + "小时" + min + "分钟";
+		} else if (day == 0 && hour != 0) {
+			return hour + "小时" + min + "分钟";
+		} else {
+			return min + "分钟";
+		}
+	}
+
+}

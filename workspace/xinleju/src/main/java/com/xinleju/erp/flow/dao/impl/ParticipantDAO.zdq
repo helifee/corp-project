@@ -1,0 +1,465 @@
+package com.xinleju.erp.flow.dao.impl;
+
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.erp.base.utils.CollectionUtils;
+import com.xinleju.erp.base.utils.StringHelper;
+import com.xinleju.erp.flow.bean.IdName;
+import com.xinleju.erp.flow.config.XmlConfig;
+import com.xinleju.erp.flow.flowutils.bean.GvBean;
+import com.xinleju.erp.flow.flowutils.bean.Gvs;
+import com.xinleju.erp.flow.frameapi.domain.Role;
+import com.xinleju.erp.flow.frameapi.domain.User;
+import com.xinleju.erp.flow.models.Ac;
+import com.xinleju.erp.flow.models.Ai;
+import com.xinleju.erp.flow.models.BizParticipant;
+import com.xinleju.erp.flow.models.Fi;
+import com.xinleju.erp.flow.models.Fl;
+import com.xinleju.erp.flow.models.Wi;
+import com.xinleju.erp.flow.service.api.OrgnAPIService;
+import com.xinleju.erp.flow.service.api.entitybean.PartEntityBean;
+import com.xinleju.erp.flow.utils.IdNameUtils;
+import com.xinleju.erp.flow.utils.SQLUtils;
+import com.xinleju.erp.frame.service.RoleGeneralService;
+
+/**
+ * 
+ * 
+ * <p>
+ * </p>
+ * <p>
+ * </p>
+ * 
+ * @author 孙朝辉
+ * @version $Id: ParticipantDAO.java 2152 2014-12-19 10:28:07Z zhongjun $
+ * @since
+ * 
+ */
+@Repository
+public class ParticipantDAO extends BaseDAO {
+
+
+
+    /**
+     * outCode.xml数据服务
+     */
+    @Autowired
+    private XmlConfig xmlConfig;
+
+    /**
+     * 组织架构Service
+     */
+    @Autowired
+    private OrgnAPIService orgnAPIService;
+
+    /**
+     * 直连数据库JdbcTemplate
+     */
+    @Autowired
+    private JdbcTemplate jt;
+    /**
+     * 工作组DAO
+     */
+    @Autowired
+    private GvDAO gvDAO;
+    
+    @Autowired
+    private RoleGeneralService roleGeneralService;
+    
+    /**
+     * 
+     * <p>
+     * 获取ai的参与人,并格式化成参与人字符串
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param ai
+     *            活动实例
+     * @return 参与人格式化字符串 User_1:张三;Role_1:总经理
+     */
+    public String getParticipantString(Ai ai) {
+
+        List<String> pl = new ArrayList<String>();
+
+        String flowCode = ai.getAc().getFlowCode();
+        String flowVersion = ai.getAc().getFlowVersion();
+
+        // 1.参与者：普通
+        if (StringUtils.isNotEmpty(ai.getAc().getPaticipantList())) {
+            pl.add(ai.getAc().getPaticipantList());
+        }
+
+        // 2.参与者：环节
+        String acPaticipant = ai.getAc().getAcPaticipant();
+
+        if (StringUtils.isNotEmpty(acPaticipant)) {
+
+            String[] nodeIds = acPaticipant.split(",");
+            List<Ac> targets = getDao().findAll(Ac.class, "flowCode=? and flowVersion=? and nodeId in (" + StringHelper.join(nodeIds, ",", "'") + ")",
+                    new Object[] { flowCode, flowVersion });
+
+            for (Ac target : targets) {
+                String acPaticipantString = IdName.PACP_PREFIX + target.getNodeId() + ":" + target.getNodeName();
+                pl.add(acPaticipantString);
+            }
+        }
+
+        // 3.参与者：ClassImpl
+        String clazzPaticipant = ai.getAc().getClassPaticipant();
+        if (StringUtils.isNotEmpty(clazzPaticipant)) {
+            String[] cps = clazzPaticipant.split(";");
+
+            for (String cp : cps) {
+                String cptString = IdName.PCLS_PREFIX + cp + ":" + xmlConfig.getPcLabel(cp);
+                pl.add(cptString);
+            }
+        }
+
+        String paticipantString = StringUtils.join(pl, ";");
+
+        return paticipantString;
+    }
+    /**
+     * 获取某个用户的领导
+     * @param fiId
+     * @param userId
+     * @return
+     */
+    public LinkedList<User> getLeaderUsers(Long fiId, Long userId){
+    	LinkedList<User> leaderUserList = new LinkedList<User>();
+    	if (null != fiId && null != userId){
+    		leaderUserList.addAll(orgnAPIService.getLeaderUsers(userId, gvDAO.getGvs(fiId)));
+    	}
+    	return leaderUserList;
+    }
+    
+    public List<User> getPaticipantUsers(String paticipantString){
+    	List<IdName> list = IdNameUtils.decode(paticipantString);
+        List<User> returnList = new ArrayList<User>();
+        for (IdName idName : list) {
+            //组织架构参与人
+            if (idName.getPrefix().startsWith(IdName.PART_PREFIX)) {
+                PartEntityBean pb = orgnAPIService.getPartEntityById(idName.getId());
+                if(pb!=null){
+                    if("role".equals(pb.getType())){
+                        returnList.addAll(orgnAPIService.getUserListByPartId(idName.getId()));
+                    }
+                    else{
+                        returnList.addAll(orgnAPIService.getUserListByPartIdAndUserMainPost(idName.getId()));
+                    }
+                }
+            }
+            //用户
+            else if (idName.getPrefix().startsWith(IdName.USER_PREFIX)) {
+                User user = orgnAPIService.getUserByUserId(idName.getId());
+                returnList.add(user);
+            }
+            //部门
+            else if (idName.getPrefix().startsWith(IdName.ORGN_PREFIX)) {
+                List<User> userList = orgnAPIService.getUserListByOrgn(idName.getId(), false);
+                returnList.addAll(userList);
+            }
+            //通用岗位
+            else if (idName.getPrefix().startsWith(IdName.GENERAL_PREFIX)) {
+            	List<String> roleList = roleGeneralService.getRoleByGeneralId(idName.getId());
+            	for (String roleStr : roleList){
+                	returnList.addAll(this.getPaticipantUsers(roleStr));
+            	}
+            }
+            //标准角色
+            else if (idName.getPrefix().startsWith(IdName.ROLE_PREFIX)) {
+                List<User> userList = orgnAPIService.getUserListByRoleId(idName.getId(), false);
+                returnList.addAll(userList);
+            } 
+            //自定义实现
+            else if (idName.getPrefix().startsWith(IdName.PBIZ_PREFIX)) {
+                BizParticipant bizp = getDao().getById(BizParticipant.class, idName.getId());
+                if (null != bizp && StringUtils.isNotBlank(bizp.getSql())){
+                    String sql = bizp.getSql();
+                    List<User> users = new ArrayList<User>();
+                    try {
+                    	users.addAll(jt.query(sql, new BizParticipantMapper()));
+                    	users = orgnAPIService.getUserListByUserIds(CollectionUtils.collectAsString(users, "userId", ","));
+                    } catch (Exception e){
+                    	e.printStackTrace();
+                    }
+                    if (users.size() > 0) {
+                        returnList.addAll(users);
+                    }
+                }
+            }
+            //职级
+            else if (idName.getPrefix().startsWith(IdName.RANK_PREFIX)) {
+                List<User> userList = orgnAPIService.getUserListByRankId(idName.getId(), false);
+                returnList.addAll(userList);
+            }
+        }
+        return returnList;
+    }
+    
+    /**
+     * 
+     * @author 孙朝辉
+     * @param fiId
+     *            流程实例ID
+     * @param paticipantString
+     *            参与人格式化字符串
+     * @param transientVar
+     *            当前变量
+     * @param gvs
+     *            全局变量
+     * @return 参与人Users
+     */
+    @SuppressWarnings("unchecked")
+    public LinkedList<User> getPaticipantUsers(Long fiId, String paticipantString, Map<String, Object> transientVar, Gvs gvs) {
+        List<IdName> list = IdNameUtils.decode(paticipantString);
+        LinkedList<User> returnList = new LinkedList<User>();
+        Fi fi = getDao().getById(Fi.class, fiId, "fl");
+        Fl fl = fi.getFl();
+        if (null == gvs){
+        	gvs = gvDAO.getGvs(fiId);
+        }
+        for (IdName idName : list) {
+            
+            //相对参与人
+            if (idName.getPrefix().startsWith(IdName.XDPA_PREFIX)) {
+                
+                //发起人部门领导
+                if(1 == idName.getId().intValue() && fi.getStartRoleId() != null){
+                    
+                    //先从<岗位领导>获取人员，获取不到，再从<部门领导>获取
+                    
+                    //<岗位领导>
+                    Long PartEntityId_of_ParentPost = orgnAPIService.getPartEntityId_of_ParentPost_by_CurrentPostId(fi.getStartRoleId());
+                    List<User> result = orgnAPIService.getUserListByPartId(PartEntityId_of_ParentPost);
+                    
+                    if(result != null && result.size() > 0){
+                        returnList.addAll(result);
+                    }
+                    else{
+                        
+                        //<部门领导>
+                        Long PartEntityId_of_DeptLeader = orgnAPIService.getPartEntityId_of_DeptLeader_by_CurrentPostId(fi.getStartRoleId());
+                        returnList.addAll(orgnAPIService.getUserListByPartId(PartEntityId_of_DeptLeader));
+                    }
+                }
+                //发起人上级部门领导
+                else if(2 == idName.getId().intValue() && fi.getStartRoleId() != null){
+                    
+                    //1.角色领导->角色领导
+                    Long GrandPost_EntityId = orgnAPIService.getPartEntityId_of_GrandPost_by_CurrentPostId(fi.getStartRoleId());
+                    
+                    //先从<上级岗位领导>获取人员，获取不到，再从<上级部门领导>获取
+                    List<User> x = orgnAPIService.getUserListByPartId(GrandPost_EntityId);
+                    if(x != null && x.size() > 0){
+                        returnList.addAll(x);
+                    }
+                    else{
+                        //2.角色领导->部门领导
+                        Long PartEntityId_of_DeptUpLeader = orgnAPIService.getPartEntityId_of_DeptUpLeader_by_CurrentPostId(fi.getStartRoleId());
+                        x = orgnAPIService.getUserListByPartId(PartEntityId_of_DeptUpLeader);
+                        if(x != null && x.size() > 0){
+                            returnList.addAll(x);
+                        }
+                    }
+                }
+                //发起人岗位领导 leader_role_id
+                else if(3 == idName.getId().intValue() && fi.getStartRoleId() != null){
+                    Long ParentPost_EntityId = orgnAPIService.getPartEntityId_of_ParentPost_by_CurrentPostId(fi.getStartRoleId());
+                    returnList.addAll(orgnAPIService.getUserListByPartId(ParentPost_EntityId));
+                }
+            }
+            //组织架构参与人
+            else if (idName.getPrefix().startsWith(IdName.PART_PREFIX)) {
+                PartEntityBean pb = orgnAPIService.getPartEntityById(idName.getId());
+                if(pb!=null){
+                    if("role".equals(pb.getType())){
+                        returnList.addAll(orgnAPIService.getUserListByPartId(idName.getId()));
+                    }
+                    else{
+                        returnList.addAll(orgnAPIService.getUserListByPartIdAndUserMainPost(idName.getId()));
+                    }
+                }
+                
+                
+            }
+            //用户
+            else if (idName.getPrefix().startsWith(IdName.USER_PREFIX)) {
+                User user = orgnAPIService.getUserByUserId(idName.getId());
+                returnList.add(user);
+            }
+            //部门
+            else if (idName.getPrefix().startsWith(IdName.ORGN_PREFIX)) {
+                List<User> userList = orgnAPIService.getUserListByOrgn(idName.getId(), false);
+                returnList.addAll(userList);
+            } 
+            //通用角色
+            else if (idName.getPrefix().startsWith(IdName.GENERAL_PREFIX)) {
+            	List<String> roleList = roleGeneralService.getRoleByGeneralId(idName.getId());
+            	for (String roleStr : roleList){
+                	returnList.addAll(this.getPaticipantUsers(fiId, roleStr, transientVar, gvs));
+            	}
+            } 
+            //标准角色
+            else if (idName.getPrefix().startsWith(IdName.ROLE_PREFIX)) {
+                List<User> userList = orgnAPIService.getUserListByRole(fl.getAppCode(), idName.getId(), gvs, false);
+                returnList.addAll(userList);
+            } 
+            //Ac参与人
+            else if (idName.getPrefix().startsWith(IdName.PACP_PREFIX)) {
+                List<IdName> completors = getDao().findByHQL(
+                        IdName.class,
+                        "select new com.xinleju.erp.flow.bean.IdName(wi.completeUserId,wi.completeUserName,wi.completeUserLoginName,'User_') from Wi wi "
+                                + "where wi.ac.nodeId = ? and wi.status = ? and wi.fiId = ? and wi.tstamp = "
+                                + "(select max(ai.tstamp) from Ai ai where ai.ac.nodeId = wi.ac.nodeId and ai.fiId = wi.fiId)",
+                        new Object[] { idName.getCode(), Wi.STATUS_COMPLETE, fiId });
+
+                if (completors.size() > 0) {
+                    List<User> users = new ArrayList<User>();
+                    users.addAll(IdNameUtils.toUsers(completors));
+                    users = orgnAPIService.getUserListByUserIds(CollectionUtils.collectAsString(users, "userId", ","));
+                    returnList.addAll(users);
+                }
+
+            }
+            //自定义实现
+            else if (idName.getPrefix().startsWith(IdName.PBIZ_PREFIX)) {
+
+                BizParticipant bizp = getDao().getById(BizParticipant.class, idName.getId());
+                if (null != bizp && StringUtils.isNotBlank(bizp.getSql())){
+                    String sql = bizp.getSql();
+                     // 内置的可用参数fiId
+                    gvs.add(new GvBean("fiId", fiId, "流程实例ID"));
+                    Map<String, Object> gvsMap = Gvs.getValueMapFromGvs(gvs);
+                    List<Object> values = SQLUtils.selectValues(sql, gvsMap);
+                    sql = SQLUtils.parseSQL(sql);
+                    List<User> users = new ArrayList<User>();
+                    users.addAll(jt.query(sql, values.toArray(), new BizParticipantMapper()));
+                    users = orgnAPIService.getUserListByUserIds(CollectionUtils.collectAsString(users, "userId", ","));
+                    if (users.size() > 0) {
+                        returnList.addAll(users);
+                    }
+                }
+            }
+            //外部参与人
+            else if (idName.getPrefix().startsWith(IdName.OBJF_PREFIX)) {
+            	List<User> users = orgnAPIService.getUsersByObjf(idName.getId(), fiId);
+            	if (users.size() > 0) {
+                    returnList.addAll(users);
+                }
+            }
+            //职级
+            else if (idName.getPrefix().startsWith(IdName.RANK_PREFIX)) {
+                List<User> userList = orgnAPIService.getUserListByRankId(idName.getId(), false);
+                returnList.addAll(userList);
+            }
+        }
+        returnList = (LinkedList<User>) CollectionUtils.distinct(returnList);
+        return returnList;
+    }
+
+    /**
+     * 
+     * <简述> <详细描述>
+     * 
+     * @author 孙朝辉
+     * @version $Id: ParticipantDAO.java 2152 2014-12-19 10:28:07Z zhongjun $
+     * @since
+     * 
+     */
+    public class BizParticipantMapper implements RowMapper<User> {
+        /**
+         * 用户ID,主键,在sql中的序号
+         */
+        static final int INDEX_USERID = 1;
+
+        /**
+         * 登录名,在sql中的序号
+         */
+        static final int INDEX_LOGINNAME = 2;
+
+        /**
+         * 用户名,在sql中的序号
+         */
+        static final int INDEX_USERNAME = 3;
+
+        @Override
+        public User mapRow(ResultSet arg0, int arg1) throws SQLException {
+            User user = new User();
+            user.setUserId(arg0.getLong(INDEX_USERID));
+            user.setLoginName(arg0.getString(INDEX_LOGINNAME));
+            user.setUserName(arg0.getString(INDEX_USERNAME));
+            return user;
+        }
+    }
+    /**
+     * 
+     * 
+     * <p>
+     * 用户RowMapper
+     * </p>
+     * <详细描述>
+     * 
+     * @author 孙朝辉
+     * @version $Id: ParticipantDAO.java 2152 2014-12-19 10:28:07Z zhongjun $
+     * @since
+     * 
+     */
+    public static class UserMapper implements RowMapper<User> {
+        @Override
+        public User mapRow(ResultSet arg0, int arg1) throws SQLException {
+            User user = new User();
+            user.setUserId(arg0.getLong("id"));
+            user.setLoginName(arg0.getString("login_name"));
+            user.setUserName(arg0.getString("user_name"));
+            user.setRoleName(arg0.getString("role_name"));
+            user.setPrefix(arg0.getString("prefix"));
+            user.setEmail(arg0.getString("email"));
+            user.setContactPhone(arg0.getString("contact_phone"));
+            user.setMobile(arg0.getString("mobile"));
+            return user;
+        }
+    }
+    
+    public static class RolePartMapper implements RowMapper<Role> {
+        @Override
+        public Role mapRow(ResultSet arg0, int arg1) throws SQLException {
+            Role role = new Role();
+            //role.setUserId(arg0.getLong("id"));
+            role.setRoleCode(arg0.getString("code"));
+            role.setRoleId(arg0.getLong("id"));
+
+            return role;
+        }
+    }
+    
+    
+    public static class PartEntityMapper implements  RowMapper<PartEntityBean> {
+
+        @Override
+        public PartEntityBean mapRow(ResultSet arg0, int arg1) throws SQLException {
+            PartEntityBean pe = new PartEntityBean();
+            //role.setUserId(arg0.getLong("id"));
+            pe.setName(arg0.getString("name"));
+            pe.setType(arg0.getString("type"));
+            pe.setId(arg0.getLong("id"));
+            pe.setRefId(arg0.getLong("refId"));
+            pe.setPrefix(arg0.getString("prefix"));
+            return pe;
+        }
+
+    }
+}

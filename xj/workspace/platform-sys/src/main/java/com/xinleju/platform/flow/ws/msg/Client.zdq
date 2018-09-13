@@ -1,0 +1,25 @@
+package com.xinleju.platform.flow.ws.msg;
+
+public class Client {
+
+	public static void main(String[] args) {
+		ISysNotifyTodoWebServiceService service = new ISysNotifyTodoWebServiceService();
+		ISysNotifyTodoWebService iSysNotifyTodoWebService = service.getISysNotifyTodoWebServicePort();
+		NotifyTodoSendContext params = new NotifyTodoSendContext();
+		params.setAppName("newplatform");
+		params.setCreateTime("2017-08-22 12:12:12");
+		params.setLink("http://localhost:8080/platform-app/flow/runtime/approve/flow.html?instanceId=c2840415e0354e8d831c20fbd9e8ef3a&taskId=6991ce6ab93c41c9b13019f6c2017ecc&time=1503384992403&msgId=d0a4160ebb5c470b81bd3c8e54b6b7fa&time=0.4483770547937189");
+		params.setModelId("000c71f605664e618fa58d2b4f5a55fd");
+		params.setModelName("【员工请假】物业总部-员工请假-王洋(鑫苑物业）-总部员工请假4天主管以下");
+		params.setSubject("xxx");
+		params.setTargets("{\"LoginName\":\"admin\"}");
+		params.setType(1);
+		try {
+			NotifyTodoAppResult result = iSysNotifyTodoWebService.sendTodo(params);
+			System.out.println(result);
+		} catch (Exception_Exception e) {
+			e.printStackTrace();
+		}
+	}
+
+}

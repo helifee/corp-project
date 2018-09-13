@@ -1,0 +1,24 @@
+package com.xinleju.platform.univ.task.dao.impl;
+
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.platform.base.dao.impl.BaseDaoImpl;
+import com.xinleju.platform.univ.task.dao.TaskLogDao;
+import com.xinleju.platform.univ.task.entity.TaskLog;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Repository
+public class TaskLogDaoImpl extends BaseDaoImpl<String,TaskLog> implements TaskLogDao{
+
+	public TaskLogDaoImpl() {
+		super();
+	}
+
+	
+	
+}

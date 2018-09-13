@@ -1,0 +1,560 @@
+package com.jzy.hio.redis.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.entity.BaseEntity;
+import com.jzy.hio.entity.OaSysApp;
+import com.jzy.hio.entity.OaSysButton;
+import com.jzy.hio.entity.OaSysExternalContact;
+import com.jzy.hio.entity.OaSysMenu;
+import com.jzy.hio.entity.OaSysOrganization;
+import com.jzy.hio.entity.OaSysRole;
+import com.jzy.hio.entity.OaSysRolePermission;
+import com.jzy.hio.entity.OaSysRoleUser;
+import com.jzy.hio.entity.OaSysUser;
+import com.jzy.hio.entity.OaSysUserPosition;
+import com.jzy.hio.redis.RedisService;
+import com.jzy.hio.redis.entity.AppDisableRds;
+import com.jzy.hio.redis.entity.RoleMenuButtonRds;
+import com.jzy.hio.redis.entity.UserRds;
+import com.jzy.hio.redis.service.RedisGetService;
+import com.jzy.hio.redis.service.RedisSetService;
+import com.jzy.hio.sys.SysConstants;
+import com.jzy.hio.sys.button.service.ButtonService;
+import com.jzy.hio.sys.external.mapper.ExternalContactMapper;
+import com.jzy.hio.sys.menu.service.MenuService;
+import com.jzy.hio.sys.organization.mapper.OrganizationMapper;
+import com.jzy.hio.sys.role.param.RoleParam;
+import com.jzy.hio.sys.user.mapper.UserMapper;
+import com.jzy.hio.sys.user.mapper.UserPositionMapper;
+
+import tk.mybatis.mapper.entity.Example;
+
+/**
+ * <pre>
+ * 角色涉及到两个redis表的维护
+ * 角色用户涉及到 {@link UserRds}}
+ * 角色权限涉及到 {@link RoleMenuButtonRds}}
+ * </pre>
+ * 
+ * @author wt.coffee<br />
+ *         2018年3月21日上午9:43:41
+ */
+@Service
+public class RedisSetServiceImpl extends Base implements RedisSetService {
+
+	private Logger logger = LoggerFactory.getLogger(getClass());
+
+	@Autowired
+	private RedisService redisService;
+	@Autowired
+	private RedisGetService redisGetService;
+	@Autowired
+	private UserMapper userMapper;
+	@Autowired
+	private UserPositionMapper userPositionMapper;
+	@Autowired
+	private OrganizationMapper organizationMapper;
+	@Autowired
+	private ExternalContactMapper externalContactMapper;
+	@Autowired
+	private MenuService menuService;
+	@Autowired
+	private ButtonService buttonService;
+
+	@Override
+	public int addEntity(String tendId, BaseEntity entity) {
+		redisService.addRow(tendId, entity);
+		return 1;
+	}
+
+	@Override
+	public int addEntityList(String tendId, List<? extends BaseEntity> list) {
+		if (isEmpty(list)) {
+			logger.info("addEntityList null");
+			return 0;
+		}
+		redisService.addRow(tendId, list);
+		return list.size();
+	}
+
+	@Override
+	public int deleteEntity(Class<?> entityClass, String... ids) {
+		for (String id : ids) {
+			redisService.delRow(getTendId(), entityClass, id);
+		}
+		return ids.length;
+	}
+
+	/**
+	 * 注意、全量替换
+	 */
+	@Override
+	public int setUserDetails(String tendId, UserRds userRds) {
+		String key = tendId + ":" + SysConstants.REDIS_TABLE_USERDETAIL + ":" + userRds.getUserId();
+		Map<String, String> newMap = Base.obj2mapStr(userRds);
+		String result = redisService.addRow(key, newMap);
+		return isSuccess(result);
+	}
+
+	@Override
+	public int deleteUserDetails(String tendId, String userId) {
+		String key = tendId + ":" + SysConstants.REDIS_TABLE_USERDETAIL + ":" + userId;
+		redisService.delAll(key);
+		return 1;
+	}
+
+	@Override
+	public int setRoleMenuButton(String tendId, RoleMenuButtonRds roleUrlRds) {
+		String key = tendId + ":" + SysConstants.REDIS_TABLE_ROLEURL;
+		Map<String, String> map = new HashMap<>();
+		String json = Base.obj2json(roleUrlRds);
+		map.put(roleUrlRds.getRoleId(), json);
+		redisService.addRow(key, map);
+		return 0;
+	}
+
+	@Override
+	public int setAppDisable(String tendId, OaSysApp app, List<OaSysMenu> menus) {
+		String key = tendId + ":" + SysConstants.REDIS_TABLE_APPDISABLE;
+		if (isEquals(app.getStatus(), BaseConstants.MYSQL_STATUS_DISABLE)) {
+			AppDisableRds appDisable = new AppDisableRds();
+			appDisable.setAppCode(app.getCode());
+			Set<String> set = new HashSet<>();
+			for (OaSysMenu menu : menus) {
+				String url = menu.getUrl();
+				// 取第一级
+				if (url.indexOf("/", 1) > -1) {
+					String subUrl = url.substring(0, url.indexOf("/", 1));
+					set.add(subUrl);
+				} else {
+					set.add(url);
+				}
+			}
+			Map<String, String> map = new HashMap<>();
+			map.put(app.getCode(), obj2json(set));
+			String result = redisService.addRow(key, map);
+			return isSuccess(result);
+		} else {
+			Long result = redisService.delRow(key, app.getCode());
+			return isSuccess(result);
+		}
+	}
+
+	/**
+	 * 追加
+	 */
+	@Override
+	public int addRoleUser(String tendId, List<OaSysRoleUser> users) {
+		// 同步mysql-->redis
+		addEntityList(tendId, users);
+		// 同步UserRds
+		for (OaSysRoleUser roleUser : users) {
+			UserRds userRds = redisGetService.getUserDetail(tendId, roleUser.getUserId());
+			userRds.getRoles().add(roleUser.getRoleId());
+			setUserDetails(tendId, userRds);
+		}
+		return 1;
+	}
+
+	/**
+	 * 改变以后需要修改UserRds、RoleButtonUrlRds对应的两个redis表
+	 */
+	@Override
+	public int setRoleAll(String tendId, RoleParam param, List<OaSysRoleUser> oldUsers) {
+		logger.info("开始同步role 数据库-->redis");
+		OaSysRole role = param.getRole();
+		if (oldUsers != null) {
+			// 新增 -- 不用删除
+			// 1、先删除老数据
+			deleteRoleAll(tendId, role.getId(), oldUsers);
+		}
+		// 2、插入OaSysRole
+		// TODO 角色有问题
+		if (isNotEmpty(role.getName())) {
+			addEntity(tendId, role);
+		}
+		// 3、插入 OaSysRoleUser
+		List<OaSysRoleUser> users = param.getUsers();
+		addEntityList(tendId, users);
+		// 4、插入OaSysRolePermission
+		List<OaSysRolePermission> permissions = param.getPermissions();
+		addEntityList(tendId, permissions);
+		//
+		if (isNotEmpty(users) || isNotEmpty(permissions)) {
+			List<OaSysButton> buttons = buttonService.queryListByTendId(tendId, false);
+			List<OaSysMenu> menus = menuService.queryListByTendId(tendId, false);
+			syncRole(tendId, users, permissions, menus, buttons);
+		}
+		return 1;
+	}
+
+	@Override
+	public int deleteRoleAll(String tendId, String roleId, List<OaSysRoleUser> oldUsers) {
+		String tendCode = tendId;
+		// 删除 RoleButtonUrlRds中的记录
+		redisService.delRow(tendCode, RoleMenuButtonRds.class, roleId);
+		// 遍历所有用户、删除该角色的授权
+		Set<String> userIds = new HashSet<>();
+		for (OaSysRoleUser roleUser : oldUsers) {
+			userIds.add(roleUser.getUserId());
+		}
+		for (String userId : userIds) {
+			UserRds userRds = redisGetService.getUserDetail(tendId, userId);
+			if (userRds != null) {
+				if (userRds.getRoles().contains(roleId)) {
+					userRds.getRoles().remove(roleId);
+					this.setUserDetails(tendId, userRds);
+				} else {
+					continue;
+				}
+			} else {
+				continue;
+			}
+		}
+		return 1;
+	}
+
+	@Override
+	public void syncRole(String tendId, List<OaSysRoleUser> users, List<OaSysRolePermission> permissions, //
+			List<OaSysMenu> roleMenus, List<OaSysButton> roleButtons) {
+		if (isEmpty(users)) {
+			logger.info("同步角色到redis ---- List<OaSysRoleUser> == null");
+			users = new ArrayList<>();
+		}
+		if (isEmpty(permissions)) {
+			logger.info("同步角色到redis ----  List<OaSysRolePermission> == null");
+			permissions = new ArrayList<>();
+		}
+		// K-menuId
+		Map<String, List<OaSysButton>> buttonMap = new HashMap<>();
+		for (OaSysButton button : roleButtons) {
+			List<OaSysButton> buttons = buttonMap.get(button.getMenuId());
+			if (buttons == null) {
+				buttons = new ArrayList<>();
+				buttonMap.put(button.getMenuId(), buttons);
+			}
+			buttons.add(button);
+		}
+		// 计算每个user的roleId
+		// K-userId V-roleIds
+		Map<String, Set<String>> userRoleMap = new HashMap<>();
+		for (OaSysRoleUser roleUser : users) {
+			Set<String> roleSet = userRoleMap.get(roleUser.getUserId());
+			if (roleSet == null) {
+				roleSet = new HashSet<>();
+				userRoleMap.put(roleUser.getUserId(), roleSet);
+			}
+			roleSet.add(roleUser.getRoleId());
+		}
+
+		// 1、操作【UserRds】--- 把每个用户的角色都放到redis中
+		for (String userId : userRoleMap.keySet()) {
+			UserRds user = redisGetService.getUserDetail(tendId, userId);
+			if (user == null) {
+				user = new UserRds();
+			}
+			user.setUserId(userId);
+			// *********************** 注意 这里需要追加 、不能直接setOauth***********************
+			user.getRoles().addAll(userRoleMap.get(userId));
+			setUserDetails(tendId, user);
+			logger.info("UserRds同步完成  >>> {}", userId);
+		}
+		// k--menuId
+		Map<String, OaSysMenu> menuMap = new HashMap<>();
+		if (isNotEmpty(roleMenus)) {
+			for (OaSysMenu menu : roleMenus) {
+				menuMap.put(menu.getId(), menu);
+			}
+		}
+
+		// k-roleId,v-menuUrls
+		Map<String, Set<String>> roleMenuUrlsMap = new HashMap<>();
+		// k-roleId,v-menuCodes
+		Map<String, Set<String>> roleMenuCodesMap = new HashMap<>();
+		// K-roleId V-buttonUrls
+		Map<String, Set<String>> roleButtonUrlsMap = new HashMap<>();
+		Map<String, Set<String>> roleButtonCodesMap = new HashMap<>();
+
+		for (OaSysRolePermission rolePerm : permissions) {
+			String roleId = rolePerm.getRoleId();
+			// 1、操作buttonUrl
+			Set<String> buttonSets = roleButtonUrlsMap.get(roleId);
+			if (buttonSets == null) {
+				buttonSets = new HashSet<>();
+				roleButtonUrlsMap.put(roleId, buttonSets);
+			}
+			// 2、操作buttonCode
+			Set<String> buttonCodes = roleButtonCodesMap.get(roleId);
+			if (buttonCodes == null) {
+				buttonCodes = new HashSet<>();
+				roleButtonCodesMap.put(roleId, buttonCodes);
+			}
+
+			List<OaSysButton> buttons = buttonMap.get(rolePerm.getMenuId());
+			if (buttons != null) {
+				for (OaSysButton button : buttons) {
+					if (button.getPermissionType() == null) {
+						// 无效的按钮 type==0
+						logger.info("无效的按钮  type==0 {}", button.getId());
+						continue;
+					}
+					// 3 & 1 == 1, 3 & 2 == 2
+					if ((rolePerm.getPermissionValue() & button.getPermissionType()) == button.getPermissionType()) {
+						if (button.getUrl() != null) {
+							buttonSets.add(button.getUrl());
+						}
+						if (button.getCode() != null) {
+							buttonCodes.add(button.getCode());
+						}
+					}
+				}
+			}
+
+			for (OaSysMenu menu : roleMenus) {
+				Set<String> menuUrls = roleMenuUrlsMap.get(roleId);
+				if (menuUrls == null) {
+					menuUrls = new HashSet<>();
+					roleMenuUrlsMap.put(roleId, menuUrls);
+				}
+				//
+				Set<String> menuCodes = roleMenuCodesMap.get(roleId);
+				if (menuCodes == null) {
+					menuCodes = new HashSet<>();
+					roleMenuCodesMap.put(roleId, menuCodes);
+				}
+				if (isEquals(menu.getId(), rolePerm.getMenuId())) {
+					if (menu.getUrl() != null) {
+						menuUrls.add(menu.getUrl());
+					}
+					if (menu.getCode() != null) {
+						menuCodes.add(menu.getCode());
+					}
+				}
+			}
+
+		}
+		// 2、操作【RoleMenuButtonRds】--- 把每个role的用户menu、buttons放到redis中
+		for (String roleId : roleButtonUrlsMap.keySet()) {
+			RoleMenuButtonRds roleUrl = redisGetService.getRoleButtonUrl(tendId, roleId);
+			if (roleUrl == null) {
+				roleUrl = new RoleMenuButtonRds();
+			}
+			roleUrl.setRoleId(roleId);
+			// 注意这里需要 set 不能追加, 因为老的角色权限url已经删除了
+			roleUrl.setButtonUrls(roleButtonUrlsMap.get(roleId));
+			roleUrl.setButtonCodes(roleButtonCodesMap.get(roleId));
+			//
+			roleUrl.setMenuUrls(roleMenuUrlsMap.get(roleId));
+			roleUrl.setMenuCodes(roleMenuCodesMap.get(roleId));
+			setRoleMenuButton(tendId, roleUrl);
+			logger.info("RoleButtonUrlRds同步完成  >>> {}", roleId);
+		}
+	}
+
+	/**
+	 * 删除(离职)组织架构里面的用户以后进行的操作
+	 */
+	@Override
+	public void deleteRoleUserAll(String tendId, String delUserId) {
+		this.deleteUserDetails(tendId, delUserId);
+
+	}
+
+	/**
+	 * 删除角色下的用户
+	 */
+	@Override
+	public int deleteRoleUser(String tendId, String roleId, String userId) {
+		if (isEmpty(userId)) {
+			logger.info("出现脏数据");
+			return 0;
+		}
+		UserRds userRds = redisGetService.getUserDetail(tendId, userId);
+		userRds.getRoles().remove(roleId);
+		setUserDetails(tendId, userRds);
+		return 1;
+	}
+
+	@Override
+	public void syncOrg(String tendId, List<OaSysUserPosition> ups) {
+		Map<String, List<OaSysUserPosition>> upsMap = new HashMap<>();
+		for (OaSysUserPosition item : ups) {
+			if (upsMap.get(item.getUserId()) == null) {
+				upsMap.put(item.getUserId(), new ArrayList<>());
+			}
+			upsMap.get(item.getUserId()).add(item);
+		}
+		//
+		for (String userId : upsMap.keySet()) {
+			// 注意不能直接new 需要先从redis里查询、 否则用户的其他信息可能被替换
+			UserRds userRds = redisGetService.getUserDetail(tendId, userId);
+			if (userRds == null) {
+				userRds = new UserRds();
+				userRds.setUserId(userId);
+			}
+			for (OaSysUserPosition item : upsMap.get(userId)) {
+				if (isEquals(item.getIsDefault(), 1)) {
+					userRds.getOrgs().add(0, item.getOrganizationId());
+				} else {
+					userRds.getOrgs().add(item.getOrganizationId());
+				}
+			}
+			setUserDetails(tendId, userRds);
+		}
+	}
+
+	@Override
+	public void syncOrgAndUserAndPositions(String tendId, List<String> orgIds, List<String> userIds, List<String> positionIds, List<String> externalIds) {
+		List<OaSysOrganization> oaSysOrganizations = queryAllOrgByOrgIds(tendId, orgIds);
+		List<OaSysUser> oaSysUsers = queryAllUserByIds(tendId, userIds);
+		List<OaSysUserPosition> oaSysUserPositions = queryAllPositionByIds(tendId, positionIds);
+		List<OaSysExternalContact> oaSysExternalContacts = queryAllExternalUsersByIds(tendId, externalIds);
+		if (isEmpty(tendId)) {
+			tendId = getTendId();
+		}
+		if (isEmpty(tendId)) {
+			logger.info("往Redis同步数据错误，tendId is NULL ===》");
+			return;
+		}
+		redisService.addRow(tendId, oaSysOrganizations);
+		redisService.addRow(tendId, oaSysUsers);
+		redisService.addRow(tendId, oaSysUserPositions);
+		redisService.addRow(tendId, oaSysExternalContacts);
+	}
+
+	@Override
+	public void syncTendIdAndUser(String tendId, String imUserId, String userId, int redisOptType) {
+		if (isEmpty(tendId)) {
+			logger.info("同步tendId-imUserId状态 tendId is empty");
+			return;
+		}
+		if (BaseConstants.REDIS_OPT_ADD == redisOptType) {
+			logger.info("同步tendId-imUserId状态 add tendId={};imUserId={};userId={}", tendId, imUserId, userId);
+			addUserRelation(tendId, imUserId, userId);
+		} else if (BaseConstants.REDIS_OPT_DEL == redisOptType) {
+			logger.info("同步tendId-imUserId状态 del tendId={};imUserId={};userId={}", tendId, imUserId, userId);
+			delUserRelation(tendId, imUserId, userId);
+		}
+
+	}
+
+	@Override
+	public void syncUserAndImUserId(String currentTend, List<OaSysUser> userList) {
+		if (isEmpty(currentTend)) {
+			logger.info("同步syncUserAndImUserId -tendId-imUserId状态 tendId is empty");
+			return;
+		}
+		redisService.delAll(currentTend + ":" + BaseConstants.REDIS_TABLE_USERID);
+
+		if (userList != null && userList.size() > 0) {
+			for (int i = 0; i < userList.size(); i++) {
+				OaSysUser oaSysUser = userList.get(i);
+				if (oaSysUser != null && oaSysUser.getDelflag().intValue() == BaseConstants.MYSQL_DELFLAG_NORMAL
+						&& oaSysUser.getWorkStatus().equals(SysConstants.UserWorkStatus.JOB.getWorkStatus())) {
+					if (isNotEmpty(oaSysUser.getImUserId())) {
+						addUserRelation(currentTend, oaSysUser.getImUserId(), oaSysUser.getId());
+					}
+				}
+			}
+		}
+		logger.info("同步 complate tendId ");
+	}
+
+	private void delUserRelation(String tendId, String imUserId, String userId) {
+		if (isNotEmpty(imUserId) && isNotEmpty(tendId)) {
+			redisService.delRow(tendId + ":" + BaseConstants.REDIS_TABLE_USERID, imUserId);
+		}
+	}
+
+	private void addUserRelation(String tendId, String imUserId, String userId) {
+		if (isNotEmpty(imUserId) && isNotEmpty(tendId) && isNotEmpty(userId)) {
+			Map<String, String> map = new HashMap<>();
+			map.put(imUserId, userId);
+			redisService.addRow(tendId + ":" + BaseConstants.REDIS_TABLE_USERID, map);
+		}
+	}
+
+	private List<OaSysExternalContact> queryAllExternalUsersByIds(String tendId, List<String> positionIds) {
+		if (positionIds == null || positionIds.size() <= 0) {
+			return new ArrayList<>();
+		}
+		Example example = new Example(OaSysExternalContact.class);
+		Example.Criteria criteria = example.createCriteria();
+		criteria.andIn("id", positionIds);
+		List<OaSysExternalContact> oaSysExternalContacts = externalContactMapper.selectByExample(example);
+		return oaSysExternalContacts;
+	}
+
+	private List<OaSysUserPosition> queryAllPositionByIds(String tendId, List<String> positionIds) {
+		if (positionIds == null || positionIds.size() <= 0) {
+			return new ArrayList<>();
+		}
+		Example example = new Example(OaSysUserPosition.class);
+		Example.Criteria criteria = example.createCriteria();
+		criteria.andIn("id", positionIds);
+		List<OaSysUserPosition> oaSysUserPositions = userPositionMapper.selectByExample(example);
+		return oaSysUserPositions;
+	}
+
+	private List<OaSysUser> queryAllUserByIds(String tendId, List<String> userIds) {
+		if (userIds == null || userIds.size() <= 0) {
+			return new ArrayList<>();
+		}
+		Example example = new Example(OaSysUser.class);
+		Example.Criteria criteria = example.createCriteria();
+		criteria.andIn("id", userIds);
+		List<OaSysUser> oaSysUsers = userMapper.selectByExample(example);
+		return oaSysUsers;
+	}
+
+	private List<OaSysOrganization> queryAllOrgByOrgIds(String tendId, List<String> orgIds) {
+		if (orgIds == null || orgIds.size() <= 0) {
+			return new ArrayList<>();
+		}
+		Example example = new Example(OaSysOrganization.class);
+		Example.Criteria criteria = example.createCriteria();
+		criteria.andIn("id", orgIds);
+		List<OaSysOrganization> oaSysOrganizations = organizationMapper.selectByExample(example);
+		return oaSysOrganizations;
+	}
+	// public int setRolePermissions(String roleId) {
+	// List<OaSysRolePermission> permissions = rolePermissionService.queryListByTendId(getTendCode(), false);
+	// Set<String> buttonUrls = new HashSet<>();
+	// for (OaSysRolePermission rolePerm : permissions) {
+	// redisService.addRow(getTendCode(), rolePerm);
+	// //
+	// List<OaSysButton> buttons = roleButtonService.queryButton(rolePerm.getMenuId(), rolePerm.getPermissionType());
+	// for (OaSysButton button : buttons) {
+	// buttonUrls.add(button.getUrl());
+	// }
+	// }
+	// List<RoleUserDto> roleUsers = roleUserService.queryRoleUsers(roleId);
+	// for (RoleUserDto user : roleUsers) {
+	// UserRds userRds = getUserDetail(user.getUserId());
+	// userRds.setOauth(buttonUrls);
+	// setUserDetails(userRds);
+	// }
+	// return 0;
+	// }
+
+	private int isSuccess(String result) {
+		return "OK".equals(result) ? 1 : 0;
+	}
+
+	private int isSuccess(Long result) {
+		return "1".equals(result + "") ? 1 : 0;
+	}
+}

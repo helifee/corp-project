@@ -1,0 +1,113 @@
+package com.xinleju.platform.sys.log.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+import java.sql.Timestamp;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Table(value="PT_SYS_LOG_DUBBO",desc="调用dubbo日志")
+public class LogDubbo extends BaseEntity{
+	
+		
+	@Column(value="sys_code",desc="调用业务系统")
+	private String sysCode;
+    
+  		
+	@Column(value="dubbo_method",desc="调用dubbo方法")
+	private String dubboMethod;
+    
+  		
+	@Column(value="return_content",desc="返回内容")
+	private String returnContent;
+    
+  		
+	@Column(value="start_time",desc="开始调用时间")
+	private Timestamp startTime;
+    
+  		
+	@Column(value="end_time",desc="结束调用时间")
+	private Timestamp endTime;
+    
+  		
+	@Column(value="execute_time",desc="调用耗时")
+	private Long executeTime;
+    
+  		
+	@Column(value="info",desc="信息描述")
+	private String info;
+	@Column(value="res_flag",desc="运行结果状态")
+	private String resFlag;
+    
+  		
+		
+	public String getResFlag() {
+		return resFlag;
+	}
+	public void setResFlag(String resFlag) {
+		this.resFlag = resFlag;
+	}
+	public String getSysCode() {
+		return sysCode;
+	}
+	public void setSysCode(String sysCode) {
+		this.sysCode = sysCode;
+	}
+    
+  		
+	public String getDubboMethod() {
+		return dubboMethod;
+	}
+	public void setDubboMethod(String dubboMethod) {
+		this.dubboMethod = dubboMethod;
+	}
+    
+  		
+	public String getReturnContent() {
+		return returnContent;
+	}
+	public void setReturnContent(String returnContent) {
+		this.returnContent = returnContent;
+	}
+    
+  		
+	public Timestamp getStartTime() {
+		return startTime;
+	}
+	public void setStartTime(Timestamp startTime) {
+		this.startTime = startTime;
+	}
+    
+  		
+	public Timestamp getEndTime() {
+		return endTime;
+	}
+	public void setEndTime(Timestamp endTime) {
+		this.endTime = endTime;
+	}
+    
+  		
+	public Long getExecuteTime() {
+		return executeTime;
+	}
+	public void setExecuteTime(Long executeTime) {
+		this.executeTime = executeTime;
+	}
+    
+  		
+	public String getInfo() {
+		return info;
+	}
+	public void setInfo(String info) {
+		this.info = info;
+	}
+    
+  		
+	
+}

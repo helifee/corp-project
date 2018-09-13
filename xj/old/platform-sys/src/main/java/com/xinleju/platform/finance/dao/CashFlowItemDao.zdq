@@ -1,0 +1,23 @@
+package com.xinleju.platform.finance.dao;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.dao.BaseDao;
+import com.xinleju.platform.finance.dto.CashFlowItemDto;
+import com.xinleju.platform.finance.entity.CashFlowItem;
+
+/**
+ * @author admin
+ *
+ */
+
+public interface CashFlowItemDao extends BaseDao<String, CashFlowItem> {
+
+	List<Map<String, Object>> queryTreeList(Map<String, Object> map);
+	
+	List<CashFlowItem> queryBudgetcapByBudget(Map<String, Object> map);
+
+	List<CashFlowItem> queryCashFlowItemList(Map<String, Object> map);
+
+}

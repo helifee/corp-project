@@ -1,0 +1,53 @@
+package com.xinleju.platform.sys.org.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Table(value="PT_SYS_ORG_USER_POST_SCOPE",desc="人员岗位范围")
+public class UserPostScope extends BaseEntity{
+	
+		
+	@Column(value="type",desc="类型")
+	private String type;
+    
+  		
+	@Column(value="ref_id",desc="组织机构Id")
+	private String refId;
+    
+  		
+	@Column(value="post_user_id",desc="用户岗位关联id")
+	private String postUserId;
+    
+	public String getType() {
+		return type;
+	}
+	public void setType(String type) {
+		this.type = type;
+	}
+    
+  		
+	public String getRefId() {
+		return refId;
+	}
+	public void setRefId(String refId) {
+		this.refId = refId;
+	}
+    
+  		
+	public String getPostUserId() {
+		return postUserId;
+	}
+	public void setPostUserId(String postUserId) {
+		this.postUserId = postUserId;
+	}
+    
+	
+}

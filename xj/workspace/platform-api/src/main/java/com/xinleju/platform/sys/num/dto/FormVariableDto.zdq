@@ -1,0 +1,60 @@
+package com.xinleju.platform.sys.num.dto;
+
+import com.xinleju.platform.base.dto.BaseDto;
+
+
+
+
+
+/**
+ * @author admin
+ * 
+ *
+ */
+public class FormVariableDto extends BaseDto{
+
+		
+	//编号
+	private String code;
+    //规则类型id
+	private String billId;
+	//名称
+	private String name;
+	//数据类型
+	private String dataType;
+	//排序
+	private String sort;	
+		
+	public String getCode() {
+		return code;
+	}
+	public void setCode(String code) {
+		this.code = code;
+	}
+	public String getBillId() {
+		return billId;
+	}
+	public void setBillId(String billId) {
+		this.billId = billId;
+	}
+	public String getName() {
+		return name;
+	}
+	public void setName(String name) {
+		this.name = name;
+	}
+	public String getDataType() {
+		return dataType;
+	}
+	public void setDataType(String dataType) {
+		this.dataType = dataType;
+	}
+	public String getSort() {
+		return sort;
+	}
+	public void setSort(String sort) {
+		this.sort = sort;
+	}
+    
+  		
+}

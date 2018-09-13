@@ -1,0 +1,142 @@
+package com.xinleju.erp.flow.service.impl;
+
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.erp.base.utils.StringHelper;
+import com.xinleju.erp.flow.dao.impl.WiDAO;
+import com.xinleju.erp.flow.flowutils.bean.Gvs;
+import com.xinleju.erp.flow.models.Ai;
+import com.xinleju.erp.flow.models.Wi;
+import com.xinleju.erp.flow.models.Wp;
+import com.xinleju.erp.flow.service.IConstantVar;
+import com.xinleju.erp.flow.utils.FlowUtils;
+
+/**
+ * 
+ * 
+ * <p>
+ * </p>
+ * <p>
+ * </p>
+ * 
+ * @author 孙朝辉
+ * @version $Id: XorFinishTypeService.java 2250 2014-12-28 11:43:36Z zhongjun $
+ * @since
+ * 
+ */
+@Service
+public class XorFinishTypeService extends AbstractFinishTypeService {
+
+    /**
+     * 工作DAO
+     */
+    @Autowired
+    private WiDAO wiDAO;
+
+    /* (non-Javadoc)
+     * 
+     * 	执行wp
+     * @see com.xinleju.erp.flow.service.IFinishTypeService#canFinish(com.xinleju.erp.flow.flowutils.bean.Gvs, java.util.Map)
+     */
+    @Override
+    public boolean canFinish(Gvs gvs, Map<String, Object> transientVars) {
+
+    	
+    	//当前wi->wp->ai
+        Ai ai = (Ai) transientVars.get(IConstantVar.TVS_AI);
+        
+        Wp wp = super.getWp(ai, transientVars); //子的WP---父wp
+        
+        
+        boolean isWpSuspend = FlowUtils.isWpSuspend(wp);
+        
+        if (isWpSuspend){
+            return false;
+        }
+        
+        boolean isSubModel = FlowUtils.isSubMode(wp);  //false;  true
+        
+        //不是以子模式运行的
+        if (!isSubModel) {
+            // 被删除
+            if (wp.getIsDeleted() != null && wp.getIsDeleted() == 1) {
+                return true;
+            }
+           //Wp查找对应运行Wi
+         
+          
+            long completeCount = getDao().findLong("select count(id) from Wi where status = ? and tstamp = ? and isEffectFlow = 1 and wpId = ?",
+                    Wi.STATUS_COMPLETE, wp.getTstamp(), wp.getId());
+         
+            /**
+             * 
+             * 获取完成干扰流程的任务
+             * yzp
+            long completeCount = getDao().findLong("select count(id) from Wi where status = ?  and isEffectFlow = 1 and wpId = ?",
+                    Wi.STATUS_COMPLETE, wp.getId());
+               *
+            * */
+            
+            boolean canFinish =
+                    // 存在已完成的工作
+                    (!FlowUtils.isChuanxing(wp) && completeCount > 0)  //不是串行，而且有已经完成的任务，可以接受本组
+                    ||( FlowUtils.isChuanxing(wp) && completeCount > 0 
+                        && getDao().findLong("select count(id) from Wi where status = ? and tstamp = ? and isEffectFlow = 1 and wpId = ?"
+                                , Wi.STATUS_CREATED, wp.getTstamp(), wp.getId()) == 0 ) //是串行，并且不存在真正完成的任务，可以接受本组
+                    // 没有参与人，自动跳过
+                    || (StringUtils.isEmpty(wp.getParticipants()) && FlowUtils.isAutoPassWhenNoParticipants(wp));//
+
+            if (canFinish) {
+            	
+            	//是否有运行的Wp
+                canFinish = !isSubWpsRunning(wp.getId());
+            }
+            if (canFinish) {
+                overdueWi(gvs, transientVars);
+            }
+            return canFinish;
+        } else {
+        	//父
+            boolean canFinish = !isSubModeWpsHaveRunning(wp.getId(), wp.getTstamp());
+            return canFinish;
+        }
+
+    }
+
+    @Override
+    public void overdueWi(Gvs gvs, Map<String, Object> transientVars) {
+        Ai ai = (Ai) transientVars.get(IConstantVar.TVS_AI);
+        Wp wp = (Wp) transientVars.get(IConstantVar.TVS_WP);
+
+        List<Wi> wiList = getDao().findAll(Wi.class, "aiId=? and tstamp = ? and (status=? or status = ?) and isEffectFlow = 1 and wpId = ?",
+                new Object[] { ai.getId(), wp.getTstamp(), Wi.STATUS_CREATED, Wi.STATUS_RUNNING, wp.getId() }, new String[] { "fi", "ai" });
+        for (Wi wi : wiList) {
+            wiDAO.overdueWi(wi);
+        }
+        
+        // 处理父亲
+        if (wp.getParentWpId() != null) {
+            Wp parentWp = getDao().getById(Wp.class, wp.getParentWpId());
+            boolean isJingzheng = StringUtils.isNotBlank(parentWp.getFinishCtrl()) && XorFinishTypeService.class.getName().equals(parentWp.getFinishCtrl());
+            //父节点是并行（竞争）的才需要完成所有的父节点下的任务
+            if (isJingzheng){
+                //该Wp的子流程所有的Wi
+                String ALL_SUB_SQL = "select id from tf_wp where id in (" + StringHelper.join(super.getSubWpIds(parentWp.getId()), ",") + ")";
+                List xList = getDao().findListBySQL(ALL_SUB_SQL, new Object[]{});
+                if(xList.size() > 0){
+                    List<Wi> wis = getDao().findAll(Wi.class,
+                            "(status=? or status = ?) and isEffectFlow = 1 and wpId in ("+StringHelper.join(xList, ",")+")"
+                            ,new Object[]{Wi.STATUS_CREATED, Wi.STATUS_RUNNING});
+                    for (Wi wi : wis) {
+                        wiDAO.overdueWi(wi);
+                    }
+                }
+            }
+        }
+    }
+}

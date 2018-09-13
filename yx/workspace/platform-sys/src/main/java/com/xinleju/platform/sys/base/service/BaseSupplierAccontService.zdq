@@ -1,0 +1,24 @@
+package com.xinleju.platform.sys.base.service;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.sys.base.dto.BaseSupplierAccontDto;
+import com.xinleju.platform.sys.base.entity.BaseSupplierAccont;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface BaseSupplierAccontService extends  BaseService <String,BaseSupplierAccont>{
+
+	public List<Map<String,Object>> getSupplierAccontMapBySupplierId(String id) throws Exception;
+	
+	public List<BaseSupplierAccont> getSupplierAccontBySupplierId(String id) throws Exception;
+
+	
+}

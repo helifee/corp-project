@@ -1,0 +1,221 @@
+package com.xinleju.platform.flow.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.log4j.Logger;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.AttachmentDto;
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.base.utils.LoginUtils;
+import com.xinleju.platform.base.utils.SecurityUserBeanInfo;
+import com.xinleju.platform.flow.dto.ApprovalList;
+import com.xinleju.platform.flow.dto.ApproveOperationDto;
+import com.xinleju.platform.flow.dto.MobileApproveDto;
+import com.xinleju.platform.flow.dto.MobileFormDto;
+import com.xinleju.platform.flow.entity.Instance;
+import com.xinleju.platform.flow.entity.InstanceTask;
+import com.xinleju.platform.flow.entity.MobileForm;
+import com.xinleju.platform.flow.entity.UploadAttachment;
+import com.xinleju.platform.flow.service.ApproveOperationService;
+import com.xinleju.platform.flow.service.InstanceService;
+import com.xinleju.platform.flow.service.InstanceTaskService;
+import com.xinleju.platform.flow.service.MobileApproveService;
+import com.xinleju.platform.flow.service.MobileFormService;
+import com.xinleju.platform.flow.service.UploadAttachmentService;
+import com.xinleju.platform.tools.data.JacksonUtils;
+import com.xinleju.platform.univ.attachment.dto.service.AttachmentDtoServiceCustomer;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class MobileApproveServiceImpl extends  BaseServiceImpl<String,Instance> implements MobileApproveService{
+
+	private static Logger log = Logger.getLogger(MobileApproveServiceImpl.class);
+	
+	@Autowired
+	private MobileFormService mobileFormService;
+	
+	@Autowired
+	private AttachmentDtoServiceCustomer attachmentDtoServiceCustomer;
+	
+	@Autowired
+	private InstanceService instanceService;
+	
+	@Autowired
+	private InstanceTaskService instanceTaskService;
+	
+	@Autowired
+	private ApproveOperationService approveOperationService;
+	
+	@Autowired
+	private UploadAttachmentService uploadAttachmentService;
+	
+	/**
+	 * paramMap(appId,businessId,instanceId,typeCode,approveRole)
+	 */
+	@Override
+	@Transactional(readOnly = false, propagation = Propagation.REQUIRED)
+	public MobileApproveDto queryMobileApproveByParamMap(Map<String, Object> paramMap) throws Exception {
+		log.info("\n\n----->>> queryMobileApproveByParamMap 001 paramMap="+JacksonUtils.toJson(paramMap));
+		MobileApproveDto mobileApprove = new MobileApproveDto();
+		//mobileApprove.setOpType("DB");
+		log.info("----->>> queryMobileApproveByParamMap 002");
+		// 手机表单数据
+		mobileApprove.setDataList(getMobileFormData(paramMap));
+		log.info("----->>> queryMobileApproveByParamMap 003 setDataList()");
+		// 流程过程附件
+		mobileApprove.setFileList(getFlowAttachment(paramMap));
+		log.info("----->>> queryMobileApproveByParamMap 004 setFileList()");
+
+		// 流程审批记录
+		mobileApprove.setFlowList(getApprovalLists(paramMap));
+		log.info("----->>> queryMobileApproveByParamMap 005 setFlowList()");
+		// 获取审批操作
+		mobileApprove.setNextList(getApproveOperation(paramMap));
+		log.info("----->>> queryMobileApproveByParamMap 006 setNextList()");
+		
+		String taskId = (String)paramMap.get("taskId");
+		InstanceTask task = instanceTaskService.getObjectById(taskId);
+		mobileApprove.setCurrentTaskStatus(task.getStatus());
+		log.info("----->>> queryMobileApproveByParamMap 007 currentTaskStatus="+mobileApprove.getCurrentTaskStatus());
+		return mobileApprove;
+	}
+	
+	/**
+	 * 获取手机表单数据
+	 * 
+	 * @param paramMap
+	 * @return
+	 * @throws Exception
+	 */
+	private List<MobileFormDto> getMobileFormData(Map<String, Object> paramMap) throws Exception {
+
+		List<MobileFormDto> mobileFormDtos = new ArrayList<MobileFormDto>();
+
+		HashMap<String, Object> conMap = new HashMap<String, Object>();
+		conMap.put("instanceId", paramMap.get("instanceId"));
+		conMap.put("sidx", "sort");
+		conMap.put("sord", "asc");
+		List<MobileForm> mobileForms = mobileFormService.queryList(conMap);
+		for (MobileForm mobileForm : mobileForms) {
+			MobileFormDto dataDto = new MobileFormDto();
+			BeanUtils.copyProperties(mobileForm, dataDto);
+			mobileFormDtos.add(dataDto);
+		}
+		return mobileFormDtos;
+	}
+
+	/**
+	 * 获取流程过程附件
+	 * 
+	 * @param paramMap
+	 * @return
+	 * @throws Exception
+	 */
+	private List<AttachmentDto> getFlowAttachment(Map<String, Object> paramMap) throws Exception {
+
+		List<AttachmentDto> attachmentDtos = new ArrayList<AttachmentDto>();
+
+		SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+		String userInfo = JacksonUtils.toJson(userBeanInfo);
+
+		HashMap<String, Object> conMap = new HashMap<String, Object>();
+		String[] businessIdArray = { (String) paramMap.get("businessId") };
+		//conMap.put("appId", paramMap.get("appId"));//自定义表单的appID传为了99
+		conMap.put("businessId", businessIdArray);
+		log.info("---- getFlowAttachment() 001 >>queryListByObject() conMap="+JacksonUtils.toJson(conMap));
+		String dubboResultInfo = attachmentDtoServiceCustomer.queryListByObject(userInfo, JacksonUtils.toJson(conMap));
+		DubboServiceResultInfo resultInfo = JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+		if (resultInfo.isSucess()) {
+			attachmentDtos = JacksonUtils.fromJson(resultInfo.getResult(), ArrayList.class, AttachmentDto.class);
+			log.info("---- getFlowAttachment() 001 >>queryListByObject() attachmentDtos="+attachmentDtos);
+		}
+		
+		//还要再查询一下pt_flow_upload_attachment的数据，然后去查询对应的信息
+		Map<String, Object> queryParam = new HashMap<String, Object>();
+		queryParam.put("instanceId", (String) paramMap.get("instanceId"));
+		log.info("---- getFlowAttachment() 002 >>queryList() queryParam="+JacksonUtils.toJson(queryParam));
+		List<UploadAttachment> uploadDataList = uploadAttachmentService.queryList(queryParam);
+		log.info("---- getFlowAttachment() 002 >>queryList() uploadDataList="+JacksonUtils.toJson(uploadDataList));
+		if(uploadDataList!=null && uploadDataList.size()>0){
+			if(attachmentDtos == null){
+				attachmentDtos = new ArrayList<AttachmentDto>();
+			}
+			for(UploadAttachment updateData : uploadDataList){
+				HashMap<String, Object> fileMap = new HashMap<String, Object>();
+				String[] businessIds = {updateData.getBusinessId() };
+				fileMap.put("businessId", businessIds);
+				fileMap.put("categoryId", "EX");//updateData.getCategoryId());
+				log.info("---- getFlowAttachment() 003 >>queryListByObject() fileMap="+JacksonUtils.toJson(fileMap));
+				String fileResultInfo = attachmentDtoServiceCustomer.queryListByObject(userInfo, JacksonUtils.toJson(fileMap));
+				DubboServiceResultInfo fileResult = JacksonUtils.fromJson(fileResultInfo, DubboServiceResultInfo.class);
+				
+				if (fileResult.isSucess()) {
+					log.info("---- getFlowAttachment() 003 >>queryListByObject() fileMap="+JacksonUtils.toJson(fileMap));
+					List<AttachmentDto> fileList = JacksonUtils.fromJson(fileResult.getResult(), ArrayList.class, AttachmentDto.class);
+					if(fileList!=null && fileList.size()>0){
+						attachmentDtos.addAll(fileList);
+					}
+				}
+			}
+		}
+		return attachmentDtos;
+	}
+	
+	/**
+	 * 获取流程审批记录
+	 * 
+	 * @param paramMap
+	 * @return
+	 */
+	private List<ApprovalList> getApprovalLists(Map<String, Object> paramMap) {
+		
+		List<ApprovalList> approvalLists = new ArrayList<ApprovalList>();
+
+		approvalLists = instanceService.queryApprovalList((String) paramMap.get("instanceId"),"mobile", null,"0");
+
+		return approvalLists;
+	}
+	
+	/**
+	 * 获取审批操作
+	 * 
+	 * @param paramMap
+	 * @return
+	 * @throws Exception
+	 */
+	private List<ApproveOperationDto> getApproveOperation(Map<String, Object> paramMap) throws Exception {
+
+		List<ApproveOperationDto> approveOperationDtos = new ArrayList<ApproveOperationDto>();
+
+		ApproveOperationDto approveOperationDto = new ApproveOperationDto();
+		/*会签	HQ
+		校稿	JG
+		审核	SH
+		审批	SP
+		核对	HD
+		办理	BL*/
+		String typeCode = (String) paramMap.get("typeCode");
+		String approveRole = (String) paramMap.get("approveRole");
+		approveOperationDto.setTypeCode(typeCode); // 审批类型码
+		approveOperationDto.setApproveRole(approveRole); // 审批角色: 1,发起人,2,审批人,3,被协办人
+
+		approveOperationDtos = approveOperationService.queryListByApproveRoleCode(typeCode, approveRole);
+
+		return approveOperationDtos;
+	}
+
+}

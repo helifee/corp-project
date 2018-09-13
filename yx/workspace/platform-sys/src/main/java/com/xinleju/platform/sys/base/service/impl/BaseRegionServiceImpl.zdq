@@ -1,0 +1,235 @@
+package com.xinleju.platform.sys.base.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.sys.base.dao.BaseRegionDao;
+import com.xinleju.platform.sys.base.dto.BaseRegionDto;
+import com.xinleju.platform.sys.base.dto.PayTypeDto;
+import com.xinleju.platform.sys.base.entity.BaseProjectType;
+import com.xinleju.platform.sys.base.entity.BaseRegion;
+import com.xinleju.platform.sys.base.entity.PayType;
+import com.xinleju.platform.sys.base.service.BaseRegionService;
+import com.xinleju.platform.sys.res.dto.DataNodeDto;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class BaseRegionServiceImpl extends  BaseServiceImpl<String,BaseRegion> implements BaseRegionService{
+	
+
+	@Autowired
+	private BaseRegionDao baseRegionDao;
+
+	@Override
+	public List<BaseRegion> getBaseRegionData() {
+		 List<BaseRegion> list = baseRegionDao.queryBaseRegionList();
+		 return list;
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.sys.base.service.BaseRegionService#getTypetree()
+	 */
+	@Override
+	public List<BaseRegionDto> getTypetree() throws Exception {
+	   List<BaseRegionDto> list =new ArrayList<BaseRegionDto>();
+	   List<BaseRegion> baseRegionList=baseRegionDao.queryBaseRegionList();
+	   List parentIds= baseRegionDao.getBaseRegionParentIdList();//查询所有的parentId
+	    if(baseRegionList!=null&&baseRegionList.size()>0){
+	    	for (BaseRegion baseRegion : baseRegionList) {
+	    		BaseRegionDto baseRegionDto=new BaseRegionDto();
+	    		String sort = baseRegion.getSort();
+	    		if(StringUtils.isNotBlank(sort)){
+	    			String[] split = sort.split("-");
+	    			Long i=(long) split.length;
+	    			BeanUtils.copyProperties(baseRegion, baseRegionDto);
+	    			baseRegionDto.setLevel(i);
+	    			baseRegionDto.setIsrepat(true);
+	    			baseRegionDto.setExpanded(true);
+	    			baseRegionDto.setLoaded(true);
+	    			String id = baseRegionDto.getId();
+	    			if(parentIds.contains(id)){
+	    				baseRegionDto.setIsLeaf(false);
+	    			}else{
+	    				baseRegionDto.setIsLeaf(true); 
+	    			};
+	    			list.add(baseRegionDto);
+	    		}
+			}
+	    }
+	   return list;
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.sys.base.service.BaseRegionService#saveBaseRegion(com.xinleju.platform.sys.base.entity.BaseRegion)
+	 */
+	@Override
+	public int saveBaseRegion(BaseRegion baseRegion) throws Exception {
+		 int j=0;
+		 String name = baseRegion.getName();
+		 String code = baseRegion.getCode();
+		 Map<String,Object>map=new HashMap<>();
+		 map.put("name", name);
+		 map.put("code", code);
+		 Integer countName=baseRegionDao.getRepeatNameCount(map);
+		 Integer countCode=baseRegionDao.getRepeatCodeCount(map);
+		 if(countName>0){
+			 j=4;
+		 }
+		 if(countCode>0){
+			 j=5;
+		 }
+		 if(countName>0&&countCode>0){
+			 j=6;
+		 }
+		 if(countName==0&&countCode==0){
+			 String parentId = baseRegion.getParentId();
+				Map<String,Object> param=new HashMap<>();
+				param.put("parentId", parentId);
+				List<BaseRegion> baseRegionList = baseRegionDao.getBaseRegionListByParentId(param);
+				if(baseRegionList!=null&&baseRegionList.size()>0){
+					String sort = baseRegionList.get(baseRegionList.size()-1).getSort();
+					if("".equals(parentId)||parentId==null){
+						 int oldNumber =Integer.parseInt(sort);
+						 int newNumber=(oldNumber+1);
+						 String newSort= String.format("%04d", newNumber); 
+						 baseRegion.setSort(newSort);
+						 baseRegion.setPrefixId(baseRegion.getId());
+					}else{
+						BaseRegion parentBaseRegion = baseRegionDao.getObjectById(parentId);
+						 int i=sort.lastIndexOf("-");
+						 String parentSort = sort.substring(0,i);
+						 String oldSort = sort.substring(i+1,sort.length());
+						 int oldNumber =Integer.parseInt(oldSort);
+						 int newNumber=(oldNumber+1);
+						 String newSort=parentSort+"-"+ String.format("%04d", newNumber); 
+						 baseRegion.setSort(newSort);
+						 baseRegion.setPrefixId(parentBaseRegion.getPrefixId()+"-"+baseRegion.getId());
+					}
+				}else{
+					if(parentId==null||"".equals(parentId)){
+						baseRegion.setSort("0001");
+						 baseRegion.setPrefixId(baseRegion.getId());
+					}else{
+						BaseRegion parentBaseRegion = baseRegionDao.getObjectById(parentId);
+						String parentSort =parentBaseRegion.getSort();
+						 String newSort=parentSort+"-"+"0001";
+						 baseRegion.setSort(newSort);
+						 baseRegion.setPrefixId(parentBaseRegion.getPrefixId()+"-"+baseRegion.getId()); 
+					}
+				}
+						j=baseRegionDao.save(baseRegion);
+			
+		 }
+		 return j;
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.sys.base.service.BaseRegionService#queryBaseRegionList()
+	 */
+	@Override
+	public List<BaseRegion> queryBaseRegionList() throws Exception {
+		return baseRegionDao.queryBaseRegionList();
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.sys.base.service.BaseRegionService#updateBaseRegion(com.xinleju.platform.sys.base.entity.BaseRegion)
+	 */
+	@Override
+	public int updateBaseRegion(BaseRegion baseRegion) throws Exception {
+		int j=0;
+		String id = baseRegion.getId();
+		BaseRegion oldBaseRegion = baseRegionDao.getObjectById(id);
+		String oldName = oldBaseRegion.getName();
+		String oldCode = oldBaseRegion.getCode();
+		 String name = baseRegion.getName();
+		 String code = baseRegion.getCode();
+		 Map<String,Object>map=new HashMap<>();
+		 map.put("name", name);
+		 map.put("code", code);
+		 Integer countName=baseRegionDao.getRepeatNameCount(map);
+		 Integer countCode=baseRegionDao.getRepeatCodeCount(map);
+		 if(countName>1||(countName==1&&(!oldName.equals(name)))){
+			 j=4;
+		 }
+		 if(countCode>1||(countCode==1&&(!oldCode.equals(code)))){
+			 j=5;
+		 }
+		 if(countName==0&&countCode==0){
+			j=baseRegionDao.update(baseRegion);
+		 }
+		 return j;
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.sys.base.service.BaseRegionService#deletePseudo(java.lang.String)
+	 */
+	@Override
+	public int deletePseudo(BaseRegion baseRegion) throws Exception {
+		String id = baseRegion.getId();
+		BaseRegion newbaseRegion = baseRegionDao.getObjectById(id);
+		String prefixId = newbaseRegion.getPrefixId();
+		Map<String,Object> map= new HashMap<String,Object>();
+		map.put("prefixId", prefixId);
+ 		List<String> ids=baseRegionDao.queryListIdsByPrefixId(map);
+		int i = baseRegionDao.deletePseudoAllObjectByIds(ids);
+		return i;
+	    
+	}
+
+	@Override
+	public int updateSort(Map map) {
+		List<BaseRegion> updateRegionList =new ArrayList<BaseRegion>();
+		map.put("parentId", "");
+		List<BaseRegion> list = baseRegionDao.queryList(map);
+	     for (BaseRegion baseRegion : list) {
+	    	 String id = baseRegion.getId();
+	    	 String sort = baseRegion.getSort();
+	    	 if(sort.contains("110000")||sort.contains("120000")||sort.contains("310000")||sort.contains("500000")||sort.contains("130000")||sort.contains("140000")||sort.contains("150000")){
+	    		 continue;
+	    	 }else{
+	    		 map.put("parentId", id);
+	    		 List<BaseRegion> list2 = baseRegionDao.queryList(map);
+	    		 int i=1;
+	    		 for (BaseRegion baseRegion2 : list2) {
+	    			 String sort2=sort+"-"+ String.format("%04d", i);
+	    			 String perfixId2=id+"-"+baseRegion2.getId();
+	    			 baseRegion2.setSort(sort2);
+	    			 baseRegion2.setPrefixId(perfixId2);
+	    			 i++;
+	    			 map.put("parentId", baseRegion2.getId());
+	    			 List<BaseRegion> list3 = baseRegionDao.queryList(map);
+	    			 int j=1;
+	    			 for (BaseRegion baseRegion3 : list3) {
+	    				 String perfixId3=perfixId2+'-'+baseRegion3.getId();
+	    				 String sort3=sort2+"-"+ String.format("%04d", j);
+	    				 baseRegion3.setSort(sort3);
+		    			 baseRegion3.setPrefixId(perfixId3);
+	    				 j++;
+	    				 updateRegionList.add(baseRegion3);
+					}
+	    			 updateRegionList.add(baseRegion2);
+				} 
+	    	 }
+		}
+	     baseRegionDao.updateBatch(updateRegionList);
+		
+		
+		
+		return 1;
+	}
+
+}

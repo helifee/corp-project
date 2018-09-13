@@ -1,0 +1,90 @@
+package com.xinleju.platform.finance.dto;
+
+import com.xinleju.platform.base.dto.BaseDto;
+
+
+
+
+
+/**
+ * @author admin
+ * 
+ *
+ */
+public class SysRegisterDto extends BaseDto{
+
+		
+	//财务系统标识
+	private String fiSysCode;
+    
+  		
+	//财务系统名称
+	private String fiSysName;
+    
+  		
+	//业务类型
+	private String type;
+    
+  		
+	//发送方标识
+	private String sender;
+    
+  		
+	//状态
+	private String status;
+    
+  		
+	//财务系统webservice地址
+	private String webUrl;
+    
+  		
+		
+	public String getFiSysCode() {
+		return fiSysCode;
+	}
+	public void setFiSysCode(String fiSysCode) {
+		this.fiSysCode = fiSysCode;
+	}
+    
+  		
+	public String getFiSysName() {
+		return fiSysName;
+	}
+	public void setFiSysName(String fiSysName) {
+		this.fiSysName = fiSysName;
+	}
+    
+  		
+	public String getType() {
+		return type;
+	}
+	public void setType(String type) {
+		this.type = type;
+	}
+    
+  		
+	public String getSender() {
+		return sender;
+	}
+	public void setSender(String sender) {
+		this.sender = sender;
+	}
+    
+  		
+	public String getStatus() {
+		return status;
+	}
+	public void setStatus(String status) {
+		this.status = status;
+	}
+    
+  		
+	public String getWebUrl() {
+		return webUrl;
+	}
+	public void setWebUrl(String webUrl) {
+		this.webUrl = webUrl;
+	}
+    
+  		
+}

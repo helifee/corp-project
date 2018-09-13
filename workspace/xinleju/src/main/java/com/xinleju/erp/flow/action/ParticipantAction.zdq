@@ -1,0 +1,732 @@
+package com.xinleju.erp.flow.action;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.xinleju.erp.base.app.action.BaseAction;
+import com.xinleju.erp.base.utils.JsonUtils;
+import com.xinleju.erp.flow.bean.IdName;
+import com.xinleju.erp.flow.service.api.OrgnAPIService;
+import com.xinleju.erp.flow.service.api.ParticipantAPIService;
+import com.xinleju.erp.frame.models.Company;
+import com.xinleju.erp.frame.models.Dept;
+import com.xinleju.erp.frame.models.Group;
+import com.xinleju.erp.frame.models.PartyEntity;
+import com.xinleju.erp.frame.models.Role;
+import com.xinleju.erp.frame.models.User;
+
+/**
+ * 
+ * 
+ * <p>
+ * 生成参与人选择树，供流程设计使用
+ * </p>`
+ * <p>
+ * 流程图设计时，在参与人Tab和抄送人Tab选择相应的岗位、人员、组织架构
+ * </p>
+ * 
+ * @author 孙朝辉
+ * @version $Id: ParticipantAction.java 2337 2015-01-23 08:16:23Z zhongjun $
+ * @since
+ * 
+ */
+public class ParticipantAction extends BaseAction {
+	public static final String QUARTERS = "岗位";
+	
+	private static final String DELETED = "(已删除)";
+	private static final String DISABLED = "(已禁用)";
+
+    /**
+     * 允许选择人数的个数最大
+     */
+    private Integer maxCount;
+    
+    /**
+     * 允许选择的人数最小
+     */
+    private Integer minCount;
+    
+    private String partNames;
+    
+    /**
+     * 组织架构Service
+     */
+    @Autowired
+    private OrgnAPIService orgnAPIService;
+    /**
+     * 组织架构Service
+     */
+    @Autowired
+    private ParticipantAPIService participantAPIService;
+    /**
+     * 选择页面单选
+     * @author jun
+     * @return 选择页面
+     */
+    public String tree(){
+        return "tree";
+    }
+    
+    /**
+     * 只有组织机构的单选页面
+     * @author jun
+     * @return 选择页面
+     */
+    public String treeOrg(){
+        return "treeOrg";
+    }
+    
+    
+    
+    /**
+     * 选择页面多选
+     * @author jun
+     * @return 选择页面
+     */
+    public String treeMore(){
+        return "treeMore";
+    }
+    
+    /**
+     * 只有组织机构的多选页面
+     * @return
+     */
+    public String treeMoreOrg() {
+    	return "treeMoreOrg";
+    }
+    
+    /**
+     * 组织架构树-只有组织机构
+     */
+    public void getOrgTree() {
+
+        String q = getParameter("q");
+        Long parentId = Long.parseLong(getRequest().getParameter("parentId").substring(IdName.PREFIX_LENGTH));
+
+        String prefix = getRequest().getParameter("prefix");
+
+        List<IdName> returnList = new ArrayList<IdName>();
+        if (prefix.equals(IdName.ROOT_PREFIX)) {
+            returnList.add(new IdName(0L, QUARTERS, IdName.PART_PREFIX));
+        } else if (prefix.equals(IdName.PART_PREFIX)) {
+            returnList.addAll(participantAPIService.findChildEntityAll(parentId, participantAPIService.getZcRootStructTypeIdByStructTypeCode(), q));
+        }
+
+        List<Map<String, Object>> trees = new ArrayList<Map<String, Object>>();
+        for (IdName idName : returnList) {
+
+            Map<String, Object> tree = new HashMap<String, Object>();
+            tree.put("id", idName.getPrefix() + idName.getId());
+            tree.put("text", idName.getName());
+
+            boolean isLeaf = false;
+            if (idName.getPrefix().equals(IdName.USER_PREFIX)){
+                isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.OBJF_PREFIX)){
+                isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.XDPA_PREFIX) && idName.getId()>0){
+                isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.PBIZ_PREFIX) && idName.getId().intValue() != 0 ){
+                isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.ORGN_PREFIX) && idName.isLeaf(false) && (Integer) ((Map<String, Object>) idName.getTarget()).get("isUserEmpty") == 1){
+                isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.ROLE_PREFIX)){
+                isLeaf = !participantAPIService.isExistedSon(idName.getId());
+            }
+            tree.put("leaf", isLeaf);
+            tree.put("prefix", idName.getPrefix());
+            if (prefix.equals(IdName.ROOT_PREFIX)) {
+            	tree.put("checkable", false);
+            }else{
+            	tree.put("checkable", true);
+            }
+
+            if (idName.getPrefix().equals(IdName.PART_PREFIX)) {
+                if("user".equals(idName.getType())){
+                    tree.put("iconCls", "img_user");
+                    tree.put("leaf", true);
+                }
+                else if("role".equals(idName.getType())){
+                    tree.put("iconCls", "img_role");
+                }
+                else if("group".equals(idName.getType())){
+                    tree.put("iconCls", "img_group");
+                }
+                else{
+                    tree.put("iconCls", "img_orgn");
+                }
+               
+            }
+
+            trees.add(tree);
+        }
+
+        Map<String, Object> pageMap = new HashMap<String, Object>();
+        pageMap.put("total", trees.size());
+        pageMap.put("nodes", trees);
+        String jsonString = JsonUtils.toJSONString(trees);
+        renderJson(jsonString);
+    }
+
+
+    /**
+     * 离职处理选人架构树
+     */
+    public void getOrgTreeForDimission() {
+
+        String q = getParameter("q");
+        Long parentId = Long.parseLong(getRequest().getParameter("parentId").substring(IdName.PREFIX_LENGTH));
+
+        String prefix = getRequest().getParameter("prefix");
+        
+        List<IdName> returnList = new ArrayList<IdName>();
+        if (prefix.equals(IdName.ROOT_PREFIX)) {
+            returnList.add(new IdName(0L, "标准角色", IdName.ROLE_PREFIX));
+            returnList.add(new IdName(0L, "岗位", IdName.PART_PREFIX));            
+        } else if (prefix.equals(IdName.PART_PREFIX)) {
+            returnList.addAll(participantAPIService.findChildEntityAll(parentId, participantAPIService.getZcRootStructTypeIdByStructTypeCode(), q));
+        } else if (prefix.equals(IdName.ROLE_PREFIX)) {
+            returnList.addAll(participantAPIService.getAllRoleList(parentId, q,false));
+        }
+
+        List<Map<String, Object>> trees = new ArrayList<Map<String, Object>>();
+        for (IdName idName : returnList) {
+            Map<String, Object> tree = new HashMap<String, Object>();
+            tree.put("id", idName.getPrefix() + idName.getId());
+            
+            if (idName.getPrefix().equals(IdName.ROLE_PREFIX)) {
+            	Role r=getCommonService().getById(Role.class, idName.getId());
+            	Integer status=0;
+            	if(r!=null&&r.getStatus()!=null){
+            		status=r.getStatus();
+            	}
+            	 if (status!=null&&status>0) {
+                     tree.put("text", "<font style=\"color:red\">" + idName.getName() + DISABLED +"</font>");
+                 } else {
+                     tree.put("text", idName.getName());
+                 }
+            }else if (idName.getPrefix().equals(IdName.PART_PREFIX)) {
+            	tree.put("text", idName.getName());
+            }
+            boolean isLeaf = false;
+            if (idName.getPrefix().equals(IdName.USER_PREFIX)){
+                isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.OBJF_PREFIX)){
+                isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.XDPA_PREFIX) && idName.getId()>0){
+                isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.PBIZ_PREFIX) && idName.getId().intValue() != 0 ){
+                isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.ORGN_PREFIX) && idName.isLeaf(false) && (Integer) ((Map<String, Object>) idName.getTarget()).get("isUserEmpty") == 1){
+                isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.ROLE_PREFIX)){
+                isLeaf = !participantAPIService.isExistedSon(idName.getId());
+            }
+            tree.put("leaf", isLeaf);
+            tree.put("prefix", idName.getPrefix());
+            if (prefix.equals(IdName.ROOT_PREFIX)) {
+            	tree.put("checkable", false);
+            }else{
+            	tree.put("checkable", true);
+            }
+
+            if (idName.getPrefix().equals(IdName.ROLE_PREFIX)) {
+                tree.put("iconCls", "img_role");
+            }else if (idName.getPrefix().equals(IdName.PART_PREFIX)) {
+                if("user".equals(idName.getType())){
+                    tree.put("iconCls", "img_user");
+                    tree.put("leaf", true);
+                }
+                else if("role".equals(idName.getType())){
+                    tree.put("iconCls", "img_role");
+                }
+                else if("group".equals(idName.getType())){
+                    tree.put("iconCls", "img_group");
+                }
+                else{
+                    tree.put("iconCls", "img_orgn");
+                }
+               
+            }
+
+            trees.add(tree);
+        }
+
+        Map<String, Object> pageMap = new HashMap<String, Object>();
+        pageMap.put("total", trees.size());
+        pageMap.put("nodes", trees);
+        String jsonString = JsonUtils.toJSONString(trees);
+        renderJson(jsonString);
+    }
+    
+    /**
+     * 
+     * <p>
+     * 组织架构树
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * 
+     */
+    @SuppressWarnings("unchecked")
+    public void getTree() {
+
+        String q = getParameter("q");
+        Long parentId = Long.parseLong(getRequest().getParameter("parentId").substring(IdName.PREFIX_LENGTH));
+
+        String prefix = getRequest().getParameter("prefix");
+
+        List<IdName> returnList = new ArrayList<IdName>();
+        if (prefix.equals(IdName.ROOT_PREFIX)) {
+            returnList.add(new IdName(0L, "自定义", IdName.PBIZ_PREFIX));
+            returnList.add(new IdName(0L, "标准角色", IdName.ROLE_PREFIX));
+            returnList.add(new IdName(0L, "岗位", IdName.PART_PREFIX));
+            returnList.add(new IdName(0L, "相对参与人", IdName.XDPA_PREFIX));
+            returnList.add(new IdName(0L, "外部参与人", IdName.APPS_PREFIX));
+            // TODO 通用角色处理，后续增加
+            returnList.add(new IdName(0L, "通用角色", IdName.GENERAL_PREFIX));
+            returnList.add(new IdName(0L, "职级", IdName.RANK_PREFIX));
+        } else if (prefix.equals(IdName.PART_PREFIX)) {
+            returnList.addAll(participantAPIService.findChildEntityAll(parentId, participantAPIService.getZcRootStructTypeIdByStructTypeCode(), q));
+        } else if (prefix.equals(IdName.ROLE_PREFIX)) {
+            returnList.addAll(participantAPIService.getAllRoleList(parentId, q,false));
+        } else if (prefix.equals(IdName.GENERAL_PREFIX)) { // 通用角色查询
+            returnList.addAll(participantAPIService.getGeneralRoleList());
+        } else if (prefix.equals(IdName.PBIZ_PREFIX)) {
+            returnList.addAll(participantAPIService.getBizParticipantList());
+        } else if (prefix.equals(IdName.XDPA_PREFIX) && parentId.intValue() == 0) {
+            returnList.addAll(participantAPIService.getXiangduiParticipantList());
+        } else if (prefix.equals(IdName.APPS_PREFIX) && parentId.intValue() == 0) {
+            returnList.addAll(participantAPIService.getAllAppList());
+        } else if (prefix.equals(IdName.APPS_PREFIX)) {
+            returnList.addAll(participantAPIService.getSmServiceObjectListByAppId(parentId.longValue()));
+        } else if (prefix.equals(IdName.OBJS_PREFIX)) {
+            returnList.addAll(participantAPIService.getSmServiceObjectFieldListByObjectId(parentId.longValue()));
+        } else if (prefix.equals(IdName.RANK_PREFIX) && parentId.intValue() == 0) {
+            returnList.addAll(participantAPIService.getRankList());
+        }
+        List<Map<String, Object>> trees = new ArrayList<Map<String, Object>>();
+        for (IdName idName : returnList) {
+
+            Map<String, Object> tree = new HashMap<String, Object>();
+            tree.put("id", idName.getPrefix() + idName.getId());
+            
+            //当标准角色，岗位为禁用状态时显示红色
+            if (idName.getPrefix().equals(IdName.ROLE_PREFIX)) {
+            	Role r=getCommonService().getById(Role.class, idName.getId());
+            	Integer status=0;
+            	if(r!=null&&r.getStatus()!=null){
+            		status=r.getStatus();
+            	}
+            	 if (status!=null&&status>0) {
+                     tree.put("text", "<font style=\"color:red\">" + idName.getName() + DISABLED +"</font>");
+                 } else {
+                     tree.put("text", idName.getName());
+                 }
+            } else if (idName.getPrefix().equals(IdName.PART_PREFIX)) {
+            	Integer status=0;
+            	PartyEntity partyEntity=getCommonService().getById(PartyEntity.class, idName.getId());
+            	if(partyEntity!=null){
+
+            		Long refParentId = partyEntity.getRefParentId();	// 具体组织架构类型父ID
+            		Long partyTypeId = partyEntity.getPartyTypeId(); // 组织架构类型ID 1：总部 2：公司 3：部门 4：团队 5：岗位 6：用户
+            		
+            		if(refParentId != null && refParentId > 01 && partyTypeId == 5){ // 岗位
+                		Role role=getCommonService().getById(Role.class,refParentId);
+                    	if(role!=null){
+                    		status=role.getStatus();
+                    	}
+                	}else if(partyTypeId == 6){ // 用户
+                		User user = getCommonService().getById(User.class,partyEntity.getRefId());
+            			if(user != null){
+            				status = user.getStatus();
+            			}
+                	}else if(partyTypeId == 3){ // 部门
+                		Dept department = getCommonService().getById(Dept.class,partyEntity.getRefId());
+                		if(department != null){
+            				status = department.getStatus();
+            			}
+                	}else if(partyTypeId == 2){ // 公司
+                		Company company = getCommonService().getById(Company.class,partyEntity.getRefId());
+                		if(company != null){
+            				status = company.getStatus();
+            			}
+                	}else if(partyTypeId == 4){ // 团队
+                		Group group = getCommonService().getById(Group.class,partyEntity.getRefId());
+                		if(group != null){
+            				status = group.getStatus();
+            			}
+                	}
+            	}
+            	
+            	if (status!=null && status>0) {
+                    tree.put("text", "<font style=\"color:red\">" + idName.getName() + DISABLED +"</font>");
+                } else {
+                    tree.put("text", idName.getName());
+                }   
+            	
+            }else{
+                tree.put("text", idName.getName());
+            }
+
+            //tree.put("text", idName.getName());
+
+            boolean isLeaf = false;
+            if (idName.getPrefix().equals(IdName.USER_PREFIX)){
+                isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.OBJF_PREFIX)){
+                isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.XDPA_PREFIX) && idName.getId()>0){
+                isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.PBIZ_PREFIX) && idName.getId().intValue() != 0 ){
+                isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.ORGN_PREFIX) && idName.isLeaf(false) && (Integer) ((Map<String, Object>) idName.getTarget()).get("isUserEmpty") == 1){
+                isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.ROLE_PREFIX)){
+                isLeaf = !participantAPIService.isExistedSon(idName.getId());
+            } else if (idName.getPrefix().equals(IdName.GENERAL_PREFIX) && idName.getId()>0){
+            	isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.RANK_PREFIX) && idName.getId()>0){
+                isLeaf = true;
+            }
+            //是否有叶子节点
+            tree.put("leaf", isLeaf);
+            tree.put("prefix", idName.getPrefix());
+            if (prefix.equals(IdName.ROOT_PREFIX)) {
+            	tree.put("checkable", false);
+            }else{
+            	tree.put("checkable", true);
+            }
+
+            if (idName.getPrefix().equals(IdName.GENERAL_PREFIX)) { // 通用角色
+                tree.put("iconCls", "img_role");
+            }if (idName.getPrefix().equals(IdName.ROLE_PREFIX)) {
+                tree.put("iconCls", "img_role");
+            } else if (idName.getPrefix().equals(IdName.USER_PREFIX)) {
+                tree.put("iconCls", "img_user");
+            } else if (idName.getPrefix().equals(IdName.PART_PREFIX)) {
+                if("user".equals(idName.getType())){
+                    tree.put("iconCls", "img_user");
+                    tree.put("leaf", true);
+                }
+                else if("role".equals(idName.getType())){
+                    tree.put("iconCls", "img_role");
+                }
+                else if("group".equals(idName.getType())){
+                    tree.put("iconCls", "img_group");
+                }
+                else{
+                    tree.put("iconCls", "img_orgn");
+                }
+                tree.put("type",idName.getType());
+            } else if (idName.getPrefix().equals(IdName.PBIZ_PREFIX)) {
+                tree.put("iconCls", "img_bizp");
+            }
+
+            trees.add(tree);
+        }
+        Map<String, Object> pageMap = new HashMap<String, Object>();
+        pageMap.put("total", trees.size());
+        pageMap.put("nodes", trees);
+        String jsonString = JsonUtils.toJSONString(trees);
+        renderJson(jsonString);
+    }
+    
+    /**
+     * 处理禁用的岗位状态
+     * @author luocheng
+     */
+    public void dealRoleStatus(){
+        Map<String, String> result = new HashMap<String, String>();
+        try {
+            if (StringUtils.isNotBlank(partNames)){
+                //初始化操作组
+               String newStr="";
+               // Pbiz_1:流程发起人;Part_658:财务会计(禁用);Part_657:财务总监
+               String[] strs=partNames.split(";");
+               if(strs!=null&&strs.length>0){
+            	   for(int i=0;i<strs.length;i++){
+            		   String s=strs[i];
+            		   if(StringUtils.isNotBlank(s)){
+            			   String stwo=s;
+            			   //当标准角色，岗位为禁用状态时显示红色
+            			   String[] sthree=s.split(":");
+            			   Integer status=0; // 具体组织架构状态
+            			   Long partId = Long.parseLong(sthree[0].split("_")[1]);
+            	            if (s.startsWith(IdName.ROLE_PREFIX)) {
+            	            	Role role=getCommonService().getById(Role.class,partId);
+            	            	
+            	            	if(role != null){
+    	            				status = role.getStatus();
+    	            				stwo = sthree[0] + ":" + role.getName();
+    	            			}else{
+    	            				if(!stwo.contains(DELETED)){
+    	            					stwo=stwo+DELETED;
+    	            				}
+    	            			}
+            	            } else if (s.startsWith(IdName.PART_PREFIX)) {
+            	            	PartyEntity partyEntity=getCommonService().getById(PartyEntity.class, partId);
+            	            	// 如果通过组织架构ID获取到数据的话，继续判断是否已禁用
+            	            	if(partyEntity!=null){
+            	            		
+            	            		Long refParentId = partyEntity.getRefParentId();	// 具体组织架构类型父ID
+            	            		Long partyTypeId = partyEntity.getPartyTypeId(); // 组织架构类型ID 1：总部 2：公司 3：部门 4：团队 5：岗位 6：用户
+            	            		
+            	            		if(refParentId != null && refParentId > 01 && partyTypeId == 5){ // 参与人为岗位
+            	            			Role role = getCommonService().getById(Role.class,refParentId);
+            	            			if(role != null){
+            	            				status = role.getStatus();
+            	            				stwo = sthree[0] + ":" + partyEntity.getName();
+            	            			}
+            	            		}else if(partyTypeId == 6) { // 参与人为人员
+            	            			User user = getCommonService().getById(User.class,partyEntity.getRefId());
+            	            			if(user != null){
+            	            				status = user.getStatus();
+            	            				stwo = sthree[0] + ":" + partyEntity.getName();
+            	            			}
+            	            		}else if(partyTypeId == 3) { // 参与人为部门
+            	            			Dept dept = getCommonService().getById(Dept.class,partyEntity.getRefId());
+            	            			if(dept != null){
+            	            				status = dept.getStatus();
+            	            				stwo = sthree[0] + ":" + partyEntity.getName();
+            	            			}
+            	            		}else if(partyTypeId == 2) { // 参与人为公司
+            	            			Company company = getCommonService().getById(Company.class,partyEntity.getRefId());
+            	            			if(company != null){
+            	            				status = company.getStatus();
+            	            				stwo = sthree[0] + ":" + partyEntity.getName();
+            	            			}
+            	            		}else if(partyTypeId == 4) { // 参与人为团队
+            	            			Group group = getCommonService().getById(Group.class,partyEntity.getRefId());
+            	            			if(group != null){
+            	            				status = group.getStatus();
+            	            				stwo = sthree[0] + ":" + partyEntity.getName();
+            	            			}
+            	            		}
+            	            	}else{ // 如果通过组织架构ID未获取到数据的话，表示参与人为已删除
+            	            		if(!stwo.contains(DELETED)){
+    	            					stwo=stwo+DELETED;
+    	            				}
+            	            	}
+            	            }
+            	            
+            	            if (status!=null && status > 0){
+            	            	stwo=stwo+DISABLED;
+	            			}
+            	            
+            	            //加入新值
+            	            if("".equals(newStr)){
+            	            	newStr=stwo;
+            	            }else{
+            	            	newStr=newStr+";"+stwo;
+            	            }
+            		   }
+            	   }
+               }
+               
+                result.put("success", newStr);
+            } else {
+                result.put("success", "false");
+            }
+        } catch (Exception e) {
+            result.put("success", "false");
+            e.printStackTrace();
+        }
+        renderJson(result);
+    }
+    
+    
+    /**
+     * 用户选择树
+     * @author jun
+     */
+    public void getUserTree() {
+        String q = getParameter("q");
+        Long parentId = Long.parseLong(getRequest().getParameter("parentId").substring(IdName.PREFIX_LENGTH));
+        List<IdName> returnList = new ArrayList<IdName>();
+        returnList.addAll(participantAPIService.findChildEntityAll(parentId, participantAPIService.getZcRootStructTypeIdByStructTypeCode(), q));
+        List<Map<String, Object>> trees = new ArrayList<Map<String, Object>>();
+        for (IdName idName : returnList) {
+            Map<String, Object> tree = new HashMap<String, Object>();
+            tree.put("id", idName.getPrefix() + idName.getId());
+            tree.put("text", idName.getName());
+            tree.put("leaf", false);
+            tree.put("prefix", idName.getPrefix());
+            if ("user".equals(idName.getType())){
+                tree.put("iconCls", "img_user");
+                tree.put("leaf", true);
+            } else if ("role".equals(idName.getType())){
+                tree.put("iconCls", "img_role");
+            } else if ("group".equals(idName.getType())){
+                tree.put("iconCls", "img_group");
+            } else {
+                tree.put("iconCls", "img_orgn");
+            }
+            trees.add(tree);
+        }
+        Map<String, Object> pageMap = new HashMap<String, Object>();
+        pageMap.put("total", trees.size());
+        pageMap.put("nodes", trees);
+        String jsonString = JsonUtils.toJSONString(trees);
+        renderJson(jsonString);
+    }
+    
+    public Integer getMaxCount() {
+        return maxCount;
+    }
+
+    public void setMaxCount(Integer maxCount) {
+        this.maxCount = maxCount;
+    }
+
+    public Integer getMinCount() {
+        return minCount;
+    }
+
+    public void setMinCount(Integer minCount) {
+        this.minCount = minCount;
+    }
+
+	public String getPartNames() {
+		return partNames;
+	}
+
+	public void setPartNames(String partNames) {
+		this.partNames = partNames;
+	}
+    
+    @SuppressWarnings("unchecked")
+    public void getWarnTree() {
+
+        String q = getParameter("q");
+        Long parentId = Long.parseLong(getRequest().getParameter("parentId").substring(IdName.PREFIX_LENGTH));
+
+        String prefix = getRequest().getParameter("prefix");
+
+        List<IdName> returnList = new ArrayList<IdName>();
+        if (prefix.equals(IdName.ROOT_PREFIX)) {
+//            returnList.add(new IdName(0L, "自定义", IdName.PBIZ_PREFIX));
+//            returnList.add(new IdName(0L, "标准角色", IdName.ROLE_PREFIX));
+            returnList.add(new IdName(0L, "岗位", IdName.PART_PREFIX));
+            returnList.add(new IdName(0L, "相对参与人", IdName.XDPA_PREFIX));
+//            returnList.add(new IdName(0L, "外部参与人", IdName.APPS_PREFIX));
+            // TODO 通用角色处理，后续增加
+//            returnList.add(new IdName(0L, "通用角色", IdName.GENERAL_PREFIX));
+//            returnList.add(new IdName(0L, "职级", IdName.RANK_PREFIX));
+        } else if (prefix.equals(IdName.PART_PREFIX)) {
+            returnList.addAll(participantAPIService.findChildEntityAll(parentId, participantAPIService.getZcRootStructTypeIdByStructTypeCode(), q));
+        } else if (prefix.equals(IdName.XDPA_PREFIX) && parentId.intValue() == 0) {
+            returnList.addAll(participantAPIService.getWarnXiangduiParticipantList());
+        } else if (prefix.equals(IdName.OBJS_PREFIX)) {
+            returnList.addAll(participantAPIService.getSmServiceObjectFieldListByObjectId(parentId.longValue()));
+        }
+        List<Map<String, Object>> trees = new ArrayList<Map<String, Object>>();
+        for (IdName idName : returnList) {
+
+            Map<String, Object> tree = new HashMap<String, Object>();
+            tree.put("id", idName.getPrefix() + idName.getId());
+            
+            //当标准角色，岗位为禁用状态时显示红色
+            if (idName.getPrefix().equals(IdName.PART_PREFIX)) {
+            	Integer status=0;
+            	PartyEntity partyEntity=getCommonService().getById(PartyEntity.class, idName.getId());
+            	if(partyEntity!=null){
+
+            		Long refParentId = partyEntity.getRefParentId();	// 具体组织架构类型父ID
+            		Long partyTypeId = partyEntity.getPartyTypeId(); // 组织架构类型ID 1：总部 2：公司 3：部门 4：团队 5：岗位 6：用户
+            		
+            		if(refParentId != null && refParentId > 01 && partyTypeId == 5){ // 岗位
+                		Role role=getCommonService().getById(Role.class,refParentId);
+                    	if(role!=null){
+                    		status=role.getStatus();
+                    	}
+                	}else if(partyTypeId == 6){ // 用户
+                		User user = getCommonService().getById(User.class,partyEntity.getRefId());
+            			if(user != null){
+            				status = user.getStatus();
+            			}
+                	}else if(partyTypeId == 3){ // 部门
+                		Dept department = getCommonService().getById(Dept.class,partyEntity.getRefId());
+                		if(department != null){
+            				status = department.getStatus();
+            			}
+                	}else if(partyTypeId == 2){ // 公司
+                		Company company = getCommonService().getById(Company.class,partyEntity.getRefId());
+                		if(company != null){
+            				status = company.getStatus();
+            			}
+                	}else if(partyTypeId == 4){ // 团队
+                		Group group = getCommonService().getById(Group.class,partyEntity.getRefId());
+                		if(group != null){
+            				status = group.getStatus();
+            			}
+                	}
+            	}
+            	
+            	if (status!=null && status>0) {
+                    tree.put("text", "<font style=\"color:red\">" + idName.getName() + DISABLED +"</font>");
+                } else {
+                    tree.put("text", idName.getName());
+                }   
+            	
+            }else{
+                tree.put("text", idName.getName());
+            }
+
+            //tree.put("text", idName.getName());
+
+            boolean isLeaf = false;
+            if (idName.getPrefix().equals(IdName.USER_PREFIX)){
+                isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.OBJF_PREFIX)){
+                isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.XDPA_PREFIX) && idName.getId()>0){
+                isLeaf = true;
+            } else if (idName.getPrefix().equals(IdName.ORGN_PREFIX) && idName.isLeaf(false) && (Integer) ((Map<String, Object>) idName.getTarget()).get("isUserEmpty") == 1){
+                isLeaf = true;
+            }
+            //是否有叶子节点
+            tree.put("leaf", isLeaf);
+            tree.put("prefix", idName.getPrefix());
+            if (prefix.equals(IdName.ROOT_PREFIX)) {
+            	tree.put("checkable", false);
+            }else{
+            	tree.put("checkable", true);
+            }
+
+            if (idName.getPrefix().equals(IdName.USER_PREFIX)) {
+                tree.put("iconCls", "img_user");
+            } else if (idName.getPrefix().equals(IdName.PART_PREFIX)) {
+                if("user".equals(idName.getType())){
+                    tree.put("iconCls", "img_user");
+                    tree.put("leaf", true);
+                }
+                else if("role".equals(idName.getType())){
+                    tree.put("iconCls", "img_role");
+                }
+                else if("group".equals(idName.getType())){
+                    tree.put("iconCls", "img_group");
+                }
+                else{
+                    tree.put("iconCls", "img_orgn");
+                }
+                tree.put("type",idName.getType());
+            }
+
+            trees.add(tree);
+        }
+        Map<String, Object> pageMap = new HashMap<String, Object>();
+        pageMap.put("total", trees.size());
+        pageMap.put("nodes", trees);
+        String jsonString = JsonUtils.toJSONString(trees);
+        renderJson(jsonString);
+    }   
+    
+}

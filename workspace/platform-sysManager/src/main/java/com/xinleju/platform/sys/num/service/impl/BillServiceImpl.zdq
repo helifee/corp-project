@@ -1,0 +1,137 @@
+package com.xinleju.platform.sys.num.service.impl;
+
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.sys.base.utils.StatusType;
+import com.xinleju.platform.sys.num.dao.BillDao;
+import com.xinleju.platform.sys.num.dao.RulerDao;
+import com.xinleju.platform.sys.num.entity.Bill;
+import com.xinleju.platform.sys.num.entity.Ruler;
+import com.xinleju.platform.sys.num.service.BillService;
+import com.xinleju.platform.sys.num.utils.DataType;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+/**
+ * @author ly
+ * 
+ * 
+ */
+@Service
+public class BillServiceImpl extends  BaseServiceImpl<String,Bill> implements BillService{
+	
+
+	@Autowired
+	private BillDao billDao;
+	@Autowired
+	private RulerDao rulerDao;
+
+	@Override
+	public int updateStatus(Bill billBean) throws Exception {
+		int i=0;
+		String status = billBean.getStatus();
+		if(StatusType.StatusOpen.getCode().equals(status)){//启用状态改为禁用
+			billBean.setStatus(StatusType.StatusClosed.getCode());
+			 i = billDao.update(billBean);
+		}else if(StatusType.StatusClosed.getCode().equals(status)){//禁用状态改为启用
+			billBean.setStatus(StatusType.StatusOpen.getCode());
+			i=billDao.update(billBean);
+		}
+		return i;
+	}
+
+	@Override
+	public Page getBillDataByPage(Map<String, Object> map) throws Exception {
+		Page page=new Page();
+		List<Map<String,Object>> list = billDao.getBillData(map);
+		Integer count = billDao.getBillDataCount(map);
+		page.setLimit((Integer) map.get("limit") );
+		page.setList(list);
+		page.setStart((Integer) map.get("start"));
+		page.setTotal(count);
+		return page;
+	}
+
+	/**
+	 * 编码规则主从表保存
+	 * @param BillDto
+	 * @return int
+	 * @author ly
+	 */
+	@Override
+	public int saveBillAndRuler(String billDto) throws Exception {
+		@SuppressWarnings("unchecked")
+		Map<String,Object> billDtoMap = JacksonUtils.fromJson(billDto, HashMap.class);//转Map
+		
+		String billId = (String) billDtoMap.get("id");//获取主键
+		Bill billEntity = billDao.getObjectById(billId);//获取数据库bill对象
+		if(null==billEntity){
+			//验证编号
+			Integer num  = billDao.getCountByCode(billDtoMap);
+			if(num>0){
+				throw new  Exception ("【编码】重复,请修改！");
+			}
+		}else{
+			//验证编号
+			Integer num  = billDao.getCountByCode(billDtoMap);
+			if(num>0){
+				throw new  Exception ("【编码】重复,请修改！");
+			}
+		}
+		
+		List<Map<String, Object>> rulerEntityList = rulerDao.getMapListByBillId(billId);//获取数据库ruler对象列表
+		
+		@SuppressWarnings("unchecked")
+		List<Map<String,Object>> rulerDtoList = (List<Map<String,Object>>) billDtoMap.get("rulerList");//获取页面规则子表数据
+		
+		if(null==billEntity){//数据为空
+			Bill newBillEntity = JacksonUtils.fromJson(JacksonUtils.toJson(billDtoMap), Bill.class);
+			billDao.save(newBillEntity);//新增bill对象
+			@SuppressWarnings("unchecked")
+			List<Map<String,Object>> rulerList = JacksonUtils.fromJson(JacksonUtils.toJson(rulerDtoList),List.class);
+			for(int i=0;i<rulerList.size();i++){
+				if(DataType.DATA_DELETE.getCode()!=rulerDtoList.get(i).get("dataType")){
+					rulerDao.save(JacksonUtils.fromJson(JacksonUtils.toJson(rulerList.get(i)), Ruler.class));//新增RulerList对象
+				}
+			}
+		}else{//数据为修改
+			String billJson = JacksonUtils.toJson(billEntity);//对象转换
+			@SuppressWarnings("unchecked")
+			Map<String,Object> billMap = JacksonUtils.fromJson(billJson, HashMap.class);
+			billMap.putAll(billDtoMap);
+			Bill newBillEntity = JacksonUtils.fromJson(JacksonUtils.toJson(billMap), Bill.class);
+			billDao.update(newBillEntity);//更新bill对象
+			
+			for(int i=0;i<rulerDtoList.size();i++){
+				if(DataType.DATA_ADD.getCode()==rulerDtoList.get(i).get("dataType")){
+					rulerDao.save(JacksonUtils.fromJson(JacksonUtils.toJson(rulerDtoList.get(i)),Ruler.class));//新增方法
+				}else if(DataType.DATA_UPDATE.getCode()==rulerDtoList.get(i).get("dataType")){
+					//匹配数据库已存在对象
+					for(int j=0;j<rulerEntityList.size();j++){
+						if(rulerEntityList.get(j).get("id").equals(rulerDtoList.get(i).get("id"))){
+							@SuppressWarnings("unchecked")
+							Map<String,Object> RulerMap = JacksonUtils.fromJson(JacksonUtils.toJson(rulerDtoList.get(i)), HashMap.class);
+							Map<String,Object> oldRulerMap = rulerEntityList.get(j);
+							oldRulerMap.putAll(RulerMap);
+							rulerDao.update(JacksonUtils.fromJson(JacksonUtils.toJson(oldRulerMap), Ruler.class));//修改方法
+						}
+					}
+					
+				}else if(DataType.DATA_DELETE.getCode()==rulerDtoList.get(i).get("dataType")){
+					rulerDao.deletePseudoObjectById((String)rulerDtoList.get(i).get("id"));//伪删除方法
+				}
+			}
+		}
+		return 1;//返回成功
+	}
+	
+
+}

@@ -1,0 +1,196 @@
+package com.xinleju.platform.portal.entity;
+
+import com.sun.org.apache.xpath.internal.operations.Bool;
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author admin
+ */
+
+@Table(value = "PT_PORTAL_COMPONENT", desc = "组件表")
+public class Component extends BaseEntity {
+
+
+    @Column(value = "title", desc = "组件标题")
+    private String title;
+
+
+    @Column(value = "code", desc = "组件编码")
+    private String code;
+
+
+    @Column(value = "title_icon", desc = "组件图标")
+    private String titleIcon;
+
+
+    @Column(value = "req_type", desc = "请求类型")
+    private String reqType;
+
+
+    @Column(value = "content_url", desc = "组件内容url")
+    private String contentUrl;
+
+
+    @Column(value = "content_type", desc = "组件内容类型")
+    private String contentType;
+
+
+    @Column(value = "description", desc = "组件描述")
+    private String description;
+
+
+    @Column(value = "category_id", desc = "组件类别ID")
+    private String categoryId;
+
+    @Column(value = "display_close", desc = "显示关闭")
+    private Boolean displayClose;
+
+    @Column(value = "display_max", desc = "显示最大化")
+    private Boolean displayMax;
+
+    @Column(value = "display_min", desc = "显示最小化")
+    private Boolean displayMin;
+
+    @Column(value = "display_delete", desc = "显示删除")
+    private Boolean displayDelete;
+
+    @Column(value = "display_refresh", desc = "显示刷新")
+    private Boolean displayRefresh;
+
+    @Column(value = "display_move", desc = "显示移动")
+    private Boolean displayMove;
+
+    @Column(value = "more_url", desc = "更多URL")
+    private String moreUrl;
+
+
+    public String getTitle() {
+        return title;
+    }
+
+    public void setTitle(String title) {
+        this.title = title;
+    }
+
+
+    public String getCode() {
+        return code;
+    }
+
+    public void setCode(String code) {
+        this.code = code;
+    }
+
+
+    public String getTitleIcon() {
+        return titleIcon;
+    }
+
+    public void setTitleIcon(String titleIcon) {
+        this.titleIcon = titleIcon;
+    }
+
+
+    public String getReqType() {
+        return reqType;
+    }
+
+    public void setReqType(String reqType) {
+        this.reqType = reqType;
+    }
+
+
+    public String getContentUrl() {
+        return contentUrl;
+    }
+
+    public void setContentUrl(String contentUrl) {
+        this.contentUrl = contentUrl;
+    }
+
+
+    public String getContentType() {
+        return contentType;
+    }
+
+    public void setContentType(String contentType) {
+        this.contentType = contentType;
+    }
+
+
+    public String getDescription() {
+        return description;
+    }
+
+    public void setDescription(String description) {
+        this.description = description;
+    }
+
+
+    public String getCategoryId() {
+        return categoryId;
+    }
+
+    public void setCategoryId(String categoryId) {
+        this.categoryId = categoryId;
+    }
+
+    public Boolean getDisplayClose() {
+        return displayClose;
+    }
+
+    public void setDisplayClose(Boolean displayClose) {
+        this.displayClose = displayClose;
+    }
+
+    public Boolean getDisplayMax() {
+        return displayMax;
+    }
+
+    public void setDisplayMax(Boolean displayMax) {
+        this.displayMax = displayMax;
+    }
+
+    public Boolean getDisplayMin() {
+        return displayMin;
+    }
+
+    public void setDisplayMin(Boolean displayMin) {
+        this.displayMin = displayMin;
+    }
+
+    public Boolean getDisplayDelete() {
+        return displayDelete;
+    }
+
+    public void setDisplayDelete(Boolean displayDelete) {
+        this.displayDelete = displayDelete;
+    }
+
+    public Boolean getDisplayRefresh() {
+        return displayRefresh;
+    }
+
+    public void setDisplayRefresh(Boolean displayRefresh) {
+        this.displayRefresh = displayRefresh;
+    }
+
+    public Boolean getDisplayMove() {
+        return displayMove;
+    }
+
+    public void setDisplayMove(Boolean displayMove) {
+        this.displayMove = displayMove;
+    }
+
+    public String getMoreUrl() {
+        return moreUrl;
+    }
+
+    public void setMoreUrl(String moreUrl) {
+        this.moreUrl = moreUrl;
+    }
+}

@@ -1,0 +1,22 @@
+package com.xinleju.platform.sys.log.service;
+
+import java.util.Map;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.sys.log.entity.LogTask;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface LogTaskService extends  BaseService <String,LogTask>{
+
+	/**
+	 * 模糊查询-分页
+	 * @return
+	 */
+	public Page vaguePage(Map<String, Object> map)throws Exception;
+}

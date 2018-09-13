@@ -1,0 +1,203 @@
+package com.xinleju.platform.flow.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+import java.util.Date;
+
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Table(value="PT_FLOW_OVERDUE_SETTING",desc="流程逾期设置")
+public class OverdueSetting extends BaseEntity{
+	
+		
+	@Column(value="approve_hours",desc="标准审核时间")
+	private Integer approveHours;
+    
+  		
+	@Column(value="is_work_day",desc="是否包含非工作日")
+	private Boolean isWorkDay;
+    
+  		
+	@Column(value="start_interval_hours",desc="通知发起人间隔")
+	private Integer startIntervalHours;
+    
+  		
+	@Column(value="start_notice_way",desc="通知发起人方式")
+	private String startNoticeWay;
+    
+  		
+	@Column(value="approve_interval_hours",desc="通知当前审批人间隔")
+	private Integer approveIntervalHours;
+    
+  		
+	@Column(value="approve_notice_way",desc="通知当前审批通知方式")
+	private String approveNoticeWay;
+    
+  		
+	@Column(value="privileged_interval_hours",desc="通知特权人间隔")
+	private Integer privilegedIntervalHours;
+    
+  		
+	@Column(value="privileged_notice_way",desc="通知特权人方式")
+	private String privilegedNoticeWay;
+
+
+
+
+	@Column(value="approve_person_id",desc="当前审批人id")
+	private String approvePersonId;
+
+	@Column(value="approve_person_name",desc="当前审批人姓名")
+	private String approvePersonName;
+
+
+	@Column(value="approve_overdue_interval_hours",desc="逾期通知当前审批人间隔")
+	private Integer approveOverdueIntervalHours;
+
+	@Column(value="privileged_person_name",desc="特权人姓名")
+	private String privilegedPersonName;
+
+	@Column(value="privileged_person_id",desc="特权人id")
+	private String privilegedPersonId;
+
+	@Column(value="exception_fl_template_id",desc="例外的流程模板id")
+	private  String exceptionFlTemplateId;
+
+	@Column(value="exception_fl_template_name",desc="例外的流程模板名称")
+	private  String exceptionFlTemplateName;
+
+
+	public Integer getApproveHours() {
+		return approveHours;
+	}
+
+	public void setApproveHours(Integer approveHours) {
+		this.approveHours = approveHours;
+	}
+
+	public Boolean getIsWorkDay() {
+		return isWorkDay;
+	}
+	public void setIsWorkDay(Boolean isWorkDay) {
+		this.isWorkDay = isWorkDay;
+	}
+    
+  		
+	public Integer getStartIntervalHours() {
+		return startIntervalHours;
+	}
+	public void setStartIntervalHours(Integer startIntervalHours) {
+		this.startIntervalHours = startIntervalHours;
+	}
+    
+  		
+	public String getStartNoticeWay() {
+		return startNoticeWay;
+	}
+	public void setStartNoticeWay(String startNoticeWay) {
+		this.startNoticeWay = startNoticeWay;
+	}
+    
+  		
+	public Integer getApproveIntervalHours() {
+		return approveIntervalHours;
+	}
+	public void setApproveIntervalHours(Integer approveIntervalHours) {
+		this.approveIntervalHours = approveIntervalHours;
+	}
+    
+  		
+	public String getApproveNoticeWay() {
+		return approveNoticeWay;
+	}
+	public void setApproveNoticeWay(String approveNoticeWay) {
+		this.approveNoticeWay = approveNoticeWay;
+	}
+    
+  		
+	public Integer getPrivilegedIntervalHours() {
+		return privilegedIntervalHours;
+	}
+	public void setPrivilegedIntervalHours(Integer privilegedIntervalHours) {
+		this.privilegedIntervalHours = privilegedIntervalHours;
+	}
+    
+  		
+	public String getPrivilegedNoticeWay() {
+		return privilegedNoticeWay;
+	}
+	public void setPrivilegedNoticeWay(String privilegedNoticeWay) {
+		this.privilegedNoticeWay = privilegedNoticeWay;
+	}
+
+	public Boolean getWorkDay() {
+		return isWorkDay;
+	}
+
+	public void setWorkDay(Boolean workDay) {
+		isWorkDay = workDay;
+	}
+
+	public String getApprovePersonId() {
+		return approvePersonId;
+	}
+
+	public void setApprovePersonId(String approvePersonId) {
+		this.approvePersonId = approvePersonId;
+	}
+
+	public String getApprovePersonName() {
+		return approvePersonName;
+	}
+
+	public void setApprovePersonName(String approvePersonName) {
+		this.approvePersonName = approvePersonName;
+	}
+
+	public Integer getApproveOverdueIntervalHours() {
+		return approveOverdueIntervalHours;
+	}
+
+	public void setApproveOverdueIntervalHours(Integer approveOverdueIntervalHours) {
+		this.approveOverdueIntervalHours = approveOverdueIntervalHours;
+	}
+
+	public String getPrivilegedPersonName() {
+		return privilegedPersonName;
+	}
+
+	public void setPrivilegedPersonName(String privilegedPersonName) {
+		this.privilegedPersonName = privilegedPersonName;
+	}
+
+	public String getPrivilegedPersonId() {
+		return privilegedPersonId;
+	}
+
+	public void setPrivilegedPersonId(String privilegedPersonId) {
+		this.privilegedPersonId = privilegedPersonId;
+	}
+
+	public String getExceptionFlTemplateId() {
+		return exceptionFlTemplateId;
+	}
+
+	public void setExceptionFlTemplateId(String exceptionFlTemplateId) {
+		this.exceptionFlTemplateId = exceptionFlTemplateId;
+	}
+
+	public String getExceptionFlTemplateName() {
+		return exceptionFlTemplateName;
+	}
+
+	public void setExceptionFlTemplateName(String exceptionFlTemplateName) {
+		this.exceptionFlTemplateName = exceptionFlTemplateName;
+	}
+}

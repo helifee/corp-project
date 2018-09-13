@@ -1,0 +1,11 @@
+package com.xinleju.platform.finance.dto.service;
+
+import com.xinleju.platform.base.dto.service.BaseDtoServiceCustomer;
+
+public interface CashFlowItemDtoServiceCustomer extends BaseDtoServiceCustomer{
+
+	String queryTreeList(String userJson, String paramaterJson);
+
+	String queryCashFlowItemList(String userJson, String paramaterJson);
+
+}

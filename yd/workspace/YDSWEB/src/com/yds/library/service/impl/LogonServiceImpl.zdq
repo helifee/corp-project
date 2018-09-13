@@ -1,0 +1,194 @@
+/*
+ * @(#)EmpGrpHis.java
+ * Copyright (c) 2010-2011 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 图书管理
+ */
+
+package com.yds.library.service.impl;
+
+import org.springframework.stereotype.Service;
+
+import com.yds.common.bean.UserInfo;
+import com.yds.common.bean.UserResult;
+import com.yds.common.service.LoginService;
+import com.yds.library.bean.Booklendinguserbklimit;
+import com.yds.library.dao.LogonDao;
+import com.yds.library.service.BooklendingService;
+import com.yds.library.service.LogonService;
+import com.yds.library.util.SessionConstants;
+import com.yds.util.service.EncryptionPW;
+import com.yds.util.service.Session;
+import com.yds.util.service.StringUtil;
+
+/**
+ * @see LoginService
+ */
+@Service("logonService")
+public class LogonServiceImpl implements LogonService {
+	
+	private LogonDao logonDao;
+	private BooklendingService booklendingService;
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public String verCheck(String userId) {
+
+		String version = "0";
+		try {
+			version = this.logonDao.verCheck(userId);
+		} catch (Exception e) {
+		}
+		return version;
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public boolean login(String userId, String password, boolean isDomainLogin) {
+
+		boolean returnFlg = true;
+
+		UserResult userResult = null;
+		// 密码验证
+		userResult = loginCheck(userId, password, isDomainLogin);
+
+		if (userResult == null) {
+			returnFlg = false;
+		}
+	
+		// 把用户信息写入session
+		sessInfo(userId, userResult, returnFlg);
+		
+		Booklendinguserbklimit booklimit = booklendingService.getbooklimit(userId);
+		Session.set(SessionConstants.USERLIMIT, booklimit);
+		
+		return returnFlg;
+
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public UserResult loginCheck(String userId, String password, boolean isDomainLogin) {
+
+		// 判断用户名或密码是否为空
+		if (null == password || null == userId) {
+			return null;
+		}
+
+		UserResult userResult = null;
+
+		// 检索是否存在对应的用户
+		if (!isDomainLogin) {
+			// md5密码加密
+			password = EncryptionPW.md5(password, userId);
+
+			userResult = logonDao.login(userId);
+		}
+
+		// 用户不存在的情况
+		if (null == userResult) {
+			return null;
+		} else {
+			// 密码不正确的情况
+			if (!isDomainLogin) {
+				if (!(password.equals(userResult.getUserPassword()))) {
+					return null;
+				}
+			}
+		}
+
+		return userResult;
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public UserResult oldLogin(String userId, String password) {
+
+		// 判断用户名或密码是否为空
+		if (null == password || null == userId) {
+			return null;
+		}
+
+		// 旧系统加密方式
+		String passwordEncOld = EncryptionPW.getEncryption(password, StringUtil.leftTrimYd(userId));
+
+		UserResult userResult = null;
+
+		// 检索是否存在对应的用户
+		userResult = logonDao.oldlogin(userId);
+
+		// 用户不存在的情况
+		if (null == userResult) {
+			return null;
+		} else {
+			// 密码不正确的情况
+			if (!(passwordEncOld.equals(userResult.getUserPassword()))) {
+				return null;
+			}
+		}
+
+		return userResult;
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	public void sessInfo(String userId, UserResult userResult, boolean userCheckFlg) {
+
+		Session.destroy();
+
+		if (userCheckFlg) {
+			// 把用户信息写入session
+			UserInfo loginUser = new UserInfo();
+			loginUser.setUserId(userResult.getUserId());
+			loginUser.setUserName(userResult.getUserName());
+			Session.set(SessionConstants.USERINFO, loginUser);
+		}
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public boolean updatePWInfo(UserResult userResult, String password) {
+
+		// md5密码加密
+		password = EncryptionPW.md5(password, userResult.getUserId());
+
+		userResult.setUserPassword(password);
+		// 更新新数据库中的密码为旧数据库密码新加密方式后的密码
+		int result = this.logonDao.updatePWInfo(userResult);
+
+		if (result > 0) {
+			sessInfo(userResult.getUserId(), userResult, true);
+			return true;
+		} else {
+			return false;
+		}
+	}
+	/**
+	 * @param loginDao
+	 *            the loginDao to set
+	 */
+	public void setLogonDao(LogonDao logonDao) {
+		this.logonDao = logonDao;
+	}
+
+	public BooklendingService getBooklendingService() {
+		return booklendingService;
+	}
+
+	public void setBooklendingService(BooklendingService booklendingService) {
+		this.booklendingService = booklendingService;
+	}
+	
+}

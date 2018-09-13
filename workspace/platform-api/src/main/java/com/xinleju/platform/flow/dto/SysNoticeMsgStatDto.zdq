@@ -1,0 +1,74 @@
+package com.xinleju.platform.flow.dto;
+
+public class SysNoticeMsgStatDto {
+	
+	private String toDoSum;//待办的总数
+	private String toReadSum;//待阅的总数
+	private String toDoSum24Hours;//24小时未处理的待办的总数
+	
+	//一级分类的各个汇总数据：待办任务    会议提醒    日程提醒   新闻提醒   董办平台  打卡提醒
+	private String taskToDoSum, meetingSum, scheduleSum, newsSum, directorsSum, clockInSum,otherSum;
+	           
+	public String getToDoSum() {
+		return toDoSum;
+	}
+	public void setToDoSum(String toDoSum) {
+		this.toDoSum = toDoSum;
+	}
+	public String getToReadSum() {
+		return toReadSum;
+	}
+	public void setToReadSum(String toReadSum) {
+		this.toReadSum = toReadSum;
+	}
+	public String getToDoSum24Hours() {
+		return toDoSum24Hours;
+	}
+	public void setToDoSum24Hours(String toDoSum24Hours) {
+		this.toDoSum24Hours = toDoSum24Hours;
+	}
+	public String getTaskToDoSum() {
+		return taskToDoSum;
+	}
+	public void setTaskToDoSum(String taskToDoSum) {
+		this.taskToDoSum = taskToDoSum;
+	}
+	public String getMeetingSum() {
+		return meetingSum;
+	}
+	public void setMeetingSum(String meetingSum) {
+		this.meetingSum = meetingSum;
+	}
+	public String getScheduleSum() {
+		return scheduleSum;
+	}
+	public void setScheduleSum(String scheduleSum) {
+		this.scheduleSum = scheduleSum;
+	}
+	public String getNewsSum() {
+		return newsSum;
+	}
+	public void setNewsSum(String newsSum) {
+		this.newsSum = newsSum;
+	}
+	public String getDirectorsSum() {
+		return directorsSum;
+	}
+	public void setDirectorsSum(String directorsSum) {
+		this.directorsSum = directorsSum;
+	}
+	public String getClockInSum() {
+		return clockInSum;
+	}
+	public void setClockInSum(String clockInSum) {
+		this.clockInSum = clockInSum;
+	}
+
+	public String getOtherSum() {
+		return otherSum;
+	}
+
+	public void setOtherSum(String otherSum) {
+		this.otherSum = otherSum;
+	}
+}

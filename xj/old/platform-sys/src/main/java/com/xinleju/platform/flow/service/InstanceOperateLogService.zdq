@@ -1,0 +1,101 @@
+package com.xinleju.platform.flow.service;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.flow.dto.InstanceDto;
+import com.xinleju.platform.flow.entity.InstanceOperateLog;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface InstanceOperateLogService extends  BaseService <String,InstanceOperateLog>{
+
+	/**
+	 * 根据相关参数，将对应的记录做逻辑删除
+	 * @param map【其中instanceId和operateType】是必填字段，而【acId、groupId、 taskId、 id和operatorIds】是选填字段
+	 * @return -1：参数不符合要求, 0:找不到对应的数据, >=1,则更新到对应的数据
+	 * @throws Exception
+	 */
+	int deleteDataByParamMap(Map<String, String> map) throws Exception;
+
+	int changeToReadIntoHaveRead(Map<String, String> paramMap);
+
+	int changeToDoIntoHaveDone(Map<String, String> paramMap);
+	/**
+	 * 流程操作日志的待办变已办
+	 * @param instanceId: 实例ID
+	 * @param acId: 环节ID
+	 * @param groupId: 分组ID
+	 * @param taskId: 任务ID
+	 * @param operatorIds: 操作人员的用户ID
+	 * @param operateContent: 操作类型, 可以为空
+	 * @param remark: 操作备注, 可以为空
+	 * @return 保存成功条数
+	 */
+	int changeToDoIntoHaveDone(String instanceId, String acId, String groupId, String taskId,
+			String operatorIds,String operateContent, String remark)  throws Exception;
+	
+	/**
+	 * 保存流程操作日志的单个信息
+	 * @param instanceId: 实例ID
+	 * @param acId: 环节ID
+	 * @param groupId: 分组ID
+	 * @param taskId: 任务ID
+	 * @param operateType: 任务类型: 详见InstanceOperateType的15中
+	 * @param operatorIds: 操作人员的用户ID
+	 * @param companyId:  操作人员所在的公司ID
+	 * @param deptId: 操作人员所在的部门ID
+	 * @param operateContent: 操作类型, 可以为空
+	 * @param remark: 操作备注, 可以为空
+	 * @return 保存成功条数
+	 */
+	int saveLogData(String instanceId, String acId, String groupId, String taskId,
+			String operateType, String operatorIds, String companyId, String deptId,
+			String projectId, String branchId, String operateContent, String remark) throws Exception;
+	
+	/**
+	 * 保存流程操作日志的单个信息
+	 * @param instanceId: 实例ID
+	 * @param acId: 环节ID
+	 * @param groupId: 分组ID
+	 * @param taskId: 任务ID
+	 * @param operateType: 任务类型: 详见InstanceOperateType的15中
+	 * @param operatorIds: 操作人员的用户ID
+	 * @param operateContent: 操作类型, 可以为空
+	 * @param remark: 操作备注, 可以为空
+	 * @return 保存成功条数
+	 */
+	int saveLogData(String instanceId, String acId, String groupId, String taskId,
+			String operateType, String operatorIds, String operateContent, String remark) throws Exception;
+
+	/**
+	 * 撤回任务等特殊操作时需要将对应的待办/待阅的操作日志删除,
+	 * 内部的逻辑是将operateType设置为DELETE_DATA,而将remark的值追加上原operateType的值
+	 * 
+	 * @param instanceId: 实例ID --必填
+	 * 
+	 * @param acId: 环节ID  --选填
+	 * @param groupId: 分组ID  --选填
+	 * @param taskId: 任务ID  --选填
+	 * @param operatorIds: 操作人员的用户ID  --选填
+	 * @return 成功逻辑删除的操作条数
+	 */
+	int deleteOperateLogBySpecialAction(String instanceId, String acId, String groupId, String taskId,
+			 String operatorIds)throws Exception;
+
+	//批量将待办/待阅的数据置为已办
+	int batchSetOperateLogHaveDone(Map<String, String> paramMap);
+	//批量将已办的数据置为逻辑删除
+	int batchDeleteOperateLog(Map<String, String> paramMap);
+
+	//List<InstanceDto> queryRelatedInstanceListByKeyword(Map<String, String> map);
+    //修改为分类查询
+	Page queryRelatedInstancePageByKeyword(Map<String, Object> map);
+	
+}

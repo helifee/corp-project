@@ -1,0 +1,147 @@
+package com.xinleju.platform.flow.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang.builder.ReflectionToStringBuilder;
+import org.apache.commons.lang.builder.ToStringStyle;
+
+import java.sql.Timestamp;
+
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Table(value="PT_FLOW_SYS_NOTICE_MSG_TEMP",desc="系统通知消息临时表")
+public class SysNoticeMsgTemp extends BaseEntity{
+
+	@Column(value="post_url",desc="消息推送地址")
+	private String postUrl;
+	
+	@Column(value="web_service",desc="webService接口")
+	private String webService;
+	
+	@Column(value="web_service_method",desc="webService接口方法")
+	private String webServiceMethod;
+
+	@Column(value="post_param",desc="消息推送参数")
+	private String postParam;
+
+	@Column(value="user_info_json",desc="接收用户信息")
+	private String userInfoJson;
+
+	@Column(value="post_type",desc="推送接口类型 httpClient, webService")
+	private String postType ;
+
+	@Column(value="op_type",desc="")
+	private String opType ;
+
+	@Column(value="login_name",desc="")
+	private String loginName ;
+
+	@Column(value="success",desc="成功标识")
+	private Boolean success ;
+
+	@Column (value="count",desc="执行次数")
+	private Integer count = 0;
+	@Column (value="locking",desc="是否锁住")
+	private Boolean locking = false;
+	public String getPostUrl() {
+		return postUrl;
+	}
+
+	public void setPostUrl(String postUrl) {
+		this.postUrl = postUrl;
+	}
+
+	public String getWebService() {
+		return webService;
+	}
+
+	public void setWebService(String webService) {
+		this.webService = webService;
+	}
+
+	public String getWebServiceMethod() {
+		return webServiceMethod;
+	}
+
+	public void setWebServiceMethod(String webServiceMethod) {
+		this.webServiceMethod = webServiceMethod;
+	}
+
+	public String getPostParam() {
+		return postParam;
+	}
+
+	public void setPostParam(String postParam) {
+		if(StringUtils.isNotEmpty(postParam) && postParam.contains("\\'")) {
+			postParam = postParam.replaceAll("\\\\'", "\'");
+		}
+		this.postParam = postParam;
+	}
+
+	public String getUserInfoJson() {
+		return userInfoJson;
+	}
+
+	public void setUserInfoJson(String userInfoJson) {
+		if(StringUtils.isNotEmpty(userInfoJson) && userInfoJson.contains("\\'")) {
+			userInfoJson = userInfoJson.replaceAll("\\\\'", "\'");
+		}
+		this.userInfoJson = userInfoJson;
+	}
+
+	public String getPostType() {
+		return postType;
+	}
+
+	public void setPostType(String postType) {
+		this.postType = postType;
+	}
+
+	public Boolean getSuccess() {
+		return success;
+	}
+
+	public void setSuccess(Boolean success) {
+		this.success = success;
+	}
+
+	public String getOpType() {
+		return opType;
+	}
+
+	public void setOpType(String opType) {
+		this.opType = opType;
+	}
+
+	public String getLoginName() {
+		return loginName;
+	}
+
+	public void setLoginName(String loginName) {
+		this.loginName = loginName;
+	}
+
+	public Integer getCount() {
+		return count;
+	}
+
+	public void setCount(Integer count) {
+		this.count = count;
+	}
+
+	public Boolean getLocking() {
+		return locking;
+	}
+
+	public void setLocking(Boolean locking) {
+		this.locking = locking;
+	}
+}

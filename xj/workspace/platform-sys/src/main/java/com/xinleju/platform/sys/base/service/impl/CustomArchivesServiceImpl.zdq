@@ -1,0 +1,192 @@
+package com.xinleju.platform.sys.base.service.impl;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.sys.base.dao.CustomArchivesDao;
+import com.xinleju.platform.sys.base.dao.CustomArchivesItemDao;
+import com.xinleju.platform.sys.base.dto.CustomArchivesDto;
+import com.xinleju.platform.sys.base.dto.CustomArchivesItemDto;
+import com.xinleju.platform.sys.base.entity.CustomArchives;
+import com.xinleju.platform.sys.base.entity.CustomArchivesItem;
+import com.xinleju.platform.sys.base.service.CustomArchivesService;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class CustomArchivesServiceImpl extends  BaseServiceImpl<String,CustomArchives> implements CustomArchivesService{
+	
+
+	@Autowired
+	private CustomArchivesDao customArchivesDao;
+
+	@Autowired
+	private CustomArchivesItemDao customArchivesItemDao;
+	
+	@Override
+	public List<CustomArchivesItemDto> getTree(Map<String, Object> map) {
+		// TODO Auto-generated method stub
+		return customArchivesDao.getTree(map);
+	}
+
+	@Override
+	public Integer queryItemsById(String mainId) {
+		// TODO Auto-generated method stub
+		return customArchivesDao.queryItemsById(mainId);
+	}
+
+	@Override
+	public List<CustomArchives> queryListSort(Map<String, Object> map) {
+		return customArchivesDao.queryListSort(map);
+	}
+
+	@Override
+	public Integer isExistCode(String code) {
+		return customArchivesDao.isExistCode(code);
+	}
+
+	@Override
+	public DubboServiceResultInfo saveList(String saveJson) {
+		boolean flag=true;
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		CustomArchivesDto customArchivesDto=JacksonUtils.fromJson(saveJson, CustomArchivesDto.class);
+		List<CustomArchivesDto> list=customArchivesDto.getCustomArchivesList();
+		List<CustomArchives> itemListAdd=new ArrayList<CustomArchives>();
+		List<CustomArchives> itemListUpdate=new ArrayList<CustomArchives>();
+		Set<String> codeSet=new HashSet<String>();
+		List<CustomArchives> resultList=customArchivesDao.queryListSort(null);
+		Map<String,CustomArchives> resultMap=this.listToMap(resultList);
+		if(list!=null && list.size()>0){
+			for(int i=0;i<list.size();i++){
+				CustomArchives customArchives=new CustomArchives();
+				BeanUtils.copyProperties(list.get(i), customArchives);
+				CustomArchives customArchivesDb=resultMap.get(customArchives.getId());
+			   	customArchives.setSort(Long.valueOf(i+1));
+			   	if(customArchivesDb==null){
+			   		customArchives.setStatus("1");
+			   		itemListAdd.add(customArchives);
+			   	}else{
+			   		customArchivesDb.setCode(customArchives.getCode());
+			   		customArchivesDb.setName(customArchives.getName());
+			   		customArchivesDb.setIsDefault(customArchives.getIsDefault());
+			   		customArchivesDb.setShowType(customArchives.getShowType());
+			   		if(customArchivesDb.getId().equals(customArchivesDto.getId())){
+			   			itemListUpdate.add(customArchivesDb);
+			   		}
+			   	}
+			}
+			if(itemListAdd!=null && itemListAdd.size()>0){
+				for(int i=0;i<itemListAdd.size();i++){
+					codeSet.add(itemListAdd.get(i).getCode());
+				}
+			}
+			if(codeSet.size()!=itemListAdd.size()){
+				//新增有重复
+				flag=false;
+			}else{
+				//与已存在记录重复
+				for(int i=0;i<itemListAdd.size();i++){
+					CustomArchives customArchives=itemListAdd.get(i);
+					Integer count=customArchivesDao.isExistCode(customArchives.getCode());
+					if(count>0){
+						flag=false;
+						break;
+					}
+				}
+			}
+			if(flag){
+				if("add".equals(customArchivesDto.getSaveOrUpdate())){
+					customArchivesDao.saveBatch(itemListAdd);
+				}else if("edit".equals(customArchivesDto.getSaveOrUpdate())){
+					customArchivesDao.updateBatch(itemListUpdate);
+				}
+				info.setResult("true");
+				info.setSucess(true);
+				info.setMsg("保存对象成功!");
+			}else{
+				info.setResult("false");
+				info.setSucess(true);
+				info.setMsg("编码重复!");
+			}
+		}
+		return info;
+	}
+
+	private Map<String, CustomArchives> listToMap(List<CustomArchives> resultList) {
+		Map<String, CustomArchives> resultMap=new HashMap<String, CustomArchives>();
+		if(resultList!=null && resultList.size()>0){
+			for(int i=0;i<resultList.size();i++){
+				CustomArchives customArchives=resultList.get(i);
+				resultMap.put(customArchives.getId(), customArchives);
+			}
+		}
+		return resultMap;
+	}
+
+	@Override
+	public DubboServiceResultInfo getTree(String paramater) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		Map map=JacksonUtils.fromJson(paramater, HashMap.class);
+		if(map.get("excludeIds")!=null){
+			List<String> excludeIdsList=Arrays.asList(map.get("excludeIds").toString().split(","));
+			map.put("excludeIds", excludeIdsList);
+		}
+		String mainId=(String) map.get("mainId");
+//		Integer itemCount=customArchivesDao.queryItemsById(mainId);
+		if(StringUtils.isNotBlank(mainId)){
+//			if(itemCount==0){
+//				//插入默认数据
+//				this.toAddDefaultData(mainId,rootName);
+//			}
+			List<CustomArchivesItemDto> list=customArchivesDao.getTree(map);
+			info.setResult(JacksonUtils.toJson(list));
+		    info.setSucess(true);
+		    info.setMsg("获取列表对象成功!");
+		}else{
+			info.setResult(null);
+		    info.setSucess(false);
+		    info.setMsg("档案ID不能为空!");
+		}
+		return info;
+	}
+	
+	/**
+	  * @Description:插入根节点
+	  * @author:zhangfangzhi
+	  * @date 2017年3月6日 下午1:58:53
+	  * @version V1.0
+	 * @param rootName 
+	 */
+	private void toAddDefaultData(String mainId, String rootName) {
+		try {
+			String parentId=IDGenerator.getUUID();
+			CustomArchivesItem customArchivesItem=new CustomArchivesItem();
+			customArchivesItem.setId(parentId);
+			customArchivesItem.setParentId("0");
+			customArchivesItem.setName(rootName);
+			customArchivesItem.setMainId(mainId);
+			customArchivesItemDao.save(customArchivesItem);
+		} catch (Exception e) {
+			//e.printStackTrace();
+		}
+	}
+}

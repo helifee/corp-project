@@ -1,0 +1,129 @@
+package com.cnaps.hvps.action.cis;
+
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.List;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import org.apache.struts.action.ActionForm;
+import org.apache.struts.action.ActionForward;
+import org.apache.struts.action.ActionMapping;
+import com.bancstone.action.BaseAction;
+import com.bancstone.common.exception.PicpMessageException;
+import com.cnaps.coreservices.CommonXMLEntity;
+import com.cnaps.coreservices.TransCodeEntity;
+import com.cnaps.coreservices.TransServices;
+import com.cnaps.hvps.form.cis.CisBepsBankNodeTradeAwaitedActionForm;
+import com.cnaps.hvps.form.cis.HandleBankNodeTradeForm;
+import com.cnaps.hvps.persistence.cis.CisBepsBkNodeTrade;
+import com.cnaps.hvps.persistence.cis.CisBepsBkNodeTradeDetail;
+/**
+ * 票交来报待处理--查询Action
+ * 实现功能--查询通用回执业务主表，查看从表明细，处理待处理的来报业务
+ * @author pdhuang
+ * 2011.09.09 星期五
+ */
+public class CisBepsBankNodeTradeAwaitedAction extends BaseAction{
+
+	public ActionForward findBankNodeTradeAwaitedList(ActionMapping mapping, ActionForm form,HttpServletRequest request, HttpServletResponse response) {
+		try{
+			String business = request.getParameter("business");  // CCMS
+			
+			//封装界面查询条件
+			CisBepsBankNodeTradeAwaitedActionForm cisform = (CisBepsBankNodeTradeAwaitedActionForm) form;
+			CisBepsBkNodeTrade cis = cisform.getCis();//获取实体类
+			
+			//必须条件--来报日期与状态
+			//来报日期：默认为当前系统工作日期--柜员可做界面日期的选择
+			//状态：00-待处理，未经处理的来账 01-未复核，已做处理但未复核
+            String businessStatus="00";
+            cisform.getConditions().add("PrcSts:"+businessStatus);
+            
+			//柜面查询条件--报文标识号与工作日期
+			
+			if(!"".equals(cis.getMsgid()) && cis.getMsgid() != null){
+				//System.out.println("看看tpm.getMsgid()的值为："+cis.getMsgid());
+				cisform.getConditions().add("msgid:"+cis.getMsgid());//报文标识号加入数据集
+			}
+			if(!"".equals(cis.getWorkdt())&&cis.getWorkdt()!= null){
+				cisform.getConditions().add("workdt:"+cis.getWorkdt());//工作日期加入数据集
+			}
+//			if(cis.getWorkdt()==null){
+//				String workDate="";//当前系统日期
+//	            DateFormat df = new SimpleDateFormat("yyyy-MM-dd");
+//	            workDate = df.format(new Date());
+//	            cisform.getConditions().add("workdt:"+workDate);
+//			}
+			String transactionid = TransCodeEntity.QUERYCD;//功能代码--普通查询
+			commSetToXML(cisform,transactionid,business);
+			cisform.setQueryCd(TransCodeEntity.CisBepsBankNodeTradeAwaitedAction_sendMsg_query);//查询码 与后台查询沟通			
+			this.setFenYe(cisform);
+ 
+			TransServices transServices = (TransServices)this.getBean("transServices");
+			CommonXMLEntity  commonXMLEntity = transServices.transProcess(cisform, cisform.getTransactionId(),"systemcontrols",cisform.getQueryCd());
+			if(!commonXMLEntity.getProcessCode().equals("000000"))
+			{
+				throw new PicpMessageException("错误码：["+commonXMLEntity.getProcessCode()+"] 错误信息：["+commonXMLEntity.getProcessDes()+"]");
+			}
+			
+			if(commonXMLEntity.getRecordcount() == null){
+				cisform.setTotalSize(0);
+			}else{
+				cisform.setTotalSize(Integer.parseInt(commonXMLEntity.getRecordcount()));
+			}
+			
+		    this.setQueryPageValue(cisform,true);
+			List<CisBepsBkNodeTrade>  List = commonXMLEntity.getResults();
+			this.setPageInfo(request,cisform);
+			this.setObjectToRequest(request, "queryList",List);
+			request.setAttribute("business", business);
+			return mapping.findForward("queryList");
+
+		} catch (Exception e) {
+			e.printStackTrace(); 
+			return toFailedPage(mapping, request,e.getMessage());
+		}
+	}
+	
+	/**
+	 * 票交来报待处理界面--点击【查看处理】链接执行页面跳转
+	 * @param mapping
+	 * @param form
+	 * @param request
+	 * @param response
+	 * @return 票交来报待处理界面
+	 */
+	public ActionForward handleBankNodeTrade(ActionMapping mapping, ActionForm form,HttpServletRequest request, HttpServletResponse response){
+ 
+		try{
+		String id= request.getParameter("id");//获取主表的id--id对应从表里面的Parented
+		HandleBankNodeTradeForm bmform = (HandleBankNodeTradeForm) form;
+		
+		if(!"".equals(id) && id!= null){//以id为条件查询从表数据信息
+			bmform.getConditions().add("id:"+id);//序号加入查询条件
+		}
+		String transactionid = TransCodeEntity.QUERYCD;//功能代码--普通查询
+		commSetToXML(bmform,TransCodeEntity.QUERYCD ,transactionid);
+		bmform.setQueryCd(TransCodeEntity.CisBepsHandleBankNodeTrade_sendMsg_query);//查询码 与后台查询沟通	
+		this.setFenYe(bmform);
+		TransServices transServices = (TransServices)this.getBean("transServices");
+		CommonXMLEntity  commonXMLEntity = transServices.transProcess(bmform, bmform.getTransactionId(),"systemcontrols",bmform.getQueryCd());
+		if(!commonXMLEntity.getProcessCode().equals("000000"))
+		{
+			throw new PicpMessageException("错误码：["+commonXMLEntity.getProcessCode()+"] 错误信息：["+commonXMLEntity.getProcessDes()+"]");
+		}
+		List<CisBepsBkNodeTradeDetail>  list = commonXMLEntity.getResults();
+		if(list!=null&&list.size()>0){
+			request.setAttribute("hbn", list.get(0));//封装实体对象，用于窗口中明细页面信息显示
+		}
+		return mapping.findForward("detail");//跳转到明细页面
+   
+	} catch (Exception e) {
+		e.printStackTrace(); 
+		return toFailedPage(mapping, request,e.getMessage());
+	}
+  
+	}
+	
+}

@@ -1,0 +1,235 @@
+package com.xinleju.cloud.oa.meeting.controller;
+
+
+
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Map;
+
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.ResponseBody;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.xinleju.cloud.oa.meeting.dto.MeetingDto;
+import com.xinleju.cloud.oa.meeting.dto.MeetingReplyDto;
+import com.xinleju.cloud.oa.meeting.dto.MeetingSummaryDto;
+import com.xinleju.cloud.oa.meeting.dto.service.MeetingReplyDtoServiceCustomer;
+import com.xinleju.cloud.oa.meeting.dto.service.MobileMeetingDtoServiceCustomer;
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.base.utils.MessageInfo;
+import com.xinleju.platform.base.utils.MessageResult;
+import com.xinleju.platform.base.utils.PageBeanInfo;
+import com.xinleju.platform.base.utils.SecurityUserBeanInfo;
+import com.xinleju.platform.tools.data.JacksonUtils;
+import com.xinleju.platform.uitls.LoginUtils;
+
+
+/**
+ * 移动端的会议列表和详情的控制层
+ * @author zhengjiajie
+ *
+ */
+@Controller
+@RequestMapping("/mobile/meeting")
+public class MobileMeetingController {
+
+	private static Logger log = Logger.getLogger(MobileMeetingController.class);
+	
+	@Autowired
+	private MobileMeetingDtoServiceCustomer mobileMeetingDtoServiceCustomer;
+	@Autowired
+	private MeetingReplyDtoServiceCustomer meetingInfoReplyDtoServiceCustomer;
+
+	
+	/**
+	 * 返回分页对象
+	 * @param paramater
+	 * @return
+	 */
+	@RequestMapping(value="/pageQueryByParamMap",method={RequestMethod.POST}, consumes="application/json")
+	public @ResponseBody MessageResult pageQueryByParamMap(@RequestBody Map<String,Object> map){
+		MessageResult result=new MessageResult();
+		String paramaterJson = JacksonUtils.toJson(map);
+		//当前登录用户
+		SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+		String userJson = JacksonUtils.toJson(userBeanInfo);
+		try {
+		    String dubboResultInfo=mobileMeetingDtoServiceCustomer.pageQueryByParamMap(userJson, paramaterJson);
+		    DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+			if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				PageBeanInfo pageInfo=JacksonUtils.fromJson(resultInfo, PageBeanInfo.class);
+				result.setResult(pageInfo);
+				result.setSuccess(MessageInfo.GETSUCCESS.isResult());
+				result.setMsg(MessageInfo.GETSUCCESS.getMsg());
+			}else{
+				result.setSuccess(MessageInfo.GETERROR.isResult());
+				result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+			}
+		} catch (Exception e) {
+			//e.printStackTrace();
+		    log.error("调用page方法:  【参数"+paramaterJson+"】======"+"【"+e.getMessage()+"】");
+			result.setSuccess(MessageInfo.GETERROR.isResult());
+			result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+e.getMessage()+"】");
+		}
+		return result;
+	}
+	
+	/**
+	 * 返回会议详情
+	 * @param paramater
+	 * @return
+	 */
+	@RequestMapping(value="/queryMeetingDetail/{id}",method=RequestMethod.GET)
+	public @ResponseBody MessageResult queryMeetingDetail(@PathVariable("id")  String id){
+		MessageResult result=new MessageResult();
+		try {
+			SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userJson = JacksonUtils.toJson(userBeanInfo);
+			String dubboResultInfo=mobileMeetingDtoServiceCustomer.queryMeetingDetail(userJson, "{\"id\":\""+id+"\"}");
+			DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+			if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				MeetingDto meetingDto=JacksonUtils.fromJson(resultInfo, MeetingDto.class);
+				
+				result.setResult(meetingDto);
+				result.setSuccess(MessageInfo.GETSUCCESS.isResult());
+				result.setMsg(MessageInfo.GETSUCCESS.getMsg());
+			}else{
+				result.setSuccess(MessageInfo.GETERROR.isResult());
+				result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+			}
+		} catch (Exception e) {
+			//e.printStackTrace();
+		    log.error("调用get方法:  【参数"+id+"】======"+"【"+e.getMessage()+"】");
+			result.setSuccess(MessageInfo.GETERROR.isResult());
+			result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+e.getMessage()+"】");
+		}
+		return result;
+	}
+	
+	/**
+	 * 返回会议纪要详情
+	 * @param paramater
+	 * @return
+	 */
+	@RequestMapping(value="/querySummaryDetail/{id}",method=RequestMethod.GET)
+	public @ResponseBody MessageResult querySummaryDetail(@PathVariable("id")  String id){
+		MessageResult result=new MessageResult();
+		try {
+			SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userJson = JacksonUtils.toJson(userBeanInfo);
+			String dubboResultInfo=mobileMeetingDtoServiceCustomer.querySummaryDetail(userJson, "{\"id\":\""+id+"\"}");
+			DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+			if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				MeetingSummaryDto meetingSummaryDto=JacksonUtils.fromJson(resultInfo, MeetingSummaryDto.class);
+				
+				result.setResult(meetingSummaryDto);
+				result.setSuccess(MessageInfo.GETSUCCESS.isResult());
+				result.setMsg(MessageInfo.GETSUCCESS.getMsg());
+			}else{
+				result.setSuccess(MessageInfo.GETERROR.isResult());
+				result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+			}
+		} catch (Exception e) {
+			//e.printStackTrace();
+		    log.error("调用get方法:  【参数"+id+"】======"+"【"+e.getMessage()+"】");
+			result.setSuccess(MessageInfo.GETERROR.isResult());
+			result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+e.getMessage()+"】");
+		}
+		return result;
+	}
+	
+	
+	/**
+	 * 根据会议id返回该登录人是否有参加和不参加的按钮权限
+	 * @param paramater
+	 * @return
+	 */
+	@RequestMapping(value="/queryUserIsjoin/{meetingId}",method=RequestMethod.GET)
+	public @ResponseBody MessageResult queryUserIsjoin(@PathVariable("meetingId")  String meetingId){
+		MessageResult result=new MessageResult();
+		try {
+			SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userJson = JacksonUtils.toJson(userBeanInfo);
+			String dubboResultInfo=mobileMeetingDtoServiceCustomer.queryUserIsjoin(userJson, meetingId);
+		    DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+		    if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				result.setResult(resultInfo);
+				result.setSuccess(MessageInfo.GETSUCCESS.isResult());
+				result.setMsg(MessageInfo.GETSUCCESS.getMsg());
+		    }else{
+		    	result.setSuccess(MessageInfo.GETERROR.isResult());
+				result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+		    }
+
+		} catch (Exception e) {
+			//e.printStackTrace();
+			log.error("调用queryUserIsjoin方法:  【参数"+meetingId+"】======"+"【"+e.getMessage()+"】");
+			result.setSuccess(MessageInfo.GETERROR.isResult());
+			result.setMsg(MessageInfo.GETERROR.getMsg()+"【"+e.getMessage()+"】");
+		}
+		return result;
+	}
+	
+	
+
+	
+	@RequestMapping(value="/saveMeetingReploy",method=RequestMethod.POST, consumes="application/json")
+	public @ResponseBody MessageResult saveMeetingReploy(@RequestBody MeetingReplyDto t){
+		MessageResult result=new MessageResult();
+		
+		try {
+			SimpleDateFormat dateFormater = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+			SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			t.setId(IDGenerator.getUUID());
+			t.setReplyDate(dateFormater.format(new Date()));
+			t.setUserId(userBeanInfo.getSecurityUserDto().getId());
+			t.setUserName(userBeanInfo.getSecurityUserDto().getRealName());
+			String saveJson= JacksonUtils.toJson(t);
+			String dubboResultInfo=meetingInfoReplyDtoServiceCustomer.save(getUserJson(), saveJson);
+		    DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+		    if(dubboServiceResultInfo.isSucess()){
+				String resultInfo= dubboServiceResultInfo.getResult();
+				MeetingReplyDto meetingReplyDto=JacksonUtils.fromJson(resultInfo, MeetingReplyDto.class);
+				result.setResult(meetingReplyDto);
+				result.setSuccess(MessageInfo.SAVESUCCESS.isResult());
+				result.setMsg(MessageInfo.SAVESUCCESS.getMsg());
+		    }else{
+		    	result.setSuccess(MessageInfo.SAVEERROR.isResult());
+				result.setMsg(MessageInfo.SAVEERROR.getMsg()+"【"+dubboServiceResultInfo.getExceptionMsg()+"】");
+		    }
+		} catch (Exception e) {
+			try {
+				//e.printStackTrace();
+			    ObjectMapper mapper = new ObjectMapper();
+				String  paramJson = mapper.writeValueAsString(t);
+				log.error("调用save方法:  【参数"+paramJson+"】======"+"【"+e.getMessage()+"】");
+				result.setSuccess(MessageInfo.SAVEERROR.isResult());
+				result.setMsg(MessageInfo.SAVEERROR.getMsg()+"【"+e.getMessage()+"】");
+			} catch (JsonProcessingException e1) {
+				// TODO Auto-generated catch block
+				//e1.printStackTrace();
+			}
+
+		}
+		return result;
+	}
+	
+	
+	 private String getUserJson(){
+			SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userJson = JacksonUtils.toJson(userBeanInfo);
+			return userJson;
+	  }
+}

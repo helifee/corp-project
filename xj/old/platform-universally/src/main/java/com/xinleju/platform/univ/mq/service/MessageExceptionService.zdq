@@ -1,0 +1,15 @@
+package com.xinleju.platform.univ.mq.service;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.univ.mq.entity.MessageException;
+
+/**
+ * @author xubaoyong
+ * 
+ * 
+ */
+
+public interface MessageExceptionService extends  BaseService <String,MessageException>{
+
+	
+}

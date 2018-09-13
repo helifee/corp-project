@@ -1,0 +1,472 @@
+/*
+ * @(#) Yd0020Action.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 社内团购
+ */
+package com.yds.gps.action;
+
+import java.util.List;
+
+import org.springframework.beans.factory.config.BeanDefinition;
+import org.springframework.context.annotation.Scope;
+import org.springframework.stereotype.Controller;
+import com.yds.common.service.ComCodeInfoService;
+import com.yds.common.service.ComCodeMaintService;
+import com.yds.common.service.CommonConstants;
+import com.yds.common.service.SessionConstants;
+import com.yds.common.service.SessionService;
+import com.yds.common.service.SessionStoreConstants;
+import com.yds.base.action.BasePagerAction;
+import com.yds.gps.service.GpsConstants;
+import com.yds.gps.service.TansferException;
+import com.yds.gps.service.Yd0020Service;
+import com.yds.common.bean.ComCodeInfo;
+import com.yds.common.bean.ComCodeMaint;
+import com.yds.gps.bean.GpsAccount;
+import com.yds.gps.bean.GpsExchangeHis;
+import com.yds.gps.bean.GpsExchangeSum;
+import com.yds.gps.bean.TansferCondA;
+import com.yds.gps.bean.Yd0020CondA;
+import com.yds.util.service.SessionStore;
+import com.yds.util.service.StringUtil;
+
+@Scope(BeanDefinition.SCOPE_PROTOTYPE)
+@Controller("yd0020Action")
+public class Yd0020Action extends BasePagerAction {
+
+	private static final long serialVersionUID = -3145571271505045948L;
+	private Yd0020Service yd0020Service;
+	private ComCodeInfoService comCodeInfoService;
+	private ComCodeMaintService comCodeMaintService;
+	private List<ComCodeInfo> accTypeList;
+	private List<ComCodeInfo> accFlagList;
+	private List<ComCodeInfo> ioList;
+	private List<ComCodeInfo> tradeTypeList;
+	private List<ComCodeMaint> ioTypeList;
+	private List<GpsExchangeHis> exChangeHisList;
+	/** 转账条件Bean. */
+	private TansferCondA tansferCondA;
+	/** 账户交易履历一览检索条件Bean. */
+	private Yd0020CondA yd0020CondA;
+	private String comRemain;
+	private GpsAccount cafeAccount;
+	private GpsAccount gpsAccount;
+	/** 公司账户ID. */
+	private String comAccId;
+	/** 个人账户ID. */
+	private String pesAccId;
+	/** 个人账户可用余额. */
+	private String pesonRemain;
+	/** 返回结果bean. */
+	private GpsExchangeSum gpsExchangeSum;
+	private String errorMessage;
+
+	/**
+	 * 画面的初期显示
+	 * 
+	 * @return SUCCESS
+	 */
+	public String execute() throws Exception {
+		// 取得账户区分
+		this.accFlagList = comCodeInfoService.getComCodeInfo("GPS", "ACC_FLAG");
+		// 取得存取区分
+		this.ioTypeList = comCodeMaintService.getDiffList("GPS", "IO_FLAG");
+		// 取得收支区分
+		this.ioList = comCodeInfoService.getComCodeInfo("GPS", "IO_FLAG", "全部");
+		// 取得交易类型
+		this.tradeTypeList = comCodeInfoService.getComCodeInfo("GPS",
+				"EX_TYPE", "");
+		// 取得账户类型
+		this.accTypeList = comCodeInfoService.getComCodeInfo("GPS", "COMPTYPE");
+		pesonRemain = yd0020Service.getPesonRemain(pesAccId);
+		// 取得公司余额
+		comRemain = yd0020Service.getComRemain();
+		// 取得咖啡账户信息
+		cafeAccount = yd0020Service.getCafeAccount();
+		// 取得团购账户信息
+		gpsAccount = yd0020Service.getGpsAccount();
+		findExchangeHisList();
+		return SUCCESS;
+	}
+
+	/**
+	 * 取得个人余额
+	 * 
+	 * @return SUCCESS
+	 */
+	public String findPesonRemain() {
+
+		pesonRemain = yd0020Service.getPesonRemain(StringUtil
+				.leftPadYd(pesAccId));
+		return SUCCESS;
+	}
+
+	/**
+	 * 存取款
+	 * 
+	 * @return SUCCESS
+	 * @throws Exception
+	 */
+	public String updateAccountInfo() throws Exception {
+		try {
+			yd0020Service.updateAccountInfo(tansferCondA, comAccId, pesAccId);
+			if (GpsConstants.INCOME.equals(tansferCondA.getIoFlag())) {
+				putOpTip(propMgr.getMessage("yds.gps.info.0039"));
+			} else {
+				putOpTip(propMgr.getMessage("yds.gps.info.0040"));
+			}
+		} catch (TansferException e) {
+			errorMessage = e.getId().value();
+			SessionService.delete(SessionConstants._MESSAGE_ID);
+			return ERROR;
+		}
+		return SUCCESS;
+	}
+
+	/**
+	 * 个人账户校验
+	 */
+	public void validateUpdateAccountInfo() {
+
+		if ((pesAccId == null || "".equals(pesAccId) && "".equals(comAccId))) {
+
+			this.addFieldError("pesAccId",
+					propMgr.getMessage("yds.com.warning.0001", "个人账户ID"));
+		}
+	}
+
+	/**
+	 * 交易履历一览
+	 * 
+	 * @return SUCCESS
+	 */
+	public String findExHisList() throws Exception {
+
+		findExchangeHisList();
+		return SUCCESS;
+	}
+
+	/**
+	 * 交易履历一览(共用)
+	 * 
+	 * @return SUCCESS
+	 */
+	private void findExchangeHisList() throws Exception {
+		if (CommonConstants.ActionReloadFlg.Reload_Condition.value().equals(
+				super.getReloadFlg())) {
+			yd0020CondA = (Yd0020CondA) SessionStore
+					.getCondition(SessionStoreConstants.YD0020);
+		} else {
+
+			if (yd0020CondA == null) {
+				yd0020CondA = new Yd0020CondA();
+				yd0020CondA.setAccFlag(GpsConstants.ACC_COMPANY);
+				yd0020CondA.setAccId(GpsConstants.CUSTOMERS_ACCOUNT);
+			} else {
+				if (!GpsConstants.ACC_COMPANY.equals(yd0020CondA.getAccFlag())) {
+					yd0020CondA.setAccId(yd0020CondA.getAccId().replaceAll(",",
+							""));
+					yd0020CondA.setAccId(StringUtil.leftPadYd(yd0020CondA
+							.getAccId()));
+				} else {
+					yd0020CondA.setAccId(yd0020CondA.getAccId().replaceAll(",",
+							""));
+				}
+			}
+		}
+		super.setPagerParamter(yd0020Service.getTotalCount(yd0020CondA),
+				"yd0020findExHisList.action", CommonConstants.PER_PAGE_COUNT);
+		// 取得检索信息一览
+		setExChangeHisList(yd0020Service.getExchangeHisList(yd0020CondA, pager
+				.getOffset().intValue(), pager.getPerDisplayCount().intValue()));
+		gpsExchangeSum = yd0020Service.getExchangeHisSum(yd0020CondA);
+		SessionStore.setCondition(SessionStoreConstants.YD0020, yd0020CondA);
+	}
+
+	/**
+	 * @return the yd0020Service
+	 */
+	public Yd0020Service getYd0020Service() {
+		return yd0020Service;
+	}
+
+	/**
+	 * @param yd0020Service
+	 *            the yd0020Service to set
+	 */
+	public void setYd0020Service(Yd0020Service yd0020Service) {
+		this.yd0020Service = yd0020Service;
+	}
+
+	/**
+	 * @return the comCodeInfoService
+	 */
+	public ComCodeInfoService getComCodeInfoService() {
+		return comCodeInfoService;
+	}
+
+	/**
+	 * @param comCodeInfoService
+	 *            the comCodeInfoService to set
+	 */
+	public void setComCodeInfoService(ComCodeInfoService comCodeInfoService) {
+		this.comCodeInfoService = comCodeInfoService;
+	}
+
+	/**
+	 * @return the accTypeList
+	 */
+	public List<ComCodeInfo> getAccTypeList() {
+		return accTypeList;
+	}
+
+	/**
+	 * @param accTypeList
+	 *            the accTypeList to set
+	 */
+	public void setAccTypeList(List<ComCodeInfo> accTypeList) {
+		this.accTypeList = accTypeList;
+	}
+
+	/**
+	 * @return the accFlagList
+	 */
+	public List<ComCodeInfo> getAccFlagList() {
+		return accFlagList;
+	}
+
+	/**
+	 * @param accFlagList
+	 *            the accFlagList to set
+	 */
+	public void setAccFlagList(List<ComCodeInfo> accFlagList) {
+		this.accFlagList = accFlagList;
+	}
+
+	/**
+	 * @return the exChangeHisList
+	 */
+	public List<GpsExchangeHis> getExChangeHisList() {
+		return exChangeHisList;
+	}
+
+	/**
+	 * @param exChangeHisList
+	 *            the exChangeHisList to set
+	 */
+	public void setExChangeHisList(List<GpsExchangeHis> exChangeHisList) {
+		this.exChangeHisList = exChangeHisList;
+	}
+
+	/**
+	 * @return the tansferCondA
+	 */
+	public TansferCondA getTansferCondA() {
+		return tansferCondA;
+	}
+
+	/**
+	 * @param tansferCondA
+	 *            the tansferCondA to set
+	 */
+	public void setTansferCondA(TansferCondA tansferCondA) {
+		this.tansferCondA = tansferCondA;
+	}
+
+	/**
+	 * @return the comRemain
+	 */
+	public String getComRemain() {
+		return comRemain;
+	}
+
+	/**
+	 * @param comRemain
+	 *            the comRemain to set
+	 */
+	public void setComRemain(String comRemain) {
+		this.comRemain = comRemain;
+	}
+
+	/**
+	 * @return the cafeAccount
+	 */
+	public GpsAccount getCafeAccount() {
+		return cafeAccount;
+	}
+
+	/**
+	 * @param cafeAccount
+	 *            the cafeAccount to set
+	 */
+	public void setCafeAccount(GpsAccount cafeAccount) {
+		this.cafeAccount = cafeAccount;
+	}
+
+	/**
+	 * @return the gpsAccount
+	 */
+	public GpsAccount getGpsAccount() {
+		return gpsAccount;
+	}
+
+	/**
+	 * @param gpsAccount
+	 *            the gpsAccount to set
+	 */
+	public void setGpsAccount(GpsAccount gpsAccount) {
+		this.gpsAccount = gpsAccount;
+	}
+
+	/**
+	 * @return the ioTypeList
+	 */
+	public List<ComCodeMaint> getIoTypeList() {
+		return ioTypeList;
+	}
+
+	/**
+	 * @param ioTypeList
+	 *            the ioTypeList to set
+	 */
+	public void setIoTypeList(List<ComCodeMaint> ioTypeList) {
+		this.ioTypeList = ioTypeList;
+	}
+
+	/**
+	 * @return the comCodeMaintService
+	 */
+	public ComCodeMaintService getComCodeMaintService() {
+		return comCodeMaintService;
+	}
+
+	/**
+	 * @param comCodeMaintService
+	 *            the comCodeMaintService to set
+	 */
+	public void setComCodeMaintService(ComCodeMaintService comCodeMaintService) {
+		this.comCodeMaintService = comCodeMaintService;
+	}
+
+	/**
+	 * @return the ioList
+	 */
+	public List<ComCodeInfo> getIoList() {
+		return ioList;
+	}
+
+	/**
+	 * @param ioList
+	 *            the ioList to set
+	 */
+	public void setIoList(List<ComCodeInfo> ioList) {
+		this.ioList = ioList;
+	}
+
+	/**
+	 * @return the tradeTypeList
+	 */
+	public List<ComCodeInfo> getTradeTypeList() {
+		return tradeTypeList;
+	}
+
+	/**
+	 * @param tradeTypeList
+	 *            the tradeTypeList to set
+	 */
+	public void setTradeTypeList(List<ComCodeInfo> tradeTypeList) {
+		this.tradeTypeList = tradeTypeList;
+	}
+
+	/**
+	 * @return the comAccId
+	 */
+	public String getComAccId() {
+		return comAccId;
+	}
+
+	/**
+	 * @param comAccId
+	 *            the comAccId to set
+	 */
+	public void setComAccId(String comAccId) {
+		this.comAccId = comAccId;
+	}
+
+	/**
+	 * @return the pesAccId
+	 */
+	public String getPesAccId() {
+		return pesAccId;
+	}
+
+	/**
+	 * @param pesAccId
+	 *            the pesAccId to set
+	 */
+	public void setPesAccId(String pesAccId) {
+		this.pesAccId = pesAccId;
+	}
+
+	/**
+	 * @return the yd0020CondA
+	 */
+	public Yd0020CondA getYd0020CondA() {
+		return yd0020CondA;
+	}
+
+	/**
+	 * @param yd0020CondA
+	 *            the yd0020CondA to set
+	 */
+	public void setYd0020CondA(Yd0020CondA yd0020CondA) {
+		this.yd0020CondA = yd0020CondA;
+	}
+
+	/**
+	 * @return the pesonRemain
+	 */
+	public String getPesonRemain() {
+		return pesonRemain;
+	}
+
+	/**
+	 * @param pesonRemain
+	 *            the pesonRemain to set
+	 */
+	public void setPesonRemain(String pesonRemain) {
+		this.pesonRemain = pesonRemain;
+	}
+
+	/**
+	 * @return the gpsExchangeSum
+	 */
+	public GpsExchangeSum getGpsExchangeSum() {
+		return gpsExchangeSum;
+	}
+
+	/**
+	 * @param gpsExchangeSum
+	 *            the gpsExchangeSum to set
+	 */
+	public void setGpsExchangeSum(GpsExchangeSum gpsExchangeSum) {
+		this.gpsExchangeSum = gpsExchangeSum;
+	}
+
+	/**
+	 * @return the errorMessage
+	 */
+	public String getErrorMessage() {
+		return errorMessage;
+	}
+
+	/**
+	 * @param errorMessage
+	 *            the errorMessage to set
+	 */
+	public void setErrorMessage(String errorMessage) {
+		this.errorMessage = errorMessage;
+	}
+}

@@ -1,0 +1,13 @@
+package com.xinleju.platform.sys.base.dto.service;
+
+import com.xinleju.platform.base.dto.service.BaseDtoServiceCustomer;
+
+public interface BaseDataDictionaryDtoServiceCustomer extends BaseDtoServiceCustomer{
+
+	public String getBaseDataDictionaryAndItem(String userinfo, String string);
+
+	public String saveBaseDataDictionaryAndItem(String userinfo, String saveJson);
+
+	public String updateBaseDataDictionaryAndItem(String userinfo,
+			String updateJson);
+}

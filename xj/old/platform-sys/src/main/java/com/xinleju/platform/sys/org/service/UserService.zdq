@@ -1,0 +1,226 @@
+package com.xinleju.platform.sys.org.service;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.sys.org.dto.OrgnazationExcelDto;
+import com.xinleju.platform.sys.org.dto.OrgnazationNodeDto;
+import com.xinleju.platform.sys.org.dto.UserDto;
+import com.xinleju.platform.sys.org.entity.User;
+import com.xinleju.platform.sys.security.dto.AuthenticationDto;
+
+/**
+ * @author sy
+ * 
+ * 
+ */
+
+public interface UserService extends  BaseService <String,User>{
+	
+	/**
+	 * 根据组织结构查询所有人
+	 * @param parentId
+	 * @return
+	 */
+	public List<UserDto> queryUserListByOrgId(Map<String, Object> paramater)  throws Exception;
+	
+	/**
+	 * 根据岗位查询用户列表
+	 * 
+	 * @param map
+	 * @return
+	 */
+	public List<UserDto> queryUserListByPostId(Map<String, Object> paramater) throws Exception;	
+	
+	/**
+	 * 根据岗位查询用户列表
+	 * 
+	 * @param map
+	 * @return
+	 */
+	public Map<String, Object> getUserListByPostIds(Map<String, Object> paramater) throws Exception;	
+	/**
+	 * 根据标准岗位Id和组织机构id（项目、公司、集团）获取userDto
+	 * 
+	 * @param map
+	 * @return
+	 */
+	public Map<String, Object> getUserListByStandardpostIdAndOrgIds(Map<String, Object> paramater) throws Exception;	
+	
+	/**
+	 * 根据角色查询用户列表
+	 * 
+	 * @param map
+	 * @return
+	 */
+	public List<UserDto> queryUserListByRoleId(Map<String, Object> paramater) throws Exception;	
+	/**
+	 * 根据虚拟角色查询用户列表
+	 * @param map
+	 * @return
+	 */
+	public List<UserDto> queryRoleUserByRoleId(Map<String, Object> paramater) throws Exception;	
+	
+	/**
+	 * 查询所有用户
+	 * @return
+	 */
+	public List<OrgnazationNodeDto> queryAllUserList(Map<String,Object> map)  throws Exception;
+	
+	/**
+	 * 查询所有用户
+	 * @return
+	 */
+	public List<UserDto> queryAllUserListReturnUser(Map<String,Object> map)  throws Exception;
+	
+	/**
+	 * 根据IDs获取结果集
+	 * @param paramater
+	 * @return
+	 */
+	public List<Map<String,String>> queryUsersByIds(Map map)throws Exception;
+	
+	/**
+	 * 根据IDs获取人员DTO
+	 * @param paramater
+	 * @return
+	 */
+	public List<UserDto> getUserByUserIds(Map map)throws Exception;
+	
+	/**
+	 * 根据姓名获取人员DTO
+	 * @param paramater
+	 * @return
+	 */
+	public List<UserDto> getUserByUserName(Map map)throws Exception;
+	
+	/**
+	 * 根据loginNames获取人员DTO
+	 * @param paramater
+	 * @return
+	 */
+	public List<UserDto> getUserByUserLoginNames(Map map)throws Exception;
+	/**
+	 * 批量保存用户排序号
+	 * @param paramater
+	 * @return
+	 */
+	public Integer saveUsersSort(Map map)throws Exception;
+	
+	/**
+	 * 获取用户详情
+	 * @param paramater
+	 * @return
+	 */
+	public UserDto selectUserInfoById(Map map)throws Exception;
+	/**
+	 * 校验登录名是否重复
+	 * @param paramater
+	 * @return
+	 */
+	public Integer checkLoginName(Map map)throws Exception;
+	
+	/**
+	 * 根据用户Id，获取用户的公司，部门，项目，分期
+	 * @param map
+	 * @return
+	 * @throws Exception
+	 */
+	public AuthenticationDto getOrgInfoByUserIdOrOrgId(Map map)throws Exception;
+	
+	/**
+	 * 获取指定组织下的人员
+	 * @param paramater
+	 * @return
+	 */
+	public Map<String, Object> getUserListByOrgId(Map<String, Object> paramater)throws Exception;
+	/** 
+	 *  根据角色id获取用户
+	 * @param paramater
+	 * @return
+	 */
+	public Map<String, Object> getUserListByRoleIds(Map<String, Object> paramater)throws Exception;
+	/** 
+	 *  根据角色id获取用户
+	 * @param paramater
+	 * @return
+	 */
+	public List<Map<String, Object>> queryUserAndPostsByUname(Map<String, Object> paramater)throws Exception;
+	
+	/**
+	 * 重置密码
+	 * @param paramater
+	 * @return
+	 */
+	public String resetPassword(String sign ,String password,String loginName)throws Exception;
+	/**
+	 * 获取多个人员岗位id
+	 * @param paramater
+	 * @return
+	 */
+	public List<String> selectPuIds(Map<String, Object> paramater)throws Exception;
+
+	/**
+	 * 获取多个人员
+	 * @param paramater
+	 * @return
+	 */
+	public List<Map<String, String>> queryPostUsersByIds(Map<String, Object> paramater)throws Exception;
+	/**
+	 * 根据条件查询用户
+	 * @param paramater
+	 * @return
+	 */
+	public List<UserDto> selectUserByQuery(Map<String, Object> paramater)throws Exception;
+	/**
+	 * 查询除了物业的人
+	 * @param paramater
+	 * @return
+	 */
+	public List<User> queryListOutWuye(Map<String, Object> paramater)throws Exception;
+	/**
+	 * 修改用户密码按组织查询，
+	 * @param paramater
+	 * @return
+	 */
+	public List<User> queryListUpdatePwdUserByOrgId(Map<String, Object> paramater)throws Exception;
+	
+	/**
+	 * 根据条件查询用户
+	 * @param paramater
+	 * @return
+	 */
+	public Page selectUserByQueryPage(Map<String, Object> paramater)throws Exception;
+	
+	/**
+	 * 修改密码，并同时修改ad密码
+	 * @param user
+	 * @param pwd
+	 * @return
+	 * @throws Exception
+	 */
+	public int updateAndAd(User user,String pwd)  throws Exception;
+	/**
+	 * 新增用户，并同时修改ad密码
+	 * @param user
+	 * @param pwd
+	 * @return
+	 * @throws Exception
+	 */
+	public int saveAndAd(User user,String pwd)  throws Exception;
+	/**
+	 * 读excel并插入db，校验数据的合法性，插入数据库，并返回结果
+	 * add by gyh 2018-1-12
+	 * @param list:读取excel组织数据
+	 */
+	public Map<String,Object> readExcelAndInsert(List<UserDto> list)throws Exception;
+
+	/**
+	 * 批量禁用或启用用户
+	 * @param param
+	 * @return
+	 */
+	public int lockUsersOrNot(Map<String, Object> param)throws Exception;
+}

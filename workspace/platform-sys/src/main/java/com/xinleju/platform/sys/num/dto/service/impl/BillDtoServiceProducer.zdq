@@ -1,0 +1,323 @@
+package com.xinleju.platform.sys.num.dto.service.impl;
+
+import java.sql.Timestamp;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.base.utils.ErrorInfoCode;
+import com.xinleju.platform.base.utils.LoginUtils;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.base.utils.SecurityUserBeanInfo;
+import com.xinleju.platform.sys.num.dto.BillDto;
+import com.xinleju.platform.sys.num.dto.service.BillDtoServiceCustomer;
+import com.xinleju.platform.sys.num.entity.Bill;
+import com.xinleju.platform.sys.num.service.BillService;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+/**
+ * @author ly
+ * 
+ *
+ */
+ 
+public class BillDtoServiceProducer implements BillDtoServiceCustomer{
+	private static Logger log = Logger.getLogger(BillDtoServiceProducer.class);
+	@Autowired
+	private BillService billService;
+
+	public String save(String userInfo, String saveJson){
+		
+	   SimpleDateFormat dateFormater = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+	   Date date=new Date();
+	   Timestamp timestamp = Timestamp.valueOf(dateFormater.format(date));
+		
+	   DubboServiceResultInfo info=new DubboServiceResultInfo();
+	   try {
+		   //获取用户对象
+		   SecurityUserBeanInfo user=LoginUtils.getSecurityUserBeanInfo();
+		   Bill bill=JacksonUtils.fromJson(saveJson, Bill.class);
+		   //用户信息赋值
+		   bill.setCreateDate(timestamp);
+		   bill.setTendId(user.getTendId());
+		   bill.setCreatePersonId(user.getSecurityUserDto().getId());
+		   bill.setCreatePersonName(user.getSecurityUserDto().getLoginName());
+		   bill.setCreateCompanyId(user.getSecurityUserDto().getBelongOrgId());
+		   bill.setCreateCompanyName(user.getSecurityUserDto().getBelongOrgName());
+		   bill.setCreateOrgId(user.getSecurityUserDto().getBelongOrgId());
+		   bill.setCreateOrgName(user.getSecurityUserDto().getBelongOrgName());
+		   
+		   billService.save(bill);
+		   info.setResult(JacksonUtils.toJson(bill));
+		   info.setSucess(true);
+		   info.setMsg("保存对象成功!");
+		} catch (Exception e) {
+		 log.error("保存对象失败!"+e.getMessage());
+		 info.setSucess(false);
+		 info.setMsg("保存对象失败!");
+		 info.setExceptionMsg(e.getMessage());
+		}
+	   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String saveBatch(String userInfo, String saveJsonList)
+			 {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public String updateBatch(String userInfo, String updateJsonList)
+			 {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public String update(String userInfo, String updateJson)  {
+		
+		SimpleDateFormat dateFormater = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+		Date date=new Date();
+		Timestamp timestamp = Timestamp.valueOf(dateFormater.format(date));
+		
+	    DubboServiceResultInfo info=new DubboServiceResultInfo();
+	    try {
+	    	//获取用户对象
+		   SecurityUserBeanInfo user=LoginUtils.getSecurityUserBeanInfo();
+		   Bill bill=JacksonUtils.fromJson(updateJson, Bill.class);
+		   
+		   bill.setUpdateDate(timestamp);
+		   bill.setUpdatePersonId(user.getSecurityUserDto().getId());
+		   bill.setUpdatePersonName(user.getSecurityUserDto().getLoginName());
+		   
+		   int result=   billService.update(bill);
+		   info.setResult(JacksonUtils.toJson(result));
+		   info.setSucess(true);
+		   info.setMsg("更新对象成功!");
+		 } catch (Exception e) {
+		   log.error("更新对象失败!"+e.getMessage());
+		   info.setSucess(false);
+		   info.setMsg("更新对象失败!");
+		   info.setExceptionMsg(e.getMessage());
+		}
+	    return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deleteObjectById(String userInfo, String deleteJson)
+	{
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   Bill bill=JacksonUtils.fromJson(deleteJson, Bill.class);
+			   int result= billService.deleteObjectById(bill.getId());
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("删除对象成功!");
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deleteAllObjectByIds(String userInfo, String deleteJsonList)
+   {
+		 DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   if (StringUtils.isNotBlank(deleteJsonList)) {
+				   @SuppressWarnings("unchecked")
+				   Map<String,Object> map=JacksonUtils.fromJson(deleteJsonList, HashMap.class);
+				   List<String> list=Arrays.asList(map.get("id").toString().split(","));
+				   int result= billService.deleteAllObjectByIds(list);
+				   info.setResult(JacksonUtils.toJson(result));
+				   info.setSucess(true);
+				   info.setMsg("删除对象成功!");
+				}
+			} catch (Exception e) {
+			 log.error("删除对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getObjectById(String userInfo, String getJson)
+	 {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Bill bill=JacksonUtils.fromJson(getJson, Bill.class);
+			Bill	result = billService.getObjectById(bill.getId());
+			if(result!=null){
+				info.setResult(JacksonUtils.toJson(result));
+			    info.setSucess(true);
+			    info.setMsg("获取对象成功!");
+			}else{
+				info.setResult(ErrorInfoCode.NULL_ERROR.getValue());
+				info.setSucess(false);
+				info.setMsg("对象数据为空!");
+			}
+		} catch (Exception e) {
+			 log.error("获取对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getPage(String userInfo, String paramater) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				@SuppressWarnings("unchecked")
+				Map<String,Object> map=JacksonUtils.fromJson(paramater, HashMap.class);
+				Page page=billService.getBillDataByPage(map);
+				info.setResult(JacksonUtils.toJson(page));
+			    info.setSucess(true);
+			    info.setMsg("获取分页对象成功!");
+			}else{
+				Page page=billService.getPage(new HashMap<String,Object>(), null, null);
+				info.setResult(JacksonUtils.toJson(page));
+			    info.setSucess(true);
+			    info.setMsg("获取分页对象成功!");
+			}
+		} catch (Exception e) {
+			 log.error("获取分页对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取分页对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String queryList(String userInfo, String paramater){
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			List<Bill> list = new ArrayList<Bill>();
+			if(StringUtils.isNotBlank(paramater)){
+				@SuppressWarnings("unchecked")
+				Map<String,Object> map=JacksonUtils.fromJson(paramater, HashMap.class);
+				list=billService.queryList(map);
+			}else{
+				list=billService.queryList(null);
+			}
+			if(list!=null&&!list.isEmpty()){
+				info.setResult(JacksonUtils.toJson(list));
+				info.setSucess(true);
+				info.setMsg("获取列表对象成功!");
+			}else{
+				info.setResult(ErrorInfoCode.NULL_ERROR.getValue());
+				info.setSucess(false);
+				info.setMsg("列表对象为空!");
+			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取列表对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取列表对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getCount(String userInfo, String paramater)  {
+		// TODO Auto-generated method stub
+		return null;
+	}
+	
+	@Override
+	public String deletePseudoObjectById(String userInfo, String deleteJson)
+	{
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   Bill bill=JacksonUtils.fromJson(deleteJson, Bill.class);
+			   int result= billService.deletePseudoObjectById(bill.getId());
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("删除对象成功!");
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deletePseudoAllObjectByIds(String userInfo, String deleteJsonList)
+   {
+		 DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   if (StringUtils.isNotBlank(deleteJsonList)) {
+				   @SuppressWarnings("unchecked")
+				   Map<String,Object> map=JacksonUtils.fromJson(deleteJsonList, HashMap.class);
+				   List<String> list=Arrays.asList(map.get("id").toString().split(","));
+				   int result= billService.deletePseudoAllObjectByIds(list);
+				   info.setResult(JacksonUtils.toJson(result));
+				   info.setSucess(true);
+				   info.setMsg("删除对象成功!");
+				}
+			} catch (Exception e) {
+			 log.error("删除对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String updateStatus(String userinfo, String id) {
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   BillDto billDto=JacksonUtils.fromJson(id, BillDto.class);
+			   Bill	billBean = billService.getObjectById(billDto.getId());
+			   int result=   billService.updateStatus(billBean);
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("更新状态成功!");
+			} catch (Exception e) {
+			 log.error("更新状态失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("更新状态失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String saveBillAndRuler(String userJson, String saveJson) {
+	    DubboServiceResultInfo info=new DubboServiceResultInfo();
+	    try {
+		   int result=   billService.saveBillAndRuler(saveJson);
+		   info.setResult(JacksonUtils.toJson(result));
+		   info.setSucess(true);
+		   info.setMsg("更新对象成功!");
+		 } catch (Exception e) {
+		   log.error("更新对象失败!"+e.getMessage());
+		   info.setSucess(false);
+		   info.setMsg("更新对象失败!");
+		   info.setExceptionMsg("更新对象失败!"+e.getMessage());
+		}
+	    return JacksonUtils.toJson(info);
+	}
+}

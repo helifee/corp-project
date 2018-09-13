@@ -1,0 +1,128 @@
+package com.xinleju.platform.sys.notice.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Table(value="PT_SYS_NOTICE_MAIL_MSG",desc="邮件信息表")
+public class MailMsg extends BaseEntity{
+	
+		
+	@Column(value="title",desc="主题")
+	private String title;
+    
+  		
+	@Column(value="send_name",desc="发送人名称")
+	private String sendName;
+    
+  		
+	@Column(value="send_address",desc="发送人地址")
+	private String sendAddress;
+    
+  		
+	@Column(value="copy_name",desc="抄送人名称")
+	private String copyName;
+    
+  		
+	@Column(value="copy_address",desc="抄送人地址")
+	private String copyAddress;
+    
+  		
+	@Column(value="context",desc="正文")
+	private String context;
+    
+  		
+	@Column(value="status",desc="状态")
+	private String status;
+    
+  		
+	@Column(value="num",desc="发送次数")
+	private Integer num;
+    
+  		
+	@Column(value="mail_server_id",desc="服务器Id")
+	private String mailServerId;
+    
+  		
+		
+	public String getTitle() {
+		return title;
+	}
+	public void setTitle(String title) {
+		this.title = title;
+	}
+    
+  		
+	public String getSendName() {
+		return sendName;
+	}
+	public void setSendName(String sendName) {
+		this.sendName = sendName;
+	}
+    
+  		
+	public String getSendAddress() {
+		return sendAddress;
+	}
+	public void setSendAddress(String sendAddress) {
+		this.sendAddress = sendAddress;
+	}
+    
+  		
+	public String getCopyName() {
+		return copyName;
+	}
+	public void setCopyName(String copyName) {
+		this.copyName = copyName;
+	}
+    
+  		
+	public String getCopyAddress() {
+		return copyAddress;
+	}
+	public void setCopyAddress(String copyAddress) {
+		this.copyAddress = copyAddress;
+	}
+    
+  		
+	public String getContext() {
+		return context;
+	}
+	public void setContext(String context) {
+		this.context = context;
+	}
+    
+  		
+	public String getStatus() {
+		return status;
+	}
+	public void setStatus(String status) {
+		this.status = status;
+	}
+    
+  		
+	public Integer getNum() {
+		return num;
+	}
+	public void setNum(Integer num) {
+		this.num = num;
+	}
+    
+  		
+	public String getMailServerId() {
+		return mailServerId;
+	}
+	public void setMailServerId(String mailServerId) {
+		this.mailServerId = mailServerId;
+	}
+    
+  		
+	
+}

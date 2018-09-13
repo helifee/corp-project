@@ -1,0 +1,170 @@
+package com.xinleju.cloud.oa.schedule.service.impl;
+
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.alibaba.dubbo.common.json.Jackson;
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.flow.dto.service.SysNoticeMsgDtoServiceCustomer;
+import com.xinleju.platform.tools.data.JacksonUtils;
+import com.xinleju.cloud.oa.schedule.dao.TaskPackageDao;
+import com.xinleju.cloud.oa.schedule.dao.TaskPackageDispatchDao;
+import com.xinleju.cloud.oa.schedule.entity.TaskPackage;
+import com.xinleju.cloud.oa.schedule.entity.TaskPackageDispatch;
+import com.xinleju.cloud.oa.schedule.entity.WorkSchedule;
+import com.xinleju.cloud.oa.schedule.service.TaskPackageDispatchService;
+import com.xinleju.cloud.oa.schedule.service.TaskPackageService;
+import com.xinleju.cloud.oa.schedule.service.WorkScheduleService;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class TaskPackageDispatchServiceImpl extends  BaseServiceImpl<String,TaskPackageDispatch> implements TaskPackageDispatchService{
+	
+
+	@Autowired
+	private TaskPackageDispatchDao taskPackageDispatchDao;
+	
+	@Autowired
+	private TaskPackageDao taskPackageDao;
+	@Autowired
+	private WorkScheduleService workScheduleService;
+	@Autowired
+	private SysNoticeMsgDtoServiceCustomer sysNoticeMsgDtoServiceCustomer;
+	/* (non-Javadoc)
+	 * @see com.xinleju.cloud.oa.schedule.service.TaskPackageDispatchService#report(java.util.Map)
+	 */
+	@Override
+	public int report(Map<String, Object> map) throws Exception {
+		String id = (String) map.get("dispatchId");
+		
+		TaskPackageDispatch taskPackageDispatch = taskPackageDispatchDao.getObjectById(id);
+		taskPackageDispatch.setReportStatus("2");
+		taskPackageDispatch.setReport((String) map.get("report"));
+		taskPackageDispatch.setActualCompleteDate(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()));
+		
+		WorkSchedule workSchedule = workScheduleService.getObjectById(id);
+		workSchedule.setStatus("2");//已汇报
+		workScheduleService.update(workSchedule);
+		
+		
+		return taskPackageDispatchDao.update(taskPackageDispatch);
+		
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.cloud.oa.schedule.service.TaskPackageDispatchService#getListById(java.lang.String)
+	 */
+	@Override
+	public List<TaskPackageDispatch> getListById(String id) throws Exception {
+		return taskPackageDispatchDao.getListById(id);
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.cloud.oa.schedule.service.TaskPackageDispatchService#updateTaskDispathStatus(java.util.Map)
+	 */
+	// 0是忽略  1 是接受
+	@Override
+	public int updateTaskDispathStatus(Map<String, Object> map)
+			throws Exception {
+		// TODO Auto-generated method stub
+		String taskStatus = (String) map.get("taskStatus");
+		String dispatchId = (String) map.get("dispatchId");
+		TaskPackageDispatch taskPackageDispatch = taskPackageDispatchDao.getObjectById(dispatchId);
+		if("0".equals(taskStatus)){
+			taskPackageDispatch.setReportStatus("5");//状态设置为忽略
+			return 	taskPackageDispatchDao.update(taskPackageDispatch);
+			
+		}else{
+			String taskPackageId = taskPackageDispatch.getTaskPackageId();
+			TaskPackage taskPackage = taskPackageDao.getObjectById(taskPackageId);
+			WorkSchedule 	 workSchedule = workScheduleService.getObjectById(taskPackageDispatch.getId());
+			if(workSchedule==null){
+				workSchedule=new  WorkSchedule();         
+				workSchedule.setId(dispatchId);
+				workSchedule.setContent(taskPackageDispatch.getContent());
+				workSchedule.setBeginTime(taskPackage.getPublishDate());
+				workSchedule.setEndTime(taskPackageDispatch.getExpectCompleteDate());
+				workSchedule.setSource("OA");
+				workSchedule.setDelflag(false);
+				workSchedule.setPeriodProceeding("0");
+				workSchedule.setType("TASK");
+				workSchedule.setStatus("1");//启用状态
+				workSchedule.setTaskOwner(taskPackageDispatch.getDutyUser());
+				workSchedule.setTaskOwnerId(taskPackageDispatch.getDutyUserId());
+			}
+			workScheduleService.save(workSchedule);
+			taskPackageDispatch.setReportStatus("1");//状态设置为已接受
+		return 	taskPackageDispatchDao.update(taskPackageDispatch);
+		}
+		
+		
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.cloud.oa.schedule.service.TaskPackageDispatchService#recordSuccess(java.util.Map)
+	 */
+	@Override
+	public int recordSuccess(String userJson,Map<String, Object> map) throws Exception {
+		List<Map<String,Object>>  checkeds = (List<Map<String,Object>>) map.get("checkedIds");	 
+	   for ( Map<String,Object>  checked : checkeds) {
+
+		   String  checkedId= (String) checked.get("checkedId");
+		   String  report= (String) checked.get("report");
+		   
+		   TaskPackageDispatch taskPackageDispatch = taskPackageDispatchDao.getObjectById(checkedId);
+		   if(!"5".equals(taskPackageDispatch.getReportStatus())){
+				WorkSchedule workSchedule = workScheduleService.getObjectById(checkedId);
+				if(workSchedule!=null){
+					workSchedule.setStatus("2");
+					workScheduleService.update(workSchedule);
+				}
+		   }
+		   Map<String,Object>param=new HashMap<String, Object>();
+		   param.put("businessId", checkedId);
+		   param.put("oldStatus", "DB");
+		   param.put("newStatus", "YB");
+		   param.put("firstType", "SCHEDULE");
+		   String paramaterJson=JacksonUtils.toJson(param);
+		  	sysNoticeMsgDtoServiceCustomer.updateStatusOfNoticeMsg(userJson, paramaterJson);
+		  	taskPackageDispatch.setActualCompleteDate(new SimpleDateFormat("yyyy-MM-dd hh:mm:ss").format(new Date()));
+		   		taskPackageDispatch.setReportStatus("2");
+		   		taskPackageDispatch.setReport(report);
+			return 	taskPackageDispatchDao.update(taskPackageDispatch);
+			
+			
+	}
+	   
+	   
+	   return 1;
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.cloud.oa.schedule.service.TaskPackageDispatchService#getTaskPackageDispatchById(java.lang.String)
+	 */
+	@Override
+	public TaskPackageDispatch getTaskPackageDispatchById(String id)
+			throws Exception {
+		TaskPackageDispatch taskPackageDispatch = taskPackageDispatchDao.getObjectById(id);
+		String taskPackageId = taskPackageDispatch.getTaskPackageId();
+		TaskPackage taskPackage = taskPackageDao.getObjectById(taskPackageId);
+		String status = taskPackage.getStatus();
+		if("3".equals(status)){
+			taskPackageDispatch.setReportStatus("3");
+		}
+		return taskPackageDispatch;
+	}
+	
+
+}

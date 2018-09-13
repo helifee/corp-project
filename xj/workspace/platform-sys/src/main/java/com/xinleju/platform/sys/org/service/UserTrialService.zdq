@@ -1,0 +1,20 @@
+package com.xinleju.platform.sys.org.service;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.sys.org.entity.User;
+import com.xinleju.platform.sys.org.entity.UserTrial;
+
+import java.util.Map;
+
+/**
+ * @author luorx
+ *
+ * 
+ */
+
+public interface UserTrialService extends  BaseService <String,UserTrial>{
+
+	public UserTrial isExistTrialOrgUser(Map map);
+
+	public User obtainOrgUserTrial(Map map);
+}

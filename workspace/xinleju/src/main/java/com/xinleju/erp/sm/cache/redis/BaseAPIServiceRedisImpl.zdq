@@ -1,0 +1,1271 @@
+package com.xinleju.erp.sm.cache.redis;
+
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import javax.annotation.Resource;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.data.redis.core.ListOperations;
+import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.erp.data.cache.api.BaseExtendAPI;
+import com.xinleju.erp.flow.flowutils.bean.AiBean;
+import com.xinleju.erp.flow.flowutils.bean.CategoryDTO;
+import com.xinleju.erp.flow.flowutils.bean.FileDto;
+import com.xinleju.erp.flow.flowutils.bean.FlowDTO;
+import com.xinleju.erp.flow.flowutils.bean.FlowInstanceDto;
+import com.xinleju.erp.flow.flowutils.bean.FlowResult;
+import com.xinleju.erp.flow.flowutils.bean.MsgDTO;
+import com.xinleju.erp.flow.flowutils.bean.PageBean;
+import com.xinleju.erp.flow.flowutils.bean.SimpleResult;
+import com.xinleju.erp.flow.flowutils.bean.ToDoBean;
+import com.xinleju.erp.flow.service.api.extend.BaseAPIService;
+import com.xinleju.erp.flow.service.api.extend.dto.CompanyDTO;
+import com.xinleju.erp.flow.service.api.extend.dto.DataAuthDTO;
+import com.xinleju.erp.flow.service.api.extend.dto.DeptDTO;
+import com.xinleju.erp.flow.service.api.extend.dto.FlowInsDTO;
+import com.xinleju.erp.flow.service.api.extend.dto.FuncDTO;
+import com.xinleju.erp.flow.service.api.extend.dto.GroupDTO;
+import com.xinleju.erp.flow.service.api.extend.dto.OpDTO;
+import com.xinleju.erp.flow.service.api.extend.dto.OrgnDTO;
+import com.xinleju.erp.flow.service.api.extend.dto.PartyEntityDTO;
+import com.xinleju.erp.flow.service.api.extend.dto.PartyStructDTO;
+import com.xinleju.erp.flow.service.api.extend.dto.RoleDTO;
+import com.xinleju.erp.flow.service.api.extend.dto.ScopeDTO;
+import com.xinleju.erp.flow.service.api.extend.dto.UserDTO;
+import com.xinleju.erp.sm.cache.utils.OrgDTOUtil;
+import com.xinleju.erp.sm.cache.utils.UserDTOUtil;
+import com.xinleju.erp.sm.extend.dto.MailDTO;
+import com.xinleju.erp.sm.extend.dto.SmDTO;
+
+
+
+public class BaseAPIServiceRedisImpl implements BaseExtendAPI {
+	public static final Map<String, Long> partyTypeNameIdMap = new HashMap<String, Long>() {
+		/**
+		 * 
+		 */
+
+		{
+			put("zb", 1l);
+			put("company", 2l);
+			put("department", 3l);
+			put("group", 4l);
+			put("role", 5l);
+			put("user", 6l);
+		}
+	};
+
+    @Autowired
+    @Qualifier("BaseAPIService")
+    BaseAPIService BaseAPIService;
+
+    @Resource(name = "redisTemplate")
+    private ListOperations<String, PartyEntityDTO> partyEntityListOper;
+
+    @Resource(name = "redisTemplate")
+    private ValueOperations<String, PartyEntityDTO> partyEntityValueOper;
+
+    @Resource(name = "redisTemplate")
+    private ListOperations<String, PartyStructDTO> partyStructListOper;
+
+    @Resource(name = "redisTemplate")
+    private ValueOperations<String, PartyStructDTO> partyStructValueOper;
+
+    @Resource(name = "redisTemplate")
+    private ListOperations<String, FuncDTO> funcListOper;
+
+    @Resource(name = "redisTemplate")
+    private ListOperations<String, OpDTO> opListOper;
+
+    @Resource(name = "redisTemplate")
+    private ValueOperations<String, UserDTO> userValueOper;
+
+    @Resource(name = "redisTemplate")
+    private ValueOperations<String, RoleDTO> roleValueOper;
+
+    @Resource(name = "redisTemplate")
+    private ListOperations<String, RoleDTO> roleListOper;
+
+    @Resource(name = "redisTemplate")
+    private ValueOperations<String, CompanyDTO> companyValueOper;
+
+    @Resource(name = "redisTemplate")
+    private ValueOperations<String, DeptDTO> deptValueOper;
+
+    @Resource(name = "redisTemplate")
+    private ListOperations<String, CompanyDTO> companyListOper;
+
+    /**
+     * 根据用户名查询用户信息
+     * 
+     * @param loginName
+     * @return
+     */
+    public FlowResult<UserDTO> findUserByLoginName(String loginName) {
+        FlowResult<UserDTO> fr = new FlowResult<UserDTO>();
+        UserDTO userDTO = userValueOper.get("user:user_login_name:" + loginName);
+        fr.setResult(userDTO);
+
+        return fr;
+    }
+
+    /**
+     * 获取组织机构根列表
+     * 
+     * @param includeTypes 包含节点类型（company:公司 department:部门 group:项目 ）
+     * @return
+     */
+    @Override
+    public FlowResult<List<OrgnDTO>> findRootOrgns(String[] includeTypes) {
+
+        FlowResult<List<OrgnDTO>> fr = new FlowResult<List<OrgnDTO>>();
+        List<PartyEntityDTO> dtos = new ArrayList<PartyEntityDTO>();
+        List<PartyStructDTO> structDTOs = partyStructListOper.range("root_struct", 0, -1);
+        PartyEntityDTO temp;
+        for (PartyStructDTO ps : structDTOs) {
+            for (String s : includeTypes) {
+                temp = partyEntityValueOper.get("entity:entity_id:" + ps.getChildEntityId());
+                if (temp != null && partyTypeNameIdMap.get(s).equals(temp.getPartyTypeId())) {
+                    dtos.add(temp);
+                }
+            }
+        }
+
+        fr.setResult(OrgDTOUtil.buildOrgDtoList(dtos));
+        return fr;
+    }
+
+    /**
+     * 获取孩子组织机构列表
+     * 
+     * @param parentId 父ID
+     * @param includeTypes 包含节点类型（company:公司 department:部门 group:项目 ）
+     * @return
+     */
+    @Override
+    public FlowResult<List<OrgnDTO>> findSubOrgns(Long parentId, String[] includeTypes) {
+        FlowResult<List<OrgnDTO>> fr = new FlowResult<List<OrgnDTO>>();
+
+        List<PartyEntityDTO> dtos = new ArrayList<PartyEntityDTO>();
+        List<PartyStructDTO> structDTOs = partyStructListOper.range(
+            "struct:struct_type:parent_entity_id:1:" + parentId, 0, -1);
+        PartyEntityDTO temp;
+        for (PartyStructDTO ps : structDTOs) {
+            for (String s : includeTypes) {
+                temp = partyEntityValueOper.get("entity:entity_id:entity_type_id:"
+                                                + ps.getChildEntityId() + ":"
+                                                + partyTypeNameIdMap.get(s));
+                if (temp != null) {
+                    dtos.add(temp);
+                }
+            }
+        }
+        fr.setResult(OrgDTOUtil.buildOrgDtoList(dtos));
+        return fr;
+    }
+
+    @Override
+    public FlowResult<PageBean<UserDTO>> getUserList(Long orgnId, String name, Integer start,
+                                                     Integer limit, Boolean includeAllSubOrgns,
+                                                     Map<String, Object> extParm) {
+        return BaseAPIService.getUserList(orgnId, name, start, limit, includeAllSubOrgns, extParm);
+
+    }
+    
+    
+
+    @Override
+	public FlowResult<List<UserDTO>> getUserListByCompanyIdAndRoleId(Long compayId,
+			Long roleId) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	/**
+     * @param orgnId
+     * @param includeAllSubOrgns
+     * @return
+     */
+    /*
+     * public FlowResult<List<UserDTO>> getUserList(Long orgnId,Boolean includeAllSubOrgns){
+     * FlowResult<List<UserDTO>> fr = new FlowResult<List<UserDTO>>(); List<PartyEntityDTO> dtos =
+     * new ArrayList<PartyEntityDTO>(); List<PartyStructDTO> structDTOs =
+     * partyStructListOper.range("struct:struct_type:parent_entity_id:1:"+orgnId, 0, -1);
+     * for(PartyStructDTO ps : structDTOs){
+     * dtos.add(partyEntityValueOper.get("entity:entity_id:entity_type_id:"
+     * +ps.getChildEntityId()+":5")); } fr.setResult(UserDTOUtil.buildUserDtoList(dtos)); return
+     * fr; }
+     */
+
+    @Override
+    public FlowResult<UserDTO> getUserById(Long userId) {
+        FlowResult<UserDTO> fr = new FlowResult<UserDTO>();
+        UserDTO userDTO = userValueOper.get("user:user_id:" + userId);
+        fr.setResult(userDTO);
+
+        return fr;
+    }
+
+    @Override
+    public FlowResult<Map<Long, String>> getUserByIds(String[] arg0) {
+
+        Map<Long, String> ma = new HashMap<Long, String>();
+        FlowResult<Map<Long, String>> fr = new FlowResult<Map<Long, String>>();
+        if (arg0 != null && arg0.length > 0) {
+            UserDTO cDTO;
+            for (int i = 0; i < arg0.length; i++ ) {
+                cDTO = userValueOper.get("user:user_id:" + arg0[i]);
+                if (cDTO != null && cDTO.getId() != null && cDTO.getRealName() != null)
+                    ma.put(cDTO.getId(), cDTO.getRealName());
+            }
+        }
+        fr.setResult(ma);
+        return fr;
+    }
+
+    @Override
+    public FlowResult<List<UserDTO>> getUserListByIds(String[] arg0) {
+
+        List<UserDTO> ma = new ArrayList<UserDTO>();
+        FlowResult<List<UserDTO>> fr = new FlowResult<List<UserDTO>>();
+        if (arg0 != null && arg0.length > 0) {
+            UserDTO cDTO;
+            for (int i = 0; i < arg0.length; i++ ) {
+                cDTO = userValueOper.get("user:user_id:" + arg0[i]);
+                if (cDTO != null && cDTO.getId() != null && cDTO.getRealName() != null)
+                    ma.add(cDTO);
+            }
+        }
+        fr.setResult(ma);
+        return fr;
+    }
+
+    @Override
+    public FlowResult<String> getUserNameByIds(String[] arg0) {
+
+        StringBuffer s = new StringBuffer();
+        FlowResult<String> fr = new FlowResult<String>();
+        if (arg0 != null && arg0.length > 0) {
+            UserDTO cDTO;
+            for (int i = 0; i < arg0.length; i++ ) {
+                cDTO = userValueOper.get("user:user_id:" + arg0[i]);
+                if (cDTO != null && cDTO.getId() != null && cDTO.getRealName() != null)
+                    s.append(cDTO.getRealName() + ",");
+            }
+        }
+        fr.setResult(s.toString());
+        return fr;
+    }
+
+    @Override
+    public FlowResult<List<UserDTO>> getUserByRoleRefId(Long roleRefId) {
+
+        FlowResult<List<UserDTO>> fr = new FlowResult<List<UserDTO>>();
+
+        List<PartyEntityDTO> dtos = partyEntityListOper.range(
+            "entity:entity_type:entity_ref_id:5:" + roleRefId, 0, -1);
+
+        List<PartyStructDTO> structDTOs = new ArrayList<PartyStructDTO>();
+
+        for (PartyEntityDTO ps : dtos) {
+            structDTOs.addAll(partyStructListOper.range("struct:struct_type:parent_entity_id:1:"
+                                                        + ps.getId(), 0, -1));
+        }
+        dtos.clear();
+        for (PartyStructDTO p : structDTOs) {
+            dtos.add(partyEntityValueOper.get("entity:entity_id:" + p.getChildEntityId()));
+        }
+        fr.setResult(UserDTOUtil.buildUserDtoList(dtos));
+
+        return fr;
+
+    }
+
+    @Override
+    public FlowResult<List<UserDTO>> getUserByRoleRefIds(String[] args) {
+
+        FlowResult<List<UserDTO>> fr = new FlowResult<List<UserDTO>>();
+
+        List<PartyEntityDTO> dtos = new ArrayList<PartyEntityDTO>();
+
+        List<PartyEntityDTO> temp = null;
+        for (String s : args) {
+
+            temp = partyEntityListOper.range("entity:entity_type:entity_ref_id:5:" + s, 0, -1);
+            if (temp != null) dtos.addAll(temp);
+            temp = null;
+        }
+
+        List<PartyStructDTO> structDTOs = new ArrayList<PartyStructDTO>();
+
+        for (PartyEntityDTO ps : dtos) {
+            structDTOs.addAll(partyStructListOper.range("struct:struct_type:parent_entity_id:1:"
+                                                        + ps.getId(), 0, -1));
+        }
+        dtos.clear();
+        for (PartyStructDTO p : structDTOs) {
+            dtos.add(partyEntityValueOper.get("entity:entity_id:" + p.getChildEntityId()));
+        }
+        fr.setResult(UserDTOUtil.buildUserDtoList(dtos));
+
+        return fr;
+
+    }
+
+    @Override
+    public FlowResult<String> getRoleNameByIds(String[] arg0) {
+
+        StringBuffer s = new StringBuffer();
+        FlowResult<String> fr = new FlowResult<String>();
+        if (arg0 != null && arg0.length > 0) {
+            RoleDTO cDTO;
+            for (int i = 0; i < arg0.length; i++ ) {
+                cDTO = roleValueOper.get("role:role_id:" + arg0[i]);
+                s.append(cDTO.getName() + ",");
+            }
+        }
+        fr.setResult(s.toString());
+        return fr;
+    }
+
+    @Override
+    public FlowResult<List<RoleDTO>> getRootStandardRoles() {
+        FlowResult<List<RoleDTO>> fr = new FlowResult<List<RoleDTO>>();
+        List<RoleDTO> dtos = roleListOper.range("role:standard", 0, -1);
+        for (int i = 0; dtos != null && i < dtos.size(); i++ ) {
+            if (dtos.get(i).getTypeCode() == null) {
+                dtos.remove(i);
+            }
+        }
+        fr.setResult(dtos);
+        return fr;
+    }
+
+    @Override
+    public FlowResult<List<RoleDTO>> getRootStandardRoles(Boolean includeDisabled) {
+        return BaseAPIService.getRootStandardRoles(includeDisabled);
+    }
+
+    @Override
+    public FlowResult<List<RoleDTO>> getSubStandardRoles(Long parentId) {
+        FlowResult<List<RoleDTO>> fr = new FlowResult<List<RoleDTO>>();
+        List<RoleDTO> dtos = roleListOper.range("role:parent_id:" + parentId, 0, -1);
+        for (int i = 0; dtos != null && i < dtos.size(); i++ ) {
+            if (dtos.get(i).getTypeCode() == null && "standard".equals(dtos.get(i).getTypeCode())) {
+                dtos.remove(i);
+            }
+        }
+        fr.setResult(dtos);
+        return fr;
+    }
+
+    @Override
+    public FlowResult<List<RoleDTO>> getSubStandardRoles(Long parentId, Boolean includeDisabled) {
+        return BaseAPIService.getSubStandardRoles(parentId, includeDisabled);
+    }
+
+    @Override
+    public FlowResult<RoleDTO> getMainRole(String longName) {
+        FlowResult<RoleDTO> fr = new FlowResult<RoleDTO>();
+        UserDTO userDTO = userValueOper.get("user:user_id:" + longName);
+        RoleDTO roleDTO = roleValueOper.get("role:role_id:" + userDTO.getMainRoleId());
+        fr.setResult(roleDTO);
+
+        return fr;
+    }
+
+    @Override
+    public FlowResult<RoleDTO> getMainRole(Long userId) {
+        FlowResult<RoleDTO> fr = new FlowResult<RoleDTO>();
+        UserDTO userDTO = userValueOper.get("user:user_login_name:" + userId);
+        RoleDTO roleDTO = roleValueOper.get("role:role_id:" + userDTO.getMainRoleId());
+        fr.setResult(roleDTO);
+
+        return fr;
+    }
+
+    @Override
+    public FlowResult<RoleDTO> getRoleByCompanyId(Long standardRoleId, Long companyId) {
+        return BaseAPIService.getRoleByCompanyId(standardRoleId, companyId);
+    }
+
+    @Override
+    public FlowResult<RoleDTO> getRoleByTeamId(Long standardRoleId, Long teamId) {
+        return BaseAPIService.getRoleByTeamId(standardRoleId, teamId);
+    }
+
+    @Override
+    public FlowResult<RoleDTO> getRoleByRoleId(Long standardRoleId, Long roleId) {
+        return BaseAPIService.getRoleByRoleId(standardRoleId, roleId);
+    }
+
+    @Override
+    public FlowResult<List<FuncDTO>> getFuncAuth(String loginName, String moduleCode) {
+        return BaseAPIService.getFuncAuth(loginName, moduleCode);
+    }
+
+    @Override
+    public FlowResult<List<OpDTO>> getOpAuth(String loginName, String moduleCode, String funcCode) {
+
+        FlowResult<List<OpDTO>> fr = new FlowResult<List<OpDTO>>();
+        List<OpDTO> fdtos = new ArrayList<OpDTO>();
+        List<PartyEntityDTO> pedtos = partyEntityListOper.range(
+            "entity:entity_type:entity_ref_id:6:" + loginName, 0, -1);
+        List<PartyStructDTO> structDTOs = new ArrayList<PartyStructDTO>();
+        for (PartyEntityDTO dto : pedtos) {
+            structDTOs.addAll(partyStructListOper.range("struct:struct_type:child_entity_id:1:"
+                                                        + dto.getId(), 0, -1));
+        }
+
+        List<PartyEntityDTO> dtos = new ArrayList<PartyEntityDTO>();
+        for (PartyStructDTO ps : structDTOs) {
+            dtos.add(partyEntityValueOper.get("entity:entity_id:entity_type_id:"
+                                              + ps.getChildEntityId() + ":5"));
+        }
+
+        for (PartyEntityDTO ped : dtos) {
+            fdtos.addAll(opListOper.range("op:func_id:" + ped.getRefId(), 0, -1));
+        }
+        fr.setResult(fdtos);
+        return null;
+    }
+
+    @Override
+    public FlowResult<DataAuthDTO> getDataAuth(String loginName) {
+        return BaseAPIService.getDataAuth(loginName);
+    }
+
+    /**
+     * @see com.xinleju.erp.flow.service.api.extend.BaseAPI#getAllCompany(java.lang.Boolean)
+     */
+    @Override
+    public FlowResult<List<CompanyDTO>> getAllCompany(Boolean includeDisabled) {
+        FlowResult<List<CompanyDTO>> fr = new FlowResult<List<CompanyDTO>>();
+        List<CompanyDTO> dtos = companyListOper.range("company:all", 0, -1);
+        if (dtos != null) {
+            for (int i = 0; i < dtos.size(); i++ ) {
+                if (!includeDisabled && dtos.get(i).getStatus().equals(new Integer(1))) {
+                    dtos.remove(i);
+                }
+            }
+        }
+        fr.setResult(dtos);
+        return fr;
+    }
+
+    /**
+     * 根据用户名查询用户公司
+     * 
+     * @param loginName
+     * @return
+     */
+    @Override
+    public FlowResult<CompanyDTO> getCompanyByUserId(String loginName) {
+
+        FlowResult<CompanyDTO> fr = new FlowResult<CompanyDTO>();
+
+        UserDTO userDto = userValueOper.get("user:user_login_name:" + loginName);
+
+        String[] userPrefix = userDto.getPrefix().split(";");
+        PartyEntityDTO tempPartyEntityDTO = null;
+        for (String s : userPrefix) {
+            tempPartyEntityDTO = partyEntityValueOper.get("entity:entity_prefix:entity_type_id:"
+                                                          + s + ":2");
+            if (tempPartyEntityDTO != null) {
+                break;
+            }
+        }
+        CompanyDTO tempCompany = null;
+        if (tempPartyEntityDTO != null) {
+            tempCompany = companyValueOper.get("company:company_id:" + tempPartyEntityDTO.getId());
+        }
+
+        if (tempCompany != null) {
+            fr.setResult(tempCompany);
+        }
+
+        return fr;
+    }
+
+    /**
+     * 根据登录名获取用户公司
+     * 
+     * @param longNames
+     * @return
+     */
+    @Override
+    public FlowResult<List<CompanyDTO>> getCompanyListByUserIds(String[] longNames) {
+        FlowResult<List<CompanyDTO>> fr = new FlowResult<List<CompanyDTO>>();
+
+        List<CompanyDTO> cs = new ArrayList<CompanyDTO>();
+
+        for (String s : longNames) {
+            cs.add(this.getCompanyByUserId(s).getResult());
+        }
+
+        fr.setResult(cs);
+        return fr;
+    }
+
+    /**
+     * 根据登录名获取用户公司
+     * 
+     * @param longNames
+     * @return
+     */
+    @Override
+    public FlowResult<Map<Long, String>> getCompanyMapByUserIds(String[] longNames) {
+        FlowResult<Map<Long, String>> fr = new FlowResult<Map<Long, String>>();
+
+        Map<Long, String> cs = new HashMap<Long, String>();
+
+        for (String s : longNames) {
+            cs.put(this.getCompanyByUserId(s).getResult().getId(),
+                this.getCompanyByUserId(s).getResult().getName());
+        }
+
+        fr.setResult(cs);
+        return fr;
+    }
+
+    /**
+     * 根据用户名查询用户部门
+     * 
+     * @param loginName
+     * @return
+     */
+    @Override
+    public FlowResult<DeptDTO> getDeptByUserId(String loginName) {
+
+        FlowResult<DeptDTO> fr = new FlowResult<DeptDTO>();
+
+        UserDTO userDto = userValueOper.get("user:user_login_name:" + loginName);
+
+        String[] userPrefix = userDto.getPrefix().split(";");
+        PartyEntityDTO tempPartyEntityDTO = null;
+        for (String s : userPrefix) {
+            tempPartyEntityDTO = partyEntityValueOper.get("entity:entity_prefix:entity_type_id:"
+                                                          + s + ":2");
+            if (tempPartyEntityDTO != null) {
+                break;
+            }
+        }
+        DeptDTO tempCompany = null;
+        if (tempPartyEntityDTO != null) {
+            tempCompany = deptValueOper.get("dept:dept_id:" + tempPartyEntityDTO.getId());
+        }
+
+        if (tempCompany != null) {
+            fr.setResult(tempCompany);
+        }
+
+        return fr;
+    }
+
+    /**
+     * 根据登录名获取用户部门
+     * 
+     * @param longNames
+     * @return
+     */
+    @Override
+    public FlowResult<List<DeptDTO>> getDeptListByUserIds(String[] longNames) {
+        FlowResult<List<DeptDTO>> fr = new FlowResult<List<DeptDTO>>();
+
+        List<DeptDTO> cs = new ArrayList<DeptDTO>();
+
+        for (String s : longNames) {
+            cs.add(this.getDeptByUserId(s).getResult());
+        }
+
+        fr.setResult(cs);
+        return fr;
+    }
+
+    /**
+     * 根据登录名获取用户部门
+     * 
+     * @param longNames
+     * @return
+     */
+    @Override
+    public FlowResult<Map<Long, String>> getDeptMapByUserIds(String[] longNames) {
+        FlowResult<Map<Long, String>> fr = new FlowResult<Map<Long, String>>();
+
+        Map<Long, String> cs = new HashMap<Long, String>();
+
+        for (String s : longNames) {
+            cs.put(this.getDeptByUserId(s).getResult().getId(),
+                this.getDeptByUserId(s).getResult().getName());
+        }
+
+        fr.setResult(cs);
+        return fr;
+    }
+
+    /**
+     * 根据用户名查询用户角色
+     * 
+     * @param loginName
+     * @return
+     */
+    @Override
+    public FlowResult<RoleDTO> getRoleByUserId(String loginName) {
+
+        FlowResult<RoleDTO> fr = new FlowResult<RoleDTO>();
+
+        UserDTO userDto = userValueOper.get("user:user_login_name:" + loginName);
+
+        String[] userPrefix = userDto.getPrefix().split(";");
+        PartyEntityDTO tempPartyEntityDTO = null;
+        for (String s : userPrefix) {
+            tempPartyEntityDTO = partyEntityValueOper.get("entity:entity_prefix:entity_type_id:"
+                                                          + s + ":2");
+            if (tempPartyEntityDTO != null) {
+                break;
+            }
+        }
+        RoleDTO tempCompany = null;
+        if (tempPartyEntityDTO != null) {
+            tempCompany = roleValueOper.get("role:role_id:" + tempPartyEntityDTO.getId());
+        }
+
+        if (tempCompany != null) {
+            fr.setResult(tempCompany);
+        }
+
+        return fr;
+    }
+
+    /**
+     * 根据登录名获取用户角色
+     * 
+     * @param longNames
+     * @return
+     */
+    @Override
+    public FlowResult<List<RoleDTO>> getRoleListByUserIds(String[] longNames) {
+        FlowResult<List<RoleDTO>> fr = new FlowResult<List<RoleDTO>>();
+
+        List<RoleDTO> cs = new ArrayList<RoleDTO>();
+
+        for (String s : longNames) {
+            cs.add(this.getRoleByUserId(s).getResult());
+        }
+
+        fr.setResult(cs);
+        return fr;
+    }
+
+    /**
+     * 根据登录名获取用户角色
+     * 
+     * @param longNames
+     * @return
+     */
+    @Override
+    public FlowResult<Map<Long, String>> getRoleMapByUserIds(String[] longNames) {
+        FlowResult<Map<Long, String>> fr = new FlowResult<Map<Long, String>>();
+
+        Map<Long, String> cs = new HashMap<Long, String>();
+
+        for (String s : longNames) {
+            cs.put(this.getRoleByUserId(s).getResult().getId(),
+                this.getRoleByUserId(s).getResult().getName());
+        }
+
+        fr.setResult(cs);
+        return fr;
+    }
+
+    /**
+     * @see com.xinleju.erp.flow.service.api.extend.BaseAPI#getCompanyById(java.lang.Long)
+     */
+    @Override
+    public FlowResult<CompanyDTO> getCompanyById(Long arg0) {
+
+        FlowResult<CompanyDTO> fr = new FlowResult<CompanyDTO>();
+        CompanyDTO userDTO = companyValueOper.get("company:company_id:" + arg0);
+        fr.setResult(userDTO);
+        return fr;
+    }
+
+    @Override
+    public FlowResult<Map<Long, String>> getCompanyByIds(String[] arg0) {
+
+        Map<Long, String> ma = new HashMap<Long, String>();
+        FlowResult<Map<Long, String>> fr = new FlowResult<Map<Long, String>>();
+        if (arg0 != null && arg0.length > 0) {
+            CompanyDTO cDTO;
+            for (int i = 0; i < arg0.length; i++ ) {
+                cDTO = companyValueOper.get("company:company_id:" + arg0[i]);
+                if (cDTO != null && cDTO.getId() != null && cDTO.getName() != null)
+                    ma.put(cDTO.getId(), cDTO.getName());
+            }
+        }
+        fr.setResult(ma);
+        return fr;
+    }
+
+    @Override
+    public FlowResult<DeptDTO> getDeptById(Long arg0) {
+
+        FlowResult<DeptDTO> fr = new FlowResult<DeptDTO>();
+        DeptDTO userDTO = deptValueOper.get("dept:dept_id:" + arg0);
+        fr.setResult(userDTO);
+        return fr;
+    }
+
+    @Override
+    public FlowResult<Map<Long, String>> getDeptByIds(String[] arg0) {
+
+        Map<Long, String> ma = new HashMap<Long, String>();
+        FlowResult<Map<Long, String>> fr = new FlowResult<Map<Long, String>>();
+        if (arg0 != null && arg0.length > 0) {
+            DeptDTO cDTO;
+            for (int i = 0; i < arg0.length; i++ ) {
+                cDTO = deptValueOper.get("dept:dept_id:" + arg0[i]);
+                if (cDTO != null && cDTO.getId() != null && cDTO.getName() != null)
+                    ma.put(cDTO.getId(), cDTO.getName());
+            }
+        }
+        fr.setResult(ma);
+        return fr;
+    }
+
+    @Override
+    public FlowResult<List<DeptDTO>> getDeptLIstByIds(String[] arg0) {
+
+        List<DeptDTO> ma = new ArrayList<DeptDTO>();
+        FlowResult<List<DeptDTO>> fr = new FlowResult<List<DeptDTO>>();
+        if (arg0 != null && arg0.length > 0) {
+            DeptDTO cDTO;
+            for (int i = 0; i < arg0.length; i++ ) {
+                cDTO = deptValueOper.get("dept:dept_id:" + arg0[i]);
+                if (cDTO != null && cDTO.getId() != null && cDTO.getName() != null) ma.add(cDTO);
+            }
+        }
+        fr.setResult(ma);
+        return fr;
+    }
+
+    @Override
+    public FlowResult<RoleDTO> getRoleById(Long arg0) {
+
+        FlowResult<RoleDTO> fr = new FlowResult<RoleDTO>();
+        RoleDTO userDTO = roleValueOper.get("role:role_id:" + arg0);
+        fr.setResult(userDTO);
+        return fr;
+    }
+
+    @Override
+    public FlowResult<Map<Long, String>> getRoleByIds(String[] arg0) {
+
+        Map<Long, String> ma = new HashMap<Long, String>();
+        FlowResult<Map<Long, String>> fr = new FlowResult<Map<Long, String>>();
+        if (arg0 != null && arg0.length > 0) {
+            RoleDTO cDTO;
+            for (int i = 0; i < arg0.length; i++ ) {
+                cDTO = roleValueOper.get("role:role_id:" + arg0[i]);
+                if (cDTO != null && cDTO.getId() != null && cDTO.getName() != null)
+                    ma.put(cDTO.getId(), cDTO.getName());
+            }
+        }
+        fr.setResult(ma);
+        return fr;
+    }
+
+    @Override
+    public FlowResult<List<RoleDTO>> getRoleListByIds(String[] arg0) {
+
+        List<RoleDTO> ma = new ArrayList<RoleDTO>();
+        FlowResult<List<RoleDTO>> fr = new FlowResult<List<RoleDTO>>();
+        if (arg0 != null && arg0.length > 0) {
+            RoleDTO cDTO;
+            for (int i = 0; i < arg0.length; i++ ) {
+                cDTO = roleValueOper.get("role:role_id:" + arg0[i]);
+                if (cDTO != null && cDTO.getId() != null && cDTO.getName() != null) ma.add(cDTO);
+            }
+        }
+        fr.setResult(ma);
+        return fr;
+    }
+
+    /**
+     * @see com.xinleju.erp.flow.service.api.extend.BaseAPI#getFlows(java.lang.Long,
+     *      java.lang.Integer, java.lang.Integer, java.util.Map)
+     */
+    @Override
+    public FlowResult<PageBean<FlowDTO>> getFlows(Long categoryId, Integer start, Integer limit,
+                                                  Map<String, Object> extParm) {
+        return BaseAPIService.getFlows(categoryId, start, limit, extParm);
+    }
+
+    /**
+     * 
+     */
+    public FlowResult<Map<String, String>> getFlowNamesMapByFlowCodes(String... flowCodes) {
+        return BaseAPIService.getFlowNamesMapByFlowCodes(flowCodes);
+    }
+
+    /**
+     * @see com.xinleju.erp.flow.service.api.extend.BaseAPI#getMaxBizCode(java.lang.String)
+     */
+    @Override
+    public FlowResult<String> getMaxBizCode(String defineCode) {
+
+        return BaseAPIService.getMaxBizCode(defineCode);
+    }
+
+    /**
+     * @see com.xinleju.erp.flow.service.api.extend.BaseAPI#getNextBizCode(java.lang.String)
+     */
+    @Override
+    public FlowResult<String> getNextBizCode(String defineCode) {
+        return BaseAPIService.getNextBizCode(defineCode);
+    }
+
+    /**
+     * @see com.xinleju.erp.flow.service.api.extend.BaseAPI#getRootCategories()
+     */
+    @Override
+    public FlowResult<List<CategoryDTO>> getRootCategories() {
+        return BaseAPIService.getRootCategories();
+    }
+
+    /**
+     * @see com.xinleju.erp.flow.service.api.extend.BaseAPI#getSubCategories(java.lang.Long)
+     */
+    @Override
+    public FlowResult<List<CategoryDTO>> getSubCategories(Long parentId) {
+        return BaseAPIService.getSubCategories(parentId);
+    }
+
+    /**
+     * @see com.xinleju.erp.flow.service.api.extend.BaseAPI#isStored(java.lang.String,
+     *      java.lang.String, java.lang.String, java.lang.String)
+     */
+    @Override
+    public FlowResult<Boolean> isStored(String module, String storeType, String contentType,
+                                        String contentId) {
+        return BaseAPIService.isStored(module, storeType, contentType, contentId);
+    }
+
+    /**
+     * @see com.xinleju.erp.flow.service.api.extend.BaseAPI#sendMsg(java.lang.String,
+     *      java.lang.String, java.lang.String, java.lang.String, java.lang.String,
+     *      java.lang.String, java.lang.String, java.lang.String, java.util.Map)
+     */
+    @Override
+    public FlowResult<Boolean> sendMsg(String arg0, String arg1, String arg2, String arg3,
+                                       String arg4, String arg5, String arg6, String arg7,
+                                       Map<String, Object> arg8) {
+        return BaseAPIService.sendMsg(arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
+    }
+
+    /**
+     * @see com.xinleju.erp.flow.service.api.extend.BaseAPI#store(java.lang.String,
+     *      java.lang.String, java.lang.String, java.lang.String, java.lang.String,
+     *      java.lang.String)
+     */
+    @Override
+    public FlowResult<Boolean> store(String arg0, String arg1, String arg2, String arg3,
+                                     String arg4, String arg5) {
+        return BaseAPIService.store(arg0, arg1, arg2, arg3, arg4, arg5);
+    }
+
+    @Override
+    public FlowResult<Boolean> undo(String bizId, Long sodId, Long userId) {
+        return BaseAPIService.undo(bizId, sodId, userId);
+    }
+
+    @Override
+    public FlowResult<Boolean> undo(String bizId, String flowCode, Long userId) {
+        return BaseAPIService.undo(bizId, flowCode, userId);
+    }
+
+    @Override
+    public FlowResult<Boolean> finishFi(String bizId, Long sodId, Long userId) {
+        return BaseAPIService.finishFi(bizId, sodId, userId);
+    }
+
+    @Override
+    public FlowResult<Boolean> finishFi(String bizId, String flowCode, Long userId) {
+        return BaseAPIService.finishFi(bizId, flowCode, userId);
+    }
+
+    @Override
+    public FlowResult<Boolean> giveBackFi(String bizId, Long sodId, Long userId) {
+        return BaseAPIService.giveBackFi(bizId, sodId, userId);
+    }
+
+    @Override
+    public FlowResult<Boolean> giveBackFi(String bizId, String flowCode, Long userId) {
+        return BaseAPIService.giveBackFi(bizId, flowCode, userId);
+    }
+
+    @Override
+    public FlowResult<Boolean> finishFiBranch(String bizId, String flowCode, String endTag,
+                                              Long userId) {
+        return BaseAPIService.finishFiBranch(bizId, flowCode, endTag, userId);
+    }
+
+    public FlowResult<List<AiBean>> getAiList(Long fiId) {
+        return BaseAPIService.getAiList(fiId);
+    }
+
+    public FlowResult<FlowInsDTO> getFlowInsByFlowCodeAndBizId(String flowCode, String bizId) {
+        return BaseAPIService.getFlowInsByFlowCodeAndBizId(flowCode, bizId);
+    }
+
+    /**
+     * @see com.xinleju.erp.flow.service.api.extend.BaseAPI#unstore(java.lang.String,
+     *      java.lang.String, java.lang.String, java.lang.String)
+     */
+    @Override
+    public FlowResult<Boolean> unstore(String arg0, String arg1, String arg2, String arg3) {
+        return BaseAPIService.unstore(arg0, arg1, arg2, arg3);
+    }
+
+    /**
+     * @see com.xinleju.erp.flow.service.api.extend.BaseAPI#updateFlowData(java.lang.String,
+     *      java.lang.String, java.util.Map)
+     */
+    @Override
+    public FlowResult<Boolean> updateFlowData(String arg0, String arg1, Map<String, Object> arg2) {
+        return BaseAPIService.updateFlowData(arg0, arg1, arg2);
+    }
+
+    @Override
+    public FlowResult<UserDTO> getUserByLoginName(String loginName) {
+        FlowResult<UserDTO> fr = new FlowResult<UserDTO>();
+        UserDTO userDTO = userValueOper.get("user:user_login_name:" + loginName);
+        fr.setResult(userDTO);
+
+        return fr;
+    }
+
+    @Override
+    public FlowResult<List<DeptDTO>> getUserDepts(String loginName) {
+        return BaseAPIService.getUserDepts(loginName);
+    }
+
+    /**
+     * @see com.xinleju.erp.flow.service.api.extend.BaseAPI#initGroupPartyStruct(com.xinleju.erp.flow.service.api.extend.dto.GroupDTO)
+     */
+    @Override
+    public FlowResult<SimpleResult> initGroupPartyStruct(GroupDTO arg0) {
+        return BaseAPIService.initGroupPartyStruct(arg0);
+    }
+
+    @Override
+    public FlowResult<PageBean<MsgDTO>> getMsgList(MsgDTO msgDTO, Integer start, Integer limit) {
+        return BaseAPIService.getMsgList(msgDTO, start, limit);
+    }
+
+    @Override
+    public FlowResult<Integer> getMsgCount(MsgDTO msgDTO) {
+        return BaseAPIService.getMsgCount(msgDTO);
+    }
+
+    @Override
+    public FlowResult<OrgnDTO> getParentOrgnByChildId(Long childId) {
+        return BaseAPIService.getParentOrgnByChildId(childId);
+    }
+
+  /*  @Override
+    public FlowResult<ToDoBean> getToDoBeanByWiId(Long wiId, String category) {
+        return BaseAPIService.getToDoBeanByWiId(wiId, category);
+    }
+
+    @Override
+    public FlowResult<ToDoBean> getTodoBeanByWiId4Mobile(Long wiId, String category) {
+        return BaseAPIService.getTodoBeanByWiId4Mobile(wiId, category);
+    }*/
+
+    @Override
+    public FlowResult<SimpleResult> completeWork(Long opUserId, Long wiId, String userNote,
+                                                 String opCode, String opName, Long opRoleId,
+                                                 String dealUsersIds, Long backToWpId,
+                                                 String backSkip, String flowInsName) {
+        return BaseAPIService.completeWork(opUserId, wiId, userNote, opCode, opName, opRoleId,
+            dealUsersIds, backToWpId, backSkip, flowInsName);
+    }
+
+    @Override
+    public FlowResult<Long> getDeptOrgnIdByLoginNameAndWiId(String loginName, Long wiId) {
+        return BaseAPIService.getDeptOrgnIdByLoginNameAndWiId(loginName, wiId);
+    }
+
+   /* @Override
+    public FlowResult<Boolean> saveMail(MailDTO arg0) {
+        return BaseAPIService.saveMail(arg0);
+    }
+
+    @Override
+    public FlowResult<Boolean> saveSm(SmDTO arg0) {
+        return BaseAPIService.saveSm(arg0);
+    }*/
+
+	@Override
+	public FlowResult<List<Long>> getProjectBranchByScopeId(String authLoginname,Long scopeId,
+			Long type) {
+		return BaseAPIService.getProjectBranchByScopeId(authLoginname,scopeId, type);
+	}
+
+	@Override
+	public FlowResult<Boolean> canUseFlow(String flowCode, Long userId) {
+		return BaseAPIService.canUseFlow(flowCode, userId);
+	}
+
+	@Override
+	public FlowResult<PageBean<MsgDTO>> getMsgCreationList(String arg0,
+			Integer arg1, Integer arg2) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public FlowResult<ToDoBean> getToDoBeanByWiId(Long arg0, String arg1) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public FlowResult<ToDoBean> getTodoBeanByWiId4Mobile(Long arg0, String arg1) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	
+
+	@Override
+	public FlowResult<Boolean> saveMail(MailDTO arg0) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public FlowResult<Boolean> saveSm(SmDTO arg0) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public FlowResult<Boolean> saveLog(Long createUserId, String moduleCode, String funcName, String url, String logInfo, String errorMsg, String returnMsg, String sign, Long type) {
+		BaseAPIService.saveLog(createUserId, moduleCode, funcName, url, logInfo, errorMsg, returnMsg, sign, type);
+		return null;
+	}
+	@Override
+	public FlowResult<Boolean> saveLog(String ipAddress, Long userId,String loginName, String moduleCode, String funcName, String url, String loginfo, String errorMsg, String returnMsg, String sign, Long type) {
+		// TODO Auto-generated method stub
+		BaseAPIService.saveLog(ipAddress,userId,loginName, moduleCode, funcName, url, loginfo, errorMsg, returnMsg, sign, type);
+		return null;
+	}
+	@Override
+	public FlowResult<List<FuncDTO>> getFuncAuthByModuleCode(String arg0) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public FlowResult<List<OpDTO>> getOpAuthByModuleCode(String moduleCode) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	
+	@Override
+	public FlowResult<List<String>> getFiCurrentAi(String bizId, String flowCode) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public FlowResult<List<UserDTO>> getUserByRealName(String realName) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public FlowResult<Boolean> autoCommitFlow(String bizId, String flowCode,
+			Long userId, Long spGwId, String userNote) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public FlowResult<List<FlowInsDTO>> getFlowInsByFlowCodeAndBizIds(
+			String flowCode, List<String> bizIds) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public FlowResult<Boolean> rejectWi(Long wiId, String opCode,
+			String opName, String userNote, Long backToWpId, String backSkip,
+			String flowInsName, UserDTO userDto) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public FlowResult<PageBean<Object[]>> getGroupLoginNameMsgDTO(MsgDTO msgDTO,
+			Integer start, Integer limit) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	public FlowResult<Boolean> getNotSubmitFiByFlowCodeAndBizId(
+			String flowCode, String bizId) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public FlowResult<String> getOpTypeByWiId(String wiid) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public FlowResult<Map<String, String>> getCurrentFlowUsers(
+			String[] flowCodes, String[] bizIds) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public FlowResult<Integer> getFileCount(String moduleCode, String ownid) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public FlowResult<Integer> getChkDraftFileCount(String[] chkDraftBefore, String[] chkDraftAfter) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+
+
+	
+	public FlowResult<Boolean> isExistsChkDraftNode(String flowCode) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public FlowResult<Boolean> isExistsRunningProofreadStep(String bizId,
+			String flowCode, Long currLoginName) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public FlowResult<PageBean<MsgDTO>> getMsgNewCreationList(String loginName,
+			Integer start, Integer limit) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+
+
+
+
+	@Override
+	public FlowResult<ToDoBean> getToDoBeanByTaskId(String taskId, String category) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public FlowResult<List<CompanyDTO>> getAllCompanyLevel(
+			Boolean includeDisabled) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public FlowResult<List<UserDTO>> getUserListByCompanyIdAndRoleId1(
+			Long compayId, Long roleId) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public FlowResult<List<CompanyDTO>> getAllCompanyLevel1(
+			Boolean includeDisabled) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+	public FlowResult<SimpleResult> completeTask(Long spGwId, Long opUserId, String taskId,
+			String userNote, String opCode, String opName, Long opRoleId,
+			String dealUsersIds, String backStepId,String backTaskId, boolean backSkip,
+			String flowInsName){
+		
+		
+		return null;
+	}
+
+
+	@Override
+	public FlowResult<SimpleResult> completeTask(Long opUserId, String taskId,
+			String userNote, String opCode, String opName, String dealUsersIds,
+			String backStepId, String backTaskId, boolean backSkip,
+			String flowInsName) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public FlowResult<List<ScopeDTO>> getAuthScope(String moduleCode,
+			String authUserLoginName, Long ctrId, Long fieldId) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public FlowResult<SimpleResult> startFlowTask(Long spGwId, Long startUserId,
+			String userNote, String flowCode, String bizId) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public List<RoleDTO> getPostsByCurrentUser(String loginName) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public FlowResult<ToDoBean> getToDoBeanByflowCodeAndbizId(String flowCode,
+			String bizId) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public FlowResult<List<FlowInstanceDto>> getEndFlowUsers(String flowCodes,
+			String bizIds) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public FlowResult<List<FileDto>> getFileList(String category, String bizIds) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+
+
+
+}

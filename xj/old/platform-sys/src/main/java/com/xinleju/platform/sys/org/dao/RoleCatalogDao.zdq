@@ -1,0 +1,66 @@
+package com.xinleju.platform.sys.org.dao;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.dao.BaseDao;
+import com.xinleju.platform.sys.org.dto.RoleNodeDto;
+import com.xinleju.platform.sys.org.entity.RoleCatalog;
+
+/**
+ * @author admin
+ *
+ */
+
+public interface RoleCatalogDao extends BaseDao<String, RoleCatalog> {
+	
+	
+	/**
+	 * 获取目录子节点目录
+	 * @param parentId
+	 * @return
+	 */
+	public List<RoleNodeDto> queryRoleCatalogList(String parentId)  throws Exception;
+	/**
+	 * 获取根目录
+	 * @param 参数
+	 * @return
+	 */
+	public List<RoleNodeDto> queryRoleCatalogRoot(Map<String,Object> map)  throws Exception;
+	
+	/**
+	 * 维护角色分类以及角色全路径
+	 * @param map 参数
+	 * @return
+	 * @throws Exception
+	 */
+	public Integer updateCataAndRoleAllPreFix(Map<String, Object> map) throws Exception;
+	
+	/**
+	 * 禁用角色
+	 * @param paramater
+	 * @return
+	 */
+	public Integer lockRole(Map map)throws Exception;
+	
+	/**
+	 * 启用角色
+	 * @param paramater
+	 * @return
+	 */
+	public Integer unLockRole(Map map)throws Exception;
+	
+	/**
+	 * 查询所有下级id 
+	 * @param paramater
+	 * @return
+	 */
+	public List<String> selectSunById(Map map)throws Exception;
+	
+	/**
+	 * 校验名字是否重复
+	 * @param paramater
+	 * @return
+	 */
+	public Integer checkName(Map map)throws Exception;
+}

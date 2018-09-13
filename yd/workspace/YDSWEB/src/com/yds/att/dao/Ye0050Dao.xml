@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE sqlMap PUBLIC "-//ibatis.apache.org//DTDSQLMap2.0//EN" "http://ibatis.apache.org/dtd/sql-map-2.dtd">
+<sqlMap namespace="Ye0050Dao">
+	
+	<typeAlias alias="ye0050AttCorrectInfo" type="com.yds.att.bean.Ye0050AttCorrectInfo"/>
+	<typeAlias alias="ye0050CondA" type="com.yds.att.bean.Ye0050CondA"/>
+	<typeAlias alias="attCorrect" type="com.yds.att.bean.AttCorrect"/>
+	<typeAlias alias="attExamin" type="com.yds.att.bean.AttExamin"/>
+	<!--检索一览信息 --> 
+	<select id="getAttCorInfo" parameterClass="ye0050CondA" resultClass="ye0050AttCorrectInfo">
+		SELECT 
+		    T1.APP_ID   AS appId,
+			EMP_CNM  AS appEmpNm,
+			APP_EMP_ID AS appEmpId,
+			T1.ORG_ID as orgId,
+			IF(STRCMP(BEF_START_TIME,'0000-00-00 00:00:00'),DATE_FORMAT(BEF_START_TIME,'%Y-%m-%d %H:%i'),'') AS befStartTime ,
+			IF(STRCMP(BEF_END_TIME,'0000-00-00 00:00:00'),DATE_FORMAT(BEF_END_TIME,'%Y-%m-%d %H:%i'),'') AS befEndTime,
+			IF(STRCMP(AFT_START_TIME,'0000-00-00 00:00:00'),DATE_FORMAT(AFT_START_TIME,'%Y-%m-%d %H:%i'),'') AS aftStartTime ,
+			IF(STRCMP(AFT_END_TIME,'0000-00-00 00:00:00'),DATE_FORMAT(AFT_END_TIME,'%Y-%m-%d %H:%i'),'') AS aftEndTime,
+            AFT_START_TIME AS aftStartTimeDate,
+			AFT_END_TIME AS aftEndTimeDate,
+			CORRECT_REASON AS correctReason,
+			(SELECT DIFF_SHORT_NAME FROM SYS_CODE_MST WHERE SUB_SYS='ATT' AND TYPE_ID='APP_STATE' AND DIFF_NO=T1.APP_STATUS) AS appStatusNm,
+			T1.APP_STATUS AS appStatus,
+		    IF(STRCMP(T2.FIRST_TIME,'0000-00-00 00:00:00'),DATE_FORMAT(T2.FIRST_TIME,'%Y-%m-%d %H:%i'),'') AS cardStartTime,
+			IF(STRCMP(T2.LAST_TIME,'0000-00-00 00:00:00'),DATE_FORMAT(T2.LAST_TIME,'%Y-%m-%d %H:%i'),'') AS cardEndTime,
+			CONCAT(T1.YEAR,'/',T1.MONTH,'/',T1.DAY) AS attTime
+		FROM ATT_CORRECT T1
+			LEFT JOIN EMP_INFO T3
+				ON T3.EMP_ID=T1.APP_EMP_ID
+			LEFT JOIN  ATT_INFO T2 
+				ON T2.EMP_ID=T1.APP_EMP_ID
+				AND T2.YEAR=T1.YEAR AND T2.MONTH=T1.MONTH AND T2.DAY=T1.DAY
+		WHERE 
+			<isEqual property="status" compareValue="1">
+					(T1.APP_STATUS='1' OR T1.APP_STATUS='2')	
+			</isEqual>
+			<isEqual property="status" compareValue="2">
+					(T1.APP_STATUS='3' OR T1.APP_STATUS='5' OR T1.APP_STATUS='4')	
+			</isEqual>
+			<isEqual  property="status" compareValue="3">
+				1=1
+			</isEqual>
+			<isNotEmpty prepend="AND" property = "startTime">
+					CONCAT(T1.YEAR,'-',T1.MONTH,'-',T1.DAY) >= DATE_FORMAT(#startTime#,'%Y-%m-%d')
+			</isNotEmpty>
+			<isNotEmpty prepend="AND" property = "endTime">
+					DATE_FORMAT(#endTime#,'%Y-%m-%d') >= CONCAT(T1.YEAR,'-',T1.MONTH,'-',T1.DAY)
+			</isNotEmpty>
+					AND (T1.APP_EMP_ID=#appEmpId#	
+			<isNotNull property="orgIdList">
+					<iterate  prepend="OR T1.ORG_ID IN(" property="orgIdList" close="))" conjunction=",">
+						   #orgIdList[].orgId#
+					</iterate>
+	        </isNotNull>
+			<isNull property="orgIdList">
+				)
+			</isNull>
+			ORDER BY T1.APP_STATUS ASC,T1.YEAR DESC ,T1.MONTH DESC,T1.DAY DESC
+	</select>
+	<!-- 更新考勤更正表 -->
+	<update id="updateAttCor" parameterClass="attCorrect">
+		UPDATE ATT_CORRECT
+		SET	
+			APP_STATUS=#appStatus#,
+			UPDATE_USER=#updateUser#,
+			UPDATE_TIME=NOW()
+		WHERE
+			APP_ID=#appId# 
+	</update>
+	<!-- 更新考勤信息表 -->
+	<update id="updateAttInfo" parameterClass="attCorrect">
+		UPDATE ATT_INFO
+		SET	
+		     <isEqual property = "appStatus" compareValue="3">
+					R_START_TIME=#aftStartTimeDate#,
+					R_END_TIME=#aftEndTimeDate#,
+			 </isEqual>
+			 ATT_STATUS_COR=#appStatus#,
+			 UPDATE_USER=#updateUser#,
+			 UPDATE_TIME=NOW(),
+			 APP_ID_COR=#appId#
+		WHERE
+			EMP_ID=#appEmpId# AND YEAR=#year# AND
+			MONTH=#month# AND  DAY=#day#
+	</update>
+	<!-- 更新审批过程表 -->
+	<update id="updateAttExamin" parameterClass="attCorrect">
+		UPDATE ATT_EXAMIN
+		SET	
+				EXA_ID=#updateUser#, 
+				EXA_RESULT=#exaResult#,
+				EXA_SUGGESTION=#exaReason#,
+				EXA_DAY=NOW()
+		WHERE
+				APP_ID=#appId# AND EXA_APP_ORDER=#exaAppOrder#
+	</update>
+	<!-- 取得一览审批过程List -->
+	<select id="gerAttExaList" parameterClass="String" resultClass="attExamin">
+		SELECT 
+			 IF((EXA_APP_ORDER='2' AND EXA_APP_END='2')OR(EXA_APP_END='1' AND PRO1='dept'),ORG_SNM,NULL) AS orgNm,
+			 IF((EXA_APP_ORDER='1' AND EXA_APP_END='2')OR(EXA_APP_END='1' AND PRO1='prjt'),ORG_SNM,NULL) AS proNm,
+			EXA_RESULT AS exaResult,
+			EXA_APP_ORDER AS exaAppOrder,
+			EXA_APP_END AS  exaAppEnd,
+			EXA_ORGANIZATION_ID AS exaOrganizationId,
+			EXA_ID AS exaId
+		FROM ATT_EXAMIN T1
+			LEFT JOIN EMP_ORG_INFO T2
+			    ON T2.ORG_ID=EXA_ORGANIZATION_ID
+			LEFT JOIN SYS_CODE_MST T3
+			    ON T3.DIFF_NO=T2.ORG_PRO_ID
+		WHERE 
+			APP_ID=#appId#
+	</select>  
+	<!-- 取得组织Id管理者 -->
+	<select id="getMnger" parameterClass="String" resultClass="String">
+		SELECT 
+			ORG_MNGER
+		FROM EMP_ORG_INFO 
+		WHERE 
+			ORG_ID=#orgId#
+	</select>  
+	<!-- 取得组织性质 -->
+	<select id="getOrgPro" parameterClass="String" resultClass="String">
+		SELECT 
+			PRO1
+		FROM EMP_ORG_INFO T1
+		LEFT JOIN SYS_CODE_MST T2
+			ON T2.DIFF_NO=T1.ORG_PRO_ID
+		WHERE 
+			T1.ORG_ID=#orgId#
+	</select>  
+	
+</sqlMap>  

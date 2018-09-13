@@ -1,0 +1,3820 @@
+package com.jzy.hio.flow.service.impl;
+
+import java.io.UnsupportedEncodingException;
+import java.sql.Timestamp;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import javax.annotation.Resource;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang.StringEscapeUtils;
+import org.dom4j.Document;
+import org.dom4j.DocumentHelper;
+import org.dom4j.Element;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.SetOperations;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.base.utils.AttachmentDto;
+import com.jzy.hio.base.utils.ConfigurationUtil;
+import com.jzy.hio.base.utils.DubboServiceResultInfo;
+import com.jzy.hio.base.utils.IDGenerator;
+import com.jzy.hio.base.utils.Page;
+import com.jzy.hio.base.utils.SecurityUserBeanInfo;
+import com.jzy.hio.base.utils.SecurityUserBeanRelationInfo;
+import com.jzy.hio.base.utils.SecurityUserDto;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.feign.dto.flow.AcDto;
+import com.jzy.hio.feign.dto.flow.FlowPostParticipantDto;
+import com.jzy.hio.flow.dto.tobedeleted.ApprovalList;
+import com.jzy.hio.flow.dto.tobedeleted.ApprovalListDto;
+import com.jzy.hio.flow.dto.tobedeleted.ApprovalSubmitDto;
+import com.jzy.hio.flow.dto.tobedeleted.ApproveOperationDto;
+import com.jzy.hio.flow.dto.tobedeleted.FlowAcPostDto;
+import com.jzy.hio.flow.dto.tobedeleted.FlowApproveViewBean;
+import com.jzy.hio.flow.dto.tobedeleted.FlowQueryBean;
+import com.jzy.hio.flow.dto.tobedeleted.InstanceAcDto;
+import com.jzy.hio.flow.dto.tobedeleted.InstanceDto;
+import com.jzy.hio.flow.dto.tobedeleted.InstanceTransitionRecordDto;
+import com.jzy.hio.flow.dto.tobedeleted.InstanceVariableDto;
+import com.jzy.hio.flow.dto.tobedeleted.MobileApproveDto;
+import com.jzy.hio.flow.dto.tobedeleted.MobileFormDto;
+import com.jzy.hio.flow.dto.tobedeleted.OrgnazationDto;
+import com.jzy.hio.flow.dto.tobedeleted.PcFormDto;
+import com.jzy.hio.flow.dto.tobedeleted.PostDto;
+import com.jzy.hio.flow.dto.tobedeleted.UploadAttachmentDto;
+import com.jzy.hio.flow.dto.tobedeleted.UserDto;
+import com.jzy.hio.flow.entity.BusinessObject;
+import com.jzy.hio.flow.entity.Fl;
+import com.jzy.hio.flow.entity.Instance;
+import com.jzy.hio.flow.entity.InstanceAc;
+import com.jzy.hio.flow.entity.InstanceAccessible;
+import com.jzy.hio.flow.entity.InstanceCollection;
+import com.jzy.hio.flow.entity.InstanceCs;
+import com.jzy.hio.flow.entity.InstanceGroup;
+import com.jzy.hio.flow.entity.InstancePost;
+import com.jzy.hio.flow.entity.InstanceStep;
+import com.jzy.hio.flow.entity.InstanceTask;
+import com.jzy.hio.flow.entity.InstanceTransitionRecord;
+import com.jzy.hio.flow.entity.InstanceVariable;
+import com.jzy.hio.flow.entity.MobileForm;
+import com.jzy.hio.flow.entity.MobileParam;
+import com.jzy.hio.flow.entity.PassReadRecord;
+import com.jzy.hio.flow.entity.PcForm;
+import com.jzy.hio.flow.entity.SysNoticeMsg;
+import com.jzy.hio.flow.entity.UploadAttachment;
+import com.jzy.hio.flow.enums.ACStatus;
+import com.jzy.hio.flow.enums.ApproverRepeatHandleType;
+import com.jzy.hio.flow.enums.ApproverStatus;
+import com.jzy.hio.flow.enums.AutoPassType;
+import com.jzy.hio.flow.enums.FlAcType;
+import com.jzy.hio.flow.enums.FlowChangeType;
+import com.jzy.hio.flow.enums.FlowRole;
+import com.jzy.hio.flow.enums.InstanceOperateType;
+import com.jzy.hio.flow.enums.InstanceStatus;
+import com.jzy.hio.flow.enums.OverdueAcHandle;
+import com.jzy.hio.flow.enums.PostStatus;
+import com.jzy.hio.flow.enums.TaskStatus;
+import com.jzy.hio.flow.enums.TaskType;
+import com.jzy.hio.flow.exception.FlowException;
+import com.jzy.hio.flow.mapper.InstanceAcDao;
+import com.jzy.hio.flow.mapper.InstanceCsDao;
+import com.jzy.hio.flow.mapper.InstanceDao;
+import com.jzy.hio.flow.mapper.InstancePostDao;
+import com.jzy.hio.flow.mapper.InstanceStepDao;
+import com.jzy.hio.flow.mapper.PassReadRecordDao;
+import com.jzy.hio.flow.mapper.SysNoticeMsgTempDao;
+import com.jzy.hio.flow.operation.EmptyOperation;
+import com.jzy.hio.flow.operation.Operation;
+import com.jzy.hio.flow.operation.OperationFactory;
+import com.jzy.hio.flow.operation.OperationType;
+import com.jzy.hio.flow.rt.model.ACUnit;
+import com.jzy.hio.flow.rt.model.ApproverUnit;
+import com.jzy.hio.flow.rt.model.InstanceUnit;
+import com.jzy.hio.flow.rt.model.OverdueAc;
+import com.jzy.hio.flow.rt.model.PostUnit;
+import com.jzy.hio.flow.rt.model.TaskUnit;
+import com.jzy.hio.flow.service.AgentService;
+import com.jzy.hio.flow.service.ApproveOperationService;
+import com.jzy.hio.flow.service.BusinessObjectService;
+import com.jzy.hio.flow.service.FlService;
+import com.jzy.hio.flow.service.FlowUserOpinionService;
+import com.jzy.hio.flow.service.InstanceAcService;
+import com.jzy.hio.flow.service.InstanceAccessibleService;
+import com.jzy.hio.flow.service.InstanceCollectionService;
+import com.jzy.hio.flow.service.InstanceCsService;
+import com.jzy.hio.flow.service.InstanceGroupService;
+import com.jzy.hio.flow.service.InstanceOperateLogService;
+import com.jzy.hio.flow.service.InstanceReadRecordService;
+import com.jzy.hio.flow.service.InstanceService;
+import com.jzy.hio.flow.service.InstanceStepService;
+import com.jzy.hio.flow.service.InstanceTaskService;
+import com.jzy.hio.flow.service.InstanceTransitionRecordService;
+import com.jzy.hio.flow.service.InstanceVariableService;
+import com.jzy.hio.flow.service.MobileFormService;
+import com.jzy.hio.flow.service.MonitorSettingService;
+import com.jzy.hio.flow.service.ParticipantService;
+import com.jzy.hio.flow.service.PcFormService;
+import com.jzy.hio.flow.service.StepService;
+import com.jzy.hio.flow.service.SysNoticeMsgService;
+import com.jzy.hio.flow.service.UploadAttachmentService;
+import com.jzy.hio.flow.utils.DateUtils;
+import com.jzy.hio.flow.utils.JavaBeanCopier;
+import com.jzy.tools.data.JacksonUtils;
+import com.jzy.tools.login.LoginUtils;
+
+
+/**
+ * 流程实例相关服务
+ * 
+ * @author admin
+ */
+@RestController
+@RequestMapping("/flow/InstanceServiceImpl")
+@Service
+public class InstanceServiceImpl extends  BaseServiceImpl<String,Instance> implements InstanceService{
+
+	private static final String FLOWRUNNING = "flowrunning";
+
+	private static Logger log = LoggerFactory.getLogger(InstanceServiceImpl.class);
+
+	@Autowired
+	private InstanceDao instanceDao;
+
+	@Autowired
+	private InstanceAcDao instanceAcDao;
+
+	@Autowired
+	private PassReadRecordDao passReadRecordDao;
+
+	@Autowired
+	private InstanceCsDao instanceCsDao;
+
+	@Autowired
+	private FlService flService;
+
+	@Autowired
+	private StepService stepService;
+
+	@Autowired
+	private InstanceStepDao instanceStepDao;
+
+	@Autowired
+	private InstanceAcService instanceAcService;
+	@Autowired
+	private InstanceStepService instanceStepService;
+	@Autowired
+	private ParticipantService participantService;
+	@Autowired
+	private InstanceGroupService instanceGroupService;
+	@Autowired
+	private InstanceVariableService instanceVariableService;
+	@Autowired
+	private InstanceAccessibleService instanceAccessibleService;
+	@Autowired
+	private InstanceCsService instanceCsService;
+
+	@Autowired
+	private InstanceTaskService instanceTaskService;
+
+	@Autowired
+	private InstancePostDao instancePostDao;
+
+	@Autowired
+	private SysNoticeMsgService msgService;
+
+	@Autowired
+	private InstanceReadRecordService instanceReadRecordService;
+
+	@Autowired
+	private AgentService agentService;
+
+	@Autowired
+	private InstanceOperateLogService instanceLogService;
+
+	@Autowired
+	private BusinessObjectService businessObjectService;
+
+	@Autowired
+	private InstanceCollectionService instanceCollectionService;
+
+	@Autowired
+	private MonitorSettingService monitorSettingService;
+
+	@Autowired
+	private PcFormService pcFormService;
+	
+	@Autowired
+	private SysFeignService sysFeignService;
+
+	@Autowired
+	private MobileFormService mobileFormService;
+
+	@Autowired
+	private UploadAttachmentService uploadAttachmentService;
+
+	@Autowired
+	private InstanceTransitionRecordService instanceTransitionRecordService;
+
+	@Autowired
+	private ApproveOperationService approveOperationService;
+	@Autowired
+	private SysNoticeMsgTempDao sysNoticeMsgTempDao;
+	@Autowired
+	private FlowUserOpinionService opinionServcie;
+
+	@Autowired
+	protected RedisTemplate<String, String> redisTemplate;
+
+	@Resource(name="redisTemplate")
+	private SetOperations<String, String> flowRunningSet;
+
+	@Override
+	public List<Instance> queryInstanceBy(String flId, String businessId) {
+		return instanceDao.queryInstanceByFlIdAndBusinessId(flId, businessId);
+	}
+
+	@Override
+	@Transactional(readOnly = false, propagation = Propagation.REQUIRED)
+	public List<ApprovalList> queryApprovalList(String instanceId, String requestSource, String status, String model) {
+		//记录查询记录
+		instanceReadRecordService.record(instanceId, requestSource);
+
+		List<ApprovalList> approvalList = queryApprovalList(instanceId, status);
+
+		if("0".equals(model)) {
+			removeForkAndJoin(approvalList);
+		}
+
+		return approvalList;
+	}
+
+	@Override
+	@Transactional(readOnly = false, propagation = Propagation.REQUIRED)
+	public List<ApprovalList> queryApprovalListNoRecord(String instanceId, String requestSource, String status, String model) {
+
+		List<ApprovalList> approvalList = queryApprovalList(instanceId, status);
+
+		if("0".equals(model)) {
+			removeForkAndJoin(approvalList);
+		}
+
+		return approvalList;
+	}
+
+	/**
+	 * 外部系统查询审批记录 TODO zhangdaoqiang
+	 */
+	@Override
+	@Transactional(readOnly = false, propagation = Propagation.REQUIRED)
+	public ApprovalListDto queryApprovalListExternal(String flCode, String businessId, String appId, String userId) {
+		ApprovalListDto retDto = new ApprovalListDto();
+
+		//1、记录查询痕迹
+
+		//2、判断流程权限
+
+		//3、查询流程记录
+		List<ApprovalList> approvalList = instanceDao.queryApprovalListExternal(flCode, businessId, appId);
+
+		removeForkAndJoin(approvalList);
+
+		retDto.setList(approvalList);
+		if(CollectionUtils.isNotEmpty(approvalList)) {
+			retDto.setCustomFormURL(approvalList.get(0).getPcUrl());
+		}
+		return retDto;
+	}
+
+	private void removeForkAndJoin(List<ApprovalList> approvalList) {
+		Iterator<ApprovalList> iterator = approvalList.iterator();
+		while(iterator.hasNext()) {
+			ApprovalList next = iterator.next();
+			String acType = next.getAcType();
+			if(FlAcType.FORK.getAcType().equals(acType)
+					||FlAcType.JOIN.getAcType().equals(acType)
+					||FlAcType.CC.getAcType().equals(acType)) {
+				iterator.remove();
+			}
+		}
+	}
+
+	public List<ApprovalList> queryApprovalList(String instanceId, String status) {
+		List<ApprovalList> approvalList = instanceDao.queryApprovalList(instanceId, status);
+		return approvalList;
+	}
+
+	@Override
+	public List<String> queryNext(String instanceId, String taskId) {
+		Map<String, String> filter = new LinkedHashMap<String, String>();
+		//1、查询审批列表，目标数据集
+		List<ApprovalList> approvalList = queryApprovalList(instanceId, null);
+		Instance instance = null;
+		try {
+			instance = instanceDao.selectByPrimaryKey(instanceId);
+			InstanceUnit instanceUnit = this.translate(instance, approvalList);
+			EmptyOperation operation = new EmptyOperation();
+			operation.setService(this);
+			ApprovalSubmitDto approvalDto = new ApprovalSubmitDto();
+			approvalDto.setInstanceId(instanceId);
+			approvalDto.setTaskId(taskId);
+
+			//设置当前位置
+			operation.setCurrentLocation(instanceUnit, approvalDto);
+
+			//如果下一环节是结束节点，直接返回
+			ACUnit currentAc = operation.getCurrentAc();
+			List<ACUnit> nextAcs = currentAc.getNextAcs();
+			if(CollectionUtils.isNotEmpty(nextAcs)) {
+				if(FlAcType.END.getAcType().equals(nextAcs.get(0).getAcType())) {
+					List<String> next = new ArrayList<String>();
+					next.add("结束");
+					return next;
+				}
+			}
+
+			//判断当前环节是否全点亮:
+			boolean allOn = checkAllPersonOn(operation.getCurrentAc());
+
+			//全点亮直接点亮下一环节
+			if(allOn) {
+				for(ACUnit ac : nextAcs) {
+					if(FlAcType.JOIN.getAcType().equals(ac.getAcType())) {
+						ac.setLeftPost(0);
+					}
+				}
+				operation.turnOn(nextAcs, instanceUnit);
+				//重新设置当前位置
+				operation.setCurrentLocation(instanceUnit, approvalDto);
+
+				//不完全点亮
+			} else {
+				operation.next(instanceUnit, approvalDto);
+
+			}
+
+			for(ACUnit acUnit : instanceUnit.getAcList()) {
+				List<PostUnit> posts = acUnit.getPosts();
+				if(CollectionUtils.isEmpty(posts)) {
+					continue;
+				}
+				for(PostUnit post : posts) {
+					List<ApproverUnit> approvers = post.getApprovers();
+					if(CollectionUtils.isEmpty(approvers)) {
+						continue;
+					}
+					for(ApproverUnit approver : approvers) {
+						if(TaskStatus.RUNNING.getValue().equals(approver.getTask().getTaskStatus())
+								&& approver.getDbAction() != 2) {
+
+							//去除与当前人同环节的人
+							String currentAcId = operation.getCurrentAc().getAcId();
+							if(approver.getOwner().getOwner().getAcId().equals(currentAcId)) {
+								continue;
+							}
+
+							//							String postFullName = approver.getOwner().getPostName();
+							//							int lastIndex = postFullName.lastIndexOf("/");
+							//							String roleName = postFullName.substring(lastIndex + 1);
+							//							String next = approver.getApproverName() + " - (" + roleName + ")";
+							//							retList.add(approver.getApproverName());
+							filter.put(approver.getApproverId(), approver.getApproverName());
+						}
+					}
+				}
+			}
+
+		} catch (Exception e) {
+		}
+
+		List<String> retList = new ArrayList<String>(filter.values());
+		if(CollectionUtils.isEmpty(retList)) {
+			retList.add("结束");
+		}
+		return retList;
+	}
+
+	private boolean checkAllPersonOn(ACUnit acUnit) {
+		for(PostUnit post : acUnit.getPosts()) {
+			List<ApproverUnit> approvers = post.getApprovers();
+			if(CollectionUtils.isEmpty(approvers)) {
+				continue;
+			}
+			for(ApproverUnit approver : approvers) {
+				if (approver.getTask() == null
+						|| TaskStatus.NOT_RUNNING.getValue().equals(approver.getTask().getTaskStatus())) {
+					return false;
+				}
+			}
+		}		
+		return true;
+	}
+
+	@Override
+	@Transactional(readOnly = false, propagation = Propagation.REQUIRED)
+	public String doWithDrawFlow(String instanceId) throws Exception {
+		List<ApprovalList> approvalList = queryApprovalList(instanceId, null);
+		Instance instance = instanceDao.selectByPrimaryKey(instanceId);
+		InstanceUnit instanceUnit = this.translate(instance, approvalList);
+		Operation operation = new OperationFactory().newOperation(OperationType.WITHDRAW_FLOW.getCode(), this);
+		ApprovalSubmitDto approvalDto = new ApprovalSubmitDto();
+		operation.action(instanceUnit, approvalDto);
+		String starter = instanceUnit.getAcList().get(0).getPosts().get(0).getApprovers().get(0).getApproverName();
+		saveTransition(instanceUnit.getId(), starter, "撤回流程");
+		return "success";
+	}
+
+	@Override
+	@Transactional(readOnly = false, propagation = Propagation.REQUIRED)
+	public String doWithDrawTask(String instanceId, String taskId) throws Exception {
+		List<ApprovalList> approvalList = queryApprovalList(instanceId, null);
+		Instance instance = instanceDao.selectByPrimaryKey(instanceId);
+		InstanceUnit instanceUnit = this.translate(instance, approvalList);
+		Operation operation = new OperationFactory().newOperation(OperationType.WITHDRAW_TASK.getCode(), this);
+		ApprovalSubmitDto approvalDto = new ApprovalSubmitDto();
+		approvalDto.setTaskId(taskId);
+		approvalDto.setOperationName("撤回任务");
+		return operation.action(instanceUnit, approvalDto);
+	}
+
+	@Override
+	@Transactional(readOnly = false, propagation = Propagation.REQUIRED)
+	public boolean doFinishApproval(String instanceId) throws Exception {
+		List<ApprovalList> approvalList = queryApprovalList(instanceId, null);
+		Instance instance = instanceDao.selectByPrimaryKey(instanceId);
+		InstanceUnit instanceUnit = this.translate(instance, approvalList);
+		Operation operation = new OperationFactory().newOperation(OperationType.FINISHFLOW.getCode(), this);
+		ApprovalSubmitDto approvalDto = new ApprovalSubmitDto();
+		approvalDto.setOperationType(OperationType.AGREE.getCode());
+		approvalDto.setOperationName("同意");
+		approvalDto.setUserNote("管理员审结通过！");
+		operation.action(instanceUnit, approvalDto);
+
+		//记录流转日志
+		this.saveTransition(instanceId, "管理员", "审结");
+		return true;
+	}
+
+	@Override
+	@Transactional(readOnly = false, propagation = Propagation.REQUIRED)
+	public boolean doSkipCurrentApprover(String instanceId) throws Exception {
+		List<ApprovalList> approvalList = queryApprovalList(instanceId, null);
+		Instance instance = instanceDao.selectByPrimaryKey(instanceId);
+		InstanceUnit instanceUnit = this.translate(instance, approvalList);
+		Operation operation = new OperationFactory().newOperation(OperationType.SKIPCURRENT.getCode(), this);
+		ApprovalSubmitDto approvalDto = new ApprovalSubmitDto();
+		approvalDto.setUserNote("管理员操作：跳过当前审批人！");
+		operation.action(instanceUnit, approvalDto);
+
+		//记录流转日志
+		this.saveTransition(instanceId, "管理员", "跳过当前审批人");
+
+		return true;
+	}
+
+	@Override
+	@Transactional(readOnly = false, propagation = Propagation.REQUIRED)
+	public boolean doFlowRestart(String instanceId) throws Exception {
+		List<ApprovalList> approvalList = queryApprovalList(instanceId, null);
+		Instance instance = instanceDao.selectByPrimaryKey(instanceId);
+		InstanceUnit instanceUnit = this.translate(instance, approvalList);
+		Operation operation = new OperationFactory().newOperation(OperationType.RESTART.getCode(), this);
+		ApprovalSubmitDto approvalDto = new ApprovalSubmitDto();
+		approvalDto.setUserNote("管理员操作：流程放行！");
+		operation.action(instanceUnit, approvalDto);
+
+		//记录流转日志
+		this.saveTransition(instanceId, "管理员", "流程放行");
+		return true;	
+	}
+
+	@Override
+	@Transactional(readOnly = false, propagation = Propagation.REQUIRED)
+	public boolean doCancelInstance(String instanceId) throws Exception {
+		List<ApprovalList> approvalList = queryApprovalList(instanceId, null);
+		Instance instance = instanceDao.selectByPrimaryKey(instanceId);
+		InstanceUnit instanceUnit = this.translate(instance, approvalList);
+		Operation operation = new OperationFactory().newOperation(OperationType.INVALID.getCode(), this);
+		ApprovalSubmitDto approvalDto = new ApprovalSubmitDto();
+		approvalDto.setUserNote("管理员流程作废操作成功！");
+		operation.action(instanceUnit, approvalDto);
+
+		saveTransition(instanceUnit.getId(), "管理员", "作废流程");
+
+		return true;
+	}
+
+	/**
+	 * 传阅时给每个人发送待阅消息
+	 * @throws Exception 
+	 */
+	@Override
+	@Transactional(readOnly = false, propagation = Propagation.REQUIRED)
+	public boolean doPassAndRead(String instanceId, List<UserDto> userList) throws Exception {
+		SecurityUserDto securityUserDto=LoginUtils.getSecurityUserBeanInfo().getSecurityUserDto();
+		Instance instance = instanceDao.selectByPrimaryKey(instanceId);
+		List<SysNoticeMsg> messages = new ArrayList<SysNoticeMsg>();
+		BusinessObject businessObject = businessObjectService.getObjectById(instance.getBusinessObjectId());
+
+		List<InstanceAccessible> accessibleList = new ArrayList<InstanceAccessible>();
+		List<PassReadRecord> readPassList=new ArrayList<PassReadRecord>();
+		Timestamp nowTime=new Timestamp(System.currentTimeMillis());
+		for(UserDto user : userList) {
+			String mobileUrl = "mobile/approve/approve_detail.html";
+			MobileParam mobileParamBean = new MobileParam();
+			mobileParamBean.setInstanceId(instanceId);
+			mobileParamBean.setBusinessId(instance.getBusinessId());
+			mobileParamBean.setAppId(instance.getAppId());
+			//mobileParamBean.setTypeCode("START");
+			//mobileParamBean.setTaskId(startApprover.getTask().getTaskId());
+			//mobileParamBean.setApproveRole(startApprover.getTask().getTaskType());
+
+			String url = "/flow/runtime/approve/flow.html"
+					+ "?instanceId=" + instanceId
+					+ "&time=" + new Date().getTime();			
+			SysNoticeMsg msg = msgService.newFlowMsg(user, "DY", instance.getName(), url, mobileUrl, JacksonUtils.toJson(mobileParamBean));
+			messages.add(msg);
+
+			InstanceAccessible instanceAccessible = new InstanceAccessible();
+			instanceAccessible.setId(IDGenerator.getUUID());
+			instanceAccessible.setFiId(instanceId);
+			instanceAccessible.setType("2");//传阅类型的可阅人
+			instanceAccessible.setAccessibleId(user.getId());
+			instanceAccessible.setAccessibleName(user.getName());
+			instanceAccessible.setDelflag(false);
+			instanceAccessible.setConcurrencyVersion(0);
+			accessibleList.add(instanceAccessible);
+
+			//记录操作日志
+			instanceLogService.saveLogData(instanceId, null, null, null, 
+					InstanceOperateType.PASS_READ.getValue(), user.getId(), 
+					null, null);
+
+			//记录传阅日志
+			PassReadRecord passReadRecord=new PassReadRecord();
+			passReadRecord.setId(IDGenerator.getUUID());
+			passReadRecord.setFiId(instanceId);
+			passReadRecord.setTransationUserName(securityUserDto.getRealName());//操作人名称 
+			passReadRecord.setTransationUserId(securityUserDto.getId());//操作人id
+			passReadRecord.setToUserId(user.getId());//传阅人id
+			passReadRecord.setToUserName(user.getName());//传阅人名称
+			passReadRecord.setTransationDate(nowTime);
+			passReadRecord.setActionName("传阅");
+			passReadRecord.setDelflag(false);
+			readPassList.add(passReadRecord);
+		}
+		passReadRecordDao.insertList(readPassList);
+		//this.msgService.saveBatch(messages);
+		this.msgService.batchSaveAndNotifyOthers(messages);
+
+		//将传阅人保存至可阅人中
+		this.instanceAccessibleService.saveBatch(accessibleList);
+
+		if(CollectionUtils.isNotEmpty(userList)) {
+			for(UserDto user : userList) {
+				log.info("发送待阅消息成功：instanceId=" + instanceId
+						+ ", 待阅人=" + user.getName()
+						+ ", 待阅人ID=" + user.getLoginName() 
+						+ ", 发送人：" + securityUserDto.getRealName()
+						+ ", 发送时间：" + new Date());			
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * 发起人催办消息
+	 * @throws Exception 
+	 */
+	@Override
+	@Transactional(readOnly = false, propagation = Propagation.REQUIRED)
+	public boolean doRemind(String instanceId) throws Exception {
+		List<ApprovalList> approvalList = queryApprovalList(instanceId, null);
+		Instance instance = instanceDao.selectByPrimaryKey(instanceId);
+		InstanceUnit instanceUnit = this.translate(instance, approvalList);
+		List<ApproverUnit> currentApprovers = instanceUnit.getCurrentApprover();
+		List<SysNoticeMsg> messages = new ArrayList<SysNoticeMsg>();
+		BusinessObject businessObject = businessObjectService.getObjectById(instance.getBusinessObjectId());
+
+		for(ApproverUnit approver : currentApprovers) {
+			String mobileUrl = "mobile/approve/approve_detail.html";
+			MobileParam mobileParamBean = new MobileParam();
+			mobileParamBean.setInstanceId(instanceUnit.getId());
+			mobileParamBean.setBusinessId(instanceUnit.getBusinessId());
+			mobileParamBean.setAppId(instanceUnit.getAppId());
+			//mobileParamBean.setTypeCode("START");
+			//mobileParamBean.setTaskId(startApprover.getTask().getTaskId());
+			//mobileParamBean.setApproveRole(startApprover.getTask().getTaskType());
+
+			String url = "/flow/runtime/approve/flow.html"
+					+ "?instanceId=" + instanceId
+					+ "&time=" + new Date().getTime();			
+			UserDto user = new UserDto(approver.getApproverId(), approver.getApproverName());
+			SysNoticeMsg message = this.msgService.newFlowMsg(user, "DY", "请尽快处理:" + instance.getName(), url, mobileUrl, JacksonUtils.toJson(mobileParamBean));
+			messages.add(message);
+
+			//记录操作日志
+			instanceLogService.saveLogData(instanceId, null, null, null, 
+					InstanceOperateType.TO_READ.getValue(), user.getId(), 
+					null, null);
+		}
+
+		//this.msgService.saveBatch(messages);
+		this.msgService.batchSaveAndNotifyOthers(messages);
+		log.info("发送催办消息成功!");
+
+		return true;
+	}
+
+	@Override
+	@Transactional(readOnly = false, propagation = Propagation.REQUIRED)
+	public boolean collection(String instanceId) throws Exception {
+		SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+		String userId = securityUserBeanInfo.getSecurityUserDto().getId();
+		InstanceCollection collection = new InstanceCollection();
+		collection.setId(IDGenerator.getUUID());
+		collection.setUserId(userId);
+		collection.setInstanceId(instanceId);
+		instanceCollectionService.save(collection);
+
+		//TODO zhangdaoqiang 记录操作日志
+		instanceLogService.saveLogData(instanceId, null, null, null, 
+				InstanceOperateType.COLLECT.getValue(), userId, null, null);
+
+		return true;
+	}
+
+	@Override
+	@Transactional(readOnly = false, propagation = Propagation.REQUIRED)
+	public boolean doAdjustAc(List<ApprovalList> approvalList) throws Exception {
+		return doAdjustAcInternal(approvalList);
+	}
+
+	private boolean doAdjustAcInternal(List<ApprovalList> approvalList) throws Exception {
+
+		//处理同岗多人问题，分裂处理
+		approvalList = handleMutipulUser(approvalList);
+
+		//重新排序（环节、岗位、人员）
+		setRelations(approvalList);
+
+		Instance instance = instanceDao.selectByPrimaryKey(approvalList.get(0).getInstanceId());
+		InstanceUnit instanceUnit = this.translate(instance, approvalList);
+
+		//设置模型【环节层】【岗位层】DB操作类型(人员层已在translate设置)，此方法从下往上设置，同时适用调整AC及审批人
+		setDbAction(instanceUnit);
+
+		//重新排序(环节、岗位、人员)
+		sort(instanceUnit);
+
+		EmptyOperation operation = new EmptyOperation();
+		operation.setService(this);
+		operation.setCurrentApprovers(instanceUnit);	// TODO zhangdaoqiang 待重构，抽成一个具体的操作。
+		operation.save(instanceUnit);
+		ApprovalSubmitDto approvalDto = new ApprovalSubmitDto();
+		operation.handleMessages(instanceUnit, approvalDto);
+
+		return true;
+	}
+
+	private List<ApprovalList> handleMutipulUser(List<ApprovalList> approvalList) {
+		List<ApprovalList> newList = new ArrayList<ApprovalList>();
+		for (ApprovalList approval : approvalList) {
+			if (!StringUtils.isEmpty(approval.getApproverId()) && approval.getApproverId().contains(",")) {
+				String[] userIdArray = approval.getApproverId().split(",");
+				String[] userNameArray = approval.getApproverName().split(",");
+				if (userIdArray.length != userNameArray.length) {
+					throw new FlowException(
+							"调整环节时数据错误：审批人ID与名称个数不一致！userIdArray=" + userIdArray + ", userNameArray" + userNameArray);
+				}
+
+				for (int i = 0; i < userIdArray.length; i++) {
+					ApprovalList newApproval = (ApprovalList) JavaBeanCopier.copy(approval);
+					newApproval.setApproverId(userIdArray[i]);
+					newApproval.setApproverName(userNameArray[i]);
+					newList.add(newApproval);
+				}
+			} else {
+				newList.add(approval);
+			}
+		}
+		return newList;
+	}
+
+	@Override
+	@Transactional(readOnly = false, propagation = Propagation.REQUIRED)
+	public List<ApprovalList> doCreateAc(InstanceAcDto instanceAcDto) throws Exception {
+		List<ApprovalList> approvalLists = new ArrayList<ApprovalList>();
+		String code=instanceAcDto.getCode();
+		code=code+"-"+DateUtils.getDateSSSText();
+		instanceAcDto.setCode(code);
+		Map<String,String> map=new HashMap<>();
+		map.put("fiId", instanceAcDto.getFiId());
+		map.put("id", instanceAcDto.getId());
+		map.put("code", instanceAcDto.getCode());
+		//校验编码重复   add by gyh  
+		Integer i=instanceAcDao.checkCode(map);
+		if(i!=null && i>0){
+			throw new FlowException("该流程此编码已存在，不可重复！");
+		}
+		/*
+		 * 构建AcDto
+		 */
+		AcDto acDto = new AcDto();
+		acDto.setId(instanceAcDto.getId());
+		acDto.setCode(instanceAcDto.getCode());
+		acDto.setName(instanceAcDto.getName());
+		acDto.setApproveTypeId(instanceAcDto.getApproveTypeId());
+		acDto.setParticipant(instanceAcDto.getParticipant());
+		acDto.setCcPerson(instanceAcDto.getCcPerson());
+		acDto.setPostMultiPerson(instanceAcDto.getPostMultiPerson());
+		acDto.setApproveStrategy(instanceAcDto.getApproveStrategy());
+
+		/*
+		 * 构建业务变量Map
+		 */
+		Map<String, Object> businessVariable = new HashMap<String, Object>();
+		Instance instance = getObjectById(instanceAcDto.getFiId());
+		businessVariable.put("flow_business_company_id", instance.getFlowBusinessCompanyId());
+		businessVariable.put("flow_business_company_name", instance.getFlowBusinessCompanyName());
+		businessVariable.put("flow_business_dept_id", instance.getFlowBusinessDeptId());
+		businessVariable.put("flow_business_dept_name", instance.getFlowBusinessDeptName());
+		businessVariable.put("flow_business_project_id", instance.getFlowBusinessProjectId());
+		businessVariable.put("flow_business_project_name", instance.getFlowBusinessProjectName());
+		businessVariable.put("flow_business_project_branch_id", instance.getFlowBusinessProjectBranchId());
+		businessVariable.put("flow_business_project_branch_name", instance.getFlowBusinessProjectBranchName());
+		businessVariable.put("start_user_id", instance.getStartUserId());
+		businessVariable.put("start_user_name", instance.getStartUserName());
+
+		/*
+		 * 解析人员岗位
+		 */
+		List<FlowAcPostDto> flowAcPostDtos = parsePost(businessVariable, acDto);
+		if(CollectionUtils.isEmpty(flowAcPostDtos)) {
+			throw new FlowException("调整环节时后台查询对应岗位为空！");
+		}
+		for (FlowAcPostDto flowAcPostDto : flowAcPostDtos) {
+			if(flowAcPostDto.getId().equals(acDto.getId())){
+				List<FlowPostParticipantDto> flowPostParticipantDtos = flowAcPostDto.getFlowPostParticipantDtos();
+				if (flowPostParticipantDtos != null && flowPostParticipantDtos.size() > 0) {
+					for (FlowPostParticipantDto post : flowPostParticipantDtos) {
+						ApprovalList approvalList = new ApprovalList();
+						approvalList.setAcId(acDto.getId());
+						approvalList.setAcName(acDto.getName());
+						approvalList.setAcCode(acDto.getCode());
+						approvalList.setAcType(acDto.getAcType());
+						approvalList.setPostId(post.getPostId());
+						approvalList.setPostName(post.getPostPrefixName());
+						approvalList.setApproverId(post.getUserId());
+						approvalList.setApproverName(post.getUserName());
+						approvalList.setApprovalTypeId(acDto.getApproveTypeId());
+						approvalList.setMultiPerson(acDto.getPostMultiPerson());
+						approvalList.setMultiPost(acDto.getApproveStrategy());
+						approvalList.setChangeType(1);
+						approvalLists.add(approvalList);
+					}
+				} else {
+					ApprovalList approvalList = new ApprovalList();
+					approvalList.setAcId(acDto.getId());
+					approvalList.setAcName(acDto.getName());
+					approvalList.setAcType(acDto.getAcType());
+					approvalList.setAcCode(acDto.getCode());
+					approvalList.setChangeType(1);
+					approvalList.setMultiPerson(acDto.getPostMultiPerson());
+					approvalList.setMultiPost(acDto.getApproveStrategy());
+					approvalLists.add(approvalList);
+				}
+			}
+		}
+		return approvalLists;
+	}
+
+
+
+	/**
+	 * 根据人员层DBaction设置AC层及岗位层DBAction
+	 * 
+	 * @param instanceUnit
+	 */
+	private void setDbAction(InstanceUnit instanceUnit) {
+		for(ACUnit acUnit : instanceUnit.getAcList()) {
+
+			//排序岗位
+			int postDelCount = 0;
+			List<PostUnit> posts = acUnit.getPosts();
+			if(CollectionUtils.isEmpty(posts)) {
+				continue;
+			}
+			for(PostUnit post : posts) {
+
+				int approverDelCount = 0;
+				List<ApproverUnit> approvers = post.getApprovers();
+				if(CollectionUtils.isEmpty(approvers)) {
+					continue;
+				}
+				for(ApproverUnit approver : approvers) {
+					if(approver.getDbAction() == 2) {
+						approver.getTask().setDbAction(2);
+						approverDelCount++;
+
+						//对应消息作删除处理
+						instanceUnit.getMessagesToDel().add(approver.getTask().getMsgId());
+					}
+
+					if(approver.getDbAction() == 1 
+							&& TaskStatus.RUNNING.getValue().equals(approver.getTask().getTaskStatus())) {
+						approver.getTask().setDbAction(1);
+					}
+				}
+				if(approverDelCount == approvers.size()) {
+					post.setDbAction(2);
+					postDelCount++;
+				}
+			}
+
+			if(postDelCount == posts.size()) {
+				acUnit.setDbAction(2);
+			}
+		}
+	}
+
+	private void sort(InstanceUnit instanceUnit) {
+		int acIndex = 0;
+		for(ACUnit acUnit : instanceUnit.getAcList()) {
+
+			//非删除时
+			if(acUnit.getDbAction() != 2) {
+				acUnit.setAcPx(++acIndex);
+			}
+
+			//排序岗位
+			int postIndex = 0;
+			List<PostUnit> posts = acUnit.getPosts();
+			if(CollectionUtils.isEmpty(posts)) {
+				continue;
+			}
+			for(PostUnit post : posts) {
+
+				if(post.getDbAction() != 2) { 
+					post.setPostSeq(++postIndex);
+				}
+
+				List<ApproverUnit> approvers = post.getApprovers();
+				if(CollectionUtils.isEmpty(approvers)) {
+					continue;
+				}
+				int approverIndex = 0;
+				for(ApproverUnit approver : approvers) {
+
+					if(approver.getDbAction() != 2) {
+						approver.setApproverSeq(++approverIndex);	//实际只有一个人，岗位未合并！！！
+					}
+				}
+			}
+		}
+	}
+
+	private void setRelations(List<ApprovalList> approvalList) {
+		for(ApprovalList approver : approvalList) {
+
+			//新增AC或人员
+			if(approver.getChangeType() == 1) {
+				approver.setGroupKey(IDGenerator.getUUID());	//人员KEY
+
+				if(!checkPostExist(approver.getPostId(), approvalList)) {
+					approver.setAcPostId(IDGenerator.getUUID());	//Post表KEY	多人岗位相同时未合并！！！
+				}
+
+				approver.setAcType(FlAcType.TASK.getAcType());
+				//				approver.setAcStatus(ACStatus.NOT_RUNNING.getValue());
+
+				//删除审批人？？？
+			} else if(approver.getChangeType() == 2) {	
+				//不需要作关系维护
+			}
+
+		}
+		//设置前后关联关系
+		for(int i=1; i<approvalList.size() - 1; i++) {
+			ApprovalList current = approvalList.get(i);
+
+			if(StringUtils.isEmpty(current.getPreAcIds())) {
+				ApprovalList pre = preAc(approvalList, i -1, approvalList.get(i-1));
+				if(pre != null) {
+					current.setPreAcIds(pre.getAcId());
+					pre.setNextAcIds(nextAc(approvalList, i-1, pre).getAcId());
+
+					if(pre.getChangeType() == 0) {
+						pre.setChangeType(3);	//修改态
+					}
+				}
+			}
+
+			if(StringUtils.isEmpty(current.getNextAcIds())) {
+				ApprovalList next = nextAc(approvalList, i, current);
+				if(next != null) {
+					current.setNextAcIds(next.getAcId());
+					next.setPreAcIds(current.getAcId());
+
+					if(next.getChangeType() == 0) {
+						next.setChangeType(3);
+					}
+				}
+			}
+		}
+	}
+
+	private boolean checkPostExist(String postId, List<ApprovalList> approvalList) {
+		int count = 0;
+		for(ApprovalList list : approvalList) {
+			if(postId.equals(list.getPostId()) && list.getChangeType() != 2
+					&& PostStatus.RUNNING.getValue().equals(list.getPostStatus())) {
+				count++;
+			}
+		}
+		if(count > 1) {
+			return true;
+		}
+		return false;
+	}
+
+	/**
+	 * 下一个ACID不同的位置
+	 * @param approvalList
+	 * @param currentIndex
+	 * @param current
+	 * @return
+	 */
+	private ApprovalList nextAc(List<ApprovalList> approvalList, int currentIndex, ApprovalList current) {
+		ApprovalList next = null;
+		do {
+			currentIndex++;
+			next = approvalList.get(currentIndex);
+		} while(current.getAcId().equals(next.getAcId()));
+
+		return next;
+	}
+
+	/**
+	 * 第一个ACID相同的位置
+	 * @param approvalList
+	 * @param currentIndex
+	 * @param current
+	 * @return
+	 */
+	private ApprovalList preAc(List<ApprovalList> approvalList, int currentIndex, ApprovalList current) {
+		for(int i=currentIndex; i>0; i--) {
+			ApprovalList pre = approvalList.get(i);
+			if(!current.getAcId().equals(pre.getAcId())) {
+				return approvalList.get(i + 1);
+			}
+		}
+		return null;
+	}
+
+	@Override
+	@Transactional(readOnly = false, propagation = Propagation.REQUIRED)
+	public boolean doUpdateApprover(List<ApprovalList> approvalList) throws Exception {
+
+		log.info("修改审批人操作开始：页面值=" + approvalList);
+
+		//处理被删除的审批人
+		//处理新增的审批人
+
+		//		//同调整AC
+		//		doAdjustAcInternal(list);
+
+		//处理同岗多人问题，分裂处理
+		approvalList = handleMutipulUser(approvalList);
+
+		//重新排序（环节、岗位、人员）
+		setRelations(approvalList);
+		log.info("重新排序（环节、岗位、人员）后的列表值=" + approvalList);
+
+		Instance instance = instanceDao.selectByPrimaryKey(approvalList.get(0).getInstanceId());
+		InstanceUnit instanceUnit = this.translate(instance, approvalList);
+
+		//不作环节新增（与调整环节不同的地方）
+		for(ACUnit acUnit: instanceUnit.getAcList()) {
+			if(acUnit.getDbAction() == 1) {
+				acUnit.setDbAction(0);
+				acUnit.setChange(true);
+			}
+		}
+
+		//设置模型【环节层】【岗位层】DB操作类型(人员层已在translate设置)，此方法从下往上设置，同时适用调整AC及审批人
+		setDbAction(instanceUnit);
+
+		//重新排序(环节、岗位、人员)
+		sort(instanceUnit);
+
+		countLeft(instanceUnit);
+
+		EmptyOperation operation = new EmptyOperation();
+		operation.setService(this);
+		operation.setCurrentApprovers(instanceUnit);	// TODO zhangdaoqiang 待重构，抽成一个具体的操作。
+		operation.save(instanceUnit);
+		ApprovalSubmitDto approvalDto = new ApprovalSubmitDto();
+		operation.handleMessages(instanceUnit, approvalDto);
+
+		return true;
+	}
+
+	private void countLeft(InstanceUnit instanceUnit) {
+		for(ACUnit acUnit : instanceUnit.getAcList()) {
+			List<PostUnit> posts = acUnit.getPosts();
+			if(CollectionUtils.isNotEmpty(posts)) {
+				int leftPost = 0;
+				for(PostUnit post : posts) {
+					List<ApproverUnit> approvers = post.getApprovers();
+					if(CollectionUtils.isNotEmpty(approvers)) {
+						int leftPerson = 0;
+						for(ApproverUnit approver : approvers) {
+							if(approver.getDbAction() != 2
+									&& TaskStatus.RUNNING.getValue().equals(approver.getTask().getTaskStatus())) {
+								leftPerson++;
+							}
+						}
+						post.setLeftPerson(leftPerson);
+					}
+
+					if(post.getDbAction() != 2
+							&& PostStatus.RUNNING.getValue().equals(post.getPostStatus())) {
+						leftPost++;
+					}
+				}
+				acUnit.setLeftPost(leftPost);
+			}
+		}
+	}
+
+	/**
+	 * 根据任务ID修改审批意见
+	 */
+	@Override
+	@Transactional(readOnly = false, propagation = Propagation.REQUIRED)
+	public boolean doUpdateApprovalComments(List<ApprovalList> list) {
+		for(ApprovalList approver : list) {
+			if(approver.getChangeType() == 3) {	//修改
+				instanceTaskService.updateComment(approver.getTaskId(), approver.getTaskComments());
+			}
+		}
+
+		String instanceId = list.get(0).getInstanceId();
+		String starter = list.get(0).getApproverId();
+
+		//TODO zhangdaoqiang 记录操作日志
+		try {
+			instanceLogService.saveLogData(instanceId, null, null, null, 
+					InstanceOperateType.MODIFY_ADVICE.getValue(), starter, null, null);
+		} catch (Exception e) {
+			throw new FlowException("保存流程操作日志异常！", e);
+		}
+		return true;
+	}
+
+	/**
+	 * 查询打回人列表
+	 */
+	@Override
+	public List<Map<String, String>> queryApproverBeReturn(String instanceId) {
+		List<Map<String, String>> retList = new ArrayList<Map<String, String>>();
+		List<ApprovalList> approverDone = queryApproverDone(instanceId);
+		for(ApprovalList approver : approverDone) {
+
+			//去除协办人
+			if(TaskType.ASSIST.getValue().equals(approver.getTaskType())) {
+				continue;
+			}
+			//去除沟通发起人
+			if(TaskType.STARTER.getValue().equals(approver.getTaskType())
+					&& !StringUtils.isEmpty(approver.getFromId())) {	//区别于发起人
+				continue;
+			}
+
+			Map<String, String> map = new HashMap<String, String>();
+			String approverId = approver.getApproverId();
+			String acId = approver.getAcId();
+			map.put("id", acId + "." + approverId);
+			String displayName = approver.getAcName() + "【" + approver.getApproverName() + "】";
+			map.put("displayName", displayName);
+			map.put("name", approver.getApproverName());
+			retList.add(map);
+		}
+
+		return retList;
+	}
+
+	/**
+	 * 查询审批完毕列表
+	 * 
+	 * @param instanceId
+	 * @return
+	 */
+	public List<ApprovalList> queryApproverDone(String instanceId) {
+		List<ApprovalList> approverDone = queryApprovalList(instanceId, TaskStatus.FINISHED.getValue());
+		Iterator<ApprovalList> iterator = approverDone.iterator();
+		while(iterator.hasNext()) {
+
+			//过滤自动跳过的人
+			ApprovalList approver = iterator.next();
+			String currentApproverTypeId = approver.getApprovalTypeId();
+			String acType = approver.getAcType();
+
+			//去除非（会签+校稿+开始）自动跳过的人
+			if (!"HQ".equals(currentApproverTypeId)
+					&& !"JG".equals(currentApproverTypeId)
+					&& !FlAcType.START.getAcType().equals(acType)
+					&& approver.getAutoPass() == 1) {
+				iterator.remove();
+			}
+
+			//去除分支聚合节点
+			if(FlAcType.FORK.getAcType().equals(acType)
+					|| FlAcType.JOIN.getAcType().equals(acType)) {
+				iterator.remove();
+			}
+		}
+
+		return approverDone;
+	}
+
+	@Override
+	@Transactional(readOnly = false, propagation = Propagation.REQUIRED)
+	public boolean approval(ApprovalSubmitDto approvalDto) throws Exception {
+
+		if(approvalDto.getOperationType() == null) {
+			throw new FlowException("用户选择的操作为空，请检查！");
+		}
+
+		//重复提交处理
+		String runKey = approvalDto.getInstanceId() + "." + approvalDto.getTaskId();
+		boolean isRunning = flowRunningSet.isMember(FLOWRUNNING, runKey);
+		log.info("重复提交处理：" + runKey + "-" + isRunning);
+		if(isRunning) {
+			throw new FlowException("流程处理中，请稍候！");
+		} else {
+			flowRunningSet.add(FLOWRUNNING, runKey);
+		}
+
+		//检查流程状态
+		String result = checkInstanceStatus(approvalDto.getInstanceId());
+		if(!"success".equals(result)) {
+			throw new FlowException(result);
+		}
+
+		//检查任务是否已完成
+		if(instanceTaskService.isFinished(approvalDto)) {
+			throw new FlowException("任务已被处理");
+		}
+
+		//1、查询审批列表，目标数据集
+		InstanceUnit instanceUnit = this.getInstanceUnit(approvalDto.getInstanceId());
+
+		//2、根据操作处理:
+		Operation operation = new OperationFactory().newOperation(approvalDto.getOperationType(),this);
+
+		try {
+			operation.action(instanceUnit, approvalDto);
+			//审批成功保存用户默认意见。需求变更，此方法去掉20171121
+			/*String userOpinionId = approvalDto.getUserOpinionId();
+			if(org.apache.commons.lang.StringUtils.isNotBlank(userOpinionId)){
+				opinionServcie.saveDefaultOpinion(userOpinionId);
+			}*/
+		} catch (Exception e) {
+			log.error("流程实例异常approval=====",e);
+			throw e;
+		} finally {
+			flowRunningSet.remove(FLOWRUNNING, runKey);
+		}
+
+		log.info("审批执行成功！instanceId=" + instanceUnit.getId());
+		return true;
+	}
+
+	private String checkInstanceStatus(String instanceId) throws Exception {
+		String message = "success";
+		Instance instance = instanceDao.selectByPrimaryKey(instanceId);
+		if(InstanceStatus.WITHDRAW.getValue().equals(instance.getStatus())) {
+			message = "流程已被撤回";
+		} else if(InstanceStatus.REJECT.getValue().equals(instance.getStatus())) {
+			message = "流程已被打回";
+		} else if(InstanceStatus.CANCEL.getValue().equals(instance.getStatus())) {
+			message = "流程已被作废";
+		}
+		return message;
+	}
+
+	private InstanceUnit getInstanceUnit(String instanceId) throws Exception {
+		List<ApprovalList> approvalList = queryApprovalList(instanceId, null);
+		Instance instance = instanceDao.selectByPrimaryKey(instanceId);
+		log.info("审核列表：" + approvalList);
+		log.info("实例信息：" + instance);
+
+		return this.translate(instance, approvalList);
+	}
+
+	@Override
+	@Transactional(readOnly = false, propagation = Propagation.REQUIRED)
+	public String saveAllInstanceData(InstanceDto instanceDto) throws Exception {
+
+		log.info("--------------流程实例初始化数据saveAllInstanceData------------------" + JacksonUtils.toJson(instanceDto));
+
+		//1、保存流程实例
+		Instance instance = generateInstanceData(instanceDto);
+
+		//2、保存流程变量
+		List<InstanceVariable> varList = generateInstanceVariable(instanceDto, instance);
+
+		List<InstanceAc> acList = new ArrayList<InstanceAc>();
+		Map<String, InstanceAc> acMap = new HashMap<String, InstanceAc>();	//key=nodeid,一次保存中各节点的nodeid不能重复
+
+		List<InstancePost> posts = new ArrayList<InstancePost>();
+		List<InstanceGroup> groups = new ArrayList<InstanceGroup>();
+		List<InstanceCs> csList = new ArrayList<InstanceCs>();
+		List<InstanceStep> stepList = new ArrayList<InstanceStep>();
+		InstanceTask startTask = null;
+
+		//3、保存AC实例
+		long acIndex = 0;
+		List<AcDto> acDtoList = instanceDto.getAcDtoList();
+		String flId = acDtoList.get(0).getFlId();
+		for(AcDto acDto : acDtoList) {
+			InstanceAc instanceAc = generateInstanceAc(instanceDto, acDto, ++acIndex);
+			acList.add(instanceAc);
+			acMap.put(acDto.getNodeId(), instanceAc);
+
+			//6、保存流程抄送人
+			csList.addAll(generateCsData(instance, instanceAc, acDto));
+
+			//4、保存AC对应的岗位
+			long postIndex = 0;
+			String postStr = acDto.getPosts();
+			if(!StringUtils.isEmpty(postStr) && postStr.contains("\'")) {
+				postStr = postStr.replaceAll("\'", "\\\\'");
+			}
+			List<PostDto> postList = JacksonUtils.fromJson(postStr, ArrayList.class, PostDto.class);
+
+			//手选时存在两个岗位相同的情况
+			deleteDuplicate(postList);
+
+			if(CollectionUtils.isEmpty(postList)) {
+				//join节点时记录已到达分支数，判断是否往下走
+				if(FlAcType.JOIN.getAcType().equals(acDto.getAcType())) {
+					instanceAc.setLeftPost(acDto.getPreviousAcDtos().size());
+				}
+				continue;
+
+			} else {
+				//普通节点初始剩余未处理岗位数
+				instanceAc.setLeftPost(postList.size());
+			}
+			for(PostDto postDto : postList) {
+				InstancePost post = generatePosts(postDto, instanceAc.getId(), ++postIndex);
+				posts.add(post);
+
+				//5、保存岗位对应的group
+				long groupIndex = 0;
+				int skipPerson = 0;
+				List<UserDto> userList = postDto.getUsers();
+				for(UserDto user : userList) {
+
+					//此处空的人应该在发起流程时处理。
+					if(StringUtils.isEmpty(user.getId())) {
+						skipPerson++;
+						continue;
+					}
+					String[] ids = user.getId().split(",");
+					String[] names = user.getName().split(",");
+
+					post.setLeftPerson(post.getLeftPerson() + ids.length);
+
+					for(int i=0; i<ids.length; i++) {
+						InstanceGroup group = generateGroup(ids[i], names[i], post, instanceAc, ++groupIndex);
+						groups.add(group);
+
+						//为发起人初始化任务(只初始化数据，状态在启动时设置)
+						if(acIndex == 1 && postIndex == 1 && groupIndex == 1) {
+
+							startTask = generateStartTask(group, instanceDto);	//发起节点默认只有一个人
+						}
+					}
+				}
+
+				if(CollectionUtils.isEmpty(userList)) {
+					continue;
+				} else {
+					post.setLeftPerson(post.getLeftPerson() - skipPerson);	//初始剩余未处理人数据
+				}
+			}
+		}
+		/* Map<String,Object> paramMap = new HashMap<String,Object>();
+		paramMap.put("flId",flId);
+		paramMap.put("delflag",false);
+	    List<Step> flStepList = stepService.queryList(paramMap);
+		Map<String,String> stepNameMap = new HashMap<String,String>();
+		for (Step step : flStepList) {
+			String sourceId = step.getSourceId();
+			sourceId = sourceId==null?"":sourceId;
+			String targetId = step.getTargetId();
+			String stepName = step.getName();
+			stepNameMap.put(sourceId+"_"+targetId,stepName);
+		}*/
+		//设置环节的上下环节
+		setPreAndNextAc(acList, acDtoList, acMap);
+
+		//保存实例连线
+		stepList = generateInstanceStep(acList);
+
+		setAutoPass(groups, instance);
+
+		//7、保存流程可阅人
+		List<InstanceAccessible> accessibleList = generateAccessibleData(instanceDto,instance);
+
+		//8、生成表单数据列表
+		List<PcForm> pcForms = new ArrayList<PcForm>();
+		List<MobileForm> mobileForms = new ArrayList<MobileForm>();
+		generateFormData(instance,instanceDto,pcForms,mobileForms);
+
+		//9、生成UploadAttachment列表
+		List<UploadAttachment> attachmentList = new ArrayList<UploadAttachment>(); 
+		generateUploadAttachmentData(instance, instanceDto, attachmentList);
+
+		//8、保存数据
+		// TODO zhangdaoqiang 1225
+		//	    instanceDao.save(instance);
+		//	    Instance newer = instanceDao.getObjectById(instance.getId());
+		//	    newer.setName("[" + newer.getSerialNo() + "]" + newer.getName());
+		//	    
+		//	    newer.setStartUserName(StringUtil.convertSingleQuotes(newer.getStartUserName()));
+		//	    newer.setCreatePersonName(StringUtil.convertSingleQuotes(newer.getCreatePersonName()));
+		//	    newer.setUpdatePersonName(StringUtil.convertSingleQuotes(newer.getUpdatePersonName()));
+		//	    
+		//	    instanceDao.update(newer);
+		log.info("===1.2 流程实例保存成功能： instanceId=" + instance.getId());
+		instanceVariableService.saveBatch(varList);
+		log.info("===1.3 流程变量保存成功：size=" + varList.size());
+		instanceAcService.saveBatch(acList);
+		log.info("===1.4 流程环节保存成功：size" + acList.size());
+		instancePostDao.insertList(posts);
+		log.info("===1.5 流程岗位保存成功：size=" + posts.size());
+		instanceGroupService.saveBatch(groups);
+		log.info("===1.6 流程审处理人保存成功： size=" + groups.size());
+		instanceAccessibleService.saveBatch(accessibleList);
+		log.info("===1.7 流程可阅人保存成功： size=" + accessibleList.size());	  
+		instanceCsService.saveBatch(csList);
+		log.info("===1.8 流程抄送人保存成功： size=" + csList.size());	  
+		instanceStepService.saveBatch(stepList);
+		log.info("===1.9 环节连线保存成功： size=" + stepList.size());	  
+		pcFormService.saveBatch(pcForms);
+		log.info("===1.10 pc表单数据保存成功： size=" + pcForms.size());	 
+		mobileFormService.saveBatch(mobileForms);
+		log.info("===1.11 mobile表单数据保存成功： size=" + mobileForms.size());	
+
+		if(attachmentList!=null && attachmentList.size()>0){
+			log.info("================ uploadAttachmentService.saveBatch() attachmentList="+JacksonUtils.toJson(attachmentList));
+			uploadAttachmentService.saveBatch(attachmentList);
+		}
+
+		//发起人为空，场景：发起人的主岗为空
+		if(startTask == null) {
+			throw new FlowException("流程【" + instanceDto.getName() + "】发起人为空！");
+		}	
+		//	    } else {
+		//		    instanceTaskService.save(startTask);
+		//		    log.info("===1.7 流程任务保存成功  taskId=" + startTask.getId());
+		//		    log.info("===1.8、实例数据保存成功：instanceId = " + instanceDto.getId());
+		//	    }
+		//	    throw new FlowException("test");
+
+		//启动流程
+		start(instanceDto);
+		log.info("===2、流程启动成功：instanceId = " + instanceDto.getId());
+		return instanceDto.getId();
+	}
+
+	private void deleteDuplicate(List<PostDto> postList) {
+		if(CollectionUtils.isEmpty(postList)) {
+			return ;
+		}
+		Map<String, PostDto> filter = new HashMap<String, PostDto>();
+		Iterator<PostDto> iter = postList.iterator();
+		while(iter.hasNext()) {
+			PostDto next = iter.next();
+			String postId = next.getId();
+			if(filter.containsKey(postId)) {
+				PostDto postDto = filter.get(postId);
+				postDto.getUsers().addAll(next.getUsers());
+				iter.remove();
+			} else {
+				filter.put(postId, next);
+			}
+		}
+	}
+
+	@Override
+	@Transactional(readOnly = false, propagation = Propagation.REQUIRED)
+	public String saveAllInstanceDataForMobile(InstanceDto instanceDto) throws Exception {
+
+		log.info("--------------流程实例初始化数据saveAllInstanceData------------------" + JacksonUtils.toJson(instanceDto));
+
+		//1、保存流程实例
+		Instance instance = generateInstanceData(instanceDto);
+
+		//2、保存流程变量
+		List<InstanceVariable> varList = generateInstanceVariable(instanceDto, instance);
+
+		List<InstanceAc> acList = new ArrayList<InstanceAc>();
+		Map<String, InstanceAc> acMap = new HashMap<String, InstanceAc>();	//key=nodeid,一次保存中各节点的nodeid不能重复
+
+		List<InstancePost> posts = new ArrayList<InstancePost>();
+		List<InstanceGroup> groups = new ArrayList<InstanceGroup>();
+		List<InstanceCs> csList = new ArrayList<InstanceCs>();
+		List<InstanceStep> stepList = new ArrayList<InstanceStep>();
+		InstanceTask startTask = null;
+
+		//3、保存AC实例
+		long acIndex = 0;
+		List<AcDto> acDtoList = instanceDto.getAcDtoList();
+		for(AcDto acDto : acDtoList) {
+			InstanceAc instanceAc = generateInstanceAc(instanceDto, acDto, ++acIndex);
+			acList.add(instanceAc);
+			acMap.put(acDto.getNodeId(), instanceAc);
+
+			//6、保存流程抄送人
+			csList.addAll(generateCsData(instance, instanceAc, acDto));
+
+			//4、保存AC对应的岗位
+			long postIndex = 0;
+			List<PostDto> postList = JacksonUtils.fromJson(acDto.getPosts(), ArrayList.class, PostDto.class);
+			if(CollectionUtils.isEmpty(postList)) {
+				//join节点时记录已到达分支数，判断是否往下走
+				if(FlAcType.JOIN.getAcType().equals(acDto.getAcType())) {
+					instanceAc.setLeftPost(acDto.getPreviousAcDtos().size());
+				}
+				continue;
+
+			} else {
+				//普通节点初始剩余未处理岗位数
+				instanceAc.setLeftPost(postList.size());
+			}
+			for(PostDto postDto : postList) {
+				InstancePost post = generatePosts(postDto, instanceAc.getId(), ++postIndex);
+				posts.add(post);
+
+				//5、保存岗位对应的group
+				long groupIndex = 0;
+				List<UserDto> userList = postDto.getUsers();
+				if(CollectionUtils.isEmpty(userList)) {
+					continue;
+				} else {
+					post.setLeftPerson(userList.size());	//初始剩余未处理人数据
+				}
+				for(UserDto user : userList) {
+
+					if(user.getId() == null) {
+						continue;
+					}
+					String[] ids = user.getId().split(",");
+					String[] names = user.getName().split(",");
+
+					post.setLeftPerson(ids.length);
+
+					for(int i=0; i<ids.length; i++) {
+						InstanceGroup group = generateGroup(ids[i], names[i], post, instanceAc, ++groupIndex);
+						groups.add(group);
+
+						//为发起人初始化任务(只初始化数据，状态在启动时设置)
+						if(acIndex == 1 && postIndex == 1 && groupIndex == 1) {
+
+							startTask = generateStartTask(group, instanceDto);	//发起节点默认只有一个人
+						}
+					}
+				}
+			}
+		}
+
+		//设置环节的上下环节
+		setPreAndNextAc(acList, acDtoList, acMap);
+
+		//保存实例连线
+		stepList = generateInstanceStep(acList);
+
+		setAutoPass(groups, instance);
+
+		//7、保存流程可阅人
+		List<InstanceAccessible> accessibleList = generateAccessibleData(instanceDto,instance);
+
+		//8、生成表单数据列表
+		List<PcForm> pcForms = new ArrayList<PcForm>();
+		List<MobileForm> mobileForms = new ArrayList<MobileForm>();
+		generateFormData(instance,instanceDto,pcForms,mobileForms);
+
+		//9、生成UploadAttachment列表
+		List<UploadAttachment> attachmentList = new ArrayList<UploadAttachment>(); 
+		generateUploadAttachmentData(instance, instanceDto, attachmentList);
+
+		//8、保存数据
+		// TODO zhangdaoqiang 1225
+		//		instanceDao.save(instance);
+		log.info("===1.2 流程实例保存成功能： instanceId=" + instance.getId());
+		instanceVariableService.saveBatch(varList);
+		log.info("===1.3 流程变量保存成功：size=" + varList.size());
+		instanceAcService.saveBatch(acList);
+		log.info("===1.4 流程环节保存成功：size" + acList.size());
+		instancePostDao.insertList(posts);
+		log.info("===1.5 流程岗位保存成功：size=" + posts.size());
+		instanceGroupService.saveBatch(groups);
+		log.info("===1.6 流程审处理人保存成功： size=" + groups.size());
+		instanceAccessibleService.saveBatch(accessibleList);
+		log.info("===1.7 流程可阅人保存成功： size=" + accessibleList.size());	  
+		instanceCsService.saveBatch(csList);
+		log.info("===1.8 流程抄送人保存成功： size=" + csList.size());	  
+		instanceStepService.saveBatch(stepList);
+		log.info("===1.9 环节连线保存成功： size=" + stepList.size());	  
+		pcFormService.saveBatch(pcForms);
+		log.info("===1.10 pc表单数据保存成功： size=" + pcForms.size());	 
+		mobileFormService.saveBatch(mobileForms);
+		log.info("===1.11 mobile表单数据保存成功： size=" + mobileForms.size());	
+
+		if(attachmentList!=null && attachmentList.size()>0){
+			log.info("================ uploadAttachmentService.saveBatch() attachmentList="+JacksonUtils.toJson(attachmentList));
+			uploadAttachmentService.saveBatch(attachmentList);
+		}
+
+		//发起人为空，场景：发起人的主岗为空
+		if(startTask == null) {
+			throw new FlowException("流程【" + instanceDto.getName() + "】发起人为空！");
+		}	
+		//	    } else {
+		//		    instanceTaskService.save(startTask);
+		//		    log.info("===1.7 流程任务保存成功  taskId=" + startTask.getId());
+		//		    log.info("===1.8、实例数据保存成功：instanceId = " + instanceDto.getId());
+		//	    }
+		//	    throw new FlowException("test");
+
+		//启动流程
+		start(instanceDto);
+		log.info("===2、流程启动成功：instanceId = " + instanceDto.getId());
+		return instanceDto.getId();
+	}
+
+	private void generateUploadAttachmentData(Instance instance, InstanceDto instanceDto,
+			List<UploadAttachment> attachmentList) throws Exception {
+		log.info("================ generateUploadAttachmentData()  UploadAttachmentDtoList="+JacksonUtils.toJson(instanceDto.getUploadAttachmentDtoList()));
+		List<UploadAttachmentDto> attachmentDtoList = instanceDto.getUploadAttachmentDtoList();
+		if (attachmentDtoList != null) {
+			for (UploadAttachmentDto uploadAttachmentDto : attachmentDtoList) {
+				UploadAttachment uploadAttachment = new UploadAttachment();
+				// BeanUtils.copyProperties(uploadAttachment,
+				// uploadAttachmentDto);//old-20170718
+				BeanUtils.copyProperties(uploadAttachmentDto, uploadAttachment);// new-20170718
+				uploadAttachment.setId(IDGenerator.getUUID());
+				uploadAttachment.setDelflag(false);
+				uploadAttachment.setInstanceId(instance.getId());
+				uploadAttachment.setReadType("1");
+				attachmentList.add(uploadAttachment);
+			}
+		}
+	}
+
+	/**
+	 * 设置前后节点
+	 * @param acList
+	 * @param acDtoList
+	 * @param acMap：<nodeid, Ac>:一次保存中各节点的nodeid不能重复
+	 */
+	private void setPreAndNextAc(List<InstanceAc> acList, List<AcDto> acDtoList, Map<String, InstanceAc> acMap) {
+		for(int i=0; i<acList.size(); i++) {
+			AcDto acDto = acDtoList.get(i);
+			List<String> previousAcNodeIds = acDto.getPreviousAcDtos();
+			List<String> nextNodeNodeIds = acDto.getNextNodeDtos();
+
+			log.info("流程发起时前后环节关系：");
+			log.info("当前环节：[" + acDto.getNodeId() + ", " + acDto.getName() + "], 上一环节：[" + previousAcNodeIds + "], 下一环节：["+ nextNodeNodeIds  + "]");
+
+			InstanceAc ac = acList.get(i);
+			ac.setPreAcIds(getAcIds(previousAcNodeIds, acMap));
+			ac.setNextAcIds(getAcIds(nextNodeNodeIds, acMap));
+		}
+	}
+
+	private String getAcIds(List<String> acNodeIds, Map<String, InstanceAc> acMap) {
+		if(CollectionUtils.isEmpty(acNodeIds)) {
+			return "";
+		}
+
+		//排重
+		LinkedHashSet<String> acIdSet = new LinkedHashSet<String>(acNodeIds);
+
+		StringBuilder acIds = new StringBuilder();
+		for(String nodeId : acIdSet) {
+			String acId = acMap.get(nodeId).getId();
+			acIds.append(acId).append(",");
+		}
+		acIds.deleteCharAt(acIds.length() - 1);
+		return acIds.toString();
+	}
+
+	private List<InstanceStep> generateInstanceStep(List<InstanceAc> acList) {
+		Map<String, InstanceAc> acMap = new HashMap<String, InstanceAc>();
+		for(InstanceAc ac : acList) {
+			acMap.put(ac.getId(), ac);
+		}
+		List<InstanceStep> stepList = new ArrayList<InstanceStep>();
+		for(InstanceAc ac: acList) {
+			String nextAcIds = ac.getNextAcIds();
+			if(!StringUtils.isEmpty(nextAcIds)) {
+				String[] nextAcIdArray = nextAcIds.split(",");
+				for(String acId : nextAcIdArray) {
+					InstanceStep step = new InstanceStep();
+					step.setId(IDGenerator.getUUID());
+					step.setName(ac.getName() + "->" + acMap.get(acId).getName());
+					step.setFiId(ac.getFiId());
+					step.setSourceId(ac.getId());
+					step.setTargetId(acId);
+					stepList.add(step);
+				}
+			}
+		}
+		return stepList;
+	}
+
+	private List<InstanceStep> generateInstanceStep(List<InstanceAc> acList,Map stepMap) {
+		Map<String, InstanceAc> acMap = new HashMap<String, InstanceAc>();
+		for(InstanceAc ac : acList) {
+			acMap.put(ac.getId(), ac);
+		}
+		List<InstanceStep> stepList = new ArrayList<InstanceStep>();
+		for(InstanceAc ac: acList) {
+			String nextAcIds = ac.getNextAcIds();
+			if(!StringUtils.isEmpty(nextAcIds)) {
+				String[] nextAcIdArray = nextAcIds.split(",");
+				for(String acId : nextAcIdArray) {
+					InstanceStep step = new InstanceStep();
+					step.setId(IDGenerator.getUUID());
+					step.setName(ac.getName() + "->" + acMap.get(acId).getName());
+					step.setFiId(ac.getFiId());
+					step.setSourceId(ac.getId());
+					step.setTargetId(acId);
+					stepList.add(step);
+				}
+			}
+		}
+		return stepList;
+	}
+
+	/**
+	 * 流程启动时根据模板配置，设置审批人是否自动通过标志
+	 * 
+	 * @param groups
+	 * @param instance
+	 */
+	private void setAutoPass(List<InstanceGroup> groups, Instance instance) {
+		String approvalRepeat = instance.getApprovalRepeat();
+		if(ApproverRepeatHandleType.NOT_SKIP.getValue().equals(approvalRepeat)) {
+			return ;
+		}
+		Map<String, List<InstanceGroup>> filterMap = new HashMap<String, List<InstanceGroup>>();
+		for(InstanceGroup group : groups) {
+			String participantId = group.getParticipantId();
+			List<InstanceGroup> sameApprovers = filterMap.get(participantId);
+			if(sameApprovers == null) {
+				sameApprovers = new ArrayList<InstanceGroup>();
+				filterMap.put(participantId, sameApprovers);
+			}
+			sameApprovers.add(group);
+		}
+
+		for(List<InstanceGroup> sameApprovers : filterMap.values()) {
+			if(sameApprovers != null && sameApprovers.size() > 1) {
+				if(ApproverRepeatHandleType.FIRST.getValue().equals(approvalRepeat)) {
+					for(int i=1; i<sameApprovers.size(); i++) {
+						sameApprovers.get(i).setAutoPass(AutoPassType.AUTO_PASS.getValue());
+						sameApprovers.get(0).setAutoPass(AutoPassType.NOT_PASS.getValue());
+					}
+				} else if(ApproverRepeatHandleType.LAST.getValue().equals(approvalRepeat)) {
+					for(int i=0; i<sameApprovers.size() - 1; i++) {
+						sameApprovers.get(i).setAutoPass(AutoPassType.AUTO_PASS.getValue());
+						sameApprovers.get(sameApprovers.size() - 1).setAutoPass(AutoPassType.NOT_PASS.getValue());
+					}
+				}
+			}
+		}
+	}
+
+	private InstanceTask generateStartTask(InstanceGroup group, InstanceDto instanceDto) {
+		InstanceTask startTask = new InstanceTask();
+		startTask.setId(IDGenerator.getUUID());
+		startTask.setGroupId(group.getId());
+		startTask.setType(TaskType.STARTER.getValue());
+		startTask.setActivateDate(new Timestamp(System.currentTimeMillis()));
+		startTask.setOperationCode("start");
+		startTask.setOperationName("发起流程");
+		startTask.setUserNote(instanceDto.getUserNote());
+		startTask.setStatus(TaskStatus.NOT_RUNNING.getValue());
+		startTask.setApproverId(instanceDto.getStartUserId());
+		return startTask;
+	}
+
+	/**
+	 * 流程实例数据设置为启动状态：启动流程实例（已保存实例数据）
+	 * 1、开始节点状态置为已完成
+	 * 2、查询下一节点数据
+	 * 3、将下一节点数据置为运行中
+	 * 
+	 * @throws Exception 
+	 */
+	private boolean start(InstanceDto instanceDto) throws Exception {
+		String instanceId = instanceDto.getId();
+		List<ApprovalList> acList = this.queryApprovalList(instanceId, null);
+		Instance instance = instanceDao.selectByPrimaryKey(instanceId);
+		InstanceUnit instanceUnit = translate(instance, acList);
+
+		ApprovalSubmitDto approvalDto = new ApprovalSubmitDto();
+		approvalDto.setOperationName("发起流程");
+		approvalDto.setOperationType(OperationType.START.getCode());
+		approvalDto.setUserNote(instanceDto.getUserNote());
+		approvalDto.setInstanceIdBeforeReturn(instanceDto.getInstanceIdBeforeReturn());
+		Operation startOperation = new OperationFactory().newOperation(OperationType.START.getCode(), this);
+		startOperation.action(instanceUnit, approvalDto);
+
+		return true;
+	}
+
+	/**
+	 * 1、将扁平的结构转换成多层结构
+	 * 
+	 * @param instance
+	 * @param approvalList
+	 * @return
+	 */
+	private InstanceUnit translate(Instance instance, List<ApprovalList> approvalList) {
+		InstanceUnit instanceUnit = new InstanceUnit();
+
+		//1、流程实例转换
+		fillInstanceUnit(instanceUnit, instance, approvalList);
+
+		//2、环节转换
+		Map<String, ACUnit> acMap = fillACUnit(instanceUnit, approvalList);
+
+		//3、岗位转换
+		Map<String, PostUnit> postMap = fillPost(acMap, approvalList);
+
+		//4、人员（组）转换
+		fillApprovers(postMap, approvalList);
+
+		return instanceUnit;
+	}
+
+	/**
+	 * 1、将扁平的结构转换成多层结构
+	 * 
+	 * @param instanceUnit
+	 * @param approvalList
+	 * @return
+	 */
+	public InstanceUnit translate(InstanceUnit instanceUnit, List<ApprovalList> approvalList) {
+		InstanceUnit newInstanceUnit = new InstanceUnit();
+		newInstanceUnit.setId(instanceUnit.getId());
+		newInstanceUnit.setFlId(instanceUnit.getFlId());
+		newInstanceUnit.setFlCode(instanceUnit.getFlCode());
+
+		//2、环节转换
+		Map<String, ACUnit> acMap = fillACUnit(newInstanceUnit, approvalList);
+
+		//3、岗位转换
+		Map<String, PostUnit> postMap = fillPost(acMap, approvalList);
+
+		//4、人员（组）转换
+		fillApprovers(postMap, approvalList);
+
+		return newInstanceUnit;
+	}
+
+	private void fillApprovers(Map<String, PostUnit> postMap, List<ApprovalList> approvalList) {
+		String preGroupKey = null;
+		for(ApprovalList row : approvalList) {
+			String groupKey = row.getGroupKey();
+			if(StringUtils.isEmpty(groupKey)) {
+				continue;
+			}
+			if(!groupKey.equals(preGroupKey)) {
+				preGroupKey = groupKey;
+				ApproverUnit approver = new ApproverUnit();
+				approver.setId(groupKey);
+				approver.setAcPostId(row.getAcPostId());
+				approver.setApproverId(row.getApproverId());
+				approver.setApproverName(row.getApproverName());
+				approver.setApproverSeq(row.getApproverSeq());
+				approver.setAutoPass(row.getAutoPass());
+
+				approver.setStatus(row.getApproverStatus());
+
+				//代理相关
+				approver.setProxy(row.getProxy());
+				approver.setProxyed(row.getProxyed());
+				approver.setProxyType(row.getProxyType());
+
+				//页面调整环节时使用！
+				approver.setDbAction(row.getChangeType());
+
+				TaskUnit task = new TaskUnit();
+				task.setTaskId(row.getTaskId());
+				task.setTaskType(row.getTaskType());
+				task.setTaskStatus(row.getTaskStatus());
+				task.setStartTime(row.getTaskStartTime());
+				task.setEndTime(row.getTaskEndTime());
+				task.setTaskResult(row.getTaskResult());
+				task.setTaskResultName(row.getTaskResultName());
+				task.setTaskComments(row.getTaskComments());
+				task.setFromId(row.getFromId());
+				task.setFromName(row.getFromName());
+				task.setMsgId(row.getMsgId());
+				approver.setTask(task);
+
+				PostUnit currentPost = postMap.get(row.getAcPostId());
+				approver.setOwner(currentPost);
+
+				List<ApproverUnit> approvers = currentPost.getApprovers();
+				if(approvers == null) {
+					//					approvers = new ArrayList<ApproverUnit>();
+					approvers = new CopyOnWriteArrayList<ApproverUnit>();
+					currentPost.setApprovers(approvers);
+				}
+				approvers.add(approver);
+			}
+		}
+	}
+
+	private Map<String, PostUnit> fillPost(Map<String, ACUnit> acMap, List<ApprovalList> approvalList) {
+		Map<String, PostUnit> postMap = new HashMap<String, PostUnit>();
+		String preAcPostId = null;
+		for(int i=0; i<approvalList.size(); i++) {
+			ApprovalList row = approvalList.get(i);
+			String acPostId = row.getAcPostId();
+			if(StringUtils.isEmpty(acPostId)) {
+				continue;
+			}
+
+			//算同岗位的人数
+			log.info("fillPost内：acPostId=" + acPostId + ", preAcPostId" + preAcPostId);
+			if(acPostId.equals(preAcPostId)) {
+				ApprovalList pre = approvalList.get(i - 1);
+				row.setAcPostId(pre.getAcPostId());
+			} else {
+				preAcPostId = row.getAcPostId();
+				PostUnit postUnit = new PostUnit();
+				postUnit.setPostId(row.getPostId());
+				postUnit.setPostName(row.getPostName());
+				postUnit.setPostStatus(row.getPostStatus());
+				postUnit.setPostSeq(row.getPostSeq());
+				postUnit.setStartTime(row.getPostStartTime());
+				postUnit.setEndTime(row.getPostEndTime());
+				postUnit.setAcId(row.getAcId());
+
+				if(row.getChangeType() == 1) {
+					row.setAcPostId(IDGenerator.getUUID());
+				}
+
+				postUnit.setId(row.getAcPostId());
+				postUnit.setLeftPerson(row.getLeftPerson());
+
+				//				if(row.getChangeType() == 1) {
+				postUnit.setDbAction(row.getChangeType());
+				//				}
+				log.info("fillPost内：postId=" + postUnit.getId() + ", dbaction=" + postUnit.getDbAction());
+
+				ACUnit currentAc = acMap.get(row.getAcId());
+				if(currentAc != null) {
+					postUnit.setOwner(currentAc);
+
+					List<PostUnit> posts = currentAc.getPosts();
+					if(posts == null) {
+						//					posts = new ArrayList<PostUnit>();	//在遍历过程中，有可能出现删除元素的情况，如跳过审批人等 
+						posts = new CopyOnWriteArrayList<PostUnit>();
+						currentAc.setPosts(posts);
+					}
+					posts.add(postUnit);
+				}
+				postMap.put(postUnit.getId(), postUnit);
+			}
+		}
+		return postMap;
+	}
+
+	private Map<String, ACUnit> fillACUnit(InstanceUnit instanceUnit, List<ApprovalList> approvalList) {
+		Map<String, ACUnit> acMap = new HashMap<String, ACUnit>();
+		List<ACUnit> acList = new ArrayList<ACUnit>();
+		String preAcId = null;
+		int preChangeType = 0;
+		for(ApprovalList row : approvalList) {
+			if(!row.getAcId().equals(preAcId)
+					//					|| row.getChangeType() != preChangeType) {	//#15486,修改当前审批人时！TODO
+					&& row.getChangeType() != 2) {
+				preAcId = row.getAcId();
+				preChangeType = row.getChangeType();
+				ACUnit acUnit = new ACUnit();
+				acUnit.setAcId(row.getAcId());
+				acUnit.setAcCode(row.getAcCode());
+				acUnit.setAcName(row.getAcName());
+				acUnit.setAcStatus(row.getAcStatus());
+				acUnit.setAcType(row.getAcType());
+				acUnit.setAcStartTime(row.getAcStartTime());
+				acUnit.setAcEndTime(row.getAcEndTime());
+				acUnit.setApprovalTypeId(row.getApprovalTypeId());
+				acUnit.setApprovalType(row.getApprovalType());
+				acUnit.setAddLabel(row.isAddLabel());
+				acUnit.setMultiPerson(row.getMultiPerson());
+				acUnit.setMultiPost(row.getMultiPost());
+				acUnit.setAcPx(row.getAcPx());
+				acUnit.setSource(row.getSource());
+				acUnit.setLeftPost(row.getLeftPost());
+				acUnit.setCcPerson(getCCPerson(row));
+				acUnit.setPreAcIds(row.getPreAcIds());
+				acUnit.setNextAcIds(row.getNextAcIds());
+				log.info("acid=" + acUnit.getAcId() + ", 下一环节关联ID=" + acUnit.getNextAcIds());
+				acUnit.setFromReturn(row.getFromReturn());
+				acUnit.setApproverNull(row.getApproverNull());
+				acUnit.setPostNull(row.getPostNull());
+
+				//新增环节
+				if(row.getChangeType() == 1) {
+					acUnit.setDbAction(1);
+					acUnit.setLeftPost(acUnit.getLeftPost() + 1);
+				}
+				if(row.getChangeType() == 2) {
+					acUnit.setDbAction(2);
+				}
+				//修改环节
+				if(row.getChangeType() == 3) {
+					acUnit.setChange(true);
+				}
+
+				acUnit.setOwner(instanceUnit);
+
+				acList.add(acUnit);
+				acMap.put(acUnit.getAcId(), acUnit);
+			}
+		}
+
+		setPreAndNextAc(acList, acMap);
+
+		instanceUnit.setAcList(acList);
+		return acMap;
+	}
+
+	private void setPreAndNextAc(List<ACUnit> acList, Map<String, ACUnit> acMap) {
+		for(int i=0; i<acList.size(); i++) {
+			ACUnit acUnit = acList.get(i);
+			String preAcIds = acUnit.getPreAcIds();
+			if(!StringUtils.isEmpty(preAcIds)) {
+				List<ACUnit> preAcs = new ArrayList<ACUnit>();
+				String[] preAcIdArray = preAcIds.split(",");
+				for(String preAcId : preAcIdArray) {
+					ACUnit pre = acMap.get(preAcId);
+					if(pre != null) {
+						preAcs.add(pre);
+					}
+				}
+				acUnit.setPreAcs(preAcs);
+			}
+
+			String nextAcIds = acUnit.getNextAcIds();
+			if(!StringUtils.isEmpty(nextAcIds)) {
+				List<ACUnit> nextAcs = new ArrayList<ACUnit>();
+				String[] nextAcIdArray = nextAcIds.split(",");
+				for(String nextAcId : nextAcIdArray) {
+					ACUnit next = acMap.get(nextAcId);
+					if(next != null) {
+						nextAcs.add(next);
+					}
+				}
+				acUnit.setNextAcs(nextAcs);
+			}
+		}
+	}
+
+	private List<UserDto> getCCPerson(ApprovalList row) {
+		String ccIds = row.getCcIds();
+		String ccNames = row.getCcNames();
+		if(!StringUtils.isEmpty(ccIds)) {
+			List<UserDto> ccPersons = new ArrayList<UserDto>();
+			String[] idArray = ccIds.split(",");
+			String[] nameArray = ccNames.split(",");
+			for(int i=0; i<idArray.length; i++) {
+				ccPersons.add(new UserDto(idArray[i], nameArray[i]));
+			}
+			return ccPersons;
+		}
+		return null;
+	}
+
+	/**
+	 * @param approvalList 
+	 * @param instanceUnit
+	 * @param instance
+	 * @throws
+	 * @throws  
+	 */
+	private void fillInstanceUnit(InstanceUnit instanceUnit, Instance instance, List<ApprovalList> approvalList){
+		//		try {
+		//			// TODO 有些字段不统一，先统一copy一份
+		//			BeanUtils.copyProperties(instanceUnit, instance);
+		//		} catch (IllegalAccessException | InvocationTargetException e) {
+		//			throw new RuntimeException(e);
+		//		}
+		instanceUnit.setId(instance.getId());
+		instanceUnit.setCode(instance.getCode());
+		instanceUnit.setName(instance.getName());
+		instanceUnit.setStatus(instance.getStatus());
+		instanceUnit.setAppId(instance.getAppId());
+		instanceUnit.setFlId(instance.getFlId());
+		instanceUnit.setBusinessObjectId(instance.getBusinessObjectId());
+		instanceUnit.setBusinessId(instance.getBusinessId());
+		instanceUnit.setRetract(instance.getRetract());
+		instanceUnit.setPostMultiPerson(instance.getPostMultiPerson());
+		instanceUnit.setTendId(instance.getTendId());
+		instanceUnit.setBusinessObjectCode(instance.getBusinessObjectCode());
+		instanceUnit.setCustomFormId(instance.getCustomFormId());
+		instanceUnit.setCustomFormURL(approvalList.get(0).getPcUrl());
+
+		instanceUnit.setApproverNullStrategy(instance.getApprovalPersonIsNull());
+		instanceUnit.setApproverRepaet(instance.getApprovalRepeat());
+		instanceUnit.setPostNull(instance.getPostIsNull());
+		instanceUnit.setBusinessCorpId(instance.getFlowBusinessCompanyId());
+		instanceUnit.setBusinessDeptId(instance.getFlowBusinessDeptId());
+		instanceUnit.setBusinessProjectId(instance.getFlowBusinessProjectId());
+		instanceUnit.setBusinessProjectStage(instance.getFlowBusinessProjectBranchId());
+		instanceUnit.setDoArchive(instance.getDoArchive());
+		instanceUnit.setStartDate(instance.getStartDate());
+		instanceUnit.setStartUserName(instance.getStartUserName());
+
+		instanceUnit.setFlCode(approvalList.get(0).getFlCode());
+	}
+
+	private InstanceGroup generateGroup(String userId, String userName, InstancePost post, InstanceAc instanceAc, long groupIndex) {
+		InstanceGroup instanceGroup = new InstanceGroup();
+		instanceGroup.setAcId(instanceAc.getId());
+		instanceGroup.setAcPostId(post.getId());
+		//    	instanceGroup.setParseType(postDto.getParseType()); TODO zhangdaoqiang	
+		instanceGroup.setPostId(post.getPostId());
+		instanceGroup.setPostName(post.getPostName());
+		instanceGroup.setParticipantId(userId);
+		instanceGroup.setParticipantName(userName);
+		instanceGroup.setPx(groupIndex);
+		instanceGroup.setSource("1");//1-模板; 2-加签
+		//    	instanceGroup.setSourceId(flId);//flId
+		instanceGroup.setDisable(false);
+		instanceGroup.setId(IDGenerator.getUUID());
+		instanceGroup.setStatus(ApproverStatus.NOT_RUNNING.getValue());
+		return instanceGroup;
+	}
+
+	private InstanceAc generateInstanceAc(InstanceDto instanceDto, AcDto acDto, long acIndex) throws Exception {
+		String flId = instanceDto.getFlId();
+		String instanceId = instanceDto.getId();
+		InstanceAc instanceAc = new InstanceAc();
+		//BeanUtils.copyProperties(instanceAc, acDto);//将ac的属性copy到instanceAc上//old-20170718
+		BeanUtils.copyProperties(acDto, instanceAc );//new 20170718
+		//ac_type、approve_type_id、x、y、width、height、is_add_label、approve_strategy、post_multiperson、
+		//source、source_id需要设置，status默认是1-未运行；
+		instanceAc.setSource("1");//1：模板，2加签 ，3 前置代理  4后置代理
+		instanceAc.setSourceId(flId);
+		instanceAc.setFiId(instanceId);
+		instanceAc.setId(IDGenerator.getUUID());
+		instanceAc.setCode(acDto.getCode()+"-"+DateUtils.getDateSSSText());
+		instanceAc.setName(acDto.getName());
+		instanceAc.setPx(acIndex);
+		instanceAc.setStatus(ACStatus.NOT_RUNNING.getValue());
+
+		System.out.println("\n>>> save(instanceAc) is done. instanceAc="+JacksonUtils.toJson(instanceAc));
+		return instanceAc;
+	}
+
+	private InstancePost generatePosts(PostDto postDto, String acId, long postIndex) {
+		InstancePost post = new InstancePost(); 
+		post.setId(IDGenerator.getUUID());
+		post.setPostId(postDto.getId());
+		post.setPostName(postDto.getName());
+		post.setActivateDate(new Timestamp(System.currentTimeMillis()));
+		post.setStatus(PostStatus.NOT_RUNNING.getValue());
+		post.setPx(postIndex);
+		post.setAcId(acId);
+		return post;
+	}
+
+	/**
+	 * 生成表单数据列表
+	 * 
+	 * @param instanceDto
+	 * @param pcForms
+	 * @param mobileForms
+	 * @throws Exception
+	 */
+	private void generateFormData(Instance instance, InstanceDto instanceDto, List<PcForm> pcForms, List<MobileForm> mobileForms)
+			throws Exception {
+		List<PcFormDto> pcFormDtoList = instanceDto.getPcFormDtoList();
+		for (PcFormDto pcFormDto : pcFormDtoList) {
+			PcForm pcForm = new PcForm();
+			//BeanUtils.copyProperties(pcForm, pcFormDto);//old-20170718
+			BeanUtils.copyProperties(pcFormDto, pcForm);
+			pcForm.setId(IDGenerator.getUUID());
+			pcForm.setInstanceId(instance.getId());
+			pcForm.setFlId(instance.getFlId());
+			pcForm.setDelflag(false);
+			pcForm.setBusinessObjectId(instance.getBusinessObjectId());
+			pcForm.setBusinessId(instance.getBusinessId());
+			pcForms.add(pcForm);
+		}
+		List<MobileFormDto> mobileFormDtoList = instanceDto.getMobileFormDtoList(); 
+		int sort = 1000;
+		for (MobileFormDto mobileFormDto : mobileFormDtoList) {
+			MobileForm mobileForm = new MobileForm();
+			//BeanUtils.copyProperties(mobileForm, mobileFormDto);//old-20170718
+			BeanUtils.copyProperties(mobileFormDto, mobileForm);
+			mobileForm.setId(IDGenerator.getUUID());
+			mobileForm.setInstanceId(instance.getId());
+			mobileForm.setFlId(instance.getFlId());
+			mobileForm.setBusinessObjectId(instance.getBusinessObjectId());
+			mobileForm.setBusinessId(instance.getBusinessId());
+			mobileForm.setSort(sort++);
+			mobileForm.setDelflag(false);
+			//针对考勤移动端处理单引号问题
+
+			mobileForms.add(mobileForm);
+		}
+	}
+
+	/*	public static void main(String[] args) {
+		String test = "<a title=\"下载\" href=\"javascript:void(0);\" onclick=\"downLoad(this,3224,' qu ')\">数据库表字段修改依据.xlsx</a>";
+		System.out.println(test.replace("'", "\\'"));
+	}*/
+
+	/**
+	 * 查询模板数据,赋值给Instance并保存Instance数据到数据库中, 同时保存实例的相关业务变量 
+	 * @param instanceDto
+	 * @return 实例ID
+	 * @throws Exception
+	 */
+	private Instance generateInstanceData(InstanceDto instanceDto) throws Exception {
+		String dateText = DateUtils.getDateSSSText();
+		String flId = instanceDto.getFlId();
+		Instance instance = new Instance();
+		//BeanUtils.copyProperties(instance, instanceDto);//将instanceDto的业务属性copy到newInstance上old-20170718
+		BeanUtils.copyProperties(instanceDto, instance);
+		Fl fl = flService.getObjectById(flId);
+		System.out.println("\n fl="+JacksonUtils.toJson(fl));
+		/*app_id、business_object_id、fl_id、retract、approval_repeat、
+	     post_isnull、approval_person_is_nul、post_multi_person 来自FL模板FL的字段；*/
+		//BeanUtils.copyProperties(instance, fl);//将fl的属性copy到newInstance上//old20170718
+		BeanUtils.copyProperties(fl, instance);//new 20170718
+		instance.setId(instanceDto.getId());//对id和flId再进行单独的赋值
+		instance.setFlId(flId);
+
+		//实例Instance的code的值是从模板FL的code复制过来，再加上时间戳；
+		//name的值是从模板FL的flow_title[默认标题规则] 的值解析出来，进行赋值
+		instance.setCode(fl.getCode()+"-"+dateText);
+		instance.setName(instanceDto.getName());//
+		instance.setStatus(null);
+		instance.setStartDate(new Timestamp(System.currentTimeMillis()));
+
+		return instance;
+	}
+
+	private List<InstanceAccessible> generateAccessibleData(InstanceDto instanceDto, Instance instance) throws Exception {
+		List<PostDto> postList = JacksonUtils.fromJson(instanceDto.getAccessiblePosts(), ArrayList.class, PostDto.class);
+		List<InstanceAccessible> accessibleList = new ArrayList<InstanceAccessible>();
+
+		if (postList != null) {
+			for (PostDto postDto : postList) {
+				List<UserDto> users = postDto.getUsers();
+				if(CollectionUtils.isEmpty(users)) {
+					continue;
+				}
+				for (UserDto userDto : users) {
+					if(StringUtils.isEmpty(userDto.getId())) {
+						continue;
+					}
+					String[] userIdArr = userDto.getId().split(",");
+					String[] userNameArr = userDto.getName().split(",");
+					if (userIdArr != null && userIdArr.length > 0 && userNameArr != null && userNameArr.length > 0) {
+						for (int i = 0; i < userIdArr.length; i++) {
+							InstanceAccessible instanceAccessible = new InstanceAccessible();
+							instanceAccessible.setId(IDGenerator.getUUID());
+							instanceAccessible.setFiId(instance.getId());
+							instanceAccessible.setAccessibleId(userIdArr[i]);
+							instanceAccessible.setAccessibleName(userNameArr[i]);
+
+							accessibleList.add(instanceAccessible);
+						}
+					}
+				}
+			}			
+		}
+
+		return accessibleList;
+	}
+
+	private List<InstanceCs> generateCsData(Instance instance, InstanceAc instanceAc, AcDto acDto) throws Exception {
+		List<PostDto> postList = JacksonUtils.fromJson(acDto.getCsPosts(), ArrayList.class, PostDto.class);
+		List<InstanceCs> instanceCsList = new ArrayList<InstanceCs>();
+
+		if (postList != null) {
+			for (PostDto postDto : postList) {
+				List<UserDto> users = postDto.getUsers();
+				for (UserDto userDto : users) {
+					if(userDto.getId() == null) {
+						continue;
+					}
+					String[] userIdArr = userDto.getId().split(",");
+					String[] userNameArr = userDto.getName().split(",");
+					if (userIdArr != null && userIdArr.length > 0 && userNameArr != null && userNameArr.length > 0) {
+						for (int i = 0; i < userIdArr.length; i++) {
+							InstanceCs instanceCs = new InstanceCs();
+							instanceCs.setId(IDGenerator.getUUID());
+							instanceCs.setPostName(postDto.getName());
+							instanceCs.setPostId(postDto.getId());
+							instanceCs.setParticipantName(userNameArr[i]);
+							instanceCs.setParticipantId(userIdArr[i]);
+							instanceCs.setFiId(instance.getId());
+							instanceCs.setAcId(instanceAc.getId());
+
+							instanceCsList.add(instanceCs);
+						}
+					}
+				}
+			}	
+		}
+
+		return instanceCsList;
+	}
+
+	private List<InstanceVariable> generateInstanceVariable(InstanceDto instanceDto, Instance instance) throws Exception {
+		//暂时注释掉变量的细节
+		List<InstanceVariableDto> variableDtoList = instanceDto.getVariableDtoList();
+		List<InstanceVariable> varList = new ArrayList<InstanceVariable>();
+		for(InstanceVariableDto variableDto : variableDtoList){
+			InstanceVariable variable = new InstanceVariable();
+			variable.setId(IDGenerator.getUUID());
+			variable.setName(variableDto.getName());
+			variable.setFiId(instance.getId());
+			varList.add(variable);
+
+			if("flow_business_company_id".equals(variableDto.getName())){
+				instance.setFlowBusinessCompanyId(variableDto.getVal());
+			}
+			if("flow_business_dept_id".equals(variableDto.getName())){
+				instance.setFlowBusinessDeptId(variableDto.getVal());
+			}
+			if("flow_business_project_id".equals(variableDto.getName())){
+				instance.setFlowBusinessProjectId(variableDto.getVal());
+			}
+			if("flow_business_project_branch_id".equals(variableDto.getName())){
+				instance.setFlowBusinessProjectBranchId(variableDto.getVal());
+			}
+			if("start_user_id".equals(variableDto.getName())){
+				instance.setStartUserId(variableDto.getVal());
+			}
+			if("flow_business_company_name".equals(variableDto.getName())){
+				instance.setFlowBusinessCompanyName(variableDto.getVal());
+			}
+			if("flow_business_dept_name".equals(variableDto.getName())){
+				instance.setFlowBusinessDeptName(variableDto.getVal());
+			}
+			if("flow_business_project_name".equals(variableDto.getName())){
+				instance.setFlowBusinessProjectName(variableDto.getVal());
+			}
+			if("flow_business_project_branch_name".equals(variableDto.getName())){
+				instance.setFlowBusinessProjectBranchName(variableDto.getVal());
+			}
+			if("start_user_name".equals(variableDto.getName())){
+				instance.setStartUserName(variableDto.getVal());
+			}
+		}
+		return varList;
+	}
+
+	@Override
+	public boolean processChange(String userInfo, String fiId, String changeType, List<ACUnit> acUnitList) {		
+
+		if(FlowChangeType.PROXY.getValue().equals(changeType)) {
+			proxyHandle(userInfo, fiId, acUnitList);
+
+		} else if(FlowChangeType.ADDLABEL.getValue().equals(changeType)) {
+			addLabelHandle(userInfo, fiId, acUnitList);
+
+		} else if(FlowChangeType.REPALCEAPPROVER.getValue().equals(changeType)) {
+			replaceApproverHandle(userInfo, fiId, acUnitList);
+
+		} else if(FlowChangeType.WITHDRAW.getValue().equals(changeType)) {
+			withdrawHandle(userInfo, fiId, acUnitList);
+		}
+		return true;
+	}
+
+	/**
+	 * 代理处理
+	 * 
+	 * @param userInfo
+	 * @param fiId
+	 * @param acUnitList
+	 * @return
+	 */
+	private boolean proxyHandle(String userInfo, String fiId, List<ACUnit> acUnitList) {
+		return true;
+	}
+
+	/**
+	 * 加签处理
+	 * 
+	 * @param userInfo
+	 * @param fiId
+	 * @param acUnitList
+	 * @return
+	 */
+	private boolean addLabelHandle(String userInfo, String fiId, List<ACUnit> acUnitList) {
+		return true;
+	}
+
+	/**
+	 * 替换审批人处理
+	 * 
+	 * @param userInfo
+	 * @param fiId
+	 * @param acUnitList
+	 * @return
+	 */
+	private boolean replaceApproverHandle(String userInfo, String fiId, List<ACUnit> acUnitList) {
+		return true;
+	}
+
+	/**
+	 * 撤回处理
+	 * @param userInfo
+	 * @param fiId
+	 * @param acUnitList
+	 * @return
+	 */
+	private boolean withdrawHandle(String userInfo, String fiId, List<ACUnit> acUnitList) {
+		return true;
+	}
+
+	public InstanceDao getInstanceDao() {
+		return instanceDao;
+	}
+
+	public void setInstanceDao(InstanceDao instanceDao) {
+		this.instanceDao = instanceDao;
+	}
+
+	public FlService getFlService() {
+		return flService;
+	}
+
+	public void setFlService(FlService flService) {
+		this.flService = flService;
+	}
+
+	public StepService getStepService() {
+		return stepService;
+	}
+
+	public void setStepService(StepService stepService) {
+		this.stepService = stepService;
+	}
+
+	public InstanceAcService getInstanceAcService() {
+		return instanceAcService;
+	}
+
+	public void setInstanceAcService(InstanceAcService instanceAcService) {
+		this.instanceAcService = instanceAcService;
+	}
+
+	public InstanceStepService getInstanceStepService() {
+		return instanceStepService;
+	}
+
+	public void setInstanceStepService(InstanceStepService instanceStepService) {
+		this.instanceStepService = instanceStepService;
+	}
+
+	public ParticipantService getParticipantService() {
+		return participantService;
+	}
+
+	public void setParticipantService(ParticipantService participantService) {
+		this.participantService = participantService;
+	}
+
+	public InstanceGroupService getInstanceGroupService() {
+		return instanceGroupService;
+	}
+
+	public void setInstanceGroupService(InstanceGroupService instanceGroupService) {
+		this.instanceGroupService = instanceGroupService;
+	}
+
+	public InstanceVariableService getInstanceVariableService() {
+		return instanceVariableService;
+	}
+
+	public void setInstanceVariableService(InstanceVariableService instanceVariableService) {
+		this.instanceVariableService = instanceVariableService;
+	}
+
+	public InstanceTaskService getInstanceTaskService() {
+		return instanceTaskService;
+	}
+
+	public void setInstanceTaskService(InstanceTaskService instanceTaskService) {
+		this.instanceTaskService = instanceTaskService;
+	}
+
+	//	@Override
+	//	public Page queryInstanceByPageParam(Map<String, Object> map) {
+	//		String starterIdText = (String)map.get("starterId");
+	//		if(starterIdText!=null && starterIdText.length()>5 ){
+	//			String starterIds[] = starterIdText.split(",");
+	//			map.remove("starterId");
+	//			map.put("starterId", starterIds);
+	//		}
+	//		
+	//		String orgIdText = (String)map.get("orgId");
+	//		if(orgIdText!=null  && orgIdText.length()>5){
+	//			String orgIds[] = orgIdText.split(",");
+	//			map.remove("orgId");
+	//			map.put("orgId", orgIds);
+	//		}
+	//		Integer start = (Integer) ( map.get("start"));//new Integer( (String) map.get("start"));
+	//		Integer limit = (Integer) ( map.get("limit"));//new Integer( (String) map.get("limit"));
+	//		map.remove("start");
+	//		map.remove("limit");
+	//		map.put("start", start);
+	//		map.put("limit", limit);
+	//		List<InstanceDto>  list = instanceDao.queryInstanceListByParam(map);
+	//		Integer total = instanceDao.queryInstanceCountByParam(map);
+	//		Page page = new Page();
+	//		page.setList(list);
+	//		page.setTotal(total);
+	//		page.setStart(start);
+	//		page.setLimit(limit);
+	//		return page;
+	//	}
+
+	public InstancePostDao getInstancePostDao() {
+		return instancePostDao;
+	}
+
+	public void setInstancePostDao(InstancePostDao instancePostDao) {
+		this.instancePostDao = instancePostDao;
+	}
+
+	@Override
+	public SysNoticeMsgService getMsgService() {
+		return msgService;
+	}
+
+	public void setMsgService(SysNoticeMsgService msgService) {
+		this.msgService = msgService;
+	}
+
+	public AgentService getAgentService() {
+		return agentService;
+	}
+
+	public void setAgentService(AgentService agentService) {
+		this.agentService = agentService;
+	}
+
+	@Override
+	public BusinessObjectService getBusinessObjectService() {
+		return businessObjectService;
+	}
+
+	public void setBusinessObjectService(BusinessObjectService businessObjectService) {
+		this.businessObjectService = businessObjectService;
+	}
+
+	@Override
+	public List<FlowAcPostDto> parsePost(Map<String, Object> businessVariable, AcDto acDto) {
+
+		List<AcDto> acDtos = new ArrayList<AcDto>();
+		AcDto startAcDto = new AcDto();
+		startAcDto.setId(IDGenerator.getUUID());
+		startAcDto.setAcType("1");
+		startAcDto.setParticipant(null);
+		startAcDto.setCcPerson(null);
+		startAcDto.setPosts(null);
+		startAcDto.setCsPosts(null);
+		startAcDto.setFlowPostParticipantDtos(null);
+		String starter = (String) businessVariable.get("start_user_id");
+		startAcDto.setParticipant(starter);
+		acDtos.add(startAcDto);
+		acDtos.add(acDto);
+
+		return parsePost(businessVariable, acDtos);
+	}
+
+	@Override
+	public List<FlowAcPostDto> parsePost(Map<String, Object> businessVariable, List<AcDto> acDtos) {
+
+		SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+		String userInfo = JacksonUtils.toJson(securityUserBeanInfo);
+
+		Map<String, Object> postBodyMap = new HashMap<String, Object>();
+		postBodyMap.put("flow_business_variable_data", JacksonUtils.toJson(businessVariable));
+		postBodyMap.put("flow_ac_data", JacksonUtils.toJson(acDtos));
+
+		// 请求获取岗位人员信息接口
+		log.info ("调用请求获取岗位人员信息接口："+JacksonUtils.toJson(postBodyMap));
+		// TODO zhangdaoqiang 1225
+		String flowPostDataStr = null;//postDtoServiceCustomer.getFlowPostData(userInfo, JacksonUtils.toJson(postBodyMap));
+		Map<String, Object> flowPostDataMap = JacksonUtils.fromJson(flowPostDataStr, Map.class);
+		// 获取岗位人员信息
+		List<FlowAcPostDto> flowAcPostDtoList = JacksonUtils.fromJson((String) flowPostDataMap.get("result"),
+				ArrayList.class, FlowAcPostDto.class);
+
+		return flowAcPostDtoList;
+	}
+
+	@Override
+	public InstanceOperateLogService getInstanceLogService() {
+		return instanceLogService;
+	}
+
+	public void setInstanceLogService(InstanceOperateLogService instanceLogService) {
+		this.instanceLogService = instanceLogService;
+	}
+
+	public MonitorSettingService getMonitorSettingService() {
+		return monitorSettingService;
+	}
+
+	public void setMonitorSettingService(MonitorSettingService monitorSettingService) {
+		this.monitorSettingService = monitorSettingService;
+	}
+
+	public List<UserDto> queryAdminList() {
+		//		UserDtoServiceCustomer userService = this.getUserDtoServiceCustomer();
+		SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+		// TODO zhangdaoqiang 1225
+		String queryAdminList = null;
+		
+		List<Map<String, Object>> list = sysFeignService.queryAdminList();
+		log.info("查询系统管理员：result = " + queryAdminList);
+		List<UserDto> adminList = new ArrayList<UserDto>();
+  			for(Map<String, Object> user : list) {
+				UserDto u = new UserDto();
+				u.setId((String) user.get("id"));
+				u.setName((String) user.get("realName"));
+				adminList.add(u);
+		}
+		return adminList;
+	}
+
+	private boolean isAdmin(String userId) {
+		List<UserDto> adminList = queryAdminList();
+		for(UserDto user : adminList) {
+			if(userId.equals(user.getId())) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	public Map<String, String> queryOrgBy(String postId) {
+		SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+		String userJson = JacksonUtils.toJson(userBeanInfo);
+		Map<String, String> params = new HashMap<String, String>();
+		params.put("postId", postId);
+		// TODO zhangdaoqiang 1225
+		String orgInfos = null;//orgnazationDtoServiceCustomer.getOrgsByPostId(userJson, JacksonUtils.toJson(params));
+		log.info("调用权限接口查询组织信息：result = " + orgInfos);
+		DubboServiceResultInfo dubboServiceResultInfo = JacksonUtils.fromJson(orgInfos,
+				DubboServiceResultInfo.class);
+		Map<String, String> result = new HashMap<String, String>();
+		if(dubboServiceResultInfo.isSucess()) {
+			List<OrgnazationDto> list = JacksonUtils.fromJson(dubboServiceResultInfo.getResult(), ArrayList.class, OrgnazationDto.class);
+			for(OrgnazationDto org : list) {
+				if ("zb".equals(org.getType())||"company".equals(org.getType())) {
+					result.put("companyId", org.getId());
+				}else if("dept".equals(org.getType())){
+					result.put("deptId", org.getId());
+				}else if("group".equals(org.getType())){
+					result.put("projectId", org.getId());
+				}else if("branch".equals(org.getType())){
+					result.put("branchId", org.getId());
+				}
+			}
+		}
+		return result;
+	}
+
+	@Override
+	public MobileApproveDto queryMobileApproveByParamMap(Map<String, Object> paramMap) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public List<InstanceDto> getRelateInstances(String instanceId) {
+		return instanceDao.getRelateInstances(instanceId);
+	}
+
+	@Override
+	public String scanOverdueAc() throws Exception {
+		List<OverdueAc> overdueAcs = instanceDao.queryOverdueAc();
+
+		List<SysNoticeMsg> messages = new ArrayList<SysNoticeMsg>();
+		for(OverdueAc overdueAc : overdueAcs) {
+			if(OverdueAcHandle.NOTICE_APPROVER.getValue().equals(overdueAc.getOverdueHandle())) {
+				messages.addAll(newMessages(overdueAc));
+
+			} else if(OverdueAcHandle.BACKTO_STARTER.getValue().equals(overdueAc.getOverdueHandle())) {
+				Operation operation = new OperationFactory().newOperation(OperationType.RETURN.getCode(),this);
+				InstanceUnit instanceUnit = this.getInstanceUnit(overdueAc.getInstanceId());
+				ApprovalSubmitDto approvalDto = new ApprovalSubmitDto();
+				operation.action(instanceUnit, approvalDto);
+
+			} else {
+
+
+			}
+		}
+
+		try {
+			msgService.batchSaveAndNotifyOthers(messages);
+		} catch (Exception e) {
+			throw new FlowException("流程逾期扫描定时任务中发送消息失败！", e);
+		}
+
+		return null;
+	}
+
+	private List<SysNoticeMsg> newMessages(OverdueAc overdueAc) {
+		List<SysNoticeMsg> msgList = new ArrayList<SysNoticeMsg>();
+		String msgTitle = "流程【" + overdueAc.getInstanceName() + "】中的环节【"
+				+ overdueAc.getAcName() + "】逾期" + overdueAc.getDuration() + "小时，请及时处理！";
+		String msgUrl = "/flow/runtime/approve/flow.html"
+				+ "?instanceId=" + overdueAc.getInstanceId()
+				+ "&time=" + new Date().getTime();
+		String receiverIds = overdueAc.getCurrentApproverIds();
+		String receiverNames = overdueAc.getCurrentApproverNames();
+		if(StringUtils.isEmpty(receiverIds)) {
+			return null;
+		}
+		String mobileUrl = "mobile/approve/approve_detail.html";
+		MobileParam mobileParamBean = new MobileParam();
+		mobileParamBean.setInstanceId(overdueAc.getInstanceId());
+		mobileParamBean.setBusinessId(overdueAc.getBusinessId());
+		//mobileParamBean.setAppId(overdueAc.);
+		//mobileParamBean.setTypeCode("START");
+		//mobileParamBean.setTaskId(startApprover.getTask().getTaskId());
+		//mobileParamBean.setApproveRole(startApprover.getTask().getTaskType());
+
+		String[] idArray = receiverIds.split(",");
+		String[] nameArray = receiverNames.split(",");
+		for(int i=0; i<idArray.length; i++) {
+			UserDto user = new UserDto(idArray[i], nameArray[i]);
+			SysNoticeMsg msg = this.msgService.newFlowMsg(user, "DY", msgTitle, msgUrl, mobileUrl, JacksonUtils.toJson(mobileParamBean));
+			msgList.add(msg);
+		}
+		return msgList;
+	}
+
+	public InstanceTransitionRecordService getInstanceTransitionRecordService() {
+		return instanceTransitionRecordService;
+	}
+
+	public void setInstanceTransitionRecordService(InstanceTransitionRecordService instanceTransitionRecordService) {
+		this.instanceTransitionRecordService = instanceTransitionRecordService;
+	}	
+
+	public void saveTransition(String instanceId, String userName, String actionName) throws Exception {
+		InstanceTransitionRecord transitionRecord = new InstanceTransitionRecord();
+		transitionRecord.setId(IDGenerator.getUUID());
+		transitionRecord.setFiId(instanceId);
+		transitionRecord.setTransationUserName(userName);
+		transitionRecord.setTransationDate(new Timestamp(System.currentTimeMillis()));
+		transitionRecord.setActionName(actionName);
+		instanceTransitionRecordService.save(transitionRecord);
+	}
+
+	@Override
+	public List<InstanceTransitionRecordDto> queryTransferList(String instanceId) {
+		return instanceTransitionRecordService.queryTransferList(instanceId);
+	}
+
+	//@Override
+	//public List<InstanceDto> personalQueryList(Map<String, String> map) {	
+	//	return instanceDao.personalQueryList(map);
+	//}
+	//	@Override
+	//	public Page personalQueryListByPageParam(Map<String, Object> map) {
+	//		Integer start = (Integer) map.get("start");
+	//		//Integer limit = new Integer( (String) map.get("limit"));
+	//		Integer limit = (Integer) map.get("limit");
+	//		map.remove("start");
+	//		map.remove("limit");
+	//		map.put("start", start);
+	//		map.put("limit", limit);
+	//		List<InstanceDto>  list = instanceDao.personalQueryListByParam(map);
+	//		Integer total = instanceDao.personalQueryCountByParam(map);
+	//		Page page = new Page();
+	//		page.setList(list);
+	//		page.setTotal(total);
+	//		page.setStart(start);
+	//		page.setLimit(limit);
+	//		return page;
+	//	}
+	//
+	//	//@Override
+	//	//public List<InstanceDto> queryListByApprover(Map<String, String> map) {
+	//	//	return instanceDao.queryListByApprover(map);
+	//	//}
+	//	//优化修改为分页查询
+	//	@Override
+	//	public Page queryListByApproverParam(Map<String, Object> map) {
+	//		Integer start = (Integer) map.get("start");
+	//		//Integer limit = new Integer( (String) map.get("limit"));
+	//		Integer limit = (Integer) map.get("limit");
+	//		map.remove("start");
+	//		map.remove("limit");
+	//		map.put("start", start);
+	//		map.put("limit", limit);
+	//		List<InstanceDto>  list = instanceDao.queryListByApproverParam(map);
+	//		Integer total = instanceDao.queryListCountByApproveParam(map);
+	//		Page page = new Page();
+	//		page.setList(list);
+	//		page.setTotal(total);
+	//		page.setStart(start);
+	//		page.setLimit(limit);
+	//		return page;
+	//	}
+	/**
+	 * 获取节点审批类型
+	 * @param map
+	 * @return
+	 * @throws Exception
+	 */
+	public String queryApprovalTypeId(Map<String, Object> map)throws Exception{
+		return instanceDao.queryApprovalTypeId(map);
+	}
+
+	@Override
+	public FlowApproveViewBean flowView(FlowQueryBean queryBean) throws Exception {
+		FlowApproveViewBean result = new FlowApproveViewBean();
+
+		//1、判断流程权限
+
+		//查询审批记录
+		String instanceId = queryBean.getInstanceId();
+		String flCode = queryBean.getFlCode();
+		String bizId = queryBean.getBusinessId();
+		String appId = queryBean.getAppId();
+		List<ApprovalList> list = null;
+		if(StringUtils.isEmpty(instanceId)) {
+			list = instanceDao.queryApprovalListExternal(flCode, bizId, appId);
+			instanceId = list.get(0).getInstanceId();
+		} else {
+			list = instanceDao.queryApprovalList(instanceId, null);
+		}
+
+		//2、记录查询痕迹
+		instanceReadRecordService.record(instanceId, null);
+
+		if(CollectionUtils.isEmpty(list)) {
+			// TODO zhangdaoqiang 1225
+			Instance instance = null;//instanceDao.getObjectById(instanceId);
+			BusinessObject objectDto = businessObjectService.getObjectById(instance.getBusinessObjectId());
+			result.setFlId(instance.getFlId());
+			result.setBusinessId(instance.getBusinessId());
+			result.setPcUrl(objectDto.getPcUrl());
+			result.setInstanceId(instanceId);
+			result.setInstanceName(instance.getName());
+			result.setInstanceStatus(instance.getStatus());
+			result.setRelateFlows(this.getRelateInstances(instanceId));
+			log.info("审批记录查询为空！");
+			return result;
+		}
+		removeForkAndJoin(list);
+
+		String currentUserId = null;
+		SecurityUserDto securityUserDto = LoginUtils.getSecurityUserBeanInfo().getSecurityUserDto();
+		if(securityUserDto != null) {
+			currentUserId = securityUserDto.getId();
+		}
+
+		Set<String> roles = new HashSet<String>();
+		//		String role = FlowRole.OTHER.getValue();	//可阅人、抄送人
+		if(currentUserId.equals(list.get(0).getApproverId())) {
+			roles.add(FlowRole.STARTER.getValue());
+		}
+
+		for(ApprovalList approval : list){
+
+			//点亮的行
+			if(TaskStatus.RUNNING.getValue().equals(approval.getTaskStatus())) {
+
+				//当前环节的审批类型
+				result.setCurrentApprovalTypeId(approval.getApprovalTypeId());
+				String iframeMode = newMode(approval.getApprovalTypeId(), approval.getApproverId(), currentUserId);
+				result.setIframeMode(iframeMode);
+
+				//一个人只能有一个点亮行
+				if(currentUserId.equals(approval.getApproverId())) {
+					roles.add(FlowRole.APPROVER_BEFORE.getValue());
+					//查询审批人操作选项
+					List<ApproveOperationDto> operations = approveOperationService
+							.queryListByApproveRoleCode(approval.getApprovalTypeId(), approval.getTaskType());
+					result.setOperations(operations);
+
+					//查询下一环节
+					result.setNextAc(this.queryNext(instanceId, approval.getTaskId()));
+					result.setCurrentGroupKey(approval.getGroupKey());
+
+					break;
+				}
+
+			} else	if(TaskStatus.FINISHED.getValue().equals(approval.getTaskStatus())
+					&& !FlAcType.START.getAcType().equals(approval.getAcType())) {
+
+				if(currentUserId.equals(approval.getApproverId())) {
+					roles.add(FlowRole.APPROVER_AFTER.getValue());
+				}
+			}
+		}
+
+		//如果同时是管理员，存在多重角色
+		if(isAdmin(currentUserId)) {
+			roles.add(FlowRole.ADMIN.getValue());
+		}
+
+		//查询功能区按钮
+		List<String> btnCodes = queryBtnCodes(roles, list.get(0).getInstanceStatus());
+		result.setBtnCodes(btnCodes);
+
+		//设置页面需要的流程数据
+		ApprovalList starter = list.get(0);
+		result.setFlCode(starter.getFlCode());
+		result.setFlId(starter.getFlId());
+		result.setPcUrl(starter.getPcUrl());
+		result.setBusinessId(starter.getBusinessId());
+		result.setInstanceId(starter.getInstanceId());
+		result.setInstanceName(starter.getInstanceName());
+		result.setInstanceStatus(starter.getInstanceStatus());
+		result.setCurrentUserId(securityUserDto.getId());
+		result.setList(list);
+		result.setRelateFlows(this.getRelateInstances(instanceId));
+		result.setAppId(starter.getAppId());
+
+		return result;
+	}
+
+	/**
+	 * 目前只用于新闻
+	 * @param approvalTypeId
+	 * @param approverId
+	 * @param currentUserId
+	 * @return
+	 */
+	private String newMode(String approvalTypeId, String approverId, String currentUserId) {
+		if("JG".equals(approvalTypeId) && approverId.equals(currentUserId)) {
+			return "edit";
+		}
+		return "view";
+	}
+
+	/**
+	 * 流程查询页面按钮控制
+	 * @param roles
+	 * @param instanceStatus
+	 * @return
+	 */
+	private List<String> queryBtnCodes(Set<String> roles, String instanceStatus) {
+		List<String> btnCodes = new ArrayList<String>();
+		for(String role : roles) {
+			//发起人
+			if(FlowRole.STARTER.getValue().equals(role)) {
+				//流程运行中
+				if(InstanceStatus.RUNNING.getValue().equals(instanceStatus)) {
+					btnCodes.add("withDrawFlow");			//撤回流程
+					btnCodes.add("remind");					//催办
+				}
+
+				//审批人、转办人、协办人
+			} else if(FlowRole.APPROVER_AFTER.getValue().equals(role)) {
+				//流程运行中
+				if(InstanceStatus.RUNNING.getValue().equals(instanceStatus)) {
+					btnCodes.add("withDrawTask");			//撤回任务
+				}
+
+				//管理员
+			} else if(FlowRole.ADMIN.getValue().equals(role)) {
+				//流程运行中
+
+				if(InstanceStatus.RUNNING.getValue().equals(instanceStatus)) {
+					btnCodes.add("cancelInstance");			//作废流程
+					btnCodes.add("finishApproval");			//审结
+					btnCodes.add("modifyReader");			//修改可阅人
+					btnCodes.add("skipCurrentApprover");	//跳过当前审批人
+					btnCodes.add("modifyAc");				//调整环节
+					btnCodes.add("modifyApprover");			//修改审批人
+					btnCodes.add("modifyApproverAdvice");	//修改处理意见
+					btnCodes.add("pass");					//传阅 进行中的流程只有管理员可以传阅
+
+					//流程正常完成
+				} else if(InstanceStatus.FINISHED.getValue().equals(instanceStatus)) {
+					btnCodes.add("cancelInstance");			//作废流程
+					btnCodes.add("modifyReader");			//修改可阅人
+
+					//流程挂起
+				} else if(InstanceStatus.HANGUP.getValue().equals(instanceStatus)) {
+					btnCodes.add("letItGo");				//放行
+					btnCodes.add("cancelInstance");			//作废流程
+					btnCodes.add("finishApproval");			//审结
+					btnCodes.add("modifyReader");			//修改可阅人
+					//					btnCodes.add("skipCurrentApprover");	//跳过当前审批人
+					btnCodes.add("modifyAc");				//调整环节
+					btnCodes.add("modifyApprover");			//修改审批人
+					btnCodes.add("modifyApproverAdvice");	//修改处理意见
+
+				}
+			}
+		}
+
+		if(InstanceStatus.FINISHED.getValue().equals(instanceStatus)) {
+			btnCodes.add("pass");		//传阅
+		}
+
+		//通用按钮
+		btnCodes.add("shut");		//关闭
+		btnCodes.add("print");		//打印
+		btnCodes.add("collect");	//收藏
+
+		return btnCodes;
+	}
+
+	public void setLoginInfo(String token, String userInfo, String menuInfo) {
+		long endTime = Calendar.getInstance().getTime().getTime();
+		redisTemplate.opsForValue().set(SecurityUserBeanInfo.TOKEN_TEND_USER + token, userInfo, endTime, TimeUnit.MILLISECONDS);
+		redisTemplate.opsForValue().set(SecurityUserBeanRelationInfo.TOKEN_TEND_USER_MENU + token, menuInfo, endTime, TimeUnit.MILLISECONDS);
+		log.info("往redis中设置当前用户信息：token=" + token + ", userInfo" + userInfo + ", menuInfo" + menuInfo);
+
+	}
+
+	@Override
+	public Map<String, List<UserDto>> queryCurrentApproversOf(List<FlowQueryBean> flowInfos) {
+		Map<String, List<UserDto>>  usersMap = new HashMap<String, List<UserDto>>();
+		List<Instance> instanceList = null;
+		String instanceId = flowInfos.get(0).getInstanceId();
+		List<String> instanceIds = new ArrayList<String>();
+		List<String> businessIds = new ArrayList<String>();
+		for(FlowQueryBean flowInfo : flowInfos) {
+			instanceIds.add(flowInfo.getInstanceId());
+			businessIds.add(flowInfo.getBusinessId());
+		}
+		if(!StringUtils.isEmpty(instanceId)) {
+			instanceList = instanceDao.queryListByInstanceIds(instanceIds);
+
+		} else {
+			instanceList = instanceDao.queryListByFlCodeAndBusinessIds(flowInfos.get(0).getFlCode(),
+					businessIds);
+		}
+
+		for(Instance instance : instanceList) {
+			List<UserDto> userList = new ArrayList<UserDto>();
+			String currentApproverIds = instance.getCurrentApproverIds();
+			String currentApprovers = instance.getCurrentApprovers();
+			if(!StringUtils.isEmpty(currentApproverIds)) {
+				String[] userIds = currentApproverIds.split(",");
+				String[] userNames = currentApprovers.split(",");
+				if(userIds != null && userIds.length > 0) {
+					for(int i=0; i<userIds.length; i++) {
+						UserDto user = new UserDto();
+						user.setId(userIds[i]);
+						user.setName(userNames[i]);
+						userList.add(user);
+					}
+				}
+			}
+			usersMap.put(instance.getBusinessId(), userList);
+		}
+
+		return usersMap;
+	}
+
+	@Override
+	public List<InstanceAcDto> queryCurrentNodeOf(FlowQueryBean flowInfo) {
+		String instanceId = flowInfo.getInstanceId();
+		return instanceDao.queryCurrentNodeOf(instanceId);
+	}
+
+	@Override
+	public SysNoticeMsgTempDao getSysNoticeMsgTempDao(){
+		return  sysNoticeMsgTempDao;
+	}
+
+	public InstanceCsService getInstanceCsService() {
+		return instanceCsService;
+	}
+
+	public void setInstanceCsService(InstanceCsService instanceCsService) {
+		this.instanceCsService = instanceCsService;
+	};
+
+	@Override
+	public Boolean validateInstanceDataAuth(Map<String,Object> paramMap,String userInfo) {
+		Boolean instanceAccess = false;
+		String sourceInstanceId = (String) paramMap.get("sourceInstanceId");
+		String instanceId = sourceInstanceId!=null?sourceInstanceId:(String) paramMap.get("instanceId");
+
+		//获取当前登录人信息
+ 		SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+		SecurityUserDto securityUserDto = securityUserBeanInfo.getSecurityUserDto();
+
+		if("2".equals(securityUserDto.getType())){
+			return true;
+		}
+
+		//判断附件来源
+		String attachmentUrlId = (String) paramMap.get("attachmentUrl_id");
+		if(org.apache.commons.lang.StringUtils.isNotBlank(attachmentUrlId)){
+			Map<String,Object> attachParam = new HashMap<String,Object>();
+			attachParam.put("id",attachmentUrlId);
+			// TODO zhangdaoqiang 1225
+			String attachResultInfoJson = null;//attachmentDtoServiceCustomer.getObjectById(userInfo,JacksonUtils.toJson(attachParam));
+			DubboServiceResultInfo attachResultInfo = JacksonUtils.fromJson(attachResultInfoJson,DubboServiceResultInfo.class);
+			String result = attachResultInfo.getResult();
+			if(org.apache.commons.lang.StringUtils.isNotBlank(result)){
+				AttachmentDto attachmentDto = JacksonUtils.fromJson(result, AttachmentDto.class);
+				if(attachmentDto!=null){
+					String url = attachmentDto.getUrl();
+					String pattern = "(instanceId="+(String) paramMap.get("instanceId")+")";
+
+					// 创建 Pattern 对象
+					Pattern r = Pattern.compile(pattern);
+
+					// 现在创建 matcher 对象
+					Matcher m = r.matcher(url);
+					if(m.find()){
+						return true;
+					}
+				}
+			}
+		}
+
+		String currentUserId = securityUserDto.getId();
+
+		// TODO zhangdaoqiang 1225
+
+		//		//获取流程实例
+		//		Instance instance = instanceDao.getObjectById(instanceId);
+		//		String deptId = instance.getFlowBusinessDeptId();
+		//		String businessId = instance.getBusinessId();
+		//
+		//		//获取自定义表单
+		//		CustomFormInstance customFormInstance = customFormInstanceDao.getObjectById(businessId);
+		//		//判断自定义表单是否为空
+		//		if(customFormInstance!=null){
+		//			String customFormId = customFormInstance.getCustomFormId();
+		//			CustomForm customForm=customFormDao.getObjectById(customFormId);
+		//			Integer customFormDataItemControl = customForm.getDataItemControl();
+		//			if(customFormDataItemControl == 2 || customFormDataItemControl == 3){
+		//				//获取流程数据权限，并且判断当前流程实例是否数据权限范围之内
+		//				Map<String,String> dataAuthMap = new HashMap<> ();
+		//				dataAuthMap.put ("appCode","OA");
+		//				dataAuthMap.put("userIds",currentUserId);
+		//				dataAuthMap.put ("itemCode", customForm.getDataItemId());
+		//				// TODO zhangdaoqiang 1225
+		//				String authResultJson = null;//orgnazationOutServiceCustomer.getUserDataAuthCoAndDeptListByItemCode(userInfo,JacksonUtils.toJson (dataAuthMap));
+		//				DubboServiceResultInfo authResultInfo = JacksonUtils.fromJson (authResultJson,DubboServiceResultInfo.class);
+		//				if(authResultInfo.isSucess ()){
+		//					Map<String,UserAuthDataOrgList> authDataMap = JacksonUtils.fromJson (authResultInfo.getResult (),Map.class);
+		//					String userAuthDataOrgListJson = JacksonUtils.toJson(authDataMap.get (currentUserId));
+		//					UserAuthDataOrgList userAuthDataOrgList = JacksonUtils.fromJson(userAuthDataOrgListJson,UserAuthDataOrgList.class);
+		//					List<OrgnazationDto> orgnazationDtos = userAuthDataOrgList.getDeptList();
+		//					for (OrgnazationDto orgnazationDto:orgnazationDtos) {
+		//						String orgId = orgnazationDto.getId();
+		//						if(orgId.equals(deptId)){
+		//							instanceAccess = true;
+		//							break;
+		//						}
+		//					}
+		//				}
+		//			}
+		//		}
+
+		//获取流程相关人员id列表
+		List<String> userIdList = this.instanceDao.queryFlowRelationUserIds(instanceId);
+		if(!instanceAccess&&userIdList.contains(currentUserId)){
+			instanceAccess = true;
+		}
+		return instanceAccess;
+	}
+
+	@Override
+	public InstanceDto getInstanceGraph(String instanceId) throws Exception {
+		if(org.apache.commons.lang.StringUtils.isBlank(instanceId)){
+			return  null;
+		}
+
+		//获取实例
+		// TODO zhangdaoqiang 1225
+		Instance instance = this.instanceDao.selectByPrimaryKey(instanceId);
+		InstanceDto instanceDto = new InstanceDto();
+		BeanUtils.copyProperties(instance,instanceDto);
+
+		List<String> currentAndPreviousNodeList = instanceDto.getCurrentAndPreviousNodeList();
+		//获取实例节点信息
+		//		Map<String,Object> acParamMap = new HashMap<String,Object>();
+		//		acParamMap.put("fiId",instanceId);
+		//		acParamMap.put("delflag",false);
+		//		acParamMap.put("sidx","px");
+		//		acParamMap.put("sord","ASC");
+		InstanceAc acParamMap = new InstanceAc();
+		acParamMap.setFiId(instanceId);
+		acParamMap.setDelflag(false);
+		List<InstanceAc> instanceAcList = this.instanceAcDao.select(acParamMap);
+		List<InstanceAcDto> instanceAcDtoList = new ArrayList<InstanceAcDto>();
+		int currentAcIndex = 0;
+		Map<String , InstanceAcDto> acNewOldMap = new HashMap<String,InstanceAcDto>();
+		for (int i = 0; i < instanceAcList.size(); i++) {
+			InstanceAc instanceAc = instanceAcList.get(i);
+			String acId = instanceAc.getId();
+			String acStatus = instanceAc.getStatus();
+			currentAndPreviousNodeList.add(acId);
+			if("2".equals(acStatus)){
+				currentAcIndex = i;
+			}
+			InstanceAcDto instanceAcDto = new InstanceAcDto();
+			BeanUtils.copyProperties(instanceAc, instanceAcDto);
+			instanceAcDtoList.add(instanceAcDto);
+
+			acNewOldMap.put(acId,instanceAcDto);
+		}
+
+		currentAndPreviousNodeList = currentAcIndex==0?currentAndPreviousNodeList:currentAndPreviousNodeList.subList(0,currentAcIndex+1);
+
+		//环节审批人列表
+		Map<String,Object> instanceGroupParamMap = new HashMap<String,Object>();
+		instanceGroupParamMap.put("instanceId",instanceDto.getId());
+		List<InstanceGroup> instanceGroupList = instanceGroupService.queryListByInstanceId(instanceGroupParamMap);
+		Iterator<InstanceGroup> groupIterator = instanceGroupList.iterator();
+		while (groupIterator.hasNext()){
+			InstanceGroup instanceGroup = groupIterator.next();
+			String postName = instanceGroup.getPostName();
+			String participantName = instanceGroup.getParticipantName();
+			participantName = ((postName!=null)?postName:"")+"/"+participantName;
+			instanceGroup.setParticipantName(participantName);
+			String acId = instanceGroup.getAcId();
+			InstanceAcDto acDto = acNewOldMap.get(acId);
+			if(acDto==null){
+				continue;
+			}
+			String participantJson = acDto.getParticipant();
+			List<InstanceGroup> groupList = JacksonUtils.fromJson(participantJson,List.class,InstanceGroup.class);
+			groupList = groupList==null?new ArrayList<InstanceGroup>():groupList;
+			groupList.add(instanceGroup);
+			acDto.setParticipant(JacksonUtils.toJson(groupList));
+		}
+
+		//环节抄送人列表
+		Map<String,Object> instanceCsParamMap = new HashMap<String,Object>();
+		instanceCsParamMap.put("fiId",instanceDto.getId());
+		instanceCsParamMap.put("delflag",false);
+		InstanceCs convertValue = new ObjectMapper().convertValue(instanceCsParamMap, InstanceCs.class);
+		List<InstanceCs> instanceCsList = instanceCsDao.select(convertValue);
+		Iterator<InstanceCs> csIterator = instanceCsList.iterator();
+		while (csIterator.hasNext()){
+			InstanceCs instanceCs = csIterator.next();
+			String acId = instanceCs.getAcId();
+			String postName = instanceCs.getPostName();
+			String participantName = instanceCs.getParticipantName();
+			participantName = ((postName!=null)?postName:"")+"/"+participantName;
+			instanceCs.setParticipantName(participantName);
+			InstanceAcDto acDto = acNewOldMap.get(acId);
+			if(acDto==null){
+				continue;
+			}
+			String participantJson = acDto.getParticipant();
+			List<InstanceCs> csList = JacksonUtils.fromJson(participantJson,List.class,InstanceCs.class);
+			csList = csList==null?new ArrayList<InstanceCs>():csList;
+			csList.add(instanceCs);
+			acDto.setCcPerson(JacksonUtils.toJson(csList));
+		}
+
+
+		//获取实例连接线信息
+		//		Map<String,Object> stepParamMap = new HashMap<String,Object>();
+		//		stepParamMap.put("fiId",instanceId);
+		//		stepParamMap.put("delflag",false);
+		InstanceStep stepParamMap = new InstanceStep();
+		stepParamMap.setFiId(instanceId);
+		stepParamMap.setDelflag(false);
+		List<InstanceStep> instanceStepList = this.instanceStepDao.select(stepParamMap);
+		//如果数据库中未保存环节连线信息，则根据节点生成
+		if(CollectionUtils.isEmpty(instanceStepList)){
+			instanceStepList = this.generateInstanceStep(instanceAcList);
+		}
+
+		for (InstanceStep instanceStep:instanceStepList){
+			String stepId = instanceStep.getId();
+			String targetId = instanceStep.getTargetId();
+			if(currentAndPreviousNodeList.contains(targetId)){
+				currentAndPreviousNodeList.add(stepId);
+			}
+		}
+		instanceDto.setCurrentAndPreviousNodeList(currentAndPreviousNodeList);
+
+		//创建画布XML
+		Document document = DocumentHelper.createDocument();
+		Element root = document.addElement("mxGraphModel").addElement("root");
+		root.addElement("mxCell").addAttribute("id", "0");
+		root.addElement("mxCell").addAttribute("id", "1").addAttribute("parent", "0");
+		parseNodeToXMLElement(root, instanceAcDtoList, "ac",currentAndPreviousNodeList,currentAcIndex==0?null:currentAndPreviousNodeList.get(currentAcIndex));
+		parseNodeToXMLElement(root, instanceStepList, "step",currentAndPreviousNodeList,currentAcIndex==0?null:currentAndPreviousNodeList.get(currentAcIndex));
+
+		instanceDto.setGraphXml(document.asXML());
+		return instanceDto;
+	}
+
+	/**
+	 * 将流程图元数据解析为可展示的XML
+	 * @param root
+	 * @param elements
+	 * @param type
+	 * @throws Exception
+	 */
+	private void parseNodeToXMLElement(Element root, Object elements, String type,List<String> currentAndPreviousNodeList,String currentNodeId) throws Exception {
+		if (root != null && elements != null && org.apache.commons.lang.StringUtils.isNotBlank(type)) {
+			if ("ac".equals(type)) {
+				List<InstanceAcDto> acs = (List<InstanceAcDto>) elements;
+				for (InstanceAcDto ac : acs) {
+					Element cellElem = root.addElement("mxCell")
+							.addAttribute("vertex", "1")
+							.addAttribute("parent", "1")
+							.addAttribute("id", ac.getId())
+							.addAttribute("value",ac.getName())
+							.addAttribute("label", ac.getName())
+							.addAttribute("description", ac.getName());
+
+					String acType = ac.getAcType();
+					//String approvalPersonIsNull = ac.getApprovalPersonIsNull();
+					String approveStrategy = ac.getApproveStrategy();
+					String approveTypeId = ac.getApproveTypeId();
+					String code = ac.getCode();
+					Boolean isAddLabel = ac.getIsAddLabel();
+					//Boolean isStart = ac.getIsStart();
+					String name = ac.getName();
+					//String nodeId = ac.getNodeId();
+					//String overdueHandle = ac.getOverdueHandle();
+					//Integer overdueTime = ac.getOverdueTime();
+					//String personRepeatIsSkipped = ac.getPersonRepeatIsSkipped();
+					//String postIsNull = ac.getPostIsNull();
+					String postMultiPerson = ac.getPostMultiPerson();
+					Map<String,Object> extraMap = new HashMap<String,Object>();
+					extraMap.put("acType",acType);
+					//extraMap.put("approvalPersonIsNull",approvalPersonIsNull);
+					extraMap.put("approveStrategy",approveStrategy);
+					extraMap.put("approveTypeId",approveTypeId);
+					extraMap.put("code",code);
+					extraMap.put("isAddLabel",isAddLabel);
+					//extraMap.put("isStart",isStart);
+					extraMap.put("name",name);
+					//extraMap.put("nodeId",nodeId);
+					//extraMap.put("overdueHandle",overdueHandle);
+					//extraMap.put("overdueTime",overdueTime);
+					//extraMap.put("personRepeatIsSkipped",personRepeatIsSkipped);
+					//extraMap.put("postIsNull",postIsNull);
+					extraMap.put("postMultiPerson",postMultiPerson);
+					String extra = JacksonUtils.toJson(extraMap);
+					cellElem.addAttribute("extra",extra);
+
+					//环节审批人
+					String participant = ac.getParticipant();
+					if(org.apache.commons.lang.StringUtils.isNotBlank(participant)){
+						cellElem.addAttribute("participant",participant);
+					}
+					//环节抄送人
+					String ccPerson = ac.getCcPerson();
+					if(org.apache.commons.lang.StringUtils.isNotBlank(participant)){
+						cellElem.addAttribute("ccPerson",ccPerson);
+					}
+
+					String styleColor = "";
+					if(currentAndPreviousNodeList.contains(ac.getId())){
+						styleColor = ";strokeColor=#458B74;fillColor=#458B74;";
+					}
+					if(org.apache.commons.lang.StringUtils.isNotBlank(currentNodeId)&&currentNodeId.equals(ac.getId())){
+						styleColor = ";strokeColor=#AFEEEE;fillColor=#AFEEEE;";
+					}
+
+
+					if (FlAcType.START.getAcType().equals(ac.getAcType())){
+						cellElem.addAttribute("style", FlAcType.START.getNodeType()+styleColor)
+						.addAttribute("nodeType", FlAcType.START.getNodeType());
+					}else if (FlAcType.TASK.getAcType().equals(ac.getAcType())) {
+						cellElem.addAttribute("style", FlAcType.TASK.getNodeType()+styleColor)
+						.addAttribute("nodeType", FlAcType.TASK.getNodeType());
+					} else if (FlAcType.FORK.getAcType().equals(ac.getAcType())) {
+						cellElem.addAttribute("style", FlAcType.FORK.getNodeType()+styleColor)
+						.addAttribute("nodeType", FlAcType.FORK.getNodeType());
+					} else if (FlAcType.JOIN.getAcType().equals(ac.getAcType())) {
+						cellElem.addAttribute("style", FlAcType.JOIN.getNodeType()+styleColor)
+						.addAttribute("nodeType", FlAcType.JOIN.getNodeType());
+					} else if (FlAcType.END.getAcType().equals(ac.getAcType())){
+						cellElem.addAttribute("style", FlAcType.END.getNodeType()+styleColor)
+						.addAttribute("nodeType", FlAcType.END.getNodeType());
+					} else if (FlAcType.CC.getAcType().equals(ac.getAcType())){
+						cellElem.addAttribute("style", FlAcType.CC.getNodeType()+styleColor)
+						.addAttribute("nodeType", FlAcType.CC.getNodeType());
+					}
+					cellElem.addElement("mxGeometry")
+					.addAttribute("x", String.valueOf(ac.getX()))
+					.addAttribute("y", String.valueOf(ac.getY()))
+					.addAttribute("width", String.valueOf(ac.getWidth()))
+					.addAttribute("height", String.valueOf(ac.getHeight()))
+					.addAttribute("as", "geometry");
+
+				}
+
+			} else if ("step".equals(type)) {
+				List<InstanceStep> steps = (List<InstanceStep>) elements;
+				for (InstanceStep step : steps) {
+					String label = "";//step.getName();
+					if(label.indexOf("->")!=-1){
+						label = label.substring(0,label.indexOf("->"));
+					}
+
+					String styleColor = "";
+					if(currentAndPreviousNodeList.contains(step.getId())){
+						styleColor = ";strokeColor=#458B74;";
+					}
+
+					Element cellElem = root.addElement("mxCell")
+							.addAttribute("style", "defaultEdge" + styleColor)
+							.addAttribute("edge", "1")
+							.addAttribute("parent", "1")
+							.addAttribute("source", step.getSourceId())
+							.addAttribute("target", step.getTargetId())
+							.addAttribute("id", step.getId())
+							.addAttribute("value", StringEscapeUtils.unescapeHtml (label));
+					/*String conditionExpression = step.getConditionExpression();
+					String conditionTranslation = step.getConditionTranslation();
+					if (org.apache.commons.lang.StringUtils.isNotBlank(conditionExpression)){
+						cellElem.addAttribute("conditionExpression", conditionExpression);
+					}
+
+					if (org.apache.commons.lang.StringUtils.isNotBlank(conditionTranslation)){
+						cellElem.addAttribute("conditionTranslation", conditionTranslation);
+					}*/
+					cellElem.addElement("mxGeometry")
+					.addAttribute("relative", "1")
+					.addAttribute("as", "geometry");
+				}
+			}
+		}
+	}
+
+	/**
+	 * 创建实例流程图xml格式数据
+	 * @param root
+	 * @param elements
+	 * @param type
+	 * @throws Exception
+	 */
+	@Deprecated
+	private void createXMLElement(Element root, Object elements, String type) throws Exception {
+		if (root != null && elements != null && org.apache.commons.lang.StringUtils.isNotBlank(type)) {
+			if ("ac".equals(type)) {
+				List<InstanceAc> acs = (List<InstanceAc>) elements;
+				for (InstanceAc ac : acs) {
+					String label = ac.getName();
+					if(label.indexOf("->")!=-1){
+						label = label.substring(0,label.indexOf("->"));
+					}
+					Element parentElem = null;
+					if (FlAcType.START.getAcType().equals(ac.getAcType())) {
+						parentElem = root.addElement(FlAcType.START.getNodeName())
+								.addAttribute("id", ac.getId())
+								.addAttribute("label", label)
+								.addAttribute("description", ac.getName())
+								.addAttribute("nodeType", FlAcType.START.getNodeType());
+					} else if (FlAcType.TASK.getAcType().equals(ac.getAcType())) {
+						parentElem = root.addElement(FlAcType.TASK.getNodeName())
+								.addAttribute("id", ac.getId())
+								.addAttribute("label", label)
+								.addAttribute("description", ac.getName())
+								.addAttribute("nodeType", FlAcType.TASK.getNodeType());
+					} else if (FlAcType.FORK.getAcType().equals(ac.getAcType())) {
+						parentElem = root.addElement(FlAcType.FORK.getNodeName())
+								.addAttribute("id", ac.getId())
+								.addAttribute("label", label)
+								.addAttribute("description", ac.getName())
+								.addAttribute("nodeType", FlAcType.FORK.getNodeType());
+					} else if (FlAcType.JOIN.getAcType().equals(ac.getAcType())) {
+						parentElem = root.addElement(FlAcType.JOIN.getNodeName())
+								.addAttribute("id", ac.getId())
+								.addAttribute("label", label)
+								.addAttribute("description", ac.getName())
+								.addAttribute("nodeType", FlAcType.JOIN.getNodeType());
+					} else if (FlAcType.END.getAcType().equals(ac.getAcType())) {
+						parentElem = root.addElement(FlAcType.END.getNodeName())
+								.addAttribute("id", ac.getId())
+								.addAttribute("label", label)
+								.addAttribute("description", ac.getName())
+								.addAttribute("nodeType", FlAcType.END.getNodeType());
+					}else{
+						//如果没有类型默认保存为task
+						parentElem = root.addElement(FlAcType.TASK.getNodeName())
+								.addAttribute("id", ac.getId())
+								.addAttribute("label", label)
+								.addAttribute("description", ac.getName())
+								.addAttribute("nodeType", FlAcType.TASK.getNodeType());
+					}
+
+					Element cellElem = parentElem.addElement("mxCell")
+							.addAttribute("vertex", "1")
+							.addAttribute("parent", "1");
+					if (FlAcType.START.getAcType().equals(ac.getAcType())){
+						cellElem.addAttribute("style", FlAcType.START.getNodeType());
+					}else if (FlAcType.TASK.getAcType().equals(ac.getAcType())) {
+						cellElem.addAttribute("style", "rounded");
+					} else if (FlAcType.FORK.getAcType().equals(ac.getAcType())) {
+						cellElem.addAttribute("style", "symbol;image=/platform-app/flow/editor/images/symbols/fork.png");
+					} else if (FlAcType.JOIN.getAcType().equals(ac.getAcType())) {
+						cellElem.addAttribute("style", "symbol;image=/platform-app/flow/editor/images/symbols/merge.png");
+					} else if (FlAcType.END.getAcType().equals(ac.getAcType())){
+						cellElem.addAttribute("style", FlAcType.END.getNodeType());
+					}
+					cellElem.addElement("mxGeometry")
+					.addAttribute("x", String.valueOf(ac.getX()))
+					.addAttribute("y", String.valueOf(ac.getY()))
+					.addAttribute("width", String.valueOf(ac.getWidth()))
+					.addAttribute("height", String.valueOf(ac.getHeight()))
+					.addAttribute("as", "geometry");
+
+				}
+
+			} else if ("step".equals(type)) {
+				List<InstanceStep> steps = (List<InstanceStep>) elements;
+				for (InstanceStep step : steps) {
+					String label = step.getName();
+					if(label.indexOf("->")!=-1){
+						label = label.substring(0,label.indexOf("->"));
+					}
+					Element parentElem = root.addElement(FlAcType.CONNECTOR.getNodeName())
+							.addAttribute("id", step.getId())
+							.addAttribute("label", StringEscapeUtils.unescapeHtml (label))
+							.addAttribute("nodeType", FlAcType.CONNECTOR.getNodeType());
+					Element cellElem = parentElem.addElement("mxCell")
+							.addAttribute("style", "defaultEdge")
+							.addAttribute("edge", "1")
+							.addAttribute("parent", "1")
+							.addAttribute("source", step.getSourceId())
+							.addAttribute("target", step.getTargetId());
+					cellElem.addElement("mxGeometry")
+					.addAttribute("relative", "1")
+					.addAttribute("as", "geometry");
+				}
+			}
+		}
+	}
+
+	/**
+	 * 修改这个实例最新的那条 我的发起 消息
+	 * @param instanceId
+	 * @param editTitleName
+	 */
+	@Override
+	public void editLastStartMsgTitle(String instanceId,String editTitleName) throws  Exception{
+		List<String> list = instanceDao.getMsgIdsByInstanceId(instanceId);
+		if(CollectionUtils.isNotEmpty(list)){
+			String firstMsgId =	list.get(list.size()-1);
+			SysNoticeMsg firstMsg = msgService.getObjectById(firstMsgId);
+			if(firstMsg != null){
+				firstMsg.setTitle(editTitleName+firstMsg.getTitle());
+				msgService.update(firstMsg);
+				log.info("修改我的发起 消息标题，增加"+editTitleName+"：msgId=" + firstMsg);
+			} else {
+				//旧的数据可能会有这种情况
+				log.info("发起人任务表的消息ID为空：instanceId=" + instanceId);
+			}
+		}
+	}
+
+	@Override
+	public void scanExceptionFlow(String userInfo) {
+		String approvers = ConfigurationUtil.getValue("scan.approvers");
+		try {
+			approvers = new String(approvers.getBytes("ISO-8859-1"),"UTF-8");
+		} catch (UnsupportedEncodingException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		String phones = ConfigurationUtil.getValue("scan.reciever.phones");
+		log.info("approvers=" + approvers + ", phones=" + phones);
+		Set<String> exceptionInstanceIds = scanExceptionInstanceIds(approvers);
+		if(CollectionUtils.isNotEmpty(exceptionInstanceIds)) {
+			sendMessage(userInfo, phones, exceptionInstanceIds);
+		}
+	}
+
+	private void sendMessage(String userJson, String phones, Set<String> exceptionInstanceIds) {
+		StringBuffer ids = new StringBuffer("检查到异常流程共" + exceptionInstanceIds.size() + "条：");
+		Object[] array = exceptionInstanceIds.toArray();
+		for(int i=0; i<array.length; i++) {
+			ids.append(array[i]).append(",");
+
+			if(i>0 && (i%10==0 || i==array.length - 1)) {
+				Map<String, String> params = new HashMap<String, String>();
+				params.put("msg", ids.toString());
+				params.put("phones", phones);
+				// TODO zhangdaoqiang 1225
+				//				String result = mailAndPhoneServiceCustomer.sendPhoneMsg(userJson, JacksonUtils.toJson(params));
+				//				log.info("短信发送结果：" + result);
+
+				ids.setLength(0);
+			}
+		}
+	}
+
+	private Set<String> scanExceptionInstanceIds(String approvers) {
+		Set<String> ids = new HashSet<String>();
+		List<String> names = Arrays.asList(approvers.split(","));
+		List<Map<String, String>> flows = instanceDao.scanFlowOf(names);
+		log.info("相关流程数量：flows.size=" + flows.size());
+		if(CollectionUtils.isEmpty(flows)) {
+			return ids;
+		}
+		//		log.info("重要人物流程：" + flows);
+
+		//监控1-任务未处理，待办消了
+		List<Map<String, String>> monitor1 = instanceDao.monitor1(null);
+		checkContains(flows, monitor1, ids);
+
+		//监控2-待办未消，任务已处理
+		List<Map<String, String>> monitor2 = instanceDao.monitor2(null);
+		checkContains(flows, monitor2, ids);
+
+		//监控3-同一人多个任务
+		List<Map<String, String>> monitor3 = instanceDao.monitor3(null);
+		checkContains(flows, monitor3, ids);
+
+		//监控4-审批中流程但移动表单数据为空
+		List<Map<String, String>> monitor4 = instanceDao.monitor4(null);
+		checkContains(flows, monitor4, ids);
+
+		//监控5-任务与审批人不一致
+		List<Map<String, String>> monitor5 = instanceDao.monitor5(null);
+		checkContains(flows, monitor5, ids);
+
+		//监控6-岗位与环节状态异常
+		List<Map<String, String>> monitor6 = instanceDao.monitor6(null);
+		checkContains(flows, monitor6, ids);
+
+		//监控7-JVM异常数据
+		List<Map<String, String>> monitor7 = instanceDao.monitor7(null);
+		checkContains(flows, monitor7, ids);
+
+		//监控8-普通异常
+		List<Map<String, String>> monitor8 = instanceDao.monitor8(null);
+		checkContains(flows, monitor8, ids);
+
+		//监控9-待办消息，流程异常
+		List<Map<String, String>> monitor9 = instanceDao.monitor9(null);
+		checkContains(flows, monitor9, ids);
+
+		return ids;
+	}
+
+	private void checkContains(List<Map<String, String>> flows, List<Map<String, String>> monitor, Set<String> ids) {
+		if(CollectionUtils.isEmpty(monitor)) {
+			return ;
+		}
+		for(Map<String, String> flow : flows) {
+			for(Map<String, String> rec : monitor) {
+				String instanceId = flow.get("id");
+				if(instanceId.equals(rec.get("instanceId"))) {
+					ids.add(instanceId);
+					log.info("查询到一条异常流程：" + instanceId);
+					break;
+				}
+			}
+		}
+	}
+
+	private boolean checkException(Map<String, String> flow) {
+		String instanceId = flow.get("id");
+		String status = flow.get("status");
+		if(InstanceStatus.RUNNING.getValue().equals(status)) {
+
+			//监控1-任务未处理，待办消了
+			List<Map<String, String>> monitor1 = instanceDao.monitor1(instanceId);
+			if(CollectionUtils.isNotEmpty(monitor1)) {
+				log.info("监控1-任务未处理，待办消了:" + instanceId);
+				return true;
+			}
+
+			//监控2-待办未消，任务已处理
+			List<Map<String, String>> monitor2 = instanceDao.monitor2(instanceId);
+			if(CollectionUtils.isNotEmpty(monitor2)) {
+				log.info("监控2-待办未消，任务已处理:" + instanceId);
+				return true;
+			}
+
+			//监控3-同一人多个任务
+			List<Map<String, String>> monitor3 = instanceDao.monitor3(instanceId);
+			if(CollectionUtils.isNotEmpty(monitor3)) {
+				log.info("监控3-同一人多个任务:" + instanceId);
+				return true;
+			}
+
+			//监控4-审批中流程但移动表单数据为空
+			List<Map<String, String>> monitor4 = instanceDao.monitor4(instanceId);
+			if(CollectionUtils.isNotEmpty(monitor4)) {
+				log.info("监控4-审批中流程但移动表单数据为空:" + instanceId);
+				return true;
+			}
+
+			//监控5-任务与审批人不一致
+			List<Map<String, String>> monitor5 = instanceDao.monitor5(instanceId);
+			if(CollectionUtils.isNotEmpty(monitor5)) {
+				log.info("监控5-任务与审批人不一致:" + instanceId);
+				return true;
+			}
+
+			//监控6-岗位与环节状态异常
+			List<Map<String, String>> monitor6 = instanceDao.monitor6(instanceId);
+			if(CollectionUtils.isNotEmpty(monitor6)) {
+				log.info("监控6-岗位与环节状态异常:" + instanceId);
+				return true;
+			}
+
+			//监控7-JVM异常数据
+			List<Map<String, String>> monitor7 = instanceDao.monitor7(instanceId);
+			if(CollectionUtils.isNotEmpty(monitor7)) {
+				log.info("监控7-JVM异常数据:" + instanceId);
+				return true;
+			}
+
+			//监控8-普通异常
+			List<Map<String, String>> monitor8 = instanceDao.monitor8(instanceId);
+			if(CollectionUtils.isNotEmpty(monitor8)) {
+				log.info("监控8-普通异常:" + instanceId);
+				return true;
+			}
+
+			//监控9-待办消息，流程异常
+			List<Map<String, String>> monitor9 = instanceDao.monitor9(instanceId);
+			if(CollectionUtils.isNotEmpty(monitor9)) {
+				log.info("监控9-待办消息，流程异常" + instanceId);
+				return true;
+			}
+
+		} else if(InstanceStatus.WITHDRAW.getValue().equals(status)) {
+
+		} else if(InstanceStatus.REJECT.getValue().equals(status)) {
+
+		} else if(InstanceStatus.CANCEL.getValue().equals(status)) {
+
+		} else if(InstanceStatus.HANGUP.getValue().equals(status)) {
+
+		}
+
+		return false;
+	}
+
+	@Override
+	public Page queryInstanceByPageParam(Map<String, Object> map) {
+		String starterIdText = (String)map.get("starterId");
+		if(starterIdText!=null && starterIdText.length()>5 ){
+			String starterIds[] = starterIdText.split(",");
+			map.remove("starterId");
+			map.put("starterId", starterIds);
+		}
+
+		String orgIdText = (String)map.get("orgId");
+		if(orgIdText!=null  && orgIdText.length()>5){
+			String orgIds[] = orgIdText.split(",");
+			map.remove("orgId");
+			map.put("orgId", orgIds);
+		}
+		Integer start = (Integer) ( map.get("start"));//new Integer( (String) map.get("start"));
+		Integer limit = (Integer) ( map.get("limit"));//new Integer( (String) map.get("limit"));
+		map.remove("start");
+		map.remove("limit");
+		map.put("start", start);
+		map.put("limit", limit);
+		List<InstanceDto>  list = instanceDao.queryInstanceListByParam(map);
+		Integer total = instanceDao.queryInstanceCountByParam(map);
+		Page page = new Page();
+		page.setList(list);
+		page.setTotal(total);
+		page.setStart(start);
+		page.setLimit(limit);
+		return page;
+	}
+
+	@Override
+	public Page personalQueryListByPageParam(Map<String, Object> map) {
+
+		List<InstanceDto> list = instanceDao.personalQueryListByParam(map);
+		Integer total = instanceDao.personalQueryCountByParam(map);
+		Page page = new Page();
+		page.setLimit((Integer)map.get("limit"));
+		page.setList(list);
+		page.setStart((Integer)map.get("start"));
+		page.setTotal(total);
+		return page;
+	}
+
+	@Override
+	public Page queryListByApproverParam(Map<String, Object> map) {
+
+		String starterIdText = (String)map.get("starterId");
+		if(starterIdText!=null && starterIdText.length()>5 ){
+			String starterIds[] = starterIdText.split(",");
+			map.remove("starterId");
+			map.put("starterId", starterIds);
+		}
+
+		String orgIdText = (String)map.get("orgId");
+		if(orgIdText!=null  && orgIdText.length()>5){
+			String orgIds[] = orgIdText.split(",");
+			map.remove("orgId");
+			map.put("orgId", orgIds);
+		}
+		Integer start = (Integer) ( map.get("start"));//new Integer( (String) map.get("start"));
+		Integer limit = (Integer) ( map.get("limit"));//new Integer( (String) map.get("limit"));
+		/*		map.remove("start");
+		map.remove("limit");
+		map.put("start", start);
+		map.put("limit", limit);*/
+		List<InstanceDto> list = instanceDao.queryListByApproverParam(map);
+		Integer total = instanceDao.queryInstanceCountByParam(map);
+		Page page = new Page();
+		page.setList(list);
+		page.setTotal(total);
+		page.setStart(start);
+		page.setLimit(limit);
+		return page;
+	}
+
+	@Override
+	public Page queryListByApprover(Map<String, Object> map) {
+		Integer start = (Integer) map.get("start");
+		//Integer limit = new Integer( (String) map.get("limit"));
+		Integer limit = (Integer) map.get("limit");
+		/*		map.remove("start");
+		map.remove("limit");
+		map.put("start", start);
+		map.put("limit", limit);*/
+		List<InstanceDto>  list = instanceDao.queryListByApproverParam(map);
+		Integer total = instanceDao.queryListCountByApproveParam(map);
+		Page page = new Page();
+		page.setList(list);
+		page.setTotal(total);
+		page.setStart(start);
+		page.setLimit(limit);
+		return page;
+	}
+
+	/*根据id查询Instance*/
+	@RequestMapping("/selectByPrimaryKey")
+	@Override
+	public Instance selectByPrimaryKey(String id) {
+		return instanceDao.selectByPrimaryKey(id);
+	}
+
+}

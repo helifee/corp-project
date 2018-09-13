@@ -1,0 +1,210 @@
+package com.xinleju.platform.univ.mq.utils;
+
+import com.alibaba.dubbo.config.spring.ReferenceBean;
+import com.rabbitmq.client.*;
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.tools.data.JacksonUtils;
+import com.xinleju.platform.univ.mq.dto.MessageDto;
+import com.xinleju.platform.univ.mq.dto.TopicDto;
+import com.xinleju.platform.univ.mq.dto.service.MessageDtoServiceCustomer;
+import com.xinleju.platform.univ.mq.dto.service.MessageExceptionDtoServiceCustomer;
+import com.xinleju.platform.univ.mq.dto.service.MessageHistoryDtoServiceCustomer;
+import com.xinleju.platform.univ.mq.dto.service.TopicDtoServiceCustomer;
+import com.xinleju.platform.univ.mq.entity.MessageException;
+import com.xinleju.platform.univ.mq.entity.MessageHistory;
+import com.xinleju.platform.univ.mq.service.MessageConsumer;
+
+import org.apache.commons.lang.StringUtils;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.BeansException;
+import org.springframework.beans.factory.InitializingBean;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.ApplicationContextAware;
+
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Properties;
+import java.util.UUID;
+
+/**
+ * 消费者共通模版
+ * 
+ * @author hao
+ * @param <T>
+ *
+ */
+public class CommonConsumer<T> implements InitializingBean , ApplicationContextAware {
+
+    private org.slf4j.Logger logger = LoggerFactory.getLogger(CommonConsumer.class);
+    private static ApplicationContext applicationContext; // Spring应用上下文环境
+    private String queueName = null;
+    private String topicId = null;
+    private Map<String,Object> consumerMap = new HashMap<String, Object>();
+    
+
+
+    @Override
+    public void afterPropertiesSet() throws Exception {
+        TopicDtoServiceCustomer mqTopicDtoServiceCustomer = (TopicDtoServiceCustomer) applicationContext.getBean(TopicDtoServiceCustomer.class);
+        String dubboResultInfo= mqTopicDtoServiceCustomer.getObjectById(null, "{\"id\":\""+topicId+"\"}");
+        DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+        TopicDto mqTopicDto = null;
+        if(dubboServiceResultInfo.isSucess()){
+            String resultInfo= dubboServiceResultInfo.getResult();
+              mqTopicDto=JacksonUtils.fromJson(resultInfo, TopicDto.class);
+        }
+
+        if(mqTopicDto == null){
+            String errorMsg = "get null with id["+topicId+"] from table PT_MQ_TOPIC";
+            logger.error(errorMsg);
+            throw  new Exception(errorMsg);
+        }
+        String  consumerBeanName = mqTopicDto.getConsumerBeanName();
+        if(StringUtils.isEmpty(consumerBeanName)){
+            String errorMsg = "consumerBeanName is null with id["+topicId+"] from table PT_MQ_TOPIC";
+            logger.error(errorMsg);
+            throw  new Exception(errorMsg);
+        }
+        final String realConsmmerName = consumerBeanName;
+        final MessageConsumer  consumerMsgInterface = (MessageConsumer)applicationContext.getBean(consumerBeanName);
+        
+        //动态把消息的dubbo引用加载进来
+        //加载消息
+        loadConsumerToMap(MessageDtoServiceCustomer.class,"messageDtoServiceCustomer");
+        //加载历史消息引用
+        loadConsumerToMap(MessageHistoryDtoServiceCustomer.class,"messageHistoryDtoServiceCustomer");
+        //加载异常消息引用
+        loadConsumerToMap(MessageExceptionDtoServiceCustomer.class,"messageExceptionDtoServiceCustomer");
+        
+        Properties properties=(Properties)applicationContext.getBean("configuration");
+        com.rabbitmq.client.ConnectionFactory org_factory = new com.rabbitmq.client.ConnectionFactory();
+        org_factory.setHost((String) properties.get("rabbit.host"));
+        org_factory.setPort(new Integer((String) properties.get("rabbit.port")));
+        org_factory.setUsername((String) properties.get("rabbit.username"));
+        org_factory.setPassword((String) properties.get("rabbit.password"));
+
+        Connection connection = org_factory.newConnection();
+        
+        /*final Channel channel = null;
+        if(channel == null){
+        	channel = connection.createChannel();
+        }*/
+        
+        final Channel channel = connection.createChannel();
+        
+        //
+        channel.exchangeDeclare(ConfigConstant.EXCHANGE_NAME, BuiltinExchangeType.DIRECT,true);
+
+//        channel.queueBind("queueName", "exchangeName", "routingKey");
+        channel.queueBind(queueName, ConfigConstant.EXCHANGE_NAME, "");//第三个参数是路由
+
+        final Consumer consumer = new DefaultConsumer(channel) {
+
+            public void handleDelivery(String consumerTag, Envelope envelope, AMQP.BasicProperties properties, byte[] body) throws IOException {
+                String messageString = new String(body, "UTF-8");
+                try {
+                    MessageDto mqMessageDto = JacksonUtils.fromJson(messageString, MessageDto.class);
+                   // if(logger.isInfoEnabled()){
+                        logger.info("queueName="+queueName+";consumerBeanName="+realConsmmerName);
+                    //}
+                    //定义目标consumer
+                    String targetConsumer = null;
+                    //从容器中获取 consumer
+                    
+                    Boolean consumverResult = consumerMsgInterface.doConsumer(JacksonUtils.toJson(mqMessageDto));
+                  //消费成功，修改消息状态
+                    String userInfo = mqMessageDto.getUserInfo();
+                    //根据tendId 获取租户信息，然后对这个租户的数据库进行  消息的操作
+                 
+                    if(consumverResult){
+                    	if(consumerMap.containsKey("messageDtoServiceCustomer")){
+                    		MessageDtoServiceCustomer mqMessageDtoServiceProducer = (MessageDtoServiceCustomer)consumerMap.get("messageDtoServiceCustomer");
+                    		mqMessageDto.setConcurrencyVersion(mqMessageDto.getConcurrencyVersion()+1);
+                            mqMessageDto.setState(MessageDto.MqMessageState_Consumed);
+                            mqMessageDtoServiceProducer.update(userInfo,JacksonUtils.toJson(mqMessageDto));
+                    	}else if(consumerMap.containsKey("messageHistoryDtoServiceCustomer")){
+                    		MessageHistoryDtoServiceCustomer messageHistoryDtoServiceProducer = (MessageHistoryDtoServiceCustomer)consumerMap.get("messageHistoryDtoServiceCustomer");
+                    		//消息消费成功后，要把消息更新到历史消息表
+                            MessageHistory messageHistory = new MessageHistory();
+                            messageHistory.setId( UUID.randomUUID().toString());
+                            messageHistory.setDelflag(false);
+                            messageHistory.setIsReSend(0);
+                            messageHistory.setTopic(mqMessageDto.getTopic());
+                            messageHistory.setTopicId(mqMessageDto.getId());
+                            messageHistory.setBody(messageString);//保存要发布的信息
+                            messageHistory.setState(MessageDto.MqMessageState_Consumed);
+                            messageHistoryDtoServiceProducer.save(userInfo, JacksonUtils.toJson(messageHistory));
+                    	}
+                    }else{
+                    	if(consumerMap.containsKey("messageDtoServiceCustomer")){
+                    		MessageDtoServiceCustomer mqMessageDtoServiceProducer = (MessageDtoServiceCustomer)consumerMap.get("messageDtoServiceCustomer");
+                    		mqMessageDto.setConcurrencyVersion(mqMessageDto.getConcurrencyVersion()+1);
+                            mqMessageDto.setState(MessageDto.MqMessageState_ConsumeFailed);
+                            mqMessageDtoServiceProducer.update(userInfo,JacksonUtils.toJson(mqMessageDto));
+                    	}else if(consumerMap.containsKey("messageHistoryDtoServiceCustomer")){
+                    		MessageExceptionDtoServiceCustomer messageExceptionDtoServiceProducer = (MessageExceptionDtoServiceCustomer)consumerMap.get("messageExceptionDtoServiceCustomer");
+                    		//消息消费失败后，要把消息放到异常彪西表
+                            MessageException messageException = new MessageException();
+                            messageException.setId( UUID.randomUUID().toString());
+                            messageException.setDelflag(false);
+                            messageException.setIsReSend(0);
+                            messageException.setTopic(mqMessageDto.getTopic());
+                            messageException.setTopicId(mqMessageDto.getId());
+                            messageException.setBody(messageString);//保存要发布的信息
+                            messageException.setState(MessageDto.MqMessageState_ConsumeFailed);
+                            messageExceptionDtoServiceProducer.save(userInfo, JacksonUtils.toJson(messageException));
+                    	}
+                    }
+                }catch (Exception e){
+                    e.printStackTrace();
+                }finally {
+                    //消息的标识，false只确认当前一个消息收到，true确认所有consumer获得的消息
+                    channel.basicAck(envelope.getDeliveryTag(), false);
+                    //ack返回false，并重新回到队列
+                    //channel.basicNack(envelope.getDeliveryTag(), false, true);
+                    //拒绝消息
+                    // channel.basicReject(envelope.getDeliveryTag(), true);
+
+                }
+            }
+        };
+        channel.basicConsume(queueName, false, consumer);
+        
+    }
+
+    public <T> void loadConsumerToMap(T t,String refenceId){
+    	ReferenceBean<T> referenceBean1 = new ReferenceBean<T>();  
+    	referenceBean1.setApplicationContext(applicationContext);  
+    	String interfaceName = null;
+    	if(t.toString().startsWith("interface")){
+    		interfaceName = t.toString().substring(10);
+    	}else if(t.toString().startsWith("class")){
+    		interfaceName = t.toString().substring(6);
+    	}
+    	referenceBean1.setInterface(interfaceName);  
+        try {
+        	referenceBean1.afterPropertiesSet();
+        	referenceBean1.setId(refenceId);
+        	referenceBean1.setCheck(false);
+        	Object target =  referenceBean1.get();
+			consumerMap.put(refenceId, target);
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}  
+    }
+    
+    public void setQueueName(String queueName) {
+        this.queueName = queueName;
+    }
+    
+    @Override
+    public void setApplicationContext(ApplicationContext applicationContext) throws BeansException {
+        CommonConsumer.applicationContext = applicationContext;
+    }
+
+    public void setTopicId(String topicId) {
+        this.topicId = topicId;
+    }
+}

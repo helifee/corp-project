@@ -1,0 +1,709 @@
+package com.jzy.hio.sys.sys.res.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.base.utils.MessageInfo;
+import com.jzy.hio.base.utils.MessageResult;
+import com.jzy.hio.base.utils.ResponseModel;
+import com.jzy.hio.sys.sys.res.dto.DataNodeDto;
+import com.jzy.hio.sys.sys.res.dto.OperationDto;
+import com.jzy.hio.sys.sys.res.dto.ResourceDto;
+import com.jzy.hio.sys.sys.res.entity.AppSystem;
+import com.jzy.hio.sys.sys.res.entity.Resource;
+import com.jzy.hio.sys.sys.res.mapper.ResourceDao;
+import com.jzy.hio.sys.sys.res.service.AppSystemService;
+import com.jzy.hio.sys.sys.res.service.OperationService;
+import com.jzy.hio.sys.sys.res.service.ResourceService;
+import com.jzy.hio.sys.sys.res.utils.InvalidCustomException;
+import com.jzy.hio.sys.sys.res.utils.ResourceType;
+import com.jzy.tools.data.JacksonUtils;
+
+/**
+ * @author admin
+ */
+
+@Service
+public class ResourceServiceImpl extends BaseServiceImpl<String, Resource> implements ResourceService {
+
+    private static final Logger logger = Logger.getLogger(ResourceServiceImpl.class);
+
+    @Autowired
+    private ResourceDao resourceDao;
+    @Autowired
+    private AppSystemService appSystemService;
+    @Autowired
+    private OperationService operationService;
+
+    @Override
+    public List<DataNodeDto> queryResourceListByAppId(Map<String, Object> paramater) throws Exception {
+        return resourceDao.queryResourceListByAppId((paramater == null || !paramater.containsKey("appId")) ? null : (String) paramater.get("appId"));
+    }
+
+    @Override
+    public List<DataNodeDto> queryResourceListByParentId(String paramater) throws Exception {
+        return resourceDao.queryResourceListByParentId(paramater);
+    }
+
+    @Override
+    public List<ResourceDto> queryListByCondition(Map<String, Object> map) throws Exception {
+        return resourceDao.queryListByCondition(map);
+    }
+
+    /**
+     * 校验编码重复
+     *
+     * @param map 参数
+     * @return
+     * @throws Exception
+     */
+    @Override
+    public Integer getCodeCount(Map<String, Object> map) throws Exception {
+        return resourceDao.getCodeCount(map);
+    }
+
+    /**
+     * 修改菜单，并维护全路径
+     *
+     * @param resource 参数
+     * @return
+     * @throws Exception
+     */
+    @Override
+    @Transactional(readOnly = false, rollbackFor = Exception.class)
+    public Integer updateMenu(Resource resource) throws Exception {
+        int result = 0;
+        try {
+            // 排序或名称修改，维护全路径级下级菜单按钮全路径 add by gyh 2017-4-2
+            Resource resOld = getObjectById(resource.getId());
+            if (resOld == null) {
+                throw new InvalidCustomException("不存在此菜单");
+            }
+            boolean flag = false;
+            Map<String, Object> map = new HashMap<String, Object>();
+            // 修改上级菜单，维护全路径
+            if (resource.getParentId() != null && StringUtils.isNotBlank(resource.getParentId())) {
+                String parentId = resource.getParentId();
+                Resource resP = getObjectById(parentId);
+                resource.setPrefixId(resP.getPrefixId() + "/" + resource.getId());
+                resource.setPrefixName(resP.getPrefixName() + "/" + resource.getName());
+                resource.setPrefixSort(resP.getPrefixSort() + "-" + String.format("B%05d", resource.getSort()));
+                map.put("prefixIdOld", resOld.getPrefixId());
+                map.put("prefixIdNew", resource.getPrefixId());
+                map.put("prefixNameOld", resOld.getPrefixName() + "/");
+                map.put("prefixNameNew", resource.getPrefixName() + "/");
+                map.put("prefixSortOld", resOld.getPrefixSort());
+                map.put("prefixSortNew", resource.getPrefixSort());
+                map.put("menuFlag", true);
+                flag = true;
+            } else if (resource.getParentId() == null || StringUtils.isBlank(resource.getParentId())) {
+                String appId = resource.getAppId();
+                AppSystem app = appSystemService.getObjectById(appId);
+                resource.setPrefixId(app.getPrefixId() + "/" + resource.getId());
+                resource.setPrefixName(app.getPrefixName() + "/" + resource.getName());
+                resource.setPrefixSort(app.getPrefixSort() + "-" + String.format("B%05d", resource.getSort()));
+                map.put("prefixIdOld", resOld.getPrefixId());
+                map.put("prefixIdNew", resource.getPrefixId());
+                map.put("prefixNameOld", resOld.getPrefixName() + "/");
+                map.put("prefixNameNew", resource.getPrefixName() + "/");
+                map.put("prefixSortOld", resOld.getPrefixSort());
+                map.put("prefixSortNew", resource.getPrefixSort());
+                map.put("menuFlag", true);
+                flag = true;
+            }
+            if (flag) {
+                appSystemService.updateAllPreFix(map);
+            }
+            // 修改排序号，禁用同时禁用下级菜单，启用同时启用上级菜单
+            if (!resOld.getStatus().equals(resource.getStatus())) {
+                if (resource.getStatus().equals("0")) {// 禁用
+                    map.put("menuId", resOld.getPrefixId());
+                    map.put("tableCol", "status");
+                    map.put("val", 0);
+                    resourceDao.lockMenu(map);
+                } else {
+                    String prefixId = resOld.getPrefixId();
+                    String menuIds[] = prefixId.split("/");
+                    map.put("menuIds", menuIds);
+                    resourceDao.unLockMenu(map);
+                }
+            }
+            result = update(resource);
+        } catch (Exception e) {
+            throw e;
+        }
+        return result;
+    }
+
+    /**
+     * 查询所有父节点
+     *
+     * @param map appId系统ID
+     * @return
+     * @throws Exception
+     */
+    public List<String> selectAllParentId(Map<String, Object> map) throws Exception {
+        return resourceDao.selectAllParentId(map);
+    }
+
+
+    @Override
+    public List<ResourceDto> queryList(Map<String, Object> map) {
+
+        return resourceDao.queryListByCondition(map);
+    }
+
+    @Override
+    public int saveResource(Map<String, Object> map) throws Exception {
+        Resource resource = JacksonUtils.fromJson(JacksonUtils.toJson(map), Resource.class);
+        //校验编码重复 add by gyh 2017-3-28
+        Map<String, Object> param = new HashMap<String, Object>();
+        param.put("code", resource.getCode());
+        param.put("appId", resource.getAppId());
+        Integer isc = getCodeCount(param);
+        if (isc > 0) {
+            throw new InvalidCustomException("该业务系统下此菜单编码已存在，不可重复");
+        }
+        //排序号不输入，改为系统最大排序加1，同时维护全路径相关字段 add by gyh 2017-4-2
+        map.put("tableName", "pt_sys_res_resource");
+        Long maxSort = appSystemService.getMaxSort(map) + 1L;//排序号自动加1
+        resource.setSort(maxSort);
+        //菜单全路径
+        if (resource.getParentId() != null && StringUtils.isNotBlank(resource.getParentId())) {
+            String parentId = (String) map.get("parentId");
+            Resource resP = getObjectById(parentId);
+            resource.setPrefixId(resP.getPrefixId() + "/" + resource.getId());
+            resource.setPrefixName(resP.getPrefixName() + "/" + resource.getName());
+            resource.setPrefixSort(resP.getPrefixSort() + "-" + String.format("B%05d", maxSort));
+        } else {
+            String appId = (String) map.get("appId");
+            AppSystem app = appSystemService.getObjectById(appId);
+            resource.setPrefixId(app.getPrefixId() + "/" + resource.getId());
+            resource.setPrefixName(app.getPrefixName() + "/" + resource.getName());
+            resource.setPrefixSort(app.getPrefixSort() + "-" + String.format("B%05d", maxSort));
+        }
+        save(resource);
+        return 0;
+    }
+
+    /**
+     * 维护相关表全路径
+     *
+     * @param map 参数
+     * @return
+     * @throws Exception
+     */
+    @Transactional(readOnly = false, rollbackFor = Exception.class)
+    public Integer upOrDown(Map<String, Object> map) throws Exception {
+        Integer res = 0;
+        try {
+            String menuId1 = (String) map.get("menuId1");
+            String sort1 = (String) map.get("sort1");
+            String menuId2 = (String) map.get("menuId2");
+            String sort2 = (String) map.get("sort2");
+            Resource res1 = getObjectById(menuId1);
+            Resource res2 = getObjectById(menuId2);
+            String prefixSortOld1 = res1.getPrefixSort();
+            String prefixSortOld2 = res2.getPrefixSort();
+            // 业务排序
+            res1.setSort(Long.valueOf(sort2));
+            res2.setSort(Long.valueOf(sort1));
+            res1.setPrefixSort(prefixSortOld2);
+            res2.setPrefixSort(prefixSortOld1);
+            Map<String, Object> param = new HashMap<String, Object>();
+            // 修改排序全路径-res1
+            param.put("prefixIdOld", res1.getPrefixId());
+            param.put("prefixSortOld", prefixSortOld1);
+            param.put("prefixSortNew", res1.getPrefixSort());
+            param.put("menuFlag", true);
+            appSystemService.updateAllPreFix(param);
+            update(res1);
+            // 修改排序全路径-app2
+            param.put("prefixIdOld", res2.getPrefixId());
+            param.put("prefixSortOld", prefixSortOld2);
+            param.put("prefixSortNew", res2.getPrefixSort());
+            param.put("menuFlag", true);
+            appSystemService.updateAllPreFix(param);
+            update(res2);
+            res = 1;
+        } catch (Exception e) {
+            throw new InvalidCustomException("排序出错");
+        }
+        return res;
+    }
+
+    /**
+     * 判断菜单是否存在下级菜单或按钮
+     *
+     * @param map 参数
+     * @return
+     * @throws Exception
+     */
+    public Integer selectSonNum(Map<String, Object> map) throws Exception {
+        return resourceDao.selectSonNum(map);
+    }
+
+    /**
+     * 获取用户的菜单
+     *
+     * @param map
+     * @return
+     * @throws Exception
+     */
+    @Override
+    public List<ResourceDto> queryAuthMenu(Map<String, Object> map) throws Exception {
+        List<ResourceDto> resourceDtoList = resourceDao.queryAuthMenu(map);
+        for (ResourceDto r : resourceDtoList) {
+            String[] ids = r.getPrefixId().split("/");
+            r.setLevel(new Long(ids.length));
+        }
+
+        return resourceDtoList;
+    }
+
+    /**
+     * 删除菜单及其下级
+     *
+     * @param resource
+     * @return
+     * @throws Exception
+     */
+    @Override
+    public Integer deleteMeneAllSon(Resource resource) throws Exception {
+        Resource res = resourceDao.selectByPrimaryKey(resource.getId());
+        Map<String, Object> map = new HashMap<String, Object>();
+        map.put("menuId", res.getPrefixId());
+        map.put("tableCol", "delflag");
+        map.put("val", 1);
+        return resourceDao.lockMenu(map);
+    }
+
+    @Override
+    public List<DataNodeDto> getResourceTree(Map<String, Object> map) throws Exception {
+        List<DataNodeDto> list = queryResourceListByAppId(map);
+        Map mapCondition = new HashMap();
+        mapCondition.put("delflag", false);
+        // 查询所有未删除的菜单
+        List<ResourceDto> listResourceDto = queryListByCondition(map);
+        for (DataNodeDto dataCtrl : list) {
+            queryResourceListAll(dataCtrl, listResourceDto);
+            dataCtrl.setType(ResourceType.RESOURCE.getCode());
+        }
+        return list;
+    }
+
+    @Override
+    public List<DataNodeDto> getOperationTreeByAppId(Map<String, Object> mapAppId) throws Exception {
+
+        Map mapApp = new HashMap();
+        mapApp.put("appDelFlag", "0");
+        mapApp.put("appStatus", "1");
+        Map mapMenu = new HashMap();
+        mapMenu.put("menuDelFlag", "0");
+        mapMenu.put("menuStatus", "1");
+        Map mapButton = new HashMap();
+        mapButton.put("delflag", "0");
+        if (null != mapAppId.get("appId") && !"".equals((String) mapAppId.get("appId"))) {
+            mapApp.put("appId", (String) mapAppId.get("appId"));
+            mapMenu.put("appId", (String) mapAppId.get("appId"));
+            mapButton.put("appId", (String) mapAppId.get("appId"));
+        }
+        mapMenu.put("isCustomForm", 0);
+        // Date t1 = new Date();
+        // 查询所有未删除、启用的系统
+        List<AppSystem> listApp = appSystemService.queryListByCondition(mapApp);
+        // Date t2 = new Date();
+        // System.out.println("查询所有未删除、启用的系统用时：：：：：：：：："+(t2.getTime()-t1.getTime()));
+        // 查询所有未删除、启用的菜单
+        List<ResourceDto> listResourceDto = queryListByCondition(mapMenu);
+        // Date t3 = new Date();
+        // System.out.println("查询所有未删除、启用的菜单用时：：：：：：：：："+(t3.getTime()-t2.getTime()));
+        // 查询所有未删除的按钮
+        List<OperationDto> listOperationDto = operationService.queryListByCondition(mapButton);
+        // Date t4 = new Date();
+        // System.out.println("查询所有未删除的按钮用时：：：：：：：：："+(t4.getTime()-t3.getTime()));
+
+        List<DataNodeDto> listReturn = new ArrayList<DataNodeDto>();
+
+        for (AppSystem app : listApp) {
+            // 查询当前传递过来的系统下
+            // for(String appId :appIdsList){
+            // if(app.getId().equals(appId)){
+            DataNodeDto dnd = new DataNodeDto();
+            dnd.setId(app.getId());
+            dnd.setName(app.getName());
+            dnd.setCode(app.getCode());
+            dnd.setResourceurl(app.getUrl());
+            dnd.setAppId(app.getId());
+            dnd.setResourceId("");
+            dnd.setType(ResourceType.APPSystem.getCode());
+            // 获取一级菜单
+            List<DataNodeDto> list = queryChildMenuByAppId(app.getId(), listResourceDto);
+
+            // 获取子菜单
+            for (DataNodeDto d : list) {
+                queryChildMenuAndButton(d, listResourceDto, listOperationDto);
+            }
+            dnd.setChildren(list);
+            listReturn.add(dnd);
+            // }
+            // }
+        }
+        // Date t5 = new Date();
+        // System.out.println("处理数据用时：：：：：：：：："+(t5.getTime()-t4.getTime()));
+        return listReturn;
+    }
+
+    @Override
+    public List<DataNodeDto> getfuncPermissionButtonJqgridTreeByAppid(Map<String, Object> mapAppId) throws Exception {
+        Map map = new HashMap();
+        map.put("delflag", false);
+        // 查询所有未删除的系统
+        List<AppSystem> listApp = appSystemService.queryListByCondition(map);
+
+        // 查询所有未删除的菜单
+        List<ResourceDto> listResourceDto = queryListByCondition(map);
+
+        // 查询所有未删除的按钮
+        List<OperationDto> listOperationDto = operationService.queryListByCondition(map);
+
+        List<DataNodeDto> listReturn = new ArrayList<DataNodeDto>();
+        Long level = 0l;
+        Long num = 1l;
+        for (AppSystem app : listApp) {
+            // 查询当前系统下
+            if (app.getId().equals((String) mapAppId.get("appId"))) {
+                DataNodeDto dnd = new DataNodeDto();
+                dnd.setId(app.getId());
+                dnd.setName(app.getName());
+                dnd.setCode(app.getCode());
+                dnd.setResourceurl(app.getUrl());
+                dnd.setType(ResourceType.APPSystem.getCode());
+                dnd.setLevel("0");
+                dnd.setExpanded(true);
+                dnd.setIsLeaf(false);
+                dnd.setLoaded(true);
+                dnd.setLft(num);
+                // 获取一级菜单
+                // List<DataNodeDto> list= qChildMenuByAppId(app.getId(),listResourceDto,num);
+                Map<String, Object> mapr = qChildMenuByAppId(app.getId(), listResourceDto, num);
+                // //获取子菜单
+                // for(DataNodeDto d:list){
+                // queryChildMenuAndButton(d,listResourceDto,listOperationDto);
+                // }
+                // dnd.setChildren(list);
+                Long numr = (Long) mapr.get("num");
+                List<DataNodeDto> list = (List<DataNodeDto>) mapr.get("list");
+                dnd.setRgt(numr);
+                listReturn.add(dnd);
+                listReturn.addAll(list);
+            }
+
+        }
+        return listReturn;
+    }
+
+    @Override
+    public List<DataNodeDto> getResourceTreeAll(Map<String, Object> map) throws Exception {
+
+        // 查询所有未删除的系统
+        List<AppSystem> listApp = appSystemService.queryListByCondition(map);
+
+        // 查询所有未删除的菜单
+        List<ResourceDto> listResourceDto = queryListByCondition(map);
+        List<DataNodeDto> listReturn = new ArrayList<DataNodeDto>();
+
+        for (AppSystem app : listApp) {
+            DataNodeDto dnd = new DataNodeDto();
+            dnd.setId(app.getId());
+            dnd.setName(app.getName());
+            dnd.setCode(app.getCode());
+            dnd.setResourceurl(app.getUrl());
+            dnd.setType(ResourceType.APPSystem.getCode());
+            // 获取一级菜单
+            List<DataNodeDto> list = queryChildMenuByAppId(app.getId(), listResourceDto);
+
+            // 获取子菜单
+            for (DataNodeDto d : list) {
+                queryChildMenu(d, listResourceDto);
+            }
+            dnd.setChildren(list);
+            listReturn.add(dnd);
+        }
+
+        return listReturn;
+    }
+
+    // 获取一级菜单(jqgrid用)
+    public Map<String, Object> qChildMenuByAppId(String id, List<ResourceDto> listResourceDto, Long num)
+            throws Exception {
+        Map<String, Object> map = new HashMap<String, Object>();
+        List<DataNodeDto> list = new ArrayList<DataNodeDto>();
+        for (ResourceDto rd : listResourceDto) {
+
+            if (id.equals(rd.getAppId()) && (null == rd.getParentId() || "".equals(rd.getParentId()))) {
+                ++num;
+                DataNodeDto dnd = new DataNodeDto();
+                dnd.setId(rd.getId());
+                dnd.setName(rd.getName());
+                dnd.setCode(rd.getCode());
+                dnd.setResourceurl(rd.getUrl());
+                dnd.setType(ResourceType.RESOURCE.getCode());
+                dnd.setLevel("1");
+                dnd.setExpanded(true);
+                dnd.setIsLeaf(false);
+                dnd.setLoaded(true);
+                dnd.setLft(num);
+                dnd.setParentId(rd.getAppId());
+                ++num;
+                dnd.setRgt(num);
+                list.add(dnd);
+            }
+        }
+
+        map.put("num", num);
+        map.put("list", list);
+        return map;
+    }
+
+    // 获取一级菜单
+    public List<DataNodeDto> queryChildMenuByAppId(String id, List<ResourceDto> listResourceDto) throws Exception {
+        List<DataNodeDto> list = new ArrayList<DataNodeDto>();
+        for (ResourceDto rd : listResourceDto) {
+            if (id.equals(rd.getAppId()) && (null == rd.getParentId() || "".equals(rd.getParentId()))) {
+                DataNodeDto dnd = new DataNodeDto();
+                dnd.setId(rd.getId());
+                dnd.setName(rd.getName());
+                dnd.setCode(rd.getCode());
+                dnd.setResourceurl(rd.getUrl());
+                dnd.setAppId(rd.getAppId());
+                dnd.setResourceId(rd.getId());
+                dnd.setType(ResourceType.RESOURCE.getCode());
+                list.add(dnd);
+            }
+        }
+        return list;
+    }
+
+    // 递归获取子菜单（带按钮）
+    public DataNodeDto queryChildMenuAndButton(DataNodeDto dto, List<ResourceDto> listResourceDto,
+                                               List<OperationDto> listOperationDto) throws Exception {
+        // List<DataNodeDto> list =
+        // resourceService.queryResourceListByParentId(dto.getId());
+        // 查询菜单子节点（代替从数据库中进行查询）
+        List<DataNodeDto> list = queryChildMenuNode(dto.getId(), listResourceDto);
+
+        // 查询菜单下的按钮
+        List<DataNodeDto> listButton = queryChildMenuAndButtonNode(dto.getId(), listOperationDto);
+        listButton.addAll(list);
+        dto.setChildren(listButton);
+        if (list != null && list.size() > 0) {
+            for (DataNodeDto dataNodeDto : list) {
+                queryChildMenuAndButton(dataNodeDto, listResourceDto, listOperationDto);
+            }
+
+        } else {
+            return dto;
+        }
+        return dto;
+    }
+
+    // 查询菜单下的按钮
+    public List<DataNodeDto> queryChildMenuAndButtonNode(String resourceId, List<OperationDto> listOperationDto) {
+        List<DataNodeDto> listButtonChildNode = new ArrayList<DataNodeDto>();
+        for (OperationDto o : listOperationDto) {
+            // 获取一级按钮
+            if (resourceId.equals(o.getResourceId()) && (null == o.getParentId() || o.getParentId().equals(""))) {
+                DataNodeDto dnd = new DataNodeDto();
+                dnd.setId(o.getId());
+                dnd.setName(o.getName());
+                dnd.setCode(o.getCode());
+                dnd.setAppId(o.getAppId());
+                dnd.setResourceId(o.getResourceId());
+                dnd.setResourceurl(o.getUrl());
+                dnd.setType(ResourceType.OPERATION.getCode());
+                listButtonChildNode.add(dnd);
+            }
+        }
+        // 循环一级按钮获取下级按钮
+        if (null != listButtonChildNode && listButtonChildNode.size() > 0) {
+            for (DataNodeDto dataNodeDto : listButtonChildNode) {
+                queryChildButtonMenu(dataNodeDto, listOperationDto);
+            }
+        }
+
+        return listButtonChildNode;
+    }
+
+    // 递归查询按钮下的按钮
+    public DataNodeDto queryChildButtonMenu(DataNodeDto dto, List<OperationDto> listOperationDto) {
+        List<DataNodeDto> list = queryChildButtonNode(dto.getId(), listOperationDto);
+        dto.setChildren(list);
+        if (list != null && list.size() > 0) {
+            for (DataNodeDto dataNodeDto : list) {
+                queryChildButtonMenu(dataNodeDto, listOperationDto);
+            }
+            dto.setChildren(list);
+        } else {
+            return dto;
+        }
+        return dto;
+    }
+
+    // 查询按钮下的子按钮
+
+    public List<DataNodeDto> queryChildButtonNode(String parentId, List<OperationDto> listOperationDto) {
+        List<DataNodeDto> listButtonChildNode = new ArrayList<DataNodeDto>();
+        for (OperationDto o : listOperationDto) {
+            // 获取子按钮
+            if (parentId.equals(o.getParentId())) {
+                DataNodeDto dnd = new DataNodeDto();
+                dnd.setId(o.getId());
+                dnd.setName(o.getName());
+                dnd.setCode(o.getCode());
+                dnd.setResourceurl(o.getUrl());
+                dnd.setType(ResourceType.OPERATION.getCode());
+                listButtonChildNode.add(dnd);
+            }
+        }
+        return listButtonChildNode;
+    }
+
+    // 递归获取子菜单
+    public DataNodeDto queryChildMenu(DataNodeDto dto, List<ResourceDto> listResourceDto) throws Exception {
+        // List<DataNodeDto> list =
+        // resourceService.queryResourceListByParentId(dto.getId());
+        List<DataNodeDto> list = queryChildMenuNode(dto.getId(), listResourceDto);
+        if (list != null && list.size() > 0) {
+            for (DataNodeDto dataNodeDto : list) {
+                queryChildMenu(dataNodeDto, listResourceDto);
+            }
+            dto.setChildren(list);
+        } else {
+            return dto;
+        }
+        return dto;
+    }
+
+    public DataNodeDto queryResourceListAll(DataNodeDto dto, List<ResourceDto> listResourceDto) throws Exception {
+        List<DataNodeDto> list = queryChildMenuNode(dto.getId(), listResourceDto);
+        if (list != null && list.size() > 0) {
+            for (DataNodeDto dataNodeDto : list) {
+                queryResourceListAll(dataNodeDto, listResourceDto);
+                dataNodeDto.setType(ResourceType.RESOURCE.getCode());
+            }
+            dto.setChildren(list);
+        } else {
+            return dto;
+        }
+        return dto;
+    }
+
+    // 查询菜单子节点（代替从数据库中进行查询）
+    public List<DataNodeDto> queryChildMenuNode(String parentId, List<ResourceDto> list_org) {
+        List<DataNodeDto> listMenuChildNode = new ArrayList<DataNodeDto>();
+        for (ResourceDto resourceDto : list_org) {
+            if (parentId.equals(resourceDto.getParentId())) {
+                DataNodeDto dnd = new DataNodeDto();
+                dnd.setId(resourceDto.getId());
+                dnd.setName(resourceDto.getName());
+                dnd.setCode(resourceDto.getCode());
+                dnd.setResourceurl(resourceDto.getUrl());
+                dnd.setAppId(resourceDto.getAppId());
+                dnd.setResourceId(resourceDto.getId());
+                dnd.setOpenmode(resourceDto.getOpenmode());
+                dnd.setType(ResourceType.RESOURCE.getCode());
+                listMenuChildNode.add(dnd);
+            }
+        }
+        return listMenuChildNode;
+    }
+
+    @Override
+    public int updateBean(Resource resource) {
+        int result = 0;
+        try {
+            Map<String, Object> map = JacksonUtils.fromJson(JacksonUtils.toJson(resource), HashMap.class);
+            // 校验编码重复 add by gyh 2017-3-28
+            Map<String, Object> param = new HashMap<String, Object>();
+            param.put("code", resource.getCode());
+            param.put("id", resource.getId());
+            param.put("appId", resource.getAppId());
+            Integer isc = this.getCodeCount(param);
+            if (isc > 0) {
+                throw new InvalidCustomException("该业务系统下此菜单编码已存在，不可重复");
+            }
+            result = this.updateMenu(resource);
+        } catch (Exception e) {
+            logger.error(e);
+        }
+        return result;
+    }
+
+    @Override
+    public int saveBean(Resource resource) {
+        try {
+            Map<String, Object> map = JacksonUtils.fromJson(JacksonUtils.toJson(resource), HashMap.class);
+            // 校验编码重复 add by gyh 2017-3-28
+            Map<String, Object> param = new HashMap<String, Object>();
+            param.put("code", resource.getCode());
+            param.put("appId", resource.getAppId());
+            Integer isc = this.getCodeCount(param);
+            if (isc > 0) {
+                throw new InvalidCustomException("该业务系统下此菜单编码已存在，不可重复");
+            }
+            // 排序号不输入，改为系统最大排序加1，同时维护全路径相关字段 add by gyh 2017-4-2
+            map.put("tableName", "pt_sys_res_resource");
+            Long maxSort = appSystemService.getMaxSort(map) + 1L;// 排序号自动加1
+            resource.setSort(maxSort);
+            // 菜单全路径
+            if (resource.getParentId() != null && StringUtils.isNotBlank(resource.getParentId())) {
+                String parentId = (String) map.get("parentId");
+                Resource resP = this.getObjectById(parentId);
+                resource.setPrefixId(resP.getPrefixId() + "/" + resource.getId());
+                resource.setPrefixName(resP.getPrefixName() + "/" + resource.getName());
+                resource.setPrefixSort(resP.getPrefixSort() + "-" + String.format("B%05d", maxSort));
+            } else {
+                String appId = (String) map.get("appId");
+                AppSystem app = appSystemService.getObjectById(appId);
+                resource.setPrefixId(app.getPrefixId() + "/" + resource.getId());
+                resource.setPrefixName(app.getPrefixName() + "/" + resource.getName());
+                resource.setPrefixSort(app.getPrefixSort() + "-" + String.format("B%05d", maxSort));
+            }
+            return this.save(resource);
+        } catch (Exception e) {
+            logger.error(e);
+        }
+        return 0;
+    }
+
+    @Override
+    public MessageResult deletePseudoBeanById(String resourceId) {
+        try {
+            // 判断是否存在下级菜单或按钮 add by gyh 2017-4-10
+            Map<String, Object> map = new HashMap<String, Object>();
+            map.put("menuId", resourceId);
+            Integer c = this.selectSonNum(map);
+            if (c > 0) {
+                throw new InvalidCustomException("下级菜单被引用，不可删除");
+            }
+            Resource resource = new Resource();
+            resource.setId(resourceId);
+            int result = this.deleteMeneAllSon(resource);
+            return ResponseModel.getResult(MessageInfo.DELETESUCCESS, result);
+        } catch (Exception e) {
+            logger.error(e);
+            return ResponseModel.getResult(MessageInfo.DELETEERROR, "删除数据失败！");
+        }
+
+    }
+}

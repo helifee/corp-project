@@ -1,0 +1,99 @@
+package com.yds.att.service.impl;
+
+import java.text.SimpleDateFormat;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.Iterator;
+import java.util.List;
+
+import org.jfree.util.Log;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.yds.att.bean.AttEmpType;
+import com.yds.att.bean.AttInfoCondC;
+import com.yds.att.common.service.AttInfoService;
+import com.yds.att.dao.Ye8010Dao;
+import com.yds.common.bean.ComIoData;
+import com.yds.util.service.DateUtil;
+import com.yds.ws.service.HandleService;
+
+@Service("ye8010Service")
+public class Ye8010ServiceImpl implements HandleService {
+	
+	private Ye8010Dao ye8010Dao;
+	private AttInfoService attInfoService;
+	private Exception e;
+
+	@Transactional(propagation = Propagation.REQUIRES_NEW, timeout = 60)
+	@Override
+	public void handle(List<ComIoData> ioDataList) throws Exception {
+	
+		dealIoData(ioDataList);
+		// 有异常则抛出
+		if (null != e) {
+			throw e;
+		}
+	}
+	
+	/**
+	 * 处理数据
+	 * @param ioDataList
+	 */
+	private void dealIoData(List<ComIoData> ioDataList) {
+		
+		Iterator<ComIoData> iter = ioDataList.iterator();
+		
+		while(iter.hasNext()) {
+			try {
+				ComIoData ioData = iter.next();
+				// 打卡ID
+				String empId = ioData.getEmpId();
+				// 打卡时间取得
+				Date ioTime = ioData.getIoTime();
+				
+				// 设置打卡人ID与打卡时间
+				AttEmpType aet = new AttEmpType();
+				aet.setEmpId(empId);
+				aet.setStartDate(ioTime);
+				// 取得员工班型信息
+				AttEmpType attEmpType = ye8010Dao.getAttEmpType(aet);
+				// 没有班型则进入下一条打卡信息
+				if (null == attEmpType) {
+					continue;
+				}
+				// 考勤日期
+				Date attYmd = ioTime;
+				SimpleDateFormat timeM = new SimpleDateFormat("HHmmss");
+				// 判断打卡时间是否在打卡有效开始时间范围
+				if (Integer.valueOf(timeM.format(ioTime)) < Integer.valueOf(attEmpType.getClockIn())) {
+					// 打卡时间前一天
+					Date ioTimeY = DateUtil.dateAdd(ioTime, Calendar.DATE, -1);
+					// 设置考勤日期为打卡时间前一天
+					attYmd = ioTimeY;
+				}
+
+				AttInfoCondC attInfoCondC = new AttInfoCondC();
+				attInfoCondC.setEmpId(empId);
+				attInfoCondC.setAttYmd(attYmd);
+				attInfoCondC.setIoTime(ioTime);
+				// 调用打卡信息处理子函数
+				attInfoService.updateAttInfo(attInfoCondC);
+			} catch (Exception e) {
+				e.printStackTrace();
+				Log.error(e);
+				this.e = e;
+			}
+		}
+	}
+
+	public void setYe8010Dao(Ye8010Dao ye8010Dao) {
+		this.ye8010Dao = ye8010Dao;
+	}
+
+	public void setAttInfoService(AttInfoService attInfoService) {
+		this.attInfoService = attInfoService;
+	}
+
+}

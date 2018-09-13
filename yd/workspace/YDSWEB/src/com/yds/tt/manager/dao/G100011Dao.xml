@@ -1,0 +1,593 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE sqlMap PUBLIC "-//ibatis.apache.org//DTDSQLMap2.0//EN" "http://ibatis.apache.org/dtd/sql-map-2.dtd">
+<sqlMap namespace="G100011Dao">
+	<typeAlias alias="bookMark" type="com.yds.tt.training.bean.Bookmark"/>
+	<typeAlias alias="messageReminding" type="com.yds.tt.manager.bean.MessageReminding"/>
+	<typeAlias alias="j020021SearchInfo" type="com.yds.tt.training.bean.J020021SearchInfo"/>
+	<typeAlias alias="courseInfo" type="com.yds.tt.training.bean.CourseInfo"/>
+	<typeAlias alias="examineInfo" type="com.yds.tt.testing.bean.ExamineInfo"/>
+	<typeAlias alias="permRequestInfo" type="com.yds.tt.manager.bean.PermRequestInfo"/>
+	<!-- 书签一览信息取得 -->
+	<select id="getBookMarkList" parameterClass="String" resultClass="bookMark">
+		SELECT 
+			T1.CHAPTER_NO as chapterNo,
+			T1.BOOKMARK_CONTENT as bookmarkContent,
+			T2.BOOK_ID as bookId
+		  FROM 
+			tt_shuqian T1,tt_jiaocai T2
+		 WHERE 
+			T1.EMPLOYEES_ID = #userId# AND
+			T2.BOOK_ID = T1.BOOK_ID AND
+			T2.BOOK_STATUS = '3'
+	</select>
+	<!-- 书签信息删除 -->
+	<delete id="delBookMark" parameterClass="bookMark">
+		DELETE 
+		  FROM 
+		       tt_shuqian
+		 WHERE 
+		       BOOK_ID = #bookId# AND 
+			   EMPLOYEES_ID = #employeesId#
+	</delete>
+	<!-- 书签信息存在check -->
+	<select id="checkBookMarkInfo" parameterClass="bookMark" resultClass="Integer">
+		SELECT 
+		       COUNT(*) 
+		  FROM 
+		       tt_shuqian
+		 WHERE 
+		       BOOK_ID = #bookId# AND  
+			   EMPLOYEES_ID = #employeesId#
+	</select>
+	<!-- 提醒消息一览信息取得（左方提醒栏显示的消息） -->
+	<select id="getMessageRemindingList" parameterClass="String" resultClass="messageReminding">
+		SELECT 
+		       INFORMATION_ID AS informationId, 
+			   MODE AS mode,
+			   PARAMETER AS parameter,
+			   CONTENT AS content
+		  FROM 
+			   tt_txxiaoxi 
+		 WHERE
+		       USER_ID = #userId# AND 
+			   INFORMATION_FLG = '0' AND <!-- 0：左方提醒栏显示的消息 --> 
+			   LOSETIME > NOW()
+
+	</select>
+	<!-- 提醒消息一览信息取得（上方信息栏显示的信息） -->
+	<select id="getMessageRemindingMarquee" parameterClass="String" resultClass="messageReminding">
+		SELECT 
+			   CONTENT AS content
+		  FROM 
+			   tt_txxiaoxi 
+		 WHERE
+			   INFORMATION_FLG = '1'  <!-- 1: 上方信息栏显示的信息 --> 
+			   AND (USER_ID = '99999999' OR
+			   USER_ID = #userId#)
+			   AND LOSETIME > NOW()
+
+	</select>
+	<!-- 提醒信息更新处理 -->
+	<update id="updateLoseTime" parameterClass="messageReminding">
+		UPDATE
+				tt_txxiaoxi 
+		   SET
+				LOSETIME = NOW()			
+		 WHERE
+				INFORMATION_ID = #informationId# AND 
+				USER_ID = #userId#
+	</update>
+	<!-- 提醒信息存在check -->
+	<select id="checkMessageInfo" parameterClass="messageReminding" resultClass="Integer">
+		SELECT 
+		       COUNT(*) 
+		  FROM 
+		       tt_txxiaoxi
+		 WHERE
+				INFORMATION_ID = #informationId# AND 
+				USER_ID = #userId#
+	</select>
+	<!-- 课程一览信息共同抽出条件 -->
+	<sql id="selectCourseInfoCom">
+		SELECT 	T1.COURSE_ID AS courseId, 
+				T1.COURSE_NAME AS courseName,
+				T1.ABSTRACT AS courseAbstract,
+				T1.NECESSARY_FLAG AS necessaryFlag,
+				CONCAT
+				(CASE t1.CATEGORY1_ID 
+					WHEN 0 THEN ""
+					ELSE 
+						(SELECT CATEGORY_NAME 
+						   FROM tt_fenlei
+						  WHERE CATEGORY1_ID = t1.CATEGORY1_ID AND 
+								CATEGORY_LEVEL = 1)
+				END,
+				CASE t1.CATEGORY2_ID
+					WHEN 0 THEN ""
+					ELSE CONCAT("-",(SELECT CATEGORY_NAME 
+								FROM tt_fenlei
+							   WHERE CATEGORY1_ID = t1.CATEGORY1_ID AND 
+									 CATEGORY2_ID = t1.CATEGORY2_ID AND
+									 CATEGORY_LEVEL = 2))
+				END ,
+				CASE t1.CATEGORY3_ID
+					WHEN 0 THEN ""
+					ELSE CONCAT("-",(SELECT CATEGORY_NAME 
+								FROM tt_fenlei 
+							   WHERE CATEGORY1_ID = t1.CATEGORY1_ID AND 
+									 CATEGORY2_ID = t1.CATEGORY2_ID AND
+									 CATEGORY3_ID = t1.CATEGORY3_ID AND
+									 CATEGORY_LEVEL = 3))
+				END) AS categoryName,
+				
+				CASE T1.NECESSARY_FLAG 
+				    WHEN 1 THEN '必修'
+				    ELSE (SELECT DIFF_NAME
+					  FROM COM_CODE_MST
+			                  WHERE TYPE_ID = 'C32'
+                    AND DIFF_NO = T2.ATTENTION_FLAG
+			    ) END AS attentionFlag,
+			    
+				CASE T1.NECESSARY_FLAG
+				    WHEN 1 THEN '0'
+				    ELSE (CASE T2.ATTENTION_FLAG 
+					          WHEN "" THEN '2'
+							  ELSE T2.ATTENTION_FLAG
+						 END)
+				    END AS attentionFlagOB,
+				T1.UPDATE_TIME AS updateTime
+	</sql>
+	<!-- 课程一览信息共同检索条件 -->
+	<sql id="whereCourseInfoCom">
+			AND T1.COURSE_PUBLISH_STATUS = 2
+		<isNotEmpty property="attentionFlag">
+			AND T2.ATTENTION_FLAG = #attentionFlag#
+		</isNotEmpty>
+		<isNotEmpty property="necessaryFlagList">
+			<isNotEqual property="necessaryFlagList[0]" compareValue="0" prepend="AND" open="(">
+				T1.NECESSARY_FLAG = #necessaryFlagList[0]#
+			</isNotEqual>				
+		</isNotEmpty>
+		<isNotEmpty property="necessaryFlagList">
+			<isNotEqual property="necessaryFlagList[0]" compareValue="0">
+				<isNotEqual property="necessaryFlagList[1]" compareValue="0">
+					OR
+				</isNotEqual>
+			</isNotEqual>				
+		</isNotEmpty>
+		<isNotEmpty property="necessaryFlagList">
+			<isEqual property="necessaryFlagList[0]" compareValue="0">
+				<isNotEqual property="necessaryFlagList[1]" compareValue="0">
+					AND
+				</isNotEqual>
+			</isEqual>				
+		</isNotEmpty>				
+		<isNotEmpty property="necessaryFlagList">
+			<isNotEqual property="necessaryFlagList[1]" compareValue="0" open="(">
+				T1.NECESSARY_FLAG = #necessaryFlagList[1]#
+			</isNotEqual>				
+		</isNotEmpty>
+		<isNotEmpty property="attentionFlagList">
+			<iterate conjunction="or" property="attentionFlagList" prepend="AND" open="(" close=")">
+				<isNotEqual property="attentionFlagList[]" compareValue="0">
+					T2.ATTENTION_FLAG = #attentionFlagList[]#
+				</isNotEqual>
+			</iterate>
+		</isNotEmpty>
+		<isNotEmpty property="necessaryFlagList">
+			<isNotEqual property="necessaryFlagList[0]" compareValue="0">
+				)
+			</isNotEqual>				
+		</isNotEmpty>
+		<isNotEmpty property="necessaryFlagList">
+			<isNotEqual property="necessaryFlagList[1]" compareValue="0">
+				)
+			</isNotEqual>				
+		</isNotEmpty>				
+		<!-- <isNotEmpty property="attentionFlag">
+			AND T1.NECESSARY_FLAG = #necessaryFlag#
+		</isNotEmpty> -->					
+		<isNotEmpty property="courseName">
+			AND T1.COURSE_NAME like CONCAT('%',#courseName#,'%')
+		</isNotEmpty>
+		<isNotEmpty property="category1Id">
+			<isNotEqual prepend="AND" property="category1Id" compareValue="0">
+				T1.CATEGORY1_ID = #category1Id#
+			</isNotEqual>
+		</isNotEmpty>
+		<isNotEmpty property="category2Id">
+			<isNotEqual prepend="AND" property="category2Id" compareValue="0">
+				T1.CATEGORY2_ID = #category2Id#
+			</isNotEqual>
+		</isNotEmpty>
+		<isNotEmpty property="category3Id">
+			<isNotEqual prepend="AND" property="category3Id" compareValue="0">
+				T1.CATEGORY3_ID = #category3Id#
+			</isNotEqual>
+		</isNotEmpty>	
+	</sql>
+	<!-- 课程一览信息件数 -->
+	<select id="getCourseInfoCount" resultClass="long" parameterClass="j020021SearchInfo">
+		SELECT ( (SELECT COUNT(*)
+				   FROM 
+						tt_kecheng T1 LEFT JOIN tt_kecheng_yuangong T2
+						ON T1.COURSE_ID = T2.COURSE_ID 
+						AND T2.EMPLOYEES_ID = #userId#
+				  WHERE
+						T1.OBJECT_TYPE = 1
+						<include refid="whereCourseInfoCom"/>) +
+				 (SELECT COUNT(*)
+				   FROM 
+						v_emp_org_list T3,tt_kecheng T1 LEFT JOIN tt_kecheng_yuangong T2 ON
+						T1.COURSE_ID = T2.COURSE_ID 
+						AND T2.EMPLOYEES_ID = #userId#
+				  WHERE
+						T1.OBJECT_TYPE = 2 
+						AND T3.EMP_ID = #userId#
+						AND T1.OBJECT_VALUE = T3.ORG_ID
+						<include refid="whereCourseInfoCom"/>) +
+				  (SELECT COUNT(*)
+				   FROM 
+						v_tt_user T4,tt_kecheng T1 LEFT JOIN tt_kecheng_yuangong T2 ON
+						T1.COURSE_ID = T2.COURSE_ID 
+						AND T2.EMPLOYEES_ID = #userId#
+				  WHERE
+						T1.OBJECT_TYPE = 3 
+						AND T4.USER_ID = #userId#
+						AND T1.OBJECT_VALUE >= YEAR(NOW()) - YEAR(T4.START_DATE)
+						<include refid="whereCourseInfoCom"/>) +
+				  (SELECT COUNT(*)
+				   FROM 
+						tt_kecheng T1,tt_kecheng_yuangong T2
+				  WHERE
+						T1.OBJECT_TYPE = 4
+						AND T1.COURSE_ID = T2.COURSE_ID 
+						AND T2.EMPLOYEES_ID = #userId#
+						<include refid="whereCourseInfoCom"/>)
+				) as courseInfoCount
+	</select>
+	<!-- 课程一览信息 -->
+	<select id="getCourseInfoList" resultClass="courseInfo" parameterClass="j020021SearchInfo">
+		<!-- ①针对对象为全员的课程检索 -->
+		(		<include refid="selectCourseInfoCom"/>
+		FROM 
+				tt_kecheng T1 LEFT JOIN tt_kecheng_yuangong T2
+				ON T1.COURSE_ID = T2.COURSE_ID 
+				AND T2.EMPLOYEES_ID = #userId#
+				
+		WHERE
+				T1.OBJECT_TYPE = 1
+				<include refid="whereCourseInfoCom"/>
+		) UNION ALL
+		<!-- ②针对对象为全员的课程检索 -->
+		(		<include refid="selectCourseInfoCom"/>
+		FROM 
+				v_emp_org_list T3,tt_kecheng T1 LEFT JOIN tt_kecheng_yuangong T2 ON
+				T1.COURSE_ID = T2.COURSE_ID 
+				AND T2.EMPLOYEES_ID = #userId#
+		WHERE
+     		    T1.OBJECT_TYPE = 2 
+				AND T3.EMP_ID = #userId#
+     		    AND T1.OBJECT_VALUE = T3.ORG_ID
+				<include refid="whereCourseInfoCom"/>
+		) UNION ALL
+		<!-- ③针对对象为全员的课程检索 -->
+		(		<include refid="selectCourseInfoCom"/>
+		FROM 
+				v_tt_user T4,tt_kecheng T1 LEFT JOIN tt_kecheng_yuangong T2 ON
+				T1.COURSE_ID = T2.COURSE_ID 
+				AND T2.EMPLOYEES_ID = #userId#
+		WHERE
+     		    T1.OBJECT_TYPE = 3 
+				AND T4.USER_ID = #userId#
+     		    AND T1.OBJECT_VALUE >= YEAR(NOW()) - YEAR(T4.START_DATE)
+				<include refid="whereCourseInfoCom"/>
+		) UNION ALL
+		<!-- ④针对对象为全员的课程检索 -->
+		(		<include refid="selectCourseInfoCom"/>
+		FROM 
+				tt_kecheng T1,tt_kecheng_yuangong T2
+		WHERE
+     		    T1.OBJECT_TYPE = 4
+				AND T1.COURSE_ID = T2.COURSE_ID 
+				AND T2.EMPLOYEES_ID = #userId#
+				<include refid="whereCourseInfoCom"/>
+		) ORDER BY courseId DESC
+	</select>
+	<!-- 考试一览信息共同抽出条件 -->
+	<sql id="selectExamineInfoCom">
+		SELECT T1.EXAMINE_ID AS examineId,
+		   T1.EXAMINE_NAME AS examineName,
+		   T1.MUST_EXAMINE_FLG AS mustExamineFlg,
+		   T1.EXAMINE_COMMENT AS examineComment,
+		   T1.EXAMINE_TIME AS examineTime,
+			(SELECT COM_CODE_MST.DIFF_NAME
+				FROM COM_CODE_MST
+				WHERE COM_CODE_MST.TYPE_ID = 'C08'
+				AND COM_CODE_MST.DIFF_NO = T1.EXAMINE_FLG
+			) AS examineFlgName,
+		   CONCAT
+			(CASE t1.CATEGORY1_ID 
+				WHEN 0 THEN ""
+				ELSE 
+					(SELECT CATEGORY_NAME 
+					   FROM tt_fenlei
+					  WHERE CATEGORY1_ID = t1.CATEGORY1_ID AND 
+							CATEGORY_LEVEL = 1)
+			END,
+			CASE t1.CATEGORY2_ID
+				WHEN 0 THEN ""
+				ELSE CONCAT("-",(SELECT CATEGORY_NAME 
+							FROM tt_fenlei
+						   WHERE CATEGORY1_ID = t1.CATEGORY1_ID AND 
+								 CATEGORY2_ID = t1.CATEGORY2_ID AND
+								 CATEGORY_LEVEL = 2))
+			END ,
+			CASE t1.CATEGORY3_ID
+				WHEN 0 THEN ""
+				ELSE CONCAT("-",(SELECT CATEGORY_NAME 
+							FROM tt_fenlei 
+						   WHERE CATEGORY1_ID = t1.CATEGORY1_ID AND 
+								 CATEGORY2_ID = t1.CATEGORY2_ID AND
+								 CATEGORY3_ID = t1.CATEGORY3_ID AND
+								 CATEGORY_LEVEL = 3))
+			END) AS categoryName,
+	   T1.APPLY_CLOSING_TIME AS applyClosingTime,
+	   T1.EXAMINE_START_TIME AS examineStartTime,
+	   (SELECT COM_CODE_MST.DIFF_NAME
+		 FROM COM_CODE_MST
+		 WHERE COM_CODE_MST.TYPE_ID = 'C21'
+		   AND COM_CODE_MST.DIFF_NO = T2.PASSEXAMINE_FLG
+		)AS score,
+		T2.EMP_EXAM_STATUS AS examineStatus,
+			(SELECT COM_CODE_MST.DIFF_NAME
+				FROM COM_CODE_MST
+				WHERE COM_CODE_MST.TYPE_ID = 'R12'
+				AND COM_CODE_MST.DIFF_NO = T1.EXAMINE_STATUS)
+		   AS examineStatusName,
+		  (SELECT COM_CODE_MST.DIFF_NAME
+				FROM COM_CODE_MST
+				WHERE COM_CODE_MST.TYPE_ID = 'R13'
+				AND COM_CODE_MST.DIFF_NO = T2.EMP_EXAM_STATUS)
+		   AS empExamStatusName,
+		CASE T1.MUST_EXAMINE_FLG 
+		WHEN 2 THEN '必考'
+		ELSE (SELECT DIFF_NAME
+			FROM COM_CODE_MST
+			WHERE TYPE_ID = 'C32'
+						AND DIFF_NO = T3.ATTENTION_FLAG
+			  ) END AS attentionFlag,
+					
+		CASE T1.MUST_EXAMINE_FLG
+		WHEN 1 THEN '0'
+		ELSE T3.ATTENTION_FLAG 
+		END AS attentionFlagOB
+	</sql>
+	<!-- 考试一览信息共同检索条件 -->
+	<sql id="whereExamineInfoCom">
+			AND T1.EXAMINE_VISIBLE_FLG = 1
+		<isNotEmpty property="examineStatus">
+			AND T2.EMP_EXAM_STATUS = #examineStatus#
+		</isNotEmpty>
+		<isNotEmpty property="mustExamineFlgList">
+			<isNotEqual property="mustExamineFlgList[0]" compareValue="0" prepend="AND" open="(">
+				T1.MUST_EXAMINE_FLG = #mustExamineFlgList[0]#
+			</isNotEqual>				
+		</isNotEmpty>
+		<isNotEmpty property="mustExamineFlgList">
+			<isNotEqual property="mustExamineFlgList[0]" compareValue="0">
+				<isNotEqual property="mustExamineFlgList[1]" compareValue="0">
+					OR
+				</isNotEqual>
+			</isNotEqual>				
+		</isNotEmpty>
+		<isNotEmpty property="mustExamineFlgList">
+			<isEqual property="mustExamineFlgList[0]" compareValue="0">
+				<isNotEqual property="mustExamineFlgList[1]" compareValue="0">
+					AND
+				</isNotEqual>
+			</isEqual>				
+		</isNotEmpty>				
+		<isNotEmpty property="mustExamineFlgList">
+			<isNotEqual property="mustExamineFlgList[1]" compareValue="0" open="(">
+				T1.MUST_EXAMINE_FLG = #mustExamineFlgList[1]#
+			</isNotEqual>				
+		</isNotEmpty>
+		<isNotEmpty property="exaAttentionFlagList">
+			<iterate conjunction="or" property="exaAttentionFlagList" prepend="AND" open="(" close=")">
+				<isNotEqual property="exaAttentionFlagList[]" compareValue="0">
+					T3.ATTENTION_FLAG = #exaAttentionFlagList[]#
+				</isNotEqual>
+			</iterate>
+		</isNotEmpty>
+		<isNotEmpty property="mustExamineFlgList">
+			<isNotEqual property="mustExamineFlgList[0]" compareValue="0">
+				)
+			</isNotEqual>				
+		</isNotEmpty>
+		<isNotEmpty property="mustExamineFlgList">
+			<isNotEqual property="mustExamineFlgList[1]" compareValue="0">
+				)
+			</isNotEqual>				
+		</isNotEmpty>		
+		<isNotEmpty property="examineStatusList">
+			<iterate conjunction="or" property="examineStatusList" prepend="AND" open="(" close=")">
+				<isNotEqual property="examineStatusList[]" compareValue="0">
+					T1.EXAMINE_STATUS = #examineStatusList[]#
+				</isNotEqual>
+			</iterate>
+		</isNotEmpty>
+		<isNotEmpty property="examineId">
+			AND T1.EXAMINE_ID = #examineId#
+		</isNotEmpty>							
+		<isNotEmpty property="examineName">
+			AND T1.EXAMINE_NAME like CONCAT('%',#examineName#,'%')
+		</isNotEmpty>
+		<isNotEmpty property="examineTimeFrom">
+			<![CDATA[ AND T1.EXAMINE_START_TIME >= #examineTimeFrom# ]]>
+		</isNotEmpty>
+		<isNotEmpty property="examineTimeTo">
+			<![CDATA[ AND T1.EXAMINE_START_TIME <= #examineTimeTo# ]]>
+		</isNotEmpty>
+		<isNotEmpty property="category1Id">
+			<isNotEqual prepend="AND" property="category1Id" compareValue="0">
+				T1.CATEGORY1_ID = #category1Id#
+			</isNotEqual>
+		</isNotEmpty>
+		<isNotEmpty property="category2Id">
+			<isNotEqual prepend="AND" property="category2Id" compareValue="0">
+				T1.CATEGORY2_ID = #category2Id#
+			</isNotEqual>
+		</isNotEmpty>
+		<isNotEmpty property="category3Id">
+			<isNotEqual prepend="AND" property="category3Id" compareValue="0">
+				T1.CATEGORY3_ID = #category3Id#
+			</isNotEqual>
+		</isNotEmpty>	
+	</sql>
+	<!-- 考试一览信息件数 -->
+	<select id="getExamineInfoCount" resultClass="long" parameterClass="examineInfo">
+		SELECT ( (SELECT COUNT(*)
+				FROM tt_ks_xinxi T1
+					LEFT JOIN tt_ks_yuangong T2 ON (T2.EXAMINE_ID = T1.EXAMINE_ID
+						AND T2.EMPLOYEES_ID = #userId#
+						AND EXAMINE_JOIN_TIMES = (SELECT MAX(T6.EXAMINE_JOIN_TIMES) 
+										FROM tt_ks_yuangong T6
+										WHERE T6.EXAMINE_ID = T1.EXAMINE_ID
+										  AND T6.EMPLOYEES_ID = #userId#))
+					LEFT JOIN tt_ks_duixiang T3 ON (T3.EXAMINE_ID = T1.EXAMINE_ID
+						AND T3.EXAMINE_OBJECT_ID = #userId#)
+				WHERE T1.OBJECT_TYPE = 1
+						<include refid="whereExamineInfoCom"/>) +
+				 (SELECT COUNT(*)
+				   FROM v_emp_org_list T4,tt_ks_xinxi T1
+					LEFT JOIN tt_ks_yuangong T2 ON (T2.EXAMINE_ID = T1.EXAMINE_ID
+						AND T2.EMPLOYEES_ID = #userId#
+						AND EXAMINE_JOIN_TIMES = (SELECT MAX(T6.EXAMINE_JOIN_TIMES) 
+										FROM tt_ks_yuangong T6
+										WHERE T6.EXAMINE_ID = T1.EXAMINE_ID
+										  AND T6.EMPLOYEES_ID = #userId#))
+					LEFT JOIN tt_ks_duixiang T3 ON (T3.EXAMINE_ID = T1.EXAMINE_ID
+						AND T3.EXAMINE_OBJECT_ID = #userId#)
+				WHERE T1.OBJECT_TYPE = 2 
+				  AND T1.OBJECT_VALUE = T4.ORG_ID 
+				  AND T4.EMP_ID = #userId#
+						<include refid="whereExamineInfoCom"/>) +
+				  (SELECT COUNT(*)
+				   FROM v_tt_user T5,tt_ks_xinxi T1
+					LEFT JOIN tt_ks_yuangong T2 ON (T2.EXAMINE_ID = T1.EXAMINE_ID
+						AND T2.EMPLOYEES_ID = #userId#
+						AND EXAMINE_JOIN_TIMES = (SELECT MAX(T6.EXAMINE_JOIN_TIMES) 
+										FROM tt_ks_yuangong T6
+										WHERE T6.EXAMINE_ID = T1.EXAMINE_ID
+										  AND T6.EMPLOYEES_ID = #userId#))
+					LEFT JOIN tt_ks_duixiang T3 ON (T3.EXAMINE_ID = T1.EXAMINE_ID
+						AND T3.EXAMINE_OBJECT_ID = #userId#)
+				WHERE T1.OBJECT_TYPE = 3 
+				  AND T1.OBJECT_VALUE >= YEAR(NOW()) - YEAR(T5.START_DATE) 
+				  AND T5.USER_ID = #userId#
+						<include refid="whereExamineInfoCom"/>) +
+				  (SELECT COUNT(*)
+				   FROM tt_ks_duixiang T3 ,tt_ks_xinxi T1
+					LEFT JOIN tt_ks_yuangong T2 ON (T2.EXAMINE_ID = T1.EXAMINE_ID
+						AND T2.EMPLOYEES_ID = #userId#
+						AND EXAMINE_JOIN_TIMES = (SELECT MAX(T6.EXAMINE_JOIN_TIMES) 
+										FROM tt_ks_yuangong T6
+										WHERE T6.EXAMINE_ID = T1.EXAMINE_ID
+										  AND T6.EMPLOYEES_ID = #userId#))
+				WHERE T1.OBJECT_TYPE = 4
+					AND T3.EXAMINE_ID = T1.EXAMINE_ID
+					AND T3.EXAMINE_OBJECT_ID = #userId#
+						<include refid="whereExamineInfoCom"/>)
+				) as examineInfoCount
+	</select>
+	<!-- 考试一览信息 -->
+	<select id="getExamineInfoList" resultClass="examineInfo" parameterClass="examineInfo">
+		<!-- ①针对对象为全员的考试检索 -->
+		(		<include refid="selectExamineInfoCom"/>
+		FROM tt_ks_xinxi T1
+				LEFT JOIN tt_ks_yuangong T2 ON (T2.EXAMINE_ID = T1.EXAMINE_ID
+					AND T2.EMPLOYEES_ID = #userId#
+					AND EXAMINE_JOIN_TIMES = (SELECT MAX(T6.EXAMINE_JOIN_TIMES) 
+									FROM tt_ks_yuangong T6
+									WHERE T6.EXAMINE_ID = T1.EXAMINE_ID
+									  AND T6.EMPLOYEES_ID = #userId#))
+
+				LEFT JOIN tt_ks_duixiang T3 ON (T3.EXAMINE_ID = T1.EXAMINE_ID
+					AND T3.EXAMINE_OBJECT_ID = #userId#)
+		WHERE T1.OBJECT_TYPE = 1
+				<include refid="whereExamineInfoCom"/>
+		) UNION ALL
+		<!-- ②针对对象为全员的考试检索 -->
+		(		<include refid="selectExamineInfoCom"/>
+		FROM v_emp_org_list T4,tt_ks_xinxi T1
+				LEFT JOIN tt_ks_yuangong T2 ON (T2.EXAMINE_ID = T1.EXAMINE_ID
+					AND T2.EMPLOYEES_ID = #userId#
+					AND EXAMINE_JOIN_TIMES = (SELECT MAX(T6.EXAMINE_JOIN_TIMES) 
+									FROM tt_ks_yuangong T6
+									WHERE T6.EXAMINE_ID = T1.EXAMINE_ID
+									  AND T6.EMPLOYEES_ID = #userId#))
+				LEFT JOIN tt_ks_duixiang T3 ON (T3.EXAMINE_ID = T1.EXAMINE_ID
+					AND T3.EXAMINE_OBJECT_ID = #userId#)
+		WHERE T1.OBJECT_TYPE = 2 
+		  AND T1.OBJECT_VALUE = T4.ORG_ID 
+		  AND T4.EMP_ID = #userId#
+				<include refid="whereExamineInfoCom"/>
+		) UNION ALL
+		<!-- ③针对对象为全员的考试检索 -->
+		(		<include refid="selectExamineInfoCom"/>
+		FROM v_tt_user T5,tt_ks_xinxi T1
+				LEFT JOIN tt_ks_yuangong T2 ON (T2.EXAMINE_ID = T1.EXAMINE_ID
+					AND T2.EMPLOYEES_ID = #userId#
+					AND EXAMINE_JOIN_TIMES = (SELECT MAX(T6.EXAMINE_JOIN_TIMES) 
+									FROM tt_ks_yuangong T6
+									WHERE T6.EXAMINE_ID = T1.EXAMINE_ID
+									  AND T6.EMPLOYEES_ID = #userId#))
+				LEFT JOIN tt_ks_duixiang T3 ON (T3.EXAMINE_ID = T1.EXAMINE_ID
+					AND T3.EXAMINE_OBJECT_ID = #userId#)
+		WHERE T1.OBJECT_TYPE = 3 
+		  AND T1.OBJECT_VALUE >= YEAR(NOW()) - YEAR(T5.START_DATE) 
+		  AND T5.USER_ID = #userId#
+				<include refid="whereExamineInfoCom"/>
+		) UNION ALL
+		<!-- ④针对对象为全员的考试检索 -->
+		(		<include refid="selectExamineInfoCom"/>
+		FROM tt_ks_duixiang T3 ,tt_ks_xinxi T1
+				LEFT JOIN tt_ks_yuangong T2 ON (T2.EXAMINE_ID = T1.EXAMINE_ID
+					AND T2.EMPLOYEES_ID = #userId#
+					AND EXAMINE_JOIN_TIMES = (SELECT MAX(T6.EXAMINE_JOIN_TIMES) 
+									FROM tt_ks_yuangong T6
+									WHERE T6.EXAMINE_ID = T1.EXAMINE_ID
+									  AND T6.EMPLOYEES_ID = #userId#))
+		WHERE T1.OBJECT_TYPE = 4
+			AND T3.EXAMINE_ID = T1.EXAMINE_ID
+			AND T3.EXAMINE_OBJECT_ID = #userId#
+				<include refid="whereExamineInfoCom"/>
+		) ORDER BY examineId DESC
+	</select>
+	<!-- 登录权限申请信息 -->
+	<insert id="insertPermRequestInfo" parameterClass="permRequestInfo">
+		INSERT INTO
+        tt_qxshenqing (
+        	USER_ID ,
+        	AUTHORITY_ID ,
+        	CATEGORY1 ,
+        	CATEGORY2 ,
+        	CATEGORY3 ,
+        	START_TIME ,
+        	END_TIME ,
+        	APPLY_TIME ,
+        	APPLY_REASON 
+        ) VALUES (
+        	#userId# ,
+        	#authorityId# ,
+        	#category1Id# ,
+        	#category2Id# ,
+        	#category3Id# ,
+        	#startTime# ,
+        	#endTime# ,
+        	now() ,
+        	#applyReason# 
+        )
+	</insert>
+</sqlMap>

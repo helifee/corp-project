@@ -1,0 +1,36 @@
+package com.xinleju.platform.sys.base.service.impl;
+
+import java.util.List;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.sys.base.dao.BaseDataDictionaryItemDao;
+import com.xinleju.platform.sys.base.dto.BaseDataDictionaryItemDto;
+import com.xinleju.platform.sys.base.entity.BaseDataDictionaryItem;
+import com.xinleju.platform.sys.base.service.BaseDataDictionaryItemService;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class BaseDataDictionaryItemServiceImpl extends  BaseServiceImpl<String,BaseDataDictionaryItem> implements BaseDataDictionaryItemService{
+	
+
+	@Autowired
+	private BaseDataDictionaryItemDao baseDataDictionaryItemDao;
+
+	@Override
+	public List<BaseDataDictionaryItemDto> getItemListByDictionaryId(String id)
+			throws Exception {
+		// TODO Auto-generated method stub
+		return baseDataDictionaryItemDao.getItemListByDictionaryId(id);
+	}
+	
+
+}

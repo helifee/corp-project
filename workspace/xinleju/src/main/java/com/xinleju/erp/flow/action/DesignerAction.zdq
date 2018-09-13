@@ -1,0 +1,844 @@
+package com.xinleju.erp.flow.action;
+
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.hibernate.FetchMode;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.Order;
+import org.hibernate.criterion.Property;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.w3c.dom.Document;
+import org.w3c.dom.Node;
+
+import com.mxgraph.io.mxCodec;
+import com.mxgraph.model.mxCell;
+import com.mxgraph.model.mxGraphModel;
+import com.mxgraph.util.mxUtils;
+import com.mxgraph.util.mxXmlUtils;
+import com.xinleju.erp.base.app.action.BaseAction;
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.app.config.Constant;
+import com.xinleju.erp.base.utils.DateUtils;
+import com.xinleju.erp.base.utils.StringHelper;
+import com.xinleju.erp.flow.bean.AcType;
+import com.xinleju.erp.flow.bean.AppBean;
+import com.xinleju.erp.flow.bean.EndTag;
+import com.xinleju.erp.flow.bean.FinishCtrl;
+import com.xinleju.erp.flow.bean.ForkCtrl;
+import com.xinleju.erp.flow.bean.IdName;
+import com.xinleju.erp.flow.bean.ParticipantClass;
+import com.xinleju.erp.flow.bean.StartCtrl;
+import com.xinleju.erp.flow.config.XmlConfig;
+import com.xinleju.erp.flow.dao.impl.FlDAO;
+import com.xinleju.erp.flow.flowutils.bean.GvBean;
+import com.xinleju.erp.flow.flowutils.bean.Gvs;
+import com.xinleju.erp.flow.frameapi.domain.User;
+import com.xinleju.erp.flow.models.Fl;
+import com.xinleju.erp.flow.models.FlGraph;
+import com.xinleju.erp.flow.models.Oc;
+import com.xinleju.erp.flow.models.Ocd;
+import com.xinleju.erp.flow.models.Op;
+import com.xinleju.erp.flow.models.OpGroup;
+import com.xinleju.erp.flow.service.AiService;
+import com.xinleju.erp.flow.service.DesignerService;
+import com.xinleju.erp.flow.service.FlowService;
+import com.xinleju.erp.flow.service.OpRelationInsService;
+import com.xinleju.erp.flow.service.WpService;
+import com.xinleju.erp.flow.service.api.OrgnAPIService;
+import com.xinleju.erp.flow.service.api.extend.dto.UserDTO;
+import com.xinleju.erp.flow.utils.DesignerUtils;
+import com.xinleju.erp.flow.utils.LoginInfoUtils;
+
+/**
+ * 
+ * 
+ * <p>
+ * </p>
+ * <p>
+ * </p>
+ * 
+ * @author 孙朝辉
+ * @version $Id: DesignerAction.java 2047 2014-12-04 10:46:37Z zhongjun $
+ * @since
+ * 
+ */
+public class DesignerAction extends BaseAction {
+
+    /**
+     * 流程编码长度
+     */
+    private static final int FLOW_CODE_LENGTH = 7;
+
+    /**
+     * 外部参与人一行显示个数
+     */
+    private static final int FLOW_PCL_LENGTH = 5;
+
+    /**
+     * Xml配置信息
+     */
+    @Autowired
+    private XmlConfig xmlConfig;
+
+    /**
+     * 工作流设计Service
+     */
+    @Autowired
+    private DesignerService designerService;
+
+    /**
+     * 
+     */
+    @Autowired
+    private FlowService flowService;
+
+    /**
+     * 环节实例Service
+     */
+    @Autowired
+    private AiService aiService;
+
+    /**
+     * 工作组Service
+     */
+    @Autowired
+    private WpService wpService;
+
+    /**
+     * 组织架构接口
+     */
+    @Autowired
+    private OrgnAPIService orgnAPIService;
+
+    /**
+     * 操作组service
+     */
+    @Autowired
+    private OpRelationInsService opRelationInsService;
+
+    /**
+     * 
+     * 流程图设计页面首页
+     * 
+     * @author 孙朝辉
+     * 
+     */
+    public void index() {
+        redirect("designer/examples/editors/layouteditor.jsp", "flowId", "act", "ctId", "serviceObjectDefineId");
+    }
+
+    /**
+     * 通过code检出流程(localhost/xinleju/Designer!indexByFlCode.do?flCode=9069121)
+     * @author jun
+     */
+    public void indexByFlCode(){
+        String flCode = getParameter("flCode");
+        Fl fl = null;
+        if (StringUtils.isNotBlank(flCode)){
+           fl = App.getBean(FlDAO.class).getFl(flCode);
+        }
+        //act=check,act=edit,act=view
+        String act = getParameter("act");
+        if (StringUtils.isBlank(act)){
+            act = "view";
+        }
+        if (null != fl && null != fl.getId()){
+            redirect("Designer!index.do?flowId=" + fl.getId() + "&act=" + act);
+        } else {
+            super.renderHtml("<script type='text/javascript'>alert('不存在编码为" + flCode + "的流程模板！');" + "window.close();</script>");
+        }
+    }
+    /**
+     * 
+     * 转移流程（修改流程目录）
+     *
+     * @author 陈鸿彬
+     * @return 转移流程的页面
+     */
+    public String moveFlow() {
+        String flowIds = getParameter("flowIds");
+        String ctId =  getParameter("ctId");
+        String serviceObjectDefineId =  getParameter("serviceObjectDefineId");
+        return "moveFlow";
+    }
+    
+    /**
+     * 
+     * 转移流程保存（修改流程目录）
+     *
+     * @author 陈鸿彬
+     */
+    public void moveFlowSave() {
+        Map<String, Object> data = new HashMap<String, Object>();
+        try {
+            Long targetId = getParameterLong("targetId");
+            String flowIds = getParameter("flowIds");
+            String[] flowIdsAry = flowIds.split(",");
+            int successCount = 0;
+            Fl fl = null;
+            for (int i = 0; i < flowIdsAry.length; i++) {
+                try {
+                    fl = getCommonService().getById(Fl.class, Long.valueOf(flowIdsAry[i]));
+                    fl.setCtId(targetId);
+                    getCommonService().update(fl);
+                    successCount++;
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+            data.put("success", true);
+            data.put("msg", (successCount > 0 ? "转移成功" + successCount + "笔！" : "")
+                    + (successCount < flowIdsAry.length ? "失败" + (flowIdsAry.length - successCount) + "笔！" : ""));
+        } catch (Exception e) {
+            data.put("success", false);
+            data.put("msg", "转移失败！");
+            StringWriter sw = new StringWriter();
+            e.printStackTrace(new PrintWriter(sw));
+        }
+        renderJson(data);
+    }
+
+    /**
+     * 
+     * 创建流程
+     * 
+     * @author 孙朝辉
+     * 
+     */
+    public void createGraph() {
+        String flowCode = StringHelper.randomCode(FLOW_CODE_LENGTH);
+        String flowVersion = DateUtils.formatDate(System.currentTimeMillis(), "yyyyMMddHHmmss");
+        String ctId = getParameter("ctId");
+        String serviceObjectDefineId = getParameter("serviceObjectDefineId");
+        String flowCtName = "";
+        if (StringUtils.isNotBlank(ctId) && !"null".equals(ctId)){
+            flowCtName = CtAction.getCtNamePath(Long.valueOf(ctId));
+        } else {
+            ctId = "";
+        }
+        if (StringUtils.isBlank(serviceObjectDefineId) || "null".equals(serviceObjectDefineId)){
+            serviceObjectDefineId = "";
+        }
+        //当前操作人的IdName对象
+        UserDTO userDto = LoginInfoUtils.getLoginInfo(request).getUserDTO();
+        IdName idName = new IdName(userDto.getId(), userDto.getRealName(), userDto.getLoginName(), IdName.USER_PREFIX);
+        String xml = DesignerUtils.getNewXML(flowCode, flowVersion, ctId, flowCtName, serviceObjectDefineId, idName);
+        renderXML(xml);
+    }
+    public void loadGraph() {
+        String flowCode = StringHelper.randomCode(FLOW_CODE_LENGTH);
+        String flowVersion = DateUtils.formatDate(System.currentTimeMillis(), "yyyyMMddHHmmss");
+        String xml = DesignerUtils.getTemplateXML(flowCode, flowVersion);
+        renderXML(xml);
+    }
+    /**
+     * 
+     * 编辑流程
+     * 
+     * @author 孙朝辉
+     * 
+     */
+    public void editGraph() {
+        Long flowId = getParameterLong("flowId");
+        FlGraph fl = getCommonService().getById(FlGraph.class, flowId, "ct", "serviceObjectDefine");
+        String oldXml = fl.getXml();
+        // 转Model
+        Document doc = mxXmlUtils.parseXml(oldXml);
+        mxCodec codec = new mxCodec(doc);
+        mxGraphModel model = (mxGraphModel) codec.decode(doc.getDocumentElement());
+        mxCell root = (mxCell) model.getRoot();
+        // 流程类型相关信息
+        String flowCtName = CtAction.getCtNamePath(fl.getCtId());
+        root.setAttribute("flowCtName", flowCtName);
+        
+        // 业务对象相关信息
+        String serviceObjectDefineId = fl.getServiceObjectDefineId() + "";
+        root.setAttribute("serviceObjectDefineId", serviceObjectDefineId);
+        
+        model.setRoot(root);
+        // 转XML
+        Node node = new mxCodec().encode(model);
+        String newXml = mxUtils.getPrettyXml(node);
+        renderXML(newXml);
+    }
+    
+    /**
+     * 
+     * 签出流程
+     * 
+     * @author 孙朝辉
+     * 
+     */
+    public void coGraph() {
+        Long flowId = getParameterLong("flowId");
+        FlGraph fl = getCommonService().getById(FlGraph.class, flowId,"ct");
+        String oldXml = fl.getXml();
+        // 转Model
+        Document doc=null;
+		try {
+			doc = mxXmlUtils.parseXml(oldXml);
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+        mxCodec codec = new mxCodec(doc);
+        mxGraphModel model = (mxGraphModel) codec.decode(doc.getDocumentElement());
+        mxCell root = (mxCell) model.getRoot();
+        String newFlowVersion = DateUtils.formatDate(System.currentTimeMillis(), "yyyyMMddHHmmss");
+        //初始化操作组配置项zhongjun
+        opRelationInsService.initOpRelationIns(fl.getFlowCode(), fl.getFlowVersion(), newFlowVersion);
+        // 修改属性
+        root.setAttribute("flowVersion", newFlowVersion);
+        root.setAttribute("flowCtName", CtAction.getCtNamePath(fl.getCtId()));
+        root.setAttribute("editUserName", fl.getEditUserName());
+        if (null != fl.getUpdateTime()){
+            root.setAttribute("updateTime", DateUtils.formatDate(new Date(), DateUtils.DATE_FORMAT_YYYY_MM_DD_HH_MM_SS));
+        }
+        model.setRoot(root);
+        // 转XML
+        Node node = new mxCodec().encode(model);
+        String newXml = mxUtils.getPrettyXml(node);
+        renderXML(newXml);
+    }
+    /**
+     * 拷贝流程
+     */
+    public void copyFlow() {
+    	
+    	Long copyFlId = getParameterLong("copyFlId");
+    	FlGraph copyFl = getCommonService().getById(FlGraph.class, copyFlId,"ct");
+    	mxGraphModel copyModel = getGraphModel(copyFl);
+    	
+    	mxGraphModel orgiModel = null;
+    	FlGraph fl = null;
+    	
+    	Long flowId = getParameterLong("flowId");
+    	
+    	if(flowId == null) {
+    		String xml = getParameter("xml");
+    		orgiModel = getGraphModel(xml);
+    	    fl = createFlByGraphModel(orgiModel);
+    	}else {
+    		fl = getCommonService().getById(FlGraph.class, flowId, "ct");
+    		orgiModel = getGraphModel(fl);
+    	}
+        
+        mxGraphModel newModel = mergeGraphModel(orgiModel, copyModel);
+        // 转Model
+        coGraph(fl, newModel);
+    }
+    
+    /**
+     * 根据图形模型创建流程模板（用于新增态没有FL对象）
+     * @param model
+     * @return
+     */
+    private FlGraph createFlByGraphModel(mxGraphModel model) {
+	    mxCell root = (mxCell) model.getRoot();
+	    FlGraph fl = new FlGraph();
+	    fl.setFlowCode(root.getAttribute("flowCode"));
+	    fl.setFlowVersion(root.getAttribute("flowVersion"));
+	    fl.setEditUserName(root.getAttribute("editUserName"));
+	    if(root.getAttribute("ctId") != null && root.getAttribute("ctId").toString().length() > 0) {
+	    	fl.setCtId(Long.parseLong(root.getAttribute("ctId")));
+	    }
+	    return fl;
+    }
+    
+    /**
+     * 合并图形模型
+     * @param orgiModel
+     * @param copyModel
+     * @return
+     */
+    private mxGraphModel mergeGraphModel(mxGraphModel orgiModel,
+			mxGraphModel copyModel) {
+    	
+    	mxCell orgiRoot = (mxCell)orgiModel.getRoot();
+    	mxCell copyRoot = (mxCell)copyModel.getRoot();
+    	
+    	copyRoot = mergeGraphRoot(orgiRoot, copyRoot);
+    	
+    	copyModel.setRoot(copyRoot);
+    	
+		return copyModel;
+	}
+    /**
+     * 合并图形根节点
+     * @param orgiRoot
+     * @param copyRoot
+     * @return
+     */
+	private mxCell mergeGraphRoot(mxCell orgiRoot, mxCell copyRoot) {
+		String[] attrs = { "appCode", "canChangeTitle", "codePrefix",
+				"codeType", "codeTypeCode", "createTime", "createUserId",
+				"createUserLoginName", "createUserName", "ctId",
+				"doWhenNoUsersAtWp", "doWhenRepeatInAcs", "editUserId",
+				"editUserLoginName", "editUserName", "fix_left", "fix_top",
+				"flRemark", "flSort", "flowCode", "flowCtName", "flowName",
+				"flowTimeLimit", "flowTimeUnit", "flowVersion", "fqList",
+				"isBizFl", "isDisabled", "isFlowTimeLimit", "isTimeLimit",
+				"jqStrategy", "kyList", "serviceObjectDefineId", "showGraph",
+				"showRelationFile", "startType", "titleType", "updateTime",
+				"wisSortType", "id" };
+		
+		for (String attr : attrs) {
+			copyRoot.setAttribute(attr, orgiRoot.getAttribute(attr));
+		}
+		
+		return copyRoot;
+	}
+
+	public void coGraph(FlGraph fl, mxGraphModel model) {
+    	mxCell root = (mxCell) model.getRoot();
+    	String newFlowVersion = DateUtils.formatDate(System.currentTimeMillis(), "yyyyMMddHHmmss");
+    	//初始化操作组配置项zhongjun
+    	opRelationInsService.initOpRelationIns(fl.getFlowCode(), fl.getFlowVersion(), newFlowVersion);
+    	// 修改属性
+    	root.setAttribute("flowVersion", newFlowVersion);
+    	root.setAttribute("flowCtName", CtAction.getCtNamePath(fl.getCtId()));
+    	root.setAttribute("editUserName", fl.getEditUserName());
+    	if (null != fl.getUpdateTime()){
+    		root.setAttribute("updateTime", DateUtils.formatDate(new Date(), DateUtils.DATE_FORMAT_YYYY_MM_DD_HH_MM_SS));
+    	}
+    	model.setRoot(root);
+    	// 转XML
+    	Node node = new mxCodec().encode(model);
+    	String newXml = mxUtils.getPrettyXml(node);
+    	renderXML(newXml);
+    }
+    
+    public mxGraphModel getGraphModel(FlGraph fl) {
+        return getGraphModel(fl.getXml());
+    }
+    
+    public mxGraphModel getGraphModel(String xml) {
+        Document doc = mxXmlUtils.parseXml(xml);
+        mxCodec codec = new mxCodec(doc);
+        mxGraphModel model = (mxGraphModel) codec.decode(doc.getDocumentElement());
+       return model;
+   }
+
+	/**
+     * 
+     * 保存流程
+     * 
+     * @author 孙朝辉
+     * 
+     */
+    public void saveGraph() {
+        String xml = request.getParameter("xml");
+        //当前操作人的IdName对象
+        UserDTO userDto = LoginInfoUtils.getLoginInfo(request).getUserDTO();
+        IdName idName = new IdName(userDto.getId(), userDto.getRealName(), userDto.getLoginName(), IdName.USER_PREFIX);
+        designerService.save(xml, false, idName);
+    }
+
+    /**
+     * 
+     * 提交流程
+     * 
+     * @author 孙朝辉
+     * 
+     */
+    public void ciGraph() {
+        String xml = getRequest().getParameter("xml");
+        //当前操作人的IdName对象
+        UserDTO userDto = LoginInfoUtils.getLoginInfo(request).getUserDTO();
+        IdName idName = new IdName(userDto.getId(), userDto.getRealName(), userDto.getLoginName(), IdName.USER_PREFIX);
+        designerService.save(xml, true, idName);
+    }
+
+    /**
+     * 
+     * 流程列表
+     * 
+     * @author 孙朝辉
+     * @return Designer-listFl.jsp
+     * 
+     */
+    public String listFl() {
+
+        Integer isDisabled = getParameterInt("isDisabled", 0, true);
+        Long ctId = getParameterLong("ctId", null, true);
+        Long serviceObjectDefineId = getParameterLong("serviceObjectDefineId", null, true);
+        String flName = getParameter("flName");
+        DetachedCriteria dcAs = DetachedCriteria.forClass(Fl.class, "flowAs");
+        dcAs.setProjection(Property.forName("flowVersion").max());
+        dcAs.add(Property.forName("flowAs.flowCode").eqProperty("flowObj.flowCode"));
+        DetachedCriteria dc = DetachedCriteria.forClass(Fl.class, "flowObj");
+        dc.add(Property.forName("flowVersion").eq(dcAs));
+        dc.setFetchMode("ct", FetchMode.JOIN);
+
+        if (StringUtils.isNotEmpty(flName)) {
+            dc.add(Restrictions.or(Restrictions.ilike("flowName", "%" + flName + "%"), Restrictions.eq("flowCode", flName)));
+        }
+
+        if (isDisabled != null) {
+            dc.add(Restrictions.eq("isDisabled", isDisabled));
+        }
+
+        if (ctId != null){
+            dc.add(Restrictions.eq("ctId", ctId));
+        } else {
+            dc.add(Restrictions.isNull("ctId"));
+        }
+        if (serviceObjectDefineId != null){
+            dc.add(Restrictions.eq("serviceObjectDefineId", serviceObjectDefineId));
+        } else {
+            dc.add(Restrictions.isNull("serviceObjectDefineId"));
+        }
+        dc.addOrder(Order.asc("flowName"));
+        dc.addOrder(Order.asc("id"));
+        page = getCommonService().findPage(dc, start, Constant.PAGE_SIZE);
+
+        return "listFl";
+    }
+
+    /**
+     * 
+     * 重置拓扑关系（修正已有流程的字段:next_from_info）
+     * 
+     * @author 孙朝辉
+     * 
+     */
+    public void resetTopo() {
+        int i = designerService.resetTopo(id);
+
+        super.renderJson("{success:" + (i == 1) + "}");
+    }
+
+    
+    /**
+     * 
+     * 设计器基础数据（外部编码和外部参与者）加载
+     * 
+     * @author 孙朝辉
+     * 
+     */
+    public void metaInfo() {
+
+        // 外部编码
+        //List<Codedef> cdList = xmlConfig.getOcc().getCodedefs();
+
+        List<Ocd> cdList = getCommonService().findAll(Ocd.class,"showinflow = 1 and (isDisabled = 0 or isDisabled is null)");
+        
+        String array = "[" + "[\"CategoryName\", \"ParentId\", \"Id\"]";
+        for (Ocd cd : cdList) {
+            array += ",[\"" + cd.getName() + "\",\"0\",\"" + cd.getCode() + "\"]";
+            //List<OutCode> ocList = xmlConfig.getSubCodes(cd.getCode());
+            List<Oc> ocList = getCommonService().findAll(Oc.class,
+                    "ocdId = ? and (isDisabled = 0 or isDisabled is null)",new Object[]{cd.getId()},"position asc");
+            for (Oc oc : ocList) {
+                array += ",[\"" + oc.getName() + "\",\"" + cd.getCode() + "\",\"" + oc.getVal() + "\"]";
+            }
+        }
+        array += "]";
+
+        // 流程外部参与人
+        //
+        List<ParticipantClass> pcs = xmlConfig.getOcc().getPcs();
+
+        String pcsCheckboxes = "";
+        int i = 0;
+        if (pcs != null && pcs.size() > 0) {
+            i++;
+            for (ParticipantClass pc : pcs) {
+                pcsCheckboxes += ("<input name=classPaticipant type=checkbox value=" + pc.getBeanClass() + ">" + pc.getLabel() + "&nbsp;&nbsp;");
+            }
+            if (i == FLOW_PCL_LENGTH) {
+                i = 0;
+                pcsCheckboxes += "<br/>";
+            }
+        }
+        
+        String opCheckboxes = "";
+        i = 0;
+        
+        List<Op> ops = getCommonService().findAll(Op.class, "isDisabled = 0 or isDisabled is null");
+        for (Op op : ops) {
+            i++;
+            opCheckboxes += "<input style=\"vertical-align:middle;\" name=ops id=ops" + i + " type=checkbox value=" + op.getCode() + ">"
+            + "<label style=\"vertical-align:middle;\" for=\"ops" + i + "\">" + op.getName() + "</label>&nbsp;&nbsp;";
+            if (i == FLOW_PCL_LENGTH) {
+                i = 0;
+                opCheckboxes += "<br/>";
+            }
+        }
+
+        //操作组
+        String opGroupsHtml = "<select id=\"opGroups\" style=\"width: 99%\" onChange=\"buildOpGroups(this.value);return false;\">";
+        opGroupsHtml += "<option value=\"\">-请选择-</option>";
+        List<OpGroup> opGroups = getCommonService().findAll(OpGroup.class, "isDisabled = 0 or isDisabled is null");
+        for (OpGroup opGroup : opGroups) {
+            opGroupsHtml += "<option value=\"" + opGroup.getId() + "\">" + opGroup.getName() + "</option>";
+        }
+        opGroupsHtml += "</select>";
+        
+        // 节点类型
+        List<AcType> ats = xmlConfig.getOcc().getAts();
+        String atsHtml = "<select id=\"at\" style=\"width: 99%\">";
+        atsHtml += "<option value=\"" + "" + "\">" + "" + "</option>";
+        for (AcType at : ats) {
+            atsHtml += "<option value=\"" + at.getValue() + "\">" + at.getText() + "</option>";
+        }
+        atsHtml += "</select>";
+        
+        List<FinishCtrl> fcs = xmlConfig.getOcc().getFcs();
+
+        // FinishCtrl
+        String fcsHtml = "<select id=\"finishCtrl\" style=\"width: 99%\">";
+        for (FinishCtrl fc : fcs) {
+            fcsHtml += "<option value=\"" + fc.getValue() + "\">" + fc.getText() + "</option>";
+        }
+        fcsHtml += "</select>";
+
+        List<EndTag> ets = xmlConfig.getOcc().getEts();
+
+        // EndTag
+        String etsHtml = "<select id=\"endTag\" style=\"width: 99%\">";
+        for (EndTag et : ets) {
+        	etsHtml += "<option value=\"" + et.getValue() + "\">" + et.getText() + "</option>";
+        }
+        etsHtml += "</select>";
+        // StartCtrl
+        List<StartCtrl> scs = xmlConfig.getOcc().getScs();
+        String scsHtml = "<select id=\"startCtrl\" style=\"width: 99%\">";
+        scsHtml += "<option value=\"" + "" + "\">" + "" + "</option>";
+        for (StartCtrl sc : scs) {
+            scsHtml += "<option value=\"" + sc.getValue() + "\">" + sc.getText() + "</option>";
+        }
+        scsHtml += "</select>";
+
+        // ForkCtrl
+        List<ForkCtrl> fks = xmlConfig.getOcc().getFks();
+        String fksHtml = "<select id=\"forkCtrl\" style=\"width: 99%\">";
+        fksHtml += "<option value=\"" + "" + "\">" + "" + "</option>";
+        for (ForkCtrl fk : fks) {
+            fksHtml += "<option value=\"" + fk.getValue() + "\">" + fk.getText() + "</option>";
+        }
+        fksHtml += "</select>";
+
+        
+        // ForkCtrl
+        List<AppBean> apps = xmlConfig.getOcc().getApps();
+        String appsHtml = "<select id=\"appCode\" style=\"width: 99%\">";
+        appsHtml += "<option value=\"" + "" + "\">" + "" + "</option>";
+        for (AppBean app : apps) {
+            appsHtml += "<option value=\"" + app.getValue() + "\">" + app.getText() + "</option>";
+        }
+        appsHtml += "</select>";
+        
+        
+        String script = "var pcs = '" + pcsCheckboxes + "';\n" + "var outCodeArray = " + array + ";\n" + "var fcs = '" + fcsHtml + "';\n" + "var ets = '" + etsHtml + "';\n" + "var scs = '"
+                + scsHtml + "';\n" + "var fks = '" + fksHtml + "';\n"  + "var ops = '" + opCheckboxes + "';\n" + "var apps = '" + appsHtml + "';\n"
+                + "var opGroups = '" + opGroupsHtml + "';\n" + "var ats = '" + atsHtml + "';\n";
+
+        renderJs(script);
+    }
+
+    /**
+     * 
+     * 流程禁用
+     * 
+     * @author 孙朝辉
+     * 
+     */
+    public void delete() {
+
+        if (ids != null) {
+            for (Long id : ids) {
+                getCommonService().execute("update Fl set isDisabled = 1 where id = ?", id);
+            }
+        }
+        redirect("Ct!index.do", "isDisabled");
+    }
+    
+    /**
+     * 
+     * 流程解禁
+     * 
+     * @author 孙朝辉
+     * 
+     */
+    public void unDelete() {
+
+        if (ids != null) {
+            for (Long id : ids) {
+                getCommonService().execute("update Fl set isDisabled = 0 where id = ?", id);
+            }
+        }
+        redirect("Ct!index.do", "isDisabled");
+    }
+
+    /**
+     * 
+     * 测试代码:启动流程
+     * 
+     * @author 孙朝辉
+     * 
+     */
+    public void startFl() {
+
+        try {
+            
+            
+            //App.getBean(FlowServerService.class).completeAi(468159L, null);
+            Long flowId = getParameterLong("flowId");
+            String flowCode = getCommonService().findString("select flowCode from Fl where id = ?", flowId);
+
+            //
+            User user = orgnAPIService.getUserByLoginName("zbadmin");
+
+           
+
+            Gvs gvs = Gvs.create().add(new GvBean("Y_BDRWS", 1, ""));
+
+          //  App.getBean(FlowServerService.class).startFi(flowCode, null, "ssssss", user.getUserId(), "", null,null);
+            
+//            Fi fi = flowService.startFi(flowCode, "测试", user, gvs);
+//
+//            // 开始活动实例
+//            Ai ai = aiService.getStartAi(fi.getId()); 
+//            gvs = flowService.getGvs(ai.getFiId());
+//            Map<String, Object> transientVar = new HashMap<String, Object>();
+//            transientVar.put(IConstantVar.TVS_AI, ai);
+//            flowService.completeAi(ai, true, gvs, transientVar);
+            
+            
+            //boolean isStarted = flowService.tryStartAi(ai, gvs, transientVar, false);
+           // globalVars.put("Y_BDRWS", 5);
+            //flowService.startFi(fi, user, gvs, true);
+            //if (isStarted) {
+                //Wp wp = wpService.pop(ai, ai.getPx());
+               // Wi wi = getCommonService().findFirst(Wi.class, "wpId = ?", new Object[] { wp.getId() });
+                // flowAPIService.changeParticipants(92277L, "User_9035:王书杰");
+                // flowAPIService.changeParticipants(92279L, "User_9027:孙国雷;User_9035:王书杰");
+                // flowAPIService.jianqian(wi.getId(), wp.getId(), "加签！", "User_9027:孙国雷", JqType.BEFORE.type, "JQ");
+                // FlowService.jiaqian(wi.getId(), wp.getId(), "User_9027:孙国雷", 2);
+                //flowService.completeWi(wi.getId(), null, "OK", "PZ");
+            //}
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        Map<String, String> jsonMap = new HashMap<String, String>();
+        super.renderJson(jsonMap);
+    }
+    /**
+     * 设为默认流程
+     */
+    public void setDefaultFl(){
+    	Map<String, Object> data = new HashMap<String, Object>();
+    	boolean success = false;
+        try {
+        	if (null != ids && ids.length > 0){
+        		Fl fl = getCommonService().getById(Fl.class, ids[0]);
+        		if (null != fl.getServiceObjectDefineId()){
+            		getCommonService().executeSQL("update tf_fl set is_default = 1 where flow_code = ?", fl.getFlowCode());
+            		getCommonService().executeSQL("update tf_fl set is_default = 0 where service_object_define_id = ? and flow_code <> ?", fl.getServiceObjectDefineId(), fl.getFlowCode());
+                	success = true;
+        		}
+        	}
+        } catch (Exception e) {
+        	e.printStackTrace();
+        }
+        data.put("success", success);
+        renderJson(data);
+    }
+    
+    /**
+     * 历史版本列表
+     * <p></p>
+     * <p></p>
+     * @author 孙朝辉
+     */
+    
+    public String listHistory(){
+        Boolean flag=false;
+        Long id = getParameterLong("id");
+        Fl fl = getCommonService().getById(Fl.class, id);
+        
+        List<Fl> flList=getCommonService().findByHQL(Fl.class, "from Fl where isDisabled = 0 and flowCode = ? order by flowVersion desc", fl.getFlowCode());
+      
+        	for(Fl f:flList){
+            	if(f.getIsCurrent()!=null&&f.getIsCurrent()==1){
+            		flag=true;
+            		break;
+            	}
+            }
+        
+        if(flag==false){
+        	getCommonService().execute("update Fl set isCurrent = 0 where id = ?", id);
+        }
+        
+        request.setAttribute("flList", flList);
+        return "listHistory";
+    }
+    
+    /**
+     * 启用历史版本
+     */
+	public void restart(){
+		Fl fl=getCommonService().getById(Fl.class, id);
+    	Map<String,Object> result = new HashMap<String,Object>();
+    	try{
+		     getCommonService().execute("update Fl set isCurrent = 0 where isCurrent =1 and flowCode=?",fl.getFlowCode());
+             getCommonService().execute("update Fl set isCurrent = 1 where id = ?", id);
+             result.put("success", true);
+    	}catch(Exception e){
+    		result.put("success", false);
+    		result.put("msg", e.getMessage());
+    	}
+    	renderJson(result);
+    	
+    }
+    
+    
+    public void showDetail(){
+        
+        String selectedString = getParameter("selectedString");
+        String detail = "";
+        
+        if(StringUtils.isNotEmpty(selectedString)){
+            String id = selectedString.substring(5);
+            if(selectedString.startsWith(IdName.ROLE_PREFIX)){
+                /*String sql = "select max(sys_connect_by_path(r.name,'/')) from sm_role r start with r.id= "+id+" connect by r.id = prior r.parent_id";
+                String x = App.getBean(JdbcTemplate.class).queryForObject(sql ,String.class);
+                detail = orgnAPIService.getRolePathDisplay(x,false,false);*/
+                detail = orgnAPIService.getRolePathNew(Long.valueOf(id));
+            
+            }
+            else if(selectedString.startsWith(IdName.PART_PREFIX)){
+                /*String sql = "select max(sys_connect_by_path(c1.name, '/'))"
+                        + " from sm_party_struct s1"
+                        + " left join sm_party_entity p1 on s1.parent_entity_id = p1.id"
+                        + " left join sm_party_entity c1 on s1.child_entity_id = c1.id"
+                        + " start with c1.id = " + id
+                        + " connect by c1.id = prior p1.id";
+                String x = App.getBean(JdbcTemplate.class).queryForObject(sql ,String.class);
+                detail = orgnAPIService.getRolePathDisplay(x,false,false);*/
+                detail = orgnAPIService.getEntityPath(Long.valueOf(id));
+            }
+            else{
+                detail = "";
+            }
+            
+            
+          
+        }
+        
+        Map<String,String> result = new HashMap<String, String>();
+        result.put("detail", detail);
+        
+        super.renderJson(result);
+    }
+}

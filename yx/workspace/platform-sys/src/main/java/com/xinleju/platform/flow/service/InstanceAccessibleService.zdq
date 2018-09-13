@@ -1,0 +1,44 @@
+package com.xinleju.platform.flow.service;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.flow.dto.BatchModifyReaderDto;
+import com.xinleju.platform.flow.dto.InstanceAccessibleDto;
+import com.xinleju.platform.flow.dto.UserDto;
+import com.xinleju.platform.flow.entity.InstanceAccessible;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface InstanceAccessibleService extends  BaseService <String,InstanceAccessible>{
+
+	/**
+	 * 修改指定流程实例的可阅人集合
+	 * 
+	 * @param type:add/delete/reset
+	 * @param instanceId
+	 * @param userList
+	 * @return
+	 * @throws Exception 
+	 */
+	public boolean doUpdateReader(String type, String instanceId, List<UserDto> userList) throws Exception;
+
+	/**
+	 * 删除指定流程实例的全部可阅人
+	 * 
+	 * @param instanceId
+	 * @return
+	 */
+	boolean deleteByInstanceId(String instanceId);
+
+	public void addResetReaderFormData(BatchModifyReaderDto readerDto) throws Exception;
+
+	public void deleteReaderByFormData(BatchModifyReaderDto readerDto);
+
+	public List<InstanceAccessibleDto> queryInstanceReaderList(Map<String, Object> map);
+}

@@ -1,0 +1,252 @@
+package com.xinleju.erp.flow.service;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.com.service.IMyDubboService;
+import com.xinleju.erp.com.service.base.IBaseBizDataService;
+import com.xinleju.erp.flow.dao.impl.BizDataDAO;
+import com.xinleju.erp.flow.flowutils.bean.BizDataDTO;
+import com.xinleju.erp.flow.flowutils.bean.NameValuePair;
+import com.xinleju.erp.flow.flowutils.bean.OpRelationInsBean;
+import com.xinleju.erp.flow.flowutils.bean.StepsHistoryAndOpRelactionBean;
+import com.xinleju.erp.flow.flowutils.bean.ToDoBean;
+import com.xinleju.erp.flow.flowutils.bean.ToDoButtonBean;
+import com.xinleju.erp.flow.flowutils.bean.ToDoFiBean;
+import com.xinleju.erp.flow.flowutils.bean.ToDoWorkBean;
+import com.xinleju.erp.flow.flowutils.bean.ToDoWpBean;
+import com.xinleju.erp.flow.flowutils.bean.UploadBean;
+import com.xinleju.erp.flow.flowutils.bean.WiBean;
+import com.xinleju.erp.flow.flowutils.bean.WpBean;
+import com.xinleju.erp.flow.flowutils.utils.OpType;
+import com.xinleju.erp.flow.flowutils.utils.WsConstant;
+import com.xinleju.erp.flow.models.Fi;
+import com.xinleju.erp.flow.models.Fl;
+import com.xinleju.erp.flow.models.Wi;
+import com.xinleju.erp.flow.service.api.FlowServerService;
+import com.xinleju.erp.flow.service.api.utils.ApiUtils;
+import com.xinleju.erp.flow.utils.FlowConstant;
+
+/**
+ * 
+ * 版权：(C) 版权所有 2000-2014 上海天好电子商务有限公司苏州分公司
+ * 流程操作接口
+ * @author   zhongjun
+ * @version  $Id$
+ * @since
+ * @see
+ */
+@Service
+public class ToDoService extends BaseService {
+    
+    /**
+     * 流程操作扩展接口
+     */
+    @Autowired
+    private FormFlowService formFlowService;
+    
+    /**
+     * 流程操作接口
+     */
+    @Autowired
+    private FlowServerService flowServerService;
+    
+    /**
+     * 业务数据操作接口
+     */
+    @Autowired
+    private BizDataDAO bizDataDAO;
+    
+    /**
+     * 获取操作bean
+     * @author jun
+     * @return
+     */
+    public ToDoBean getToDoBean(Long wiId, String category){
+        ToDoBean toDoBean = new ToDoBean();
+        if (null != wiId){
+        	category = FlowConstant.ATT_CODE_SP;
+        	//当前任务
+        	Wi curWi = formFlowService.getWi(wiId);
+        	// 未读时置为已读
+        	if(curWi == null){
+        		return null;
+        	}
+            if (1 != curWi.getIsRead()) {
+                flowServerService.markWiIsRead(wiId);
+            }
+            // 催办的直接置为已办
+            if (curWi.getStatus() == WsConstant.STATUS_RUNNING && WsConstant.WiType.CB.getCode().equals(curWi.getWiType())) {
+                flowServerService.completeWi(wiId, curWi.getParticipant(), "", formFlowService.getOpName(OpType.YD, OpType.YD_NAME, "", null, false), "", null);
+            }
+            // 如果是抄送的
+            if (WsConstant.WiType.CS.getCode().equals(curWi.getWiType()) || WsConstant.WiType.CY.getCode().equals(curWi.getWiType())) {
+                flowServerService.completeWi(wiId, curWi.getParticipant(), "", formFlowService.getOpName(OpType.YD, OpType.YD_NAME, "", null, false), "", null);
+            } 
+            //将催办wi设置为催办对应待办的wp
+            String dyType=null;
+            if (WsConstant.WiType.CB.getCode().equals(curWi.getWiType()) && null != curWi.getAssignWiId()) {
+            	dyType=WsConstant.WiType.CB.getCode();
+            	curWi = formFlowService.getWi(curWi.getAssignWiId());
+                wiId = curWi.getId();
+            }
+        
+            
+           
+            /**
+             * 组装当前任务
+             */
+            WiBean curWb = ApiUtils.buildWiBean(curWi, true);
+        	ToDoWorkBean wiBean = ApiUtils.buildToDoWorkBean(curWb, formFlowService.fillUploadFiles(wiId, category), null != curWb ? curWb.getWp().getOpGroupsName() : "", null != curWb ? curWb.getWp().getRolePath() : "");
+        	wiBean.setDyType(dyType);
+            toDoBean.setWiBean(wiBean);
+            /**
+             * 当前流程
+             */
+            Fi fi = formFlowService.getFiByFiId(formFlowService.findFinaleFiIdByFiId(curWi.getFiId()));
+            //业务数据
+            List<NameValuePair> dataList = new ArrayList<NameValuePair>();
+            try {
+            	List<BizDataDTO> bizDataDTOList = bizDataDAO.getBizDataDTOList(curWi.getFiId(), fi.getBizVersion());
+            	for (BizDataDTO bizDataDTO : bizDataDTOList){
+            		dataList.add(ApiUtils.buildNameValuePair(bizDataDTO));
+            	}
+            } catch (Exception e){
+            	e.printStackTrace();
+            }
+            
+            //得到附件
+            List<UploadBean>  uploadList=new ArrayList<UploadBean>();
+            
+            //通过接口得到附件的ownerid
+			String appCode=fi.getFl().getAppCode();
+            String serviceId = "i" + (appCode.substring(0,1) + appCode.substring(1).toLowerCase()) + "BaseBizDataService";
+    		IBaseBizDataService iBaseBizDataService = App.getBean(IMyDubboService.class).getBaseBizDataService(serviceId);
+    		String soCode = null != fi.getServiceObjectDefine() ? fi.getServiceObjectDefine().getCode() : "";
+    		List<String> strs=iBaseBizDataService.queryBizUpload(soCode,fi.getBizId());
+    		uploadList=formFlowService.fillBizUploadFiles(strs);
+            
+            ToDoFiBean fiBean = ApiUtils.buildToDoFiBean(fi, dataList,uploadList);
+            toDoBean.setFiBean(fiBean);
+            //相关的审批id
+            Long[] fiIds = FormFlowService.idsStrToLongArray((StringUtils.isNotBlank(fi.getRelatedFiIds()) ? fi.getRelatedFiIds() + "," : "") + fi.getId(), ",", false);
+            //历史记录
+            List<WpBean> spStepMap = new ArrayList<WpBean>();
+            //正在运行的流程的节点
+            List<WpBean> runningSpStepList = new ArrayList<WpBean>();
+            Map<String, List<OpRelationInsBean>> opRelationInsBeanListMap = new HashMap<String, List<OpRelationInsBean>>();
+            List<OpRelationInsBean> spButtons = new ArrayList<OpRelationInsBean>();
+            // 审批流以及审批历程
+            StepsHistoryAndOpRelactionBean stepsHistoryAndOpRelactionBean = flowServerService.getStepsHistorysAndOps(fiIds, fiIds, null != wiId ? Long.valueOf(wiId) : null, true, true, true).getResult();
+            if (stepsHistoryAndOpRelactionBean != null) {
+                if (null != stepsHistoryAndOpRelactionBean.getUserOpRelationsMap()) {
+                    opRelationInsBeanListMap = stepsHistoryAndOpRelactionBean.getUserOpRelationsMap();
+                }
+                runningSpStepList = formFlowService.filterSpHis(stepsHistoryAndOpRelactionBean.getFiSteps(), new Long[] {fi.getId()}, false);
+                spStepMap = formFlowService.filterSpHis(stepsHistoryAndOpRelactionBean.getFiSteps(), fiIds, true);
+            }
+            
+            /**
+             * 组装可退回的任务组
+             */
+            List<ToDoWpBean> canBackedWpList = new ArrayList<ToDoWpBean>();
+            //当前的wp
+            WpBean curWp = ApiUtils.buildWpBean(null != curWi ? curWi.getWp() : null, true, true, true);;
+            //可以退回的节点列表
+            for (WpBean wb : runningSpStepList){
+            	if (curWp.getTp() > wb.getTp()){
+            		canBackedWpList.add(ApiUtils.buildToDoWpBean(wb));
+            	}
+            }
+            
+            toDoBean.setToDoWpBeanList(canBackedWpList);
+            
+            /**
+             * 审批历程
+             */
+            List<ToDoWorkBean> wiList = formFlowService.fixToDoWorkBeanList(spStepMap, fi, category);
+            toDoBean.setWiList(wiList);
+            
+            /**
+             * 组装操作按钮
+             */
+            spButtons = formFlowService.getSpButtons(curWi, opRelationInsBeanListMap);
+            List<ToDoButtonBean> buttonList = new ArrayList<ToDoButtonBean>();
+            if(spButtons!=null && spButtons.size()>0){
+            	   for (OpRelationInsBean sb : spButtons){
+                   	buttonList.add(ApiUtils.buildOpRelationInsBean(sb));
+                   }
+            }
+         
+            toDoBean.setBbList(buttonList);
+        }
+        return toDoBean ;
+    }
+    
+    /**
+     * 获取操作bean
+     * @author jun
+     * @return
+     */
+    public ToDoBean getToDoBeanForMobile(Long fiId, String category){
+        ToDoBean toDoBean = new ToDoBean();
+            /**
+             * 当前流程
+             */
+            Fi fi = formFlowService.getFiByFiId(formFlowService.findFinaleFiIdByFiId(fiId));
+            //业务数据
+            List<NameValuePair> dataList = new ArrayList<NameValuePair>();
+            try {
+            	List<BizDataDTO> bizDataDTOList = bizDataDAO.getBizDataDTOList(fiId, fi.getBizVersion());
+            	for (BizDataDTO bizDataDTO : bizDataDTOList){
+            		dataList.add(ApiUtils.buildNameValuePair(bizDataDTO));
+            	}
+            } catch (Exception e){
+            	e.printStackTrace();
+            }
+            
+            //得到附件
+            List<UploadBean>  uploadList=new ArrayList<UploadBean>();
+            
+            //通过接口得到附件的ownerid
+			String appCode=fi.getFl().getAppCode();
+            String serviceId = "i" + (appCode.substring(0,1) + appCode.substring(1).toLowerCase()) + "BaseBizDataService";
+    		IBaseBizDataService iBaseBizDataService = App.getBean(IMyDubboService.class).getBaseBizDataService(serviceId);
+    		String soCode = null != fi.getServiceObjectDefine() ? fi.getServiceObjectDefine().getCode() : "";
+    		List<String> strs=iBaseBizDataService.queryBizUpload(soCode,String.valueOf(fi.getBizId()));
+    		uploadList=formFlowService.fillBizUploadFiles(strs);
+            
+            ToDoFiBean fiBean = ApiUtils.buildToDoFiBean(fi, dataList,uploadList);
+            toDoBean.setFiBean(fiBean);
+            //相关的审批id
+            Long[] fiIds = FormFlowService.idsStrToLongArray((StringUtils.isNotBlank(fi.getRelatedFiIds()) ? fi.getRelatedFiIds() + "," : "") + fi.getId(), ",", false);
+            //历史记录
+            List<WpBean> spStepMap = new ArrayList<WpBean>();
+            List<WpBean> runningSpStepList = new ArrayList<WpBean>();
+            Map<String, List<OpRelationInsBean>> opRelationInsBeanListMap = new HashMap<String, List<OpRelationInsBean>>();
+            // 审批流以及审批历程
+            StepsHistoryAndOpRelactionBean stepsHistoryAndOpRelactionBean = flowServerService.getStepsHistorysAndOps(fiIds, fiIds, null, true, true, true).getResult();
+            if (stepsHistoryAndOpRelactionBean != null) {
+                if (null != stepsHistoryAndOpRelactionBean.getUserOpRelationsMap()) {
+                    opRelationInsBeanListMap = stepsHistoryAndOpRelactionBean.getUserOpRelationsMap();
+                }
+                runningSpStepList = formFlowService.filterSpHis(stepsHistoryAndOpRelactionBean.getFiSteps(), new Long[] {fi.getId()}, false);
+                spStepMap = formFlowService.filterSpHis(stepsHistoryAndOpRelactionBean.getFiSteps(), fiIds, true);
+            }
+
+            /**
+             * 审批历程
+             */
+            List<ToDoWorkBean> wiList = formFlowService.fixToDoWorkBeanList(spStepMap, fi, category);
+            toDoBean.setWiList(wiList);
+        return toDoBean ;
+    }
+}

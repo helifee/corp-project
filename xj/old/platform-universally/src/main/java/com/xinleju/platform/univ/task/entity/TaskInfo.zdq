@@ -1,0 +1,176 @@
+package com.xinleju.platform.univ.task.entity;
+
+import java.util.Date;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Table(value="PT_UNIV_TASK_INFO",desc="任务定义信息")
+public class TaskInfo extends BaseEntity{
+	
+		
+	@Column(value="name", fuzzyQuery=true, desc="任务名称")
+	private String name;
+    
+  		
+	@Column(value="code",desc="任务编码")
+	private String code;
+  		
+	@Column(value="active",desc="任务是否可用（1-有效、0-失效）")
+	private Boolean active;
+    
+	@Column(value="simple_trigger",desc="true=简单任务，间隔触发, false=按时间表达式触发")
+	private Boolean simpleTrigger;
+	
+	@Column(value="time_interval",desc="任务执行时间间隔，用于简单定时任务")
+	private Integer timeInterval;
+	
+	@Column(value="start_time",desc="任务调度开始时间")
+	private Date startTime;
+	
+	@Column(value="end_time",desc="任务调度结束时间")
+	private Date endTime;
+	
+	@Column(value="type",desc="1-Java、2-DB")
+	private Integer type;
+
+	@Column(value="fully_qualified_name",desc="Java接口或者存储过程的全限定名称")
+	private String fullyQualifiedName;
+  		
+	@Column(value="method_name",desc="Java执行的方法名称或存储过程的名称。任务类型是DB时，该字段值为空")
+	private String methodName;
+	
+	@Column(value="trigger_object_name",desc="任务触发器对象标识名称")
+	private String triggerObjectName;
+	
+	@Column(value="job_object_name",desc="任务类对象标识名称")
+	private String jobObjectName;
+  		
+	@Column(value="time_expression",desc="Task执行时间表达式")
+	private String timeExpression;
+    
+  		
+	@Column(value="remark",desc="描述")
+	private String remark;
+  		
+	@Column(value="is_for_platform",desc="任务类别：1-平台，0-业务系统")
+	private Boolean isForPlatform;
+	
+	
+	@Column(value="app_id",desc="应用")
+	private String appId;
+		
+	public String getName() {
+		return name;
+	}
+	public void setName(String name) {
+		this.name = name;
+	}
+  		
+	public String getCode() {
+		return code;
+	}
+	public void setCode(String code) {
+		this.code = code;
+	}
+	
+	public Boolean getActive() {
+		return active;
+	}
+	public void setActive(Boolean active) {
+		this.active = active;
+	}
+  		
+	public Boolean getSimpleTrigger() {
+		return simpleTrigger;
+	}
+	public void setSimpleTrigger(Boolean simpleTrigger) {
+		this.simpleTrigger = simpleTrigger;
+	}
+	public Integer getTimeInterval() {
+		return timeInterval;
+	}
+	public void setTimeInterval(Integer timeInterval) {
+		this.timeInterval = timeInterval;
+	}
+	public Date getStartTime() {
+		return startTime;
+	}
+	public void setStartTime(Date startTime) {
+		this.startTime = startTime;
+	}
+	public Date getEndTime() {
+		return endTime;
+	}
+	public void setEndTime(Date endTime) {
+		this.endTime = endTime;
+	}
+	public Integer getType() {
+		return type;
+	}
+	public void setType(Integer type) {
+		this.type = type;
+	}
+  		
+	public String getFullyQualifiedName() {
+		return fullyQualifiedName;
+	}
+	public void setFullyQualifiedName(String fullyQualifiedName) {
+		this.fullyQualifiedName = fullyQualifiedName;
+	}
+  		
+	public String getMethodName() {
+		return methodName;
+	}
+	public void setMethodName(String methodName) {
+		this.methodName = methodName;
+	}
+  		
+	public String getTriggerObjectName() {
+		return triggerObjectName;
+	}
+	public void setTriggerObjectName(String triggerObjectName) {
+		this.triggerObjectName = triggerObjectName;
+	}
+	public String getJobObjectName() {
+		return jobObjectName;
+	}
+	public void setJobObjectName(String jobObjectName) {
+		this.jobObjectName = jobObjectName;
+	}
+	public String getTimeExpression() {
+		return timeExpression;
+	}
+	public void setTimeExpression(String timeExpression) {
+		this.timeExpression = timeExpression;
+	}
+  		
+	public String getRemark() {
+		return remark;
+	}
+	public void setRemark(String remark) {
+		this.remark = remark;
+	}
+    
+	public String getAppId() {
+		return appId;
+	}
+	public void setAppId(String appId) {
+		this.appId = appId;
+	}
+	public Boolean getIsForPlatform() {
+		return isForPlatform;
+	}
+	public void setIsForPlatform(Boolean isForPlatform) {
+		this.isForPlatform = isForPlatform;
+	}
+    
+}

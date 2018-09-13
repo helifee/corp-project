@@ -1,0 +1,214 @@
+package com.sitech.oa.pars;
+
+import java.io.File;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import com.sitech.oa.pars.node.Function;
+import com.sitech.oa.pars.node.FunctionCall;
+import com.sitech.oa.pars.node.NodeToken;
+import com.sitech.oa.pars.node.Param;
+import com.sitech.oa.pars.node.SqlStr;
+import com.sitech.oa.pars.node.Visitor;
+import com.sitech.sql.parse.ComplieSql;
+
+public class SYNTree extends Visitor {
+	public String fileName;
+	public String filePath;
+	public Map funMap;
+	private FUN fun;
+	private int flag;
+	private Map moduleMap;
+	
+	public SYNTree(){
+		flag=0;
+		funMap=new HashMap();
+	}
+	
+	protected void visitNodeToken(NodeToken token){
+		super.visitNodeToken(token);
+		if(flag==1){
+			fun.functionName=token.tokenString;
+			fun.lineNum=token.lineNum;
+			funMap.put(fun.functionName, fun);
+		}else if(flag==2){
+			fun.callList.add(token.tokenString);
+		}else if(flag==3){
+			fun.SqlList.add(token.tokenString.replaceAll("\\s{2,}", " "));
+		}
+		flag=0;
+	}
+	
+	public void visitFunctionCall(FunctionCall f){
+		//flag=2;
+		//super.visitFunctionCall(f);
+		//fun.callList.add(f.functionName.tokenString+"_"+f.path);
+		fun.callList.add(f.functionName.tokenString);
+		f.functionName.accept(this);
+		if(f.paramList!=null){
+			f.paramList.accept(this);
+		}
+	}
+	
+	public void visitFunction(Function f){
+		fun=new FUN();
+		flag=1;
+		if(f.paramList.list.size()==1){
+			Param p=(Param)f.paramList.list.getChild(0);
+			if(p.typeDef.type.token.tokenString.equals("TPSVCINFO")){
+				fun.isServer=true;
+			}
+		}
+		super.visitFunction(f);
+	}
+	
+	public void visitSqlStr(SqlStr s){
+		flag=3;
+		super.visitSqlStr(s);
+	}
+
+	public void print(int opt,String type){
+		if(opt==1){
+			print1(type);//过滤函数定义
+		}else if(opt==2){
+			print2();//过滤调用关系
+		}else if(opt==3){
+			print3(type);
+		}else if(opt==4){//server调用关系
+			print4();
+		}else if(opt==5){//server定义
+			print5(type);
+		}else if(opt==6){
+			print6();
+		}
+	}
+	//插入bcp函数定义
+	private void  print1(String type){
+		BCPConn conn=BCPConn.getIntance();
+		long time=new File(filePath+fileName).lastModified();
+		long sourceId=conn.insertFile(filePath, fileName, time);
+		
+		Set set=funMap.keySet();
+		Iterator it=set.iterator();
+		while(it.hasNext()){
+			FUN fun=(FUN)funMap.get(it.next());
+			System.out.println(fun.functionName);
+			long moduleId=conn.insertBusi(type,fun.functionName,sourceId,fun.lineNum);
+			System.out.println("Call="+fun.callList);
+			System.out.println("Sql="+fun.SqlList+"\n");
+			for(int i=0;i<fun.SqlList.size();i+=1){
+				String sqlStr=(String)fun.SqlList.get(i);
+				ComplieSql.parseSql(sqlStr.replaceAll("^\"", "").replaceAll("\"$", ""),moduleId);
+			}
+		}
+	}
+	//插入调用关系
+	private void print2(){
+		BCPConn conn=BCPConn.getIntance();
+		moduleMap=GetFunDefind.getInstance().getMyMap();
+		Set set=funMap.keySet();
+		Iterator it=set.iterator();
+		while(it.hasNext()){
+			FUN fun=(FUN)funMap.get(it.next());//取出解析出来的模块
+			ModuleBean bean=(ModuleBean)moduleMap.get(fun.functionName);//取出数据库中已经存储的模块
+			if(bean==null) continue;
+			long funId=bean.getModuleId();
+			for(int i=0;i<fun.callList.size();i+=1){
+				String funStr=(String)fun.callList.get(i);
+				bean=(ModuleBean)moduleMap.get(funStr);
+				if(bean==null) continue;
+				long callFunid=bean.getModuleId();
+				System.out.println(callFunid+"   "+funId+"   "+fun.functionName+"     "+funStr);
+				conn.insertModuleMapping(funId, callFunid);
+			}
+		}
+	}
+	private void print6(){
+		BCPConn conn=BCPConn.getIntance();
+		moduleMap=GetFunDefind.getInstance().getMyMap();
+		Set set=funMap.keySet();
+		Iterator it=set.iterator();
+		while(it.hasNext()){
+			FUN fun=(FUN)funMap.get(it.next());
+			ModuleBean bean=(ModuleBean)moduleMap.get(fun.functionName);
+			if(bean==null) continue;
+			long funId=bean.getModuleId();
+			for(int i=0;i<fun.callList.size();i+=1){
+				String funStr=(String)fun.callList.get(i);
+				bean=(ModuleBean)moduleMap.get(funStr);
+				if(bean==null) continue;
+				long callFunid=bean.getModuleId();
+				System.out.println(callFunid+"   "+funId+"   "+fun.functionName+"     "+funStr);
+				conn.insertModuleMapping(funId, callFunid);
+			}
+		}
+	}
+	//插入busi函数定义,不保存sql
+	private void  print3(String type){
+		BCPConn conn=BCPConn.getIntance();
+		long time=new File(filePath+fileName).lastModified();
+		long sourceId=conn.insertFile(filePath, fileName, time);
+		
+		Set set=funMap.keySet();
+		Iterator it=set.iterator();
+		while(it.hasNext()){
+			FUN fun=(FUN)funMap.get(it.next());
+			System.out.println(fun.functionName);
+			long moduleId=conn.insertBusi(type,fun.functionName,sourceId,fun.lineNum);
+			System.out.println("Call="+fun.callList);
+		}
+	}
+	//插入server定义
+	private void print5(String type){
+		BCPConn conn=BCPConn.getIntance();
+		long time=new File(filePath+fileName).lastModified();
+		long sourceId=conn.insertFile(filePath, fileName, time);
+		Set set=funMap.keySet();
+		Iterator it=set.iterator();
+		while(it.hasNext()){
+			FUN fun=(FUN)funMap.get(it.next());
+			if(fun.isServer){
+				System.out.println("insert server:"+fun.functionName);
+				long moduleId=conn.insertBusi(type,fun.functionName,sourceId,fun.lineNum);
+				
+			}
+			
+			
+		}
+	}
+	//插入server调用关系
+	private void print4(){
+		BCPConn conn=BCPConn.getIntance();
+		moduleMap=GetFunDefind.getInstance().getMyMap();
+		Set set=funMap.keySet();
+		Iterator it=set.iterator();
+		while(it.hasNext()){
+			FUN fun=(FUN)funMap.get(it.next());
+			ModuleBean bean=(ModuleBean)moduleMap.get(fun.functionName);
+			if(bean==null) continue;
+			long funId=bean.getModuleId();
+			
+			if(fun.callList.size()>=2){
+				String funStr=(String)fun.callList.get(1);
+				bean=(ModuleBean)moduleMap.get(funStr);
+				if(bean==null) continue;
+				long callFunid=bean.getModuleId();
+				System.out.println(callFunid+"   "+funId);
+				conn.insertModuleMapping(funId, callFunid);
+				
+			}
+		}
+	}
+
+	private class FUN{
+		String functionName;
+		boolean isServer=false;
+		int lineNum;
+		List callList=new ArrayList();
+		List SqlList=new ArrayList();
+	}
+}

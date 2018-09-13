@@ -1,0 +1,177 @@
+package com.xinleju.platform.flow.operation;
+
+import com.xinleju.platform.flow.dto.ApprovalSubmitDto;
+import com.xinleju.platform.flow.dto.UserDto;
+import com.xinleju.platform.flow.entity.MobileParam;
+import com.xinleju.platform.flow.entity.SysNoticeMsg;
+import com.xinleju.platform.flow.enumeration.*;
+import com.xinleju.platform.flow.exception.FlowException;
+import com.xinleju.platform.flow.model.*;
+import com.xinleju.platform.tools.data.JacksonUtils;
+import org.apache.commons.collections.CollectionUtils;
+import org.springframework.util.StringUtils;
+
+import java.sql.Timestamp;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * 管理员功能：流程作废
+ * 
+ * @author daoqi
+ *
+ */
+public class InvalidOperation extends DefaultOperation implements Operation{
+
+	public InvalidOperation() {
+		super(OperationType.INVALID);
+	}
+
+	@Override
+	public String action(InstanceUnit instanceUnit, ApprovalSubmitDto approvalDto) throws Exception {
+		//收集当前审批人id、name信息
+		List<UserDto> currentApprovers = new ArrayList<UserDto>();
+		this.setInstanceUnit(instanceUnit);
+		this.setApprovalDto(approvalDto);
+		
+		//流程实例置作废标志
+		instanceUnit.setStatus(InstanceStatus.CANCEL.getValue());
+		instanceUnit.setEndDate(new Timestamp(System.currentTimeMillis()));
+		
+		//监控处理
+		monitorHandle(null, instanceUnit.getFlId(), FlowMonitorPoint.FLOW_CANCEL);
+		
+		//实例中运行中的任务置为跳过
+		for(ACUnit acUnit : instanceUnit.getAcList()) {
+			int delPostCnt = 0;
+			
+			if(ACStatus.NOT_RUNNING.getValue().equals(acUnit.getAcStatus())) {
+				acUnit.setDbAction(2);
+				continue;
+			}
+			
+			if(CollectionUtils.isEmpty(acUnit.getPosts())) {
+				continue;
+			}
+			
+			for(PostUnit post : acUnit.getPosts()) {
+				
+				int delPersonCnt = 0;
+				List<ApproverUnit> approvers = post.getApprovers();
+				if(CollectionUtils.isEmpty(approvers)) {
+					continue;
+				}
+				for(ApproverUnit approver : approvers) {
+					TaskUnit task = approver.getTask();
+					if(task != null && TaskStatus.RUNNING.getValue().equals(task.getTaskStatus())) {
+						task.setTaskStatus(TaskStatus.SKIP.getValue());
+						task.setEndTime(new Timestamp(System.currentTimeMillis()));
+						task.setDbAction(2);
+						
+						approver.setDbAction(2);
+						delPersonCnt++;
+						
+						//收集待撤回消息ID
+						instanceUnit.getMessagesToDel().add(task.getMsgId());
+
+						//收集当前审批人id、name信息
+						currentApprovers.add(new UserDto(approver.getApproverId(),approver.getApproverName()));
+					}
+				}
+				if(delPersonCnt == approvers.size()) {
+					post.setDbAction(2);
+					delPostCnt++; 
+				}
+			}
+			
+			if(delPostCnt == acUnit.getPosts().size()) {
+				acUnit.setDbAction(2);
+			}
+		}
+
+		//保存模型
+		save(instanceUnit);
+		
+		//删除消息
+		super.sendMessages(instanceUnit.getMessages());
+		withDrawMessage(instanceUnit.getMessagesToDel());
+		
+		//记录操作日志
+		String starter = instanceUnit.getAcList().get(0).getPosts().get(0).getApprovers().get(0).getApproverId();
+		service.getInstanceLogService().saveLogData(instanceUnit.getId(), null, null, null, 
+				InstanceOperateType.CANCEL.getValue(), starter, null, null);
+		
+		//通知业务系统流程作废状态
+		super.noticeBusinessSystem(instanceUnit, approvalDto);
+		
+		//从全文检索中删除流程内容
+		super.deleteIndexFromSearch(instanceUnit);
+		
+		//撤回此流程实例中其他管理员没有处理的待办
+		service.getMsgService().deleteMsgOfAdminBy(instanceUnit.getId());
+
+		//我的发起 消息标题加前缀
+		service.editLastStartMsgTitle(instanceUnit.getId(),"【作废】");
+
+		//给发起人发待阅消息
+		sendInvalidMessage(currentApprovers,instanceUnit);
+		/*ACUnit startAc = instanceUnit.getAcList().get(0);
+		ApproverUnit startApprover = startAc.getPosts().get(0).getApprovers().get(0);
+		UserDto user = new UserDto(startApprover.getApproverId(), startApprover.getApproverName());
+		SysNoticeMsg toReadMsg = createToReadMsg(instanceUnit, instanceUnit.getCustomFormURL(), user);
+		service.getMsgService().saveAndNotifyOthers(toReadMsg);*/
+
+		//增加管理员作废节点
+		service.addDrawFlowNode(instanceUnit,1);
+
+		
+		return "success";
+	}
+	
+	protected void withDrawMessage(List<String> msgIds) throws Exception {
+		if(CollectionUtils.isNotEmpty(msgIds))  {
+			getService().getMsgService().deletePseudoAllObjectByIds(msgIds);
+			
+			//TODO zhangdaoqiang 记录操作日志
+			try {
+				service.getInstanceLogService().deleteOperateLogBySpecialAction(instanceUnit.getId(),
+						null, null, null,null);
+				
+			} catch (Exception e) {
+				throw new FlowException("记录流程日志异常：", e);
+			}
+		}
+	}
+
+	/**
+	 * 作废流程给发起人发送作废待阅
+	 * @throws Exception
+	 */
+	protected void sendInvalidMessage(List<UserDto> currentApprovers,InstanceUnit instanceUnit) throws Exception{
+		List<SysNoticeMsg> msgList = new ArrayList<SysNoticeMsg>();
+		ACUnit startAc = instanceUnit.getAcList().get(0);
+		ApproverUnit startApprover = startAc.getPosts().get(0).getApprovers().get(0);
+		UserDto user = new UserDto(startApprover.getApproverId(), startApprover.getApproverName());
+
+		String instanceId = instanceUnit.getId();
+		String instanceName = instanceUnit.getName();
+		String businessId = instanceUnit.getBusinessId();
+		String msgTitle = "【流程【" + instanceName + "】已被管理员作废！请知晓!";
+		String msgUrl = "/flow/runtime/approve/flow.html?instanceId=" + instanceId;
+		String mobileUrl = "mobile/approve/approve_detail.html";
+		MobileParam mobileParamBean = new MobileParam();
+		mobileParamBean.setInstanceId(instanceId);
+		mobileParamBean.setBusinessId(businessId);
+		SysNoticeMsg msg = service.getMsgService().newFlowMsg(user, "DY", msgTitle, msgUrl, mobileUrl, JacksonUtils.toJson(mobileParamBean));
+		msgList.add(msg);
+
+		for (UserDto userDto:currentApprovers) {
+			if(!userDto.getId().equals(user.getId())){
+				SysNoticeMsg approverMsg = service.getMsgService().newFlowMsg(userDto, "DY", msgTitle, msgUrl, mobileUrl, JacksonUtils.toJson(mobileParamBean));
+				msgList.add(approverMsg);
+			}
+		}
+
+		service.getMsgService().saveBatch(msgList);
+	}
+}

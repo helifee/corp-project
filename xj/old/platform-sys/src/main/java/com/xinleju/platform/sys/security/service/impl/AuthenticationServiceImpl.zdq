@@ -1,0 +1,33 @@
+package com.xinleju.platform.sys.security.service.impl;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.platform.sys.org.entity.User;
+import com.xinleju.platform.sys.org.service.UserService;
+import com.xinleju.platform.sys.org.utils.EncryptionUtils;
+import com.xinleju.platform.sys.security.service.AuthenticationService;
+
+@Service
+public class AuthenticationServiceImpl implements AuthenticationService{
+
+	
+	@Autowired
+	private UserService userService;
+	
+	@Override
+	public List<User> login(User user) throws Exception {
+		Map<String,Object> map = new HashMap<String,Object>();
+		map.put("loginName", user.getLoginName());
+		map.put("delflag", "0");
+		map.put("status", "1");
+		List<User> listUser = userService.queryList(map);
+		return listUser;
+	}
+
+}

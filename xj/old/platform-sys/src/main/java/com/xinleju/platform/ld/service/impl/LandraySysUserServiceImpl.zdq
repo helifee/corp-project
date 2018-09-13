@@ -1,0 +1,24 @@
+package com.xinleju.platform.ld.service.impl;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.ld.dao.LandraySysUserDao;
+import com.xinleju.platform.ld.entity.LandraySysUser;
+import com.xinleju.platform.ld.service.LandraySysUserService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class LandraySysUserServiceImpl extends  BaseServiceImpl<String,LandraySysUser> implements LandraySysUserService {
+	
+
+	@Autowired
+	private LandraySysUserDao landraySysUserDao;
+	
+
+}

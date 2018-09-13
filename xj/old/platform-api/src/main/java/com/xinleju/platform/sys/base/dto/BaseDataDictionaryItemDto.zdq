@@ -1,0 +1,49 @@
+package com.xinleju.platform.sys.base.dto;
+
+import com.xinleju.platform.base.dto.BaseDto;
+
+
+
+
+
+/**
+ * @author admin
+ * 
+ *
+ */
+public class BaseDataDictionaryItemDto extends BaseDto{
+
+		
+	//名称
+	private String name;
+    
+  		
+	//值
+	private String val;
+    
+  	//父级id
+	private String parentId;
+		
+	public String getName() {
+		return name;
+	}
+	public void setName(String name) {
+		this.name = name;
+	}
+    
+  		
+	public String getVal() {
+		return val;
+	}
+	public void setVal(String val) {
+		this.val = val;
+	}
+	public String getParentId() {
+		return parentId;
+	}
+	public void setParentId(String parentId) {
+		this.parentId = parentId;
+	}
+    
+  		
+}

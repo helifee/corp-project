@@ -1,0 +1,286 @@
+package com.xinleju.erp.finance.action;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.UnsupportedEncodingException;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.log4j.Logger;
+import org.apache.poi.hssf.usermodel.HSSFWorkbook;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.opensymphony.xwork2.ModelDriven;
+import com.xinleju.erp.base.app.action.BaseAction;
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.utils.JsonUtils;
+import com.xinleju.erp.finance.dto.FiCollectionTypeCapDTO;
+import com.xinleju.erp.finance.dto.FunNameDTO;
+import com.xinleju.erp.finance.models.FiAccountCaption;
+import com.xinleju.erp.finance.models.FiAccountSetData;
+import com.xinleju.erp.finance.models.FiCollectionTypeCap;
+import com.xinleju.erp.finance.models.extender.FiCollectionTypeCapComboTreeExtender;
+import com.xinleju.erp.finance.models.extender.FiCollectionTypeComboTreeExtender;
+import com.xinleju.erp.finance.models.extender.FiCompanyComboTreeExtender;
+import com.xinleju.erp.finance.service.FiAccountCaptionService;
+import com.xinleju.erp.finance.service.FiAccountSetDataService;
+import com.xinleju.erp.finance.service.FiCollectionTypeCapService;
+import com.xinleju.erp.finance.utils.ExcelHandlerUtil;
+import com.xinleju.erp.finance.utils.IExcelHandler;
+import com.xinleju.erp.flow.utils.LoginInfoUtils;
+import com.xinleju.erp.frame.dto.JsonTreeTableTemplete;
+import com.xinleju.erp.frame.utils.CommonUtil;
+import com.xinleju.erp.sa.service.SyncFinaSaData;
+import com.xinleju.erp.sm.extend.dto.FinaData;
+import com.xinleju.erp.sm.extend.dto.FinaQueryParams;
+
+import net.sf.json.JSONArray;
+
+/**
+ * 代收类型科目对照 ACTION
+ * @author chc
+ *
+ */
+public class FiCollectionTypeCapAction extends BaseAction implements ModelDriven<FiCollectionTypeCap>{
+	
+	@Autowired
+	private FiCollectionTypeCapService fiCollectionTypeCapService;
+	@Autowired
+	private FiAccountCaptionService fiAccountCaptionService;
+	@Autowired
+	private FiAccountSetDataService fiAccountSetDataService;
+	private FiCollectionTypeCap fiCollectionTypeCap = new FiCollectionTypeCap();
+	private File  uploadfile;
+	
+	/**
+	 * 列表
+	 * 
+	 * @return
+	 */
+	public String list() {
+		Long accountSetId = getParameterLong("accountSetId");
+		//Long fisysinfoid = getParameterLong("fisysinfoid");
+		String accountSetCode = request.getParameter("accountSetCode");
+		Long sysId = getParameterLong("sysId");
+		request.setAttribute("accountSetCode", accountSetCode);
+		request.setAttribute("sysId", sysId);
+		request.setAttribute("accountSetId", accountSetId);
+		List<FiAccountSetData> fasds = fiAccountSetDataService.getFiAccountSetsDataByAccountId(accountSetId,sysId);
+		if(fasds != null && fasds.size() > 0){
+			List<Long> ids = new ArrayList<Long>();
+			List<FiAccountSetData> companys = new ArrayList<FiAccountSetData>();
+			for(FiAccountSetData f:fasds){
+				if(!ids.contains(f.getCompanyId())){
+					ids.add(f.getCompanyId());
+					companys.add(f);
+				}
+			}
+			String accountSetsjson = JsonUtils.toJSONString(companys);
+			request.setAttribute("accountSetsjson", accountSetsjson);
+			ids.clear();
+		}else{
+			request.setAttribute("accountSetsjson", "[]");
+		}
+		return "list";
+	}
+	
+	/**
+	 * 加载银行科目对照的treeGrid的json数据
+	 */
+	public void loadTreeGrid() {
+		try{
+		Long accountSetId = getParameterLong("accountSetId");
+		Long companyId = getParameterLong("companyId");
+		String accountSetCode = request.getParameter("accountSetCode");
+		Long sysId = getParameterLong("sysId");
+		String status = "1";
+		List<FiCollectionTypeCapDTO> fiCollectionTypeCapDTOs = null;
+		if (StringUtils.isNotBlank(accountSetCode))
+			//System.out.println();
+			fiCollectionTypeCapDTOs = fiCollectionTypeCapService.getFiCollectionTypeCapDTOList(accountSetId, status,sysId,companyId);
+		else
+			fiCollectionTypeCapDTOs = new ArrayList<FiCollectionTypeCapDTO>();
+		JsonTreeTableTemplete jttt = new JsonTreeTableTemplete("id", "pid", FiCollectionTypeCapDTO.class, FiCollectionTypeCapComboTreeExtender.class);
+		JSONArray jsonTree = CommonUtil.transTree(fiCollectionTypeCapDTOs, jttt);
+		renderJson(jsonTree.toString());
+		}catch(Exception e){
+			e.printStackTrace();
+		}
+	}
+	
+	public void loadComboTree() {
+		Long accountSetId = getParameterLong("accountSetId");
+		Long companyId = getParameterLong("companyId");
+		String accountSetCode = request.getParameter("accountSetCode");
+		Long sysId = getParameterLong("sysId");
+		//sysId = 2l;
+		String status = "1";
+		List<FiCollectionTypeCapDTO> fiCollectionTypeCapDTOList = null;
+		if (StringUtils.isNotBlank(accountSetCode))
+			fiCollectionTypeCapDTOList = fiCollectionTypeCapService.getFiCollectionTypeCapDTOList(accountSetId, status,sysId,companyId);
+		else
+			fiCollectionTypeCapDTOList = new ArrayList<FiCollectionTypeCapDTO>();
+		JsonTreeTableTemplete jttt = new JsonTreeTableTemplete("id", "pid", FiCollectionTypeCapDTO.class, FiCollectionTypeCapComboTreeExtender.class);
+		JSONArray jsonTree = CommonUtil.transTree(fiCollectionTypeCapDTOList, jttt);
+		renderJson(jsonTree.toString());
+	}
+	
+	public void loadCollectionTypeTree() {
+		Long companyId = getParameterLong("companyId");
+		SyncFinaSaData syncFinaSaData = (SyncFinaSaData) App.getBean("syncFinaSaData");
+		FinaQueryParams params = new FinaQueryParams();
+		params.setCorpId(companyId+"");
+		params.setCurrentPage(0);
+		List<FinaData> fds = syncFinaSaData.getFunName(params).getResult().getItems();
+		List<FunNameDTO> list = new ArrayList<FunNameDTO>();
+		for(FinaData data:fds){
+			FunNameDTO dto = new FunNameDTO();
+			dto.setId(data.get("id")+"");
+			String pid = "";
+			if(!"0".equals(data.get("pid")+"")){
+				pid = data.get("pid")+"";
+			}
+			dto.setPid(pid);
+			dto.setBankCode(data.get("code")+"");
+			dto.setBankName(data.get("name")+"");
+			dto.setRid(data.get("rid")+"");
+			list.add(dto);
+		}
+		JsonTreeTableTemplete jttt = new JsonTreeTableTemplete("id", "pid", FunNameDTO.class, FiCollectionTypeComboTreeExtender.class);
+		JSONArray jsonTree = CommonUtil.transTree(list, jttt);
+		renderJson(jsonTree.toString());
+	}
+	
+	/**
+	 * 保存或者更代收类型科目对照
+	 */
+	public void saveOrUpdate() {
+		Map<String, Object> result = new HashMap<String, Object>();
+		if (fiCollectionTypeCap.getId() != null) {
+			fiCollectionTypeCap.setEditDate(new Date());
+			fiCollectionTypeCap.setStatus(1);
+			fiCollectionTypeCap.setEditUserId(LoginInfoUtils.getLoginInfoUserDtoId(request));
+		} else {
+			fiCollectionTypeCap.setCreateDate(new Date());
+			fiCollectionTypeCap.setStatus(1);
+			fiCollectionTypeCap.setCreateUserId(LoginInfoUtils.getLoginInfoUserDtoId(request));
+		}
+
+		try {
+			fiCollectionTypeCapService.saveOrUpdate(fiCollectionTypeCap);
+			result.put("success", true);
+			result.put("msg", "操作成功");
+			renderHtml(JsonUtils.toJSONString(result));
+		} catch (Exception e) {
+			result.put("success", false);
+			result.put("msg", e.getMessage());
+			renderHtml(JsonUtils.toJSONString(result));
+		}
+	}
+
+	public void delete() {
+		Map<String, Object> result = new HashMap<String, Object>();
+		try {
+			fiCollectionTypeCapService.delete(fiCollectionTypeCap);
+			result.put("success", true);
+			renderHtml(JsonUtils.toJSONString(result));
+		} catch (Exception e) {
+			result.put("success", false);
+			result.put("msg", e.getMessage());
+			renderHtml(JsonUtils.toJSONString(result));
+		}
+	}
+	
+	/*
+	 * 代收类型科目对照 导出
+	 */
+	public void exportPr(){
+		try {
+			String accountSetCode = request.getParameter("accountSetCode");
+			String sysId = request.getParameter("sysId");
+			String accountSetId = request.getParameter("accountSetId");
+			Long companyId = getParameterLong("companyId");
+			List<IExcelHandler> iexcelHandlerList = new ArrayList<IExcelHandler>();
+			iexcelHandlerList.add(fiCollectionTypeCapService);
+			HSSFWorkbook wb = ExcelHandlerUtil.onexport(iexcelHandlerList,accountSetCode,Long.parseLong(sysId),Long.parseLong(accountSetId),companyId);
+			onExport(wb,"代收类型科目对照.xls");
+		} catch (Exception e) {
+			e.printStackTrace();
+			Logger.getLogger(this.getClass()).error(e.getMessage());
+		}
+	}
+	
+	public void onExport(HSSFWorkbook wb,String fileName) throws UnsupportedEncodingException{
+		response.setContentType("application/vnd.ms-excel");
+		String downloadFileName=new String(fileName.getBytes("gb2312"), "iso8859-1");
+		
+		response.setHeader("Content-disposition","attachment;filename="+downloadFileName);
+		OutputStream ouputStream = null;
+		try {
+			ouputStream = response.getOutputStream();
+			wb.write(ouputStream);
+			ouputStream.flush();
+			ouputStream.close();
+		} catch (IOException e) {
+			Logger.getLogger(this.getClass()).error(e.getMessage());
+			Logger.getLogger(this.getClass()).error("业务异常",e);
+		}finally{
+			if (ouputStream != null)
+				try {
+					ouputStream.close();
+				} catch (IOException e) {
+					Logger.getLogger(this.getClass()).error(e.getMessage());
+					Logger.getLogger(this.getClass()).error("业务异常",e);
+				}
+            
+		}
+	}
+	
+	/**
+	 * 代收类型科目对照导入
+	 */
+	public void  importPr(){
+		try {
+			String accountSetCode = request.getParameter("accountSetCode");//账套好
+			String sysId = request.getParameter("sysId");//系统
+			String companyCode = request.getParameter("companyCode");//公司编码
+			String accountSetId = request.getParameter("accountSetId");
+			Long companyId = getParameterLong("companyId");
+			List<IExcelHandler> iexcelHandlerList = new ArrayList<IExcelHandler>();
+			iexcelHandlerList.add(fiCollectionTypeCapService);
+			FileInputStream fileInputStream = new FileInputStream(uploadfile);
+			ExcelHandlerUtil.importPr(fileInputStream,accountSetCode,sysId,companyCode,accountSetId,iexcelHandlerList,companyId);
+		} catch (Exception e) {
+			e.printStackTrace();
+			Logger.getLogger(this.getClass()).error(e.getMessage());
+			Logger.getLogger(this.getClass()).error("业务异常",e);
+		}
+	}
+
+	public FiCollectionTypeCap getModel() {
+		return fiCollectionTypeCap;
+	}
+
+	public FiCollectionTypeCap getFiCollectionTypeCap() {
+		return fiCollectionTypeCap;
+	}
+
+	public void setFiCollectionTypeCap(FiCollectionTypeCap fiCollectionTypeCap) {
+		this.fiCollectionTypeCap = fiCollectionTypeCap;
+	}
+
+	public File getUploadfile() {
+		return uploadfile;
+	}
+
+	public void setUploadfile(File uploadfile) {
+		this.uploadfile = uploadfile;
+	}
+	
+}

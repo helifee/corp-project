@@ -1,0 +1,708 @@
+/*
+ * @(#)K050011Action.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 教育考试培训系统
+ *    SubSystem: 考试子系统
+ */
+package com.yds.tt.testing.action;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.springframework.beans.factory.config.BeanDefinition;
+import org.springframework.context.annotation.Scope;
+import org.springframework.stereotype.Controller;
+
+import com.opensymphony.xwork2.interceptor.annotations.InputConfig;
+import com.yds.base.action.AbstractBaseAction;
+import com.yds.tt.manager.bean.AuthorityInfo;
+import com.yds.tt.manager.bean.TtCheckResult;
+import com.yds.tt.manager.service.TtCommonService;
+import com.yds.tt.manager.service.TtCommonUtil;
+import com.yds.tt.manager.service.TtConstants;
+import com.yds.tt.manager.service.TtExclusiveException;
+import com.yds.tt.testing.bean.TestPaperInfo;
+import com.yds.tt.testing.service.K050011Service;
+import com.yds.util.service.StringUtil;
+
+/**
+ * 试卷新建及权限分配.
+ * 
+ * @author jiaosunquan
+ * @version 1.00 2010/03/17
+ */
+@Scope(BeanDefinition.SCOPE_PROTOTYPE)
+@Controller("k050011Action")
+public class K050011Action extends AbstractBaseAction {
+
+	private static final long serialVersionUID = -2707059018336774614L;
+	
+	private K050011Service k050011Service;
+	private TtCommonService ttCommonService;
+	
+	private List<AuthorityInfo> editorList; // 编辑者信息一览
+	private AuthorityInfo approverInfo; // 编辑者信息一览
+	private TestPaperInfo testPaperInfo; // 试卷基本信息
+	private Integer category1Id; // 一级分类ID
+	private Integer category2Id; // 二级分类ID
+	private Integer category3Id; // 三级分类ID
+	private String mode; //模式
+	private String callScreenId; // 启动画面ID
+	private String paperId; // 试卷ID
+	private Integer paperVersionNo; // 试卷版本号
+	private String belongId; // 创建对象
+	private String errorMessage;
+	
+	private Integer sltCategory1;//一级分类ID初期值
+	private Integer sltCategory2;//二级分类ID初期值
+	private Integer sltCategory3;//三级分类ID初期值
+	private String sltCategory1Enable;//一级分类ID可用标识
+	private String sltCategory2Enable;//二级分类ID可用标识
+	private String sltCategory3Enable;//三级分类ID可用标识
+
+	/**
+	 * 画面的初期显示 试卷一览（K050021）调用时的<管理>模式.
+	 * 
+	 * @return SUCCESS
+	 */
+	@InputConfig(resultName="error")
+	public String initManagePaper() throws Exception {
+		
+		// 参数检查
+		String retStr = ttCommonService.isParamNull(paperId,paperVersionNo,belongId);
+		if (retStr != null){
+			errorMessage = retStr;
+			return ERROR;	
+		}
+		
+		// 画面启动检查
+		List<String> objectId = new ArrayList<String>();
+		objectId.add(paperId);
+		TtCheckResult result= ttCommonService.checkStartupAuthority(
+				TtConstants.PageId.K050011.toString(),
+				"K050011",
+				TtConstants.C43.C43_4.value(), objectId);
+		if (!result.getRetFlag()) {
+			errorMessage = result.getRetMessage();
+			return ERROR;	
+		}
+				
+		// 画面模式设定
+		setMode(TtConstants.Mode.Update_Mode.value());
+
+		// 试卷Bean初始化:接口参数
+		testPaperInfo = new TestPaperInfo();
+		testPaperInfo.setPaperId(paperId);// 试卷ID设置
+		testPaperInfo.setPaperVersionNo(paperVersionNo);// 试卷版本号设置
+		testPaperInfo.setBelongId(belongId);// 创建对象设置
+
+		// 试卷基本信息检索处理
+		testPaperInfo = k050011Service.getTestPaperInfo(testPaperInfo);
+		if (testPaperInfo == null) {
+			errorMessage = propMgr.getMessage("yds.com.error.JYE12","试卷");
+			return ERROR;
+		}
+		
+		// 保存时间戳检查用的更新时间
+		ttCommonService.setTimestamp(TtConstants.PageId.K050011, 
+				TtConstants.Mode.Update_Mode, 
+				this.testPaperInfo.getUpdateTime());
+
+		// 编辑者信息检索处理
+		editorList = ttCommonService.getAuthorityInfoList(
+				paperId, TtConstants.C24.C24_9.toString());
+		
+		// 审批者信息检索处理
+		AuthorityInfo approver = ttCommonService.getAuthorityInfo(
+				paperId, TtConstants.C24.C24_13.toString());
+		
+		// 画面审批者设定
+		approverInfo = new AuthorityInfo();
+		approverInfo.setUserId(StringUtil.leftTrimYd(approver.getUserId()));
+		approverInfo.setUserName(approver.getUserName());
+		
+		// 画面分类设定
+		sltCategory1 = this.testPaperInfo.getCategory1Id();
+		sltCategory2 = this.testPaperInfo.getCategory2Id();
+		sltCategory3 = this.testPaperInfo.getCategory3Id();
+
+		// 分类设定
+		sltCategory1Enable = "1";
+		sltCategory2Enable = "1";
+		sltCategory3Enable = "1";
+
+		return SUCCESS;
+	}
+
+	/**
+	 * 画面的初期显示 试卷一览（K050021）调用时的<新建试卷>模式.
+	 * 
+	 * @return SUCCESS
+	 */
+	@InputConfig(resultName="error")
+	public String initInsertPaper() throws Exception {
+		
+		// 画面启动检查
+		TtCheckResult result= ttCommonService.checkStartupAuthority(
+				TtConstants.PageId.K050011.toString(),
+				"K050011",
+				null, null);
+		if (!result.getRetFlag()) {
+			errorMessage = result.getRetMessage();
+			return ERROR;	
+		}
+
+		// 画面模式设定
+		setMode(TtConstants.Mode.Insert_Mode.value());
+		
+		return SUCCESS;
+	}
+	
+	/**
+	 * 画面的初期显示 考试详细（管理）（K060071），考试总体设定及生成（K060061）调用时的<新建试卷>模式
+	 * 
+	 * @return SUCCESS
+	 */
+	@InputConfig(resultName="error")
+	public String initInsertPaper2() throws Exception {
+		
+		// 参数检查
+		String retStr = ttCommonService.isParamNull(belongId, sltCategory1, sltCategory2,sltCategory3);
+		if (retStr != null){
+			errorMessage = retStr;
+			return ERROR;	
+		}
+		
+		// 画面启动检查
+		List<String> objectId = new ArrayList<String>();
+		objectId.add(belongId);
+		TtCheckResult result= ttCommonService.checkStartupAuthority(
+				TtConstants.PageId.K050011.toString(),
+				"K050011",
+				TtConstants.C43.C43_3.value(), objectId);
+		if (!result.getRetFlag()) {
+			errorMessage = result.getRetMessage();
+			return ERROR;	
+		}
+
+		// 分类设定
+		sltCategory1Enable = "0";
+		if(sltCategory1 == 0){
+			sltCategory1Enable = "1";
+		}
+		sltCategory2Enable = "0";
+		if(sltCategory2 == 0){
+			sltCategory2Enable = "1";
+		}
+		sltCategory3Enable = "0";
+		if(sltCategory3 == 0){
+			sltCategory3Enable = "1";
+		}
+		
+		// 创建对象设置
+		testPaperInfo = new TestPaperInfo();
+		testPaperInfo.setBelongId(belongId);
+		
+		// 画面模式设定
+		setMode(TtConstants.Mode.Insert_Inner_Mode.value());
+		
+		return SUCCESS;
+	}
+	/**
+	 * 画面的初期显示 试卷查看（K050051）调用时的<参照新建>模式.
+	 * 
+	 * @return SUCCESS
+	 */
+	@InputConfig(resultName="error")
+	public String initCopyPaper() throws Exception {
+		// 参数检查
+		String retStr = ttCommonService.isParamNull(paperId, paperVersionNo);
+		if (retStr != null){
+			errorMessage = retStr;
+			return ERROR;	
+		}
+		
+		// 画面启动检查
+		List<String> objectId = new ArrayList<String>();
+		objectId.add(paperId);
+		TtCheckResult result= ttCommonService.checkStartupAuthority(
+				TtConstants.PageId.K050011.toString(),
+				"K050011",
+				null, null);
+		if (!result.getRetFlag()) {
+			errorMessage = result.getRetMessage();
+			return ERROR;	
+		}
+
+		// 画面模式设定
+		setMode(TtConstants.Mode.Copy_Insert_Mode.value());
+		
+		// 试卷Bean初始化:接口参数
+		testPaperInfo = new TestPaperInfo();
+		testPaperInfo.setPaperId(paperId);// 试卷ID设置
+		testPaperInfo.setPaperVersionNo(paperVersionNo);// 试卷版本号设置
+		testPaperInfo.setBelongId(belongId);// 创建对象设置
+
+		// 试卷基本信息检索处理
+		testPaperInfo = k050011Service.getTestPaperInfo(testPaperInfo);
+		if (testPaperInfo == null) {
+			errorMessage = propMgr.getMessage("yds.com.error.JYE12","试卷");
+			return ERROR;
+		}
+		
+		// 保存时间戳检查用的更新时间
+		ttCommonService.setTimestamp(TtConstants.PageId.K050011, 
+				TtConstants.Mode.Copy_Insert_Mode, 
+				this.testPaperInfo.getUpdateTime());
+
+		// 编辑者信息检索处理
+		editorList = ttCommonService.getAuthorityInfoList(
+				testPaperInfo.getPaperId(), TtConstants.C24.C24_9.toString());
+		
+		// 审批者信息检索处理
+		AuthorityInfo approver = ttCommonService.getAuthorityInfo(
+				testPaperInfo.getPaperId(), TtConstants.C24.C24_13.toString());
+
+		// 画面审批者设定
+		approverInfo = new AuthorityInfo();
+		approverInfo.setUserId(StringUtil.leftTrimYd(approver.getUserId()));
+		approverInfo.setUserName(approver.getUserName());
+		
+		// 画面分类设定
+		sltCategory1 = this.testPaperInfo.getCategory1Id();
+		sltCategory2 = this.testPaperInfo.getCategory2Id();
+		sltCategory3 = this.testPaperInfo.getCategory3Id();
+
+		// 分类设定
+		sltCategory1Enable = "1";
+		sltCategory2Enable = "1";
+		sltCategory3Enable = "1";
+		
+		return SUCCESS;
+	}
+
+	/**
+	 * 插入试卷表处理（<新建试卷>模式下进行）.
+	 * 
+	 * @return SUCCESS
+	 */
+	public String insertPaperInfo() {
+		
+		this.sltCategory1 = category1Id;
+		this.sltCategory2 = category2Id;
+		this.sltCategory3 = category3Id;
+		this.sltCategory1Enable = "1";
+		this.sltCategory2Enable = "1";
+		this.sltCategory3Enable = "1";
+
+		// 画面启动检查
+		TtCheckResult result= ttCommonService.checkStartupAuthority(
+				TtConstants.PageId.K050011.toString(),
+				"K050011",
+				null, null);
+		if (!result.getRetFlag()) {
+			errorMessage = result.getRetMessage();
+			return ERROR;	
+		}
+		
+		// 插入试卷表处理（<新建试卷>，<参照新建>模式下进行）
+		k050011Service.insertTestPaperInfo(testPaperInfo, approverInfo, editorList);
+		
+		return SUCCESS;
+	}
+	
+	/**
+	 * 插入试卷表处理（<参照新建>模式下进行）.
+	 * 
+	 * @return SUCCESS
+	 */
+	public String insertCopyPaperInfo() {
+		// 画面启动检查
+		List<String> objectId = new ArrayList<String>();
+		objectId.add(paperId);
+		TtCheckResult result= ttCommonService.checkStartupAuthority(
+				TtConstants.PageId.K050011.toString(),
+				"K050011",
+				null, null);
+		if (!result.getRetFlag()) {
+			errorMessage = result.getRetMessage();
+			return ERROR;	
+		}
+		
+		// 插入试卷表处理（<新建试卷>，<参照新建>模式下进行）
+		k050011Service.insertCopyTestPaperInfo(testPaperInfo, approverInfo, editorList);
+		
+		return SUCCESS;
+	}
+	
+	/**
+	 * 更新试卷表数据处理（<管理>模式下进行）.
+	 * 
+	 * @return SUCCESS
+	 */
+	public String updatePaperInfo() {
+		// 画面启动检查
+		List<String> objectId = new ArrayList<String>();
+		objectId.add(testPaperInfo.getPaperId());
+		TtCheckResult result= ttCommonService.checkStartupAuthority(
+				TtConstants.PageId.K050011.toString(),
+				"K050011",
+				TtConstants.C43.C43_4.value(), objectId);
+		if (!result.getRetFlag()) {
+			errorMessage = result.getRetMessage();
+			return ERROR;	
+		}
+		
+		try {
+			
+			// 更新试卷表数据处理（<管理>模式下进行）
+			k050011Service.updateTestPaperInfo(testPaperInfo, approverInfo, editorList);
+			
+		} catch (TtExclusiveException e){
+			errorMessage = propMgr.getMessage("yds.tt.error.KSE56");
+			return ERROR;			
+		}
+		
+		return SUCCESS;
+	}
+	
+	/**
+	 * 新建校验
+	 * 
+	 */
+	public void validateInsertPaperInfo(){
+
+		// 关联check
+		relativeCheck();
+	}	
+	
+	/**
+	 * 参照新建校验
+	 * 
+	 */
+	public void validateInsertCopyPaperInfo(){
+		
+		// 关联check
+		relativeCheck();
+	}
+	
+	/**
+	 * 更新校验
+	 * 
+	 */
+	public void validateUpdatePaperInfo(){
+		
+		// 关联check
+		relativeCheck();
+	}
+	
+	/**
+	 * 校验
+	 */
+	private void relativeCheck(){
+	
+		// 开始时间与结束时间校验
+		if (null != this.editorList) {
+			for (int i = 0; i < this.editorList.size(); i++) {
+				
+				if (null != this.editorList.get(i).getStartTime()
+						&& null != this.editorList.get(i).getEndTime()) {
+					
+					if (0 < this.editorList.get(i).getStartTime().compareTo(
+							this.editorList.get(i).getEndTime())) {
+						this.addFieldError("editorList[" + i +"].startTime",
+								propMgr.getMessage("yds.tt.error.JYE05", this.editorList.get(i).getUserName()));
+						this.addFieldError("editorList[" + i +"].endTime",
+								propMgr.getMessage("yds.tt.error.JYE05", this.editorList.get(i).getUserName()));
+
+					}
+				}
+			}
+		}
+		
+		// 检查审批者是否存在
+		if (ttCommonService.isExistUserId(StringUtil.leftPadYd(approverInfo.getUserId()) ) == false) {
+			this.addFieldError("approverInfo.userId", propMgr.getMessage("yds.tt.error.JYE12", "审批者"));
+		}
+		
+		// 分类整合性检查
+		if (TtCommonUtil.isEquals(testPaperInfo.getCategory1Id(), 0) == false &&
+			ttCommonService.checkCategoryStatus(testPaperInfo.getCategory1Id(), 0, 0) == false) {
+			
+			this.addFieldError("category1Id", propMgr.getMessage("yds.tt.error.JYE04", "试卷"));			
+		}
+
+		if (TtCommonUtil.isEquals(testPaperInfo.getCategory2Id(), 0) == false && 
+			ttCommonService.checkCategoryStatus(testPaperInfo.getCategory1Id(), 
+					testPaperInfo.getCategory2Id(), 0) == false) {
+			
+			this.addFieldError("category2Id", propMgr.getMessage("yds.tt.error.JYE04", "试卷"));			
+		}
+		
+		if (TtCommonUtil.isEquals(testPaperInfo.getCategory3Id(), 0) == false && 
+			ttCommonService.checkCategoryStatus(testPaperInfo.getCategory1Id(), 
+					testPaperInfo.getCategory2Id(), 
+					testPaperInfo.getCategory3Id()) == false) {
+			this.addFieldError("category3Id", propMgr.getMessage("yds.tt.error.JYE04", "试卷"));			
+		}
+		
+		return ;
+	}
+
+	
+	/**
+	 * @return the editorInfoList
+	 */
+	public List<AuthorityInfo> getEditorList() {
+		return editorList;
+	}
+
+	/**
+	 * @param editorInfoList
+	 *            the editorInfoList to set
+	 */
+	public void setEditorList(List<AuthorityInfo> editorInfoList) {
+		this.editorList = editorInfoList;
+	}
+
+
+
+	/**
+	 * @param service
+	 *            the k050011Service to set
+	 */
+	public void setK050011Service(K050011Service service) {
+		k050011Service = service;
+	}
+
+	/**
+	 * @param ttCommonService
+	 *            the ttCommonService to set
+	 */
+	public void setTtCommonService(TtCommonService ttCommonService) {
+		this.ttCommonService = ttCommonService;
+	}
+
+	/**
+	 * @return the testPaperInfo
+	 */
+	public TestPaperInfo getTestPaperInfo() {
+		return testPaperInfo;
+	}
+
+	/**
+	 * @param testPaperInfo
+	 *            the testPaperInfo to set
+	 */
+	public void setTestPaperInfo(TestPaperInfo testPaperInfo) {
+		this.testPaperInfo = testPaperInfo;
+	}
+	
+	/**
+	 * @return the callScreenId
+	 */
+	public String getCallScreenId() {
+		return callScreenId;
+	}
+
+	/**
+	 * @param callScreenId
+	 *            the callScreenId to set
+	 */
+	public void setCallScreenId(String callScreenId) {
+		this.callScreenId = callScreenId;
+	}
+
+	/**
+	 * @return the paperId
+	 */
+	public String getPaperId() {
+		return paperId;
+	}
+
+	/**
+	 * @param paperId
+	 *            the paperId to set
+	 */
+	public void setPaperId(String paperId) {
+		this.paperId = paperId;
+	}
+
+	/**
+	 * @return the paperVersionNo
+	 */
+	public Integer getPaperVersionNo() {
+		return paperVersionNo;
+	}
+
+	/**
+	 * @param paperVersionNo
+	 *            the paperVersionNo to set
+	 */
+	public void setPaperVersionNo(Integer paperVersionNo) {
+		this.paperVersionNo = paperVersionNo;
+	}
+
+	/**
+	 * @return the belongId
+	 */
+	public String getBelongId() {
+		return belongId;
+	}
+
+	/**
+	 * @param belongId
+	 *            the belongId to set
+	 */
+	public void setBelongId(String belongId) {
+		this.belongId = belongId;
+	}
+
+	/**
+	 * @return the errorMessage
+	 */
+	public String getErrorMessage() {
+		return errorMessage;
+	}
+
+	/**
+	 * @param errorMessage the errorMessage to set
+	 */
+	public void setErrorMessage(String errorMessage) {
+		this.errorMessage = errorMessage;
+	}
+
+	/**
+	 * @return the sltCategory1
+	 */
+	public Integer getSltCategory1() {
+		return sltCategory1;
+	}
+
+	/**
+	 * @param sltCategory1 the sltCategory1 to set
+	 */
+	public void setSltCategory1(Integer sltCategory1) {
+		this.sltCategory1 = sltCategory1;
+	}
+
+	/**
+	 * @return the sltCategory2
+	 */
+	public Integer getSltCategory2() {
+		return sltCategory2;
+	}
+
+	/**
+	 * @param sltCategory2 the sltCategory2 to set
+	 */
+	public void setSltCategory2(Integer sltCategory2) {
+		this.sltCategory2 = sltCategory2;
+	}
+
+	/**
+	 * @return the sltCategory3
+	 */
+	public Integer getSltCategory3() {
+		return sltCategory3;
+	}
+
+	/**
+	 * @param sltCategory3 the sltCategory3 to set
+	 */
+	public void setSltCategory3(Integer sltCategory3) {
+		this.sltCategory3 = sltCategory3;
+	}
+
+	/**
+	 * @return the sltCategory1Enable
+	 */
+	public String getSltCategory1Enable() {
+		return sltCategory1Enable;
+	}
+
+	/**
+	 * @param sltCategory1Enable the sltCategory1Enable to set
+	 */
+	public void setSltCategory1Enable(String sltCategory1Enable) {
+		this.sltCategory1Enable = sltCategory1Enable;
+	}
+
+	/**
+	 * @return the sltCategory2Enable
+	 */
+	public String getSltCategory2Enable() {
+		return sltCategory2Enable;
+	}
+
+	/**
+	 * @param sltCategory2Enable the sltCategory2Enable to set
+	 */
+	public void setSltCategory2Enable(String sltCategory2Enable) {
+		this.sltCategory2Enable = sltCategory2Enable;
+	}
+
+	/**
+	 * @return the sltCategory3Enable
+	 */
+	public String getSltCategory3Enable() {
+		return sltCategory3Enable;
+	}
+
+	/**
+	 * @param sltCategory3Enable the sltCategory3Enable to set
+	 */
+	public void setSltCategory3Enable(String sltCategory3Enable) {
+		this.sltCategory3Enable = sltCategory3Enable;
+	}
+
+	/**
+	 * @param approverInf the approverInf to set
+	 */
+	public void setApproverInfo(AuthorityInfo approverInfo) {
+		this.approverInfo = approverInfo;
+	}
+
+	/**
+	 * @return the approverInf
+	 */
+	public AuthorityInfo getApproverInfo() {
+		return approverInfo;
+	}
+
+	/**
+	 * @param mode the mode to set
+	 */
+	public void setMode(String mode) {
+		this.mode = mode;
+	}
+
+	/**
+	 * @return the mode
+	 */
+	public String getMode() {
+		return mode;
+	}
+
+	/**
+	 * @param category1Id the category1Id to set
+	 */
+	public void setCategory1Id(Integer category1Id) {
+		this.category1Id = category1Id;
+	}
+
+	/**
+	 * @param category2Id the category2Id to set
+	 */
+	public void setCategory2Id(Integer category2Id) {
+		this.category2Id = category2Id;
+	}
+
+	/**
+	 * @param category3Id the category3Id to set
+	 */
+	public void setCategory3Id(Integer category3Id) {
+		this.category3Id = category3Id;
+	}
+}

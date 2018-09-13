@@ -1,0 +1,1746 @@
+
+package com.jzy.hio.oa.project.service.impl;
+
+import com.jzy.hio.ApiFeignResponse;
+
+import java.beans.PropertyDescriptor;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.text.SimpleDateFormat;
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import com.jzy.hio.annotation.DataSource;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.disk.directory.dto.AuthorizeDto;
+import com.jzy.hio.disk.directory.param.AuthorizeParam;
+import com.jzy.hio.disk.directory.param.SaveDirectoryParam;
+import com.jzy.hio.disk.directory.param.UpdateProjectDirectoryParam;
+import com.jzy.hio.disk.directory.param.UserAndAuthorizeParam;
+import com.jzy.hio.feign.*;
+import com.jzy.hio.oa.OaConstant;
+import com.jzy.hio.oa.project.dto.*;
+import com.jzy.hio.oa.project.mapper.ProjectTeamPersonMapper;
+import com.jzy.hio.oa.project.mapper.ProjectTrendsMapper;
+import com.jzy.hio.platform.message.param.*;
+import com.jzy.hio.platform.redis.PlatformRedis;
+import com.jzy.hio.sys.external.dto.UserIsNormalDto;
+import com.jzy.hio.sys.external.param.UserIsNormalParam;
+import com.jzy.hio.sys.role.dto.RoleButtonDto;
+import com.jzy.hio.utils.DirectoryUtil;
+import com.jzy.hio.utils.OaUserUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.entity.ProjectInfo;
+import com.jzy.hio.entity.ProjectTeamPerson;
+import com.jzy.hio.exception.HioMybatisDeleteException;
+import com.jzy.hio.exception.HioMybatisInsertException;
+import com.jzy.hio.exception.HioMybatisQueryException;
+import com.jzy.hio.exception.HioMybatisUpdateException;
+
+import com.jzy.hio.oa.project.mapper.ProjectInfoMapper;
+import com.jzy.hio.oa.project.service.ProjectInfoService;
+import com.jzy.hio.oa.project.service.ProjectStageService;
+import com.jzy.hio.oa.project.service.ProjectTeamPersonService;
+import com.jzy.hio.oa.project.service.ProjectTrendsService;
+import com.jzy.hio.oa.task.param.QueryTaskListParam;
+import com.jzy.hio.oa.task.service.TaskService;
+import com.jzy.hio.platform.message.MessageFeignService;
+import com.jzy.hio.sys.user.dto.OAUserDto;
+import com.jzy.hio.sys.user.param.OAUserParam;
+import com.jzy.hio.utils.LoginUser;
+import com.jzy.hio.utils.Page;
+
+/**
+ * 项目基本信息
+ * 
+ * @author yangning
+ */
+@Service("projectInfoService")
+public class ProjectInfoServiceImpl extends BaseServiceImpl<ProjectInfo> implements ProjectInfoService {
+
+	private static Logger logger = LoggerFactory.getLogger(ProjectInfoServiceImpl.class);
+
+	@Autowired
+	private ProjectTeamPersonService projectTeamPersonService;
+
+	@Autowired
+	private ProjectTrendsService projectTrendsService;
+	@Autowired
+	private ProjectStageService projectStageService;
+	@Autowired
+	private ProjectInfoMapper projectInfoMapper;
+
+	@Autowired
+	private ProjectTrendsMapper projectTrendsMapper;
+	@Autowired
+	private ProjectTeamPersonMapper projectTeamPersonMapper;
+
+	@Autowired
+	private TaskService taskService;
+
+	@Autowired
+	private SysFeignService sysFeignService;
+	@Autowired
+	private SysRoleFeignService sysRoleFeignService;
+	@Autowired
+	private MessageFeignService messageFeignService;
+	@Autowired
+	private SysExtrenalFeignService sysExtrenalFeignService;
+	@Autowired
+	private DiskFeignService diskFeignService;
+	@Autowired
+	private PlatformRedis platformRedis;
+	@Autowired
+	private OaUserUtil userUtil;
+
+	@Override
+	public ProjectIdDto queryProjectId() throws HioMybatisQueryException {
+		ProjectIdDto projectIdDto = new ProjectIdDto();
+		projectIdDto.setProjectId(generatePk());
+		projectIdDto.setAppId(BaseConstants.App.OA.getId());
+		projectIdDto.setCategoryId(BaseConstants.AttachmentCategory.OA_PROJECT.getId());
+		return projectIdDto;
+
+	}
+
+	@Override
+	public ProjectInfoDto queryWhitelistProject(String id) throws HioMybatisQueryException {
+		ProjectInfo projectInfo = getObjectById(id);
+		ProjectInfoDto projectInfoDto = new ProjectInfoDto();
+		if (isNotEmpty(projectInfo)) {
+			BeanUtils.copyProperties(projectInfo, projectInfoDto);
+		}
+		return projectInfoDto;
+	}
+
+	@Override
+	public ProjectInfoDto getProjectInfoById(@DataSource String tendId, String id) throws HioMybatisQueryException {
+		ProjectInfo projectInfo = getObjectById(id);
+		ProjectInfoDto projectInfoDto = new ProjectInfoDto();
+		if (isNotEmpty(projectInfo)) {
+			BeanUtils.copyProperties(projectInfo, projectInfoDto);
+		}
+		return projectInfoDto;
+	}
+
+	@Override
+	public ProjectInfoDto queryProjectInfoById(String id, LoginUser loginUser) throws HioMybatisQueryException {
+
+		String permission = queryProjectPermission(id, OaConstant.PROJECTINPERSON ,loginUser);
+		if(isNotEmpty(permission)){
+			ProjectInfoDto projectInfoDto = projectInfoMapper.queryProjectInfoById(id, loginUser.getUserId());
+			if(isEmpty(projectInfoDto)){
+				logger.info("该项目已被删除!");
+				throw new HioMybatisQueryException("该项目已被删除!");
+			}
+			projectInfoDto.setProjectPermission(permission);
+			ProjectIdDto projectIdDto = queryProjectId();
+			projectInfoDto.setAppId(projectIdDto.getAppId());
+			projectInfoDto.setCategoryId(projectIdDto.getCategoryId());
+
+			ProjectTeamQueryParamDto participantQueryDto = new ProjectTeamQueryParamDto();
+			participantQueryDto.setProjectId(id);
+			participantQueryDto.setTeamType(OaConstant.PROJECTPARTICIPANTPERSON);
+
+			ProjectTeamQueryParamDto shareQueryDto = new ProjectTeamQueryParamDto();
+			shareQueryDto.setProjectId(id);
+			shareQueryDto.setTeamType(OaConstant.PROJECTSHAREPERSON);
+
+			if (isNotEmpty(projectInfoDto)) {
+				List<ProjectTeamPerson> projectParticipantPersonList = projectTeamPersonService.queryProjectTeamPersonByTeamQueryParam(participantQueryDto);
+				List<ProjectTeamPerson> projectSharePersonList = projectTeamPersonService.queryProjectTeamPersonByTeamQueryParam(shareQueryDto);
+				projectInfoDto.setProjectParticipantPersonList(projectParticipantPersonList);
+				projectInfoDto.setProjectSharePersonList(projectSharePersonList);
+			}
+			return projectInfoDto;
+		}else {
+			logger.info("您的访问权限被取消或项目已删除!");
+			throw new HioMybatisQueryException("您的访问权限被取消或项目已删除!");
+		}
+
+	}
+
+	@Override
+	public ProjectInfoDto queryMobileProjectInfoById(String id, String isOut, LoginUser loginUser) throws HioMybatisQueryException {
+
+		String permission = queryProjectPermission(id,isOut ,loginUser);
+		if(isNotEmpty(permission)){
+			ProjectInfoDto projectInfoDto = projectInfoMapper.queryProjectInfoById(id, loginUser.getUserId());
+			if(isEmpty(projectInfoDto)){
+				logger.info("该项目已被删除!");
+				throw new HioMybatisQueryException("该项目已被删除!");
+			}
+			projectInfoDto.setProjectPermission(permission);
+			ProjectIdDto projectIdDto = queryProjectId();
+			projectInfoDto.setAppId(projectIdDto.getAppId());
+			projectInfoDto.setCategoryId(projectIdDto.getCategoryId());
+
+			ProjectTeamQueryParamDto participantQueryDto = new ProjectTeamQueryParamDto();
+			participantQueryDto.setProjectId(id);
+			participantQueryDto.setTeamType(OaConstant.PROJECTPARTICIPANTPERSON);
+
+			ProjectTeamQueryParamDto shareQueryDto = new ProjectTeamQueryParamDto();
+			shareQueryDto.setProjectId(id);
+			shareQueryDto.setTeamType(OaConstant.PROJECTSHAREPERSON);
+
+			if (isNotEmpty(projectInfoDto)) {
+				List<ProjectTeamPerson> projectParticipantPersonList = projectTeamPersonService.queryProjectTeamPersonByTeamQueryParam(participantQueryDto);
+				List<ProjectTeamPerson> projectSharePersonList = projectTeamPersonService.queryProjectTeamPersonByTeamQueryParam(shareQueryDto);
+				projectInfoDto.setProjectParticipantPersonList(projectParticipantPersonList);
+				projectInfoDto.setProjectSharePersonList(projectSharePersonList);
+			}
+			return projectInfoDto;
+		}else {
+			logger.info("您的访问权限被取消或项目已删除!");
+			throw new HioMybatisQueryException("您的访问权限被取消或项目已删除!");
+		}
+
+	}
+
+	@Override
+	public int saveProjectInfo(ProjectInfoDto projectInfoDto, LoginUser loginUser) throws HioMybatisInsertException {
+		logger.info("************************saveProjectInfo.id{}************************", projectInfoDto.getId());
+		if(isEmpty(projectInfoDto.getId())){
+			throw new HioMybatisInsertException("输入参数项目ID为空!请刷新重试!");
+		}
+		int count = 0;
+		Map<String, Object> returnValidate = DirectoryUtil.validateName(projectInfoDto.getProjectName().trim());
+		if (isNotEmpty(returnValidate)) {
+			if (!(boolean) returnValidate.get(OaConstant.DISKRETURNVALIDATERESULT)) {
+				logger.error((String) returnValidate.get(OaConstant.DISKRETURNVALIDATMSG));
+				throw new HioMybatisInsertException((String) returnValidate.get(OaConstant.DISKRETURNVALIDATMSG));
+			}
+		}
+		List<ProjectInfoDto> projectInfoList = queryProjectInfoByProjectName(projectInfoDto.getProjectName().trim());
+		/**
+		 * 判断是否有同名项目
+		 */
+		if (null == projectInfoList || projectInfoList.size() == 0) {
+			ProjectInfo projectInfo = new ProjectInfo();
+			BeanUtils.copyProperties(projectInfoDto, projectInfo);
+			projectInfo.setProjectName(projectInfoDto.getProjectName().trim());
+			/**
+			 * 保存登录用户信息
+			 */
+			if (isNotEmpty(loginUser.getUserId())) {
+				projectInfo.setProjectCreatePersonId(loginUser.getUserId());
+				projectInfoDto.setProjectCreatePersonId(loginUser.getUserId());
+				logger.info("*********************************调用获取UserName的公共接口开始*************loginUser.getUserId():{}************", loginUser.getUserId());
+				String userName = userUtil.selectUserName(loginUser.getUserId());
+				logger.info("*********************************调用获取UserName的公共接口结束*************************");
+				projectInfo.setProjectCreatePersonName(userName);
+				projectInfo.setProjectCreatePersonImId(getUserIdIM());
+				projectInfo.setProjectCreatePersonDeptId(loginUser.getOrgId());
+				projectInfoDto.setProjectCreatePersonName(userName);
+				projectInfoDto.setProjectCreatePersonImId(getUserIdIM());
+				projectInfoDto.setProjectCreatePersonDeptId(loginUser.getOrgId());
+				try {
+					SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+					Date nowDate = new Date();
+					String now = sdf.format(nowDate);
+					String projectStart = projectInfo.getProjectStart();
+					String projectEnd = projectInfo.getProjectEnd();
+					long nowCompareStart = compareDate(now, projectStart);
+					long nowCompareEnd = compareDate(now, projectEnd);
+					// 项目状态 ：0进行中、1已延期、2未启动、3已完成、4已撤销。
+					/**
+					 * 例如: compareDate("2018-04-01","2018-04-11") return 10; compareDate("2018-04-21","2018-04-11") return -10; compareDate("2018-04-11","2018-04-11") return 0;
+					 */
+					if (nowCompareStart > 0) {
+						projectInfo.setProjectStatus(OaConstant.PROJECTSTATUSNOTSTARTED);
+					} else if (nowCompareEnd < 0) {
+						projectInfo.setProjectStatus(OaConstant.PROJECTSTATUSPOSTPONED);
+					} else if (nowCompareStart <= 0 && nowCompareEnd >= 0) {
+						projectInfo.setProjectStatus(OaConstant.PROJECTSTATUSRUNNING);
+					}
+				} catch (Exception e) {
+					logger.error("*****saveProjectInfo*****时间格式转换失败*****projectInfo.getProjectStart()={} ***** projectInfo.getProjectEnd()={}", projectInfo.getProjectStart(),
+							projectInfo.getProjectEnd());
+					throw new HioMybatisInsertException("保存项目信息失败,时间格式转换失败!");
+				}
+				count = save(projectInfo);
+				if (count > 0) {
+					/**
+					 * 保存项目创建人
+					 */
+					// TODO 待重构 创建人参与人从项目基本信息抽取出来,不存项目信息里
+					ProjectTeamPerson createPerson = new ProjectTeamPerson();
+					createPerson.setProjectId(projectInfo.getId());
+					createPerson.setTeamType(OaConstant.PROJECTCREATEPERSON);
+					createPerson.setTeamPersonId(projectInfo.getProjectCreatePersonId());
+					createPerson.setTeamPersonImId(projectInfo.getProjectCreatePersonImId());
+					createPerson.setTeamPersonName(projectInfo.getProjectCreatePersonName());
+					createPerson.setTeamPersonDeptId(projectInfo.getProjectCreatePersonDeptId());
+					createPerson.setOutType(OaConstant.PROJECTINPERSON);
+					createPerson.setShareType(OaConstant.NOTSHAREPERSON);
+					projectTeamPersonService.save(createPerson);
+					/**
+					 * 保存项目负责人
+					 */
+					ProjectTeamPerson responsiblePerson = new ProjectTeamPerson();
+					responsiblePerson.setProjectId(projectInfo.getId());
+					responsiblePerson.setTeamType(OaConstant.PROJECTRESPONSIBLEPERSON);
+					responsiblePerson.setTeamPersonId(projectInfo.getProjectResponsiblePersonId());
+					responsiblePerson.setTeamPersonName(projectInfo.getProjectResponsiblePersonName());
+					responsiblePerson.setTeamPersonImId(projectInfo.getProjectResponsiblePersonImId());
+					responsiblePerson.setTeamPersonDeptId(projectInfo.getProjectResponsiblePersonDeptId());
+					responsiblePerson.setOutType(OaConstant.PROJECTINPERSON);
+					responsiblePerson.setShareType(OaConstant.NOTSHAREPERSON);
+					projectTeamPersonService.save(responsiblePerson);
+					/**
+					 * 保存项目参与人
+					 */
+					List<ProjectTeamPerson> projectParticipantPersonList = projectInfoDto.getProjectParticipantPersonList();
+					if (isNotEmpty(projectParticipantPersonList)) {
+						for (ProjectTeamPerson projectParticipantPerson : projectParticipantPersonList) {
+							projectParticipantPerson.setProjectId(projectInfo.getId());
+							projectParticipantPerson.setTeamType(OaConstant.PROJECTPARTICIPANTPERSON);
+							projectParticipantPerson.setShareType(OaConstant.NOTSHAREPERSON);
+							projectTeamPersonService.save(projectParticipantPerson);
+						}
+					}
+					/**
+					 * 保存项目共享人
+					 */
+					List<ProjectTeamPerson> projectSharePersonList = projectInfoDto.getProjectSharePersonList();
+					if (isNotEmpty(projectSharePersonList)) {
+						for (ProjectTeamPerson projectSharePerson : projectSharePersonList) {
+							projectSharePerson.setProjectId(projectInfo.getId());
+							projectSharePerson.setTeamType(OaConstant.PROJECTSHAREPERSON);
+							projectSharePerson.setShareType(projectSharePerson.getShareType());
+							projectTeamPersonService.save(projectSharePerson);
+						}
+					}
+					/**
+					 * 保存项目动态
+					 */
+					ProjectTrendsDto projectTrendsDto = new ProjectTrendsDto();
+					projectTrendsDto.setProjectId(projectInfo.getId());
+					projectTrendsDto.setTrendContent("创建项目");
+					projectTrendsDto.setTrendPersonId(projectInfo.getProjectCreatePersonId());
+					projectTrendsDto.setTrendPersonName(projectInfo.getProjectCreatePersonName());
+					projectTrendsService.saveProjectTrends(projectTrendsDto);
+					/**
+					 * 创建IM群 0否1是
+					 */
+					if (OaConstant.PROJECTYES.equals(projectInfoDto.getProjectCommunication())) {
+						logger.info("***********新建项目同时创建IM群接口调用开始*********projectId={}*********loginUserId={}******", projectInfoDto.getId(), loginUser.getUserId());
+						createImTeam(projectInfoDto, loginUser);
+						logger.info("************************新建项目同时创建IM群接口调用结束**********************************");
+					}
+					/**
+					 * 创建网盘 0否1是
+					 */
+					if (OaConstant.PROJECTYES.equals(projectInfoDto.getProjectNetDisk())) {
+						logger.info("************************新建项目同时创建网盘接口调用开始************projectId={}*********loginUserId={}******", projectInfoDto.getId(), loginUser.getUserId());
+						createDisk(projectInfoDto, loginUser);
+						logger.info("************************新建项目同时创建网盘接口调用结束**********************************");
+					}
+					/**
+					 * 推送CC消息
+					 */
+					String message = "";
+					logger.info("************************新建项目同时推送CC消息接口调用开始**********************************");
+					Set<String> sendMessageList = new HashSet<String>();
+					Set<String> sendOutMessageList = new HashSet<String>();
+					/**
+					 * 负责人
+					 */
+					if (isNotEquals(projectInfoDto.getProjectResponsiblePersonImId(), projectInfoDto.getProjectCreatePersonImId())) {
+						if (isNotEmpty(projectInfoDto.getProjectResponsiblePersonImId())) {
+							sendMessageList.add(projectInfoDto.getProjectResponsiblePersonImId());
+						}
+					}
+					// 参与人员表人员id列表
+					List<ProjectTeamPerson> participantPersonList = projectInfoDto.getProjectParticipantPersonList();
+					if (isNotEmpty(participantPersonList)) {
+						for (ProjectTeamPerson participantPerson : participantPersonList) {
+							if (isEquals(OaConstant.PROJECTINPERSON, participantPerson.getOutType())) {
+								sendMessageList.add(participantPerson.getTeamPersonImId());
+							} else if (isEquals(OaConstant.PROJECTOUTPERSON, participantPerson.getOutType())) {
+								sendOutMessageList.add(participantPerson.getTeamPersonImId());
+							}
+						}
+
+					}
+					// 共享人员表人员id列表
+					if (isNotEmpty(projectInfoDto.getProjectSharePersonList())) {
+						Map shareMap = getShareUserList(projectInfoDto.getProjectSharePersonList());
+						List<ProjectTeamPerson> userList = (List<ProjectTeamPerson>) shareMap.get("personUserList");
+						List<OAUserDto> roleUserList = (List<OAUserDto>) shareMap.get("roleUserList");
+						List<OAUserDto> orgUserList = (List<OAUserDto>) shareMap.get("orgUserList");
+						if (isNotEmpty(userList)) {
+							for (ProjectTeamPerson shareUserPerson : userList) {
+								if (isEquals(OaConstant.PROJECTINPERSON, shareUserPerson.getOutType())) {
+									sendMessageList.add(shareUserPerson.getTeamPersonImId());
+								} else if (isEquals(OaConstant.PROJECTOUTPERSON, shareUserPerson.getOutType())) {
+									sendOutMessageList.add(shareUserPerson.getTeamPersonImId());
+								}
+							}
+						}
+						if (isNotEmpty(roleUserList)) {
+							roleUserList.forEach(shareUserPerson -> {
+								sendMessageList.add(shareUserPerson.getImUserId());
+							});
+						}
+
+						if (isNotEmpty(orgUserList)) {
+							orgUserList.forEach(shareUserPerson -> {
+								sendMessageList.add(shareUserPerson.getImUserId());
+							});
+						}
+					}
+
+					ProjectInfoMessageParam projectInfoMessageParam = new ProjectInfoMessageParam();
+					projectInfoMessageParam.setProjectName(projectInfo.getProjectName());
+					projectInfoMessageParam.setProjectResponsiblePersonName(projectInfo.getProjectResponsiblePersonName());
+					projectInfoMessageParam.setProjectStart(projectInfo.getProjectStart());
+					projectInfoMessageParam.setProjectEnd(projectInfo.getProjectEnd());
+					projectInfoMessageParam.setPcUrl(OaConstant.PROJECTINFOPCURL + projectInfo.getId() + "?tendId=" + loginUser.getTendId() + "&projectId=" + projectInfo.getId());
+					projectInfoMessageParam.setMobileUrl(OaConstant.PROJECTINFOMOBILEURL + "?tendId=" + loginUser.getTendId() + "&projectId=" + projectInfo.getId()+"&isOut="+OaConstant.PROJECTINPERSON);
+					/**
+					 * 发送内部消息
+					 */
+					sendMessage(sendMessageList, projectInfoMessageParam, loginUser,false);
+					projectInfoMessageParam.setPcUrl(null);
+					projectInfoMessageParam.setMobileUrl(OaConstant.PROJECTINFOMOBILEURL + "?tendId=" + loginUser.getTendId() + "&projectId=" + projectInfo.getId()+"&isOut="+OaConstant.PROJECTOUTPERSON);
+					/**
+					 * 发送外部消息
+					 */
+					sendMessage(sendOutMessageList, projectInfoMessageParam, loginUser,true);
+					logger.info("************************新建项目同时推送CC消息接口调用结束**********************************");
+				}
+			} else {
+				logger.error("获取登录用户信息失败!");
+				throw new HioMybatisInsertException("获取登录用户信息失败!请重新登录!");
+			}
+		} else {
+			logger.error("已有同名项目,保存项目信息失败!");
+			throw new HioMybatisInsertException("已有同名项目,保存项目信息失败!");
+		}
+		return count;
+	}
+
+	/**
+	 * 修改项目基本信息
+	 *
+	 * @param projectInfoDto
+	 * @param loginUser
+	 * @return
+	 * @throws HioMybatisUpdateException
+	 */
+	@Override
+	public int updateProjectInfo(ProjectInfoDto projectInfoDto, LoginUser loginUser) throws HioMybatisUpdateException {
+		logger.info("************************updateProjectInfo.id{}************************", projectInfoDto.getId());
+		int count = 0;
+		String permission = queryProjectPermission(projectInfoDto.getId(),OaConstant.PROJECTINPERSON ,loginUser);
+		/**
+		 * 是否有权限修改
+		 */
+		if (OaConstant.PROJECTADMIN.equals(permission) || OaConstant.PROJECTCREATEPERSON.equals(permission) || OaConstant.PROJECTRESPONSIBLEPERSON.equals(permission)) {
+
+			boolean sameName = false;
+			ProjectInfo projectOldInfo = getObjectById(projectInfoDto.getId());
+
+			/**
+			 * 非已完成状态的项目才可修改基本信息
+			 */
+			if (isNotEquals(OaConstant.PROJECTSTATUSFINISHED, projectOldInfo.getProjectStatus())) {
+				/**
+				 * 查询同名项目
+				 */
+				List<ProjectInfoDto> projectInfoList = queryProjectInfoByProjectName(projectInfoDto.getProjectName().trim());
+
+				if (isNotEmpty(projectInfoList)) {
+					for (ProjectInfoDto projectInfo : projectInfoList) {
+						if (!projectInfo.getId().equals(projectInfoDto.getId())) {
+							sameName = true;
+							break;
+						}
+					}
+				}
+
+				if (!sameName) {
+					ProjectInfo projectNewInfo = new ProjectInfo();
+					BeanUtils.copyProperties(projectInfoDto, projectNewInfo);
+					projectNewInfo.setProjectName(projectInfoDto.getProjectName().trim());
+					String userId = loginUser.getUserId();
+					String userName = userUtil.selectUserName(loginUser.getUserId());
+					/**
+					 * 项目基本信息里变更 存动态
+					 */
+					List<ProjectTrendsDto> trends = contrastObj(projectOldInfo, projectNewInfo, userId, userName);
+					projectNewInfo.setUpdateDate(new Date());
+
+					try {
+						SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+						// Date nowDate = new Date();
+						String now = sdf.format(projectNewInfo.getUpdateDate());
+						String projectStart = projectNewInfo.getProjectStart();
+						String projectEnd = projectNewInfo.getProjectEnd();
+
+						long nowCompareStart = compareDate(now, projectStart);
+						long nowCompareEnd = compareDate(now, projectEnd);
+						// 项目状态 ：0进行中、1已延期、2未启动、3已完成、4已撤销。
+						/**
+						 * * 例如: compareDate("2018-04-01","2018-04-11") return 10; compareDate("2018-04-21","2018-04-11") return -10; compareDate("2018-04-11","2018-04-11") return
+						 * 0;
+						 */
+						if (nowCompareStart > 0) {
+							projectNewInfo.setProjectStatus(OaConstant.PROJECTSTATUSNOTSTARTED);
+						} else if (nowCompareEnd < 0) {
+							projectNewInfo.setProjectStatus(OaConstant.PROJECTSTATUSPOSTPONED);
+						} else if (nowCompareStart <= 0 && nowCompareEnd >= 0) {
+							projectNewInfo.setProjectStatus(OaConstant.PROJECTSTATUSRUNNING);
+						}
+					} catch (Exception e) {
+						logger.error("*****updateProjectStauts******项目状态修改****时间转换格式失败" + projectNewInfo);
+						throw new HioMybatisUpdateException("项目状态改修改时间格式转换失败");
+					}
+
+					String oldResponsiblePersonId = projectOldInfo.getProjectResponsiblePersonId();
+					String newResponsiblePersonId = projectNewInfo.getProjectResponsiblePersonId();
+
+
+
+					//List<ProjectTeamPerson> projectTeamPersonTempList = projectTeamPersonMapper.queryAllProjectTeamPerson(projectInfoDto.getId());
+					/**
+					 * 参与人
+					 */
+					List<ProjectTeamPerson> projectTeamPersonTempList =  new ArrayList<ProjectTeamPerson>();
+					projectTeamPersonTempList.addAll(projectInfoDto.getProjectParticipantPersonList());
+
+
+
+
+					/**
+					 * 负责人
+					 */
+					ProjectTeamQueryParamDto responsibleParam = new ProjectTeamQueryParamDto();
+					responsibleParam.setProjectId(projectInfoDto.getId());
+					responsibleParam.setTeamType(OaConstant.PROJECTRESPONSIBLEPERSON);
+					responsibleParam.setTeamPersonId(projectInfoDto.getProjectResponsiblePersonId());
+					List<ProjectTeamPerson> responsiblePerson = projectTeamPersonMapper.queryProjectTeamPersonByTeamQueryParam(responsibleParam);
+					projectTeamPersonTempList.addAll(responsiblePerson);
+
+					/**
+					 * 共享人
+					 */
+					/*ProjectTeamQueryParamDto shareParam = new ProjectTeamQueryParamDto();
+					shareParam.setProjectId(projectInfoDto.getId());
+					shareParam.setTeamType(OaConstant.PROJECTSHAREPERSON);
+					shareParam.setShareType(OaConstant.PROJECTSHAREUSER);*/
+					List<ProjectTeamPerson> sharePerson = projectInfoDto.getProjectSharePersonList().stream()
+							.filter(projectTeamPerson -> isEquals(projectTeamPerson.getShareType(),OaConstant.PROJECTSHAREUSER)).collect(Collectors.toList());
+					logger.info("*********************************************"+sharePerson.size()+"*******************************************");
+					projectTeamPersonTempList.addAll(sharePerson);
+					/**
+					 * 检查项目团队人员状态
+					 */
+					checkUserStatus(projectTeamPersonTempList);
+
+
+
+					Set<String> sendMessageList = new HashSet<String>();
+					/**
+					 * 外部联系人消息
+					 */
+					Set<String> sendOutMessageList = new HashSet<String>();
+
+					if (isNotEquals(oldResponsiblePersonId, newResponsiblePersonId)) {
+						/**
+						 * 更新负责人
+						 */
+						ProjectTeamQueryParamDto responsibleQueryDto = new ProjectTeamQueryParamDto();
+						responsibleQueryDto.setProjectId(projectInfoDto.getId());
+						responsibleQueryDto.setTeamType(OaConstant.PROJECTRESPONSIBLEPERSON);
+						responsibleQueryDto.setShareType(OaConstant.PROJECTNOTSHAREPERSON);
+						List<ProjectTeamPerson> responsibleList = new ArrayList<ProjectTeamPerson>();
+						ProjectTeamPerson responsible = new ProjectTeamPerson();
+						responsible.setProjectId(projectInfoDto.getId());
+						responsible.setTeamType(OaConstant.PROJECTRESPONSIBLEPERSON);
+						responsible.setShareType(OaConstant.PROJECTNOTSHAREPERSON);
+						responsible.setOutType(OaConstant.PROJECTINPERSON);
+						responsible.setTeamPersonId(projectInfoDto.getProjectResponsiblePersonId());
+						responsible.setTeamPersonName(projectInfoDto.getProjectResponsiblePersonName());
+						responsible.setTeamPersonImId(projectInfoDto.getProjectResponsiblePersonImId());
+						responsible.setTeamPersonDeptId(projectInfoDto.getProjectResponsiblePersonDeptId());
+						responsibleList.add(responsible);
+						projectTeamPersonService.updateProjectTeamPerson(responsibleList, responsibleQueryDto, loginUser, sendMessageList, sendOutMessageList);
+					}
+					/**
+					 * 更新参与人
+					 */
+					ProjectTeamQueryParamDto participantQueryDto = new ProjectTeamQueryParamDto();
+					participantQueryDto.setProjectId(projectInfoDto.getId());
+					participantQueryDto.setTeamType(OaConstant.PROJECTPARTICIPANTPERSON);
+					participantQueryDto.setShareType(OaConstant.PROJECTNOTSHAREPERSON);
+					projectTeamPersonService.updateProjectTeamPerson(projectInfoDto.getProjectParticipantPersonList(), participantQueryDto, loginUser, sendMessageList,
+							sendOutMessageList);
+					/**
+					 * 更新共享人
+					 */
+					ProjectTeamQueryParamDto shareQueryDto = new ProjectTeamQueryParamDto();
+					shareQueryDto.setProjectId(projectInfoDto.getId());
+					shareQueryDto.setTeamType(OaConstant.PROJECTSHAREPERSON);
+					projectTeamPersonService.updateProjectTeamSharePerson(projectInfoDto.getProjectSharePersonList(), shareQueryDto, loginUser, sendMessageList,
+							sendOutMessageList);
+					for (ProjectTrendsDto projectTrendsDto : trends) {
+						projectTrendsService.saveProjectTrends(projectTrendsDto);
+					}
+
+
+
+
+					count = update(projectNewInfo);
+
+
+					ProjectInfoMessageParam projectInfoMessageParam = new ProjectInfoMessageParam();
+					projectInfoMessageParam.setProjectName(projectNewInfo.getProjectName());
+					projectInfoMessageParam.setProjectResponsiblePersonName(projectNewInfo.getProjectResponsiblePersonName());
+					projectInfoMessageParam.setProjectStart(projectNewInfo.getProjectStart());
+					projectInfoMessageParam.setProjectEnd(projectNewInfo.getProjectEnd());
+
+					projectInfoMessageParam
+							.setPcUrl(OaConstant.PROJECTINFOPCURL + projectNewInfo.getId() + "?tendId=" + loginUser.getTendId() + "&projectId=" + projectNewInfo.getId());
+					projectInfoMessageParam.setMobileUrl(OaConstant.PROJECTINFOMOBILEURL + "?tendId=" + loginUser.getTendId() + "&projectId=" + projectNewInfo.getId()+"&isOut="+OaConstant.PROJECTINPERSON);
+
+					/**
+					 * 新增人员发送CC消息
+					 */
+
+					logger.info("*******************新增人员发送CC消息开始******************");
+					/**
+					 * 发送内部消息
+					 */
+					sendMessage(sendMessageList, projectInfoMessageParam, loginUser, false);
+
+					projectInfoMessageParam.setPcUrl(null);
+					projectInfoMessageParam.setMobileUrl(OaConstant.PROJECTINFOMOBILEURL + "?tendId=" + loginUser.getTendId() + "&projectId=" + projectNewInfo.getId()+"&isOut="+OaConstant.PROJECTOUTPERSON);
+
+					/**
+					 * 发送外部消息
+					 */
+					sendMessage(sendOutMessageList, projectInfoMessageParam, loginUser,true);
+					logger.info("*******************新增人员发送CC消息结束******************");
+				} else {
+					logger.error("已有同名项目,修改失败!");
+					throw new HioMybatisUpdateException("已有同名项目,修改失败!");
+				}
+			} else {
+				logger.error("项目状态为已完成不能修改项目基本信息!");
+				throw new HioMybatisUpdateException("项目状态为已完成不能修改项目基本信息!");
+			}
+		} else {
+			logger.error("非项目创建人/负责人不能修改项目信息!");
+			throw new HioMybatisUpdateException("非项目创建人/负责人不能修改项目信息!");
+		}
+		return count;
+
+	}
+
+	/**
+	 * 项目删除，对当前项目进行删除操作，删除的项目的前提是：项目没有任何相关数据。
+	 * 
+	 * @param id
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public int deleteProjectInfoById(String id, LoginUser loginUser) throws HioMybatisDeleteException {
+		int count = 0;
+		String permission = queryProjectPermission(id, OaConstant.PROJECTINPERSON ,loginUser);
+		if (OaConstant.PROJECTADMIN.equals(permission) || OaConstant.PROJECTCREATEPERSON.equals(permission) || OaConstant.PROJECTRESPONSIBLEPERSON.equals(permission)) {
+
+			// 查看当前项目是否有包含项目任务
+			QueryTaskListParam queryTaskListParam = new QueryTaskListParam();
+			queryTaskListParam.setProjectId(id);
+			List taskList = taskService.queryTaskList(queryTaskListParam);
+			if (taskList.size() > 0) {
+				throw new HioMybatisDeleteException("此项目包含任务，不允许删除。");
+			}
+
+			/**
+			 * 查询是否创建了网盘
+			 */
+			boolean delNetDisk = false;
+			ProjectInfo delProject = projectInfoMapper.queryProjectInfoById(id,loginUser.getUserId());
+			if(isEquals(OaConstant.PROJECTNETDISKCREATED,delProject.getProjectNetDisk())){
+				delNetDisk = true;
+			}
+
+			count = projectInfoMapper.deleteProjectInfoById(id);
+			UpdateProjectDirectoryParam updateProjectDirectoryParam = new UpdateProjectDirectoryParam();
+			updateProjectDirectoryParam.setProjectId(id);
+			updateProjectDirectoryParam.setTendId(loginUser.getTendId());
+			updateProjectDirectoryParam.setUpdatePersonId(loginUser.getUserId());
+			updateProjectDirectoryParam.setUpdatePersonName(userUtil.selectUserName(loginUser.getUserId()));
+
+
+			if(delNetDisk){
+				logger.info("*******************项目删除后修改网盘目录开始*************************");
+				ApiFeignResponse apiFeignResponse = diskFeignService.updateProjectDirectory(updateProjectDirectoryParam);
+				if (OaConstant.SUCCESSSTATUS != apiFeignResponse.getStatus()) {
+					logger.info("******************apiFeignResponse.isSuccess()={}*******************************", apiFeignResponse.isSuccess());
+					logger.info("******************apiFeignResponse.getStatus()={}********************************", apiFeignResponse.getStatus());
+					logger.info("******************apiFeignResponse.getMessage()={}********************************", apiFeignResponse.getMessage());
+					logger.info("******************apiFeignResponse.getResult()={}********************************", apiFeignResponse.getResult());
+					throw new HioMybatisUpdateException("项目删除后修改网盘目录失败!");
+				}
+				logger.info("*******************项目删除后修改网盘目录结束*************************");
+			}
+
+
+		} else {
+			logger.error("非项目创建人/负责人不能删除项目!");
+			throw new HioMybatisUpdateException("非项目创建人/负责人不能删除项目!");
+		}
+		return count;
+	}
+
+	/**
+	 * 通过反射获取项目属性, 对比修改过的 存项目动态
+	 *
+	 * @param oldobj
+	 * @param newobj
+	 * @param uid
+	 * @param uname
+	 * @return
+	 */
+	private List<ProjectTrendsDto> contrastObj(ProjectInfo oldobj, ProjectInfo newobj, String uid, String uname) {
+		List<ProjectTrendsDto> returnList = new ArrayList<ProjectTrendsDto>();
+		try {
+			String projectId = oldobj.getId();
+			Field[] fields = oldobj.getClass().getDeclaredFields();
+			for (Field field : fields) {
+				PropertyDescriptor pd = new PropertyDescriptor(field.getName(), oldobj.getClass());
+				Method getMethod = pd.getReadMethod();
+				Object oo = getMethod.invoke(oldobj);
+				Object on = getMethod.invoke(newobj);
+				String oldValue = oo == null ? "" : oo.toString();
+				String newValue = on == null ? "" : on.toString();
+				if (!oldValue.equals(newValue)) {
+					String fieldName = field.getName().toUpperCase();
+					logger.info("不一样的属性：" + fieldName + " 属性值：[" + oldValue + "," + newValue + "]");
+
+					/**
+					 *
+					 *
+					 * 项目发起人,项目责任人 里包含ID 和 NAME IMID 三条属性 增加判断逻辑 项目发起人,项目责任人变化只插入一条动态
+					 *
+					 * 项目描述变化不增加动态
+					 */
+
+					if (!"PROJECTRESPONSIBLEPERSONID".equals(fieldName) && !"PROJECTCREATEPERSONID".equals(fieldName) && !"PROJECTDESC".equals(fieldName)
+							&& !"PROJECTCREATEPERSONNAME".equals(fieldName) && !"PROJECTRESPONSIBLEPERSONNAME".equals(fieldName) && !"PROJECTCREATEPERSONIMID".equals(fieldName)
+							&& !"PROJECTRESPONSIBLEPERSONIMID".equals(fieldName) && !"PROJECTCREATEPERSONDEPTID".equals(fieldName)
+							&& !"PROJECTRESPONSIBLEPERSONDEPTID".equals(fieldName) && !"PROJECTNETDISK".equals(fieldName)
+
+					) {
+						ProjectTrendsDto projectTrendsDto = new ProjectTrendsDto();
+						projectTrendsDto.setProjectId(projectId);
+
+						projectTrendsDto.setTrendPersonId(uid);
+						projectTrendsDto.setTrendPersonName(uname);
+						projectTrendsDto.setCreatePersonId(uid);
+						projectTrendsDto.setCreatePersonName(uname);
+						String info = "";
+						int infoType = 0;
+						switch (fieldName) {
+						// 项目状态头信息
+						case "PROJECTSTATUS":
+							info = OaConstant.PROJECTSTATUS;
+							infoType = 1;
+							break;
+
+						default:
+							info = OaConstant.PROJECTINFO;
+							break;
+						}
+
+						String trendContent = info;
+						if (infoType == 1) {
+							trendContent += "由“" + oldValue + "”变更为“" + newValue + "”";
+						} else {
+							Field property = OaConstant.class.getField(field.getName().toUpperCase());
+							if (isEquals("PROJECTLEVEL", fieldName)) {
+
+								trendContent += (String) property.get(OaConstant.class) + "信息由“" + levelCode2Name(oldValue) + "”变更为“" + levelCode2Name(newValue) + "”";
+							} else {
+								trendContent += (String) property.get(OaConstant.class) + "信息由“" + oldValue + "”变更为“" + newValue + "”";
+							}
+						}
+						projectTrendsDto.setTrendContent(trendContent);
+						returnList.add(projectTrendsDto);
+					}
+				}
+			}
+		} catch (Exception e) {
+			logger.error("构建项目动态失败!" + e.getMessage());
+			throw new HioMybatisInsertException();
+		}
+		return returnList;
+	}
+
+	/**
+	 * 查询项目信息，分页
+	 * 
+	 * @param param
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public Page queryProjectInfoPage(ProjectInfoPageParam param, LoginUser loginUser, String type) throws HioMybatisQueryException {
+
+		/**
+		 * 获取登录用户
+		 */
+		String userId = loginUser.getUserId();
+		List<String> roleIds = loginUser.getRoleIds();
+		List<String> orgIds = userUtil.findAllOrgIds(loginUser.getTendId(),userId);
+
+		if (isEquals(OaConstant.PROJECTALLPAGE, type)) {
+			boolean admin = false;
+			for (String roleId : roleIds) {
+				if (isEquals(roleId, OaConstant.ADMINROLEID)) {
+					admin = true;
+					logger.info("*********************************有项目管理员权限***********************");
+					break;
+				}
+
+			}
+			if (!admin) {
+
+				/**
+				 * 判断是否具备Role权限
+				 *
+				 * @param menuCode
+				 *            传入OaSysMenu表的code字段
+				 * @return
+				 */
+				admin = isRolePermission(BaseConstants.MYSQL_MENU_CODE_PROJECT_MANAGE);
+			}
+			if (!admin) {
+				logger.info("您的访问权限被取消!");
+				throw new HioMybatisQueryException("您的访问权限被取消!");
+			}
+		}
+
+		param.setUserId(userId);
+		param.setRoleIds(roleIds);
+		param.setOrgIds(orgIds);
+
+		param.setTeamType(type);
+		// 每页条数
+		Integer pageCount = param.getPageCount();
+		pageCount = pageCount == null ? 10 : pageCount;
+		// 页码
+		Integer pageNum = param.getPageNum();
+		pageNum = pageNum == null ? 1 : pageNum;
+		int start = (pageNum - 1) * pageCount;
+		param.setStart(start);
+
+		String orderBy = param.getOrderBy() == null ? "" : param.getOrderBy();
+		if (isNotEmpty(orderBy)) {
+			// id asc,sort desc
+			StringBuilder sql = new StringBuilder();
+			String[] orders = orderBy.split(",");
+			for (String key : orders) {
+				if (sql.length() == 0) {
+					sql.append(" order by " + key);
+				} else {
+					sql.append(" , " + key);
+				}
+			}
+			param.setDynamicSql(sql.toString());
+		}
+
+		/*
+		 * 默认排序 ORDER BY p.project_status asc, ABS(now()- p.project_end) asc , p.create_date desc
+		 */
+		SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+		String now = sdf.format(new Date());
+		param.setNow(now);
+		Integer count = 0;
+		List<ProjectInfoDto> projectInfoList = null;
+		/**
+		 * 管理员查询全部项目
+		 */
+		if (OaConstant.PROJECTALLPAGE.equals(type)) {
+
+			param.setUserId(null);
+			param.setRoleIds(null);
+			param.setOrgIds(null);
+			param.setTeamType(null);
+			logger.info("*********************************管理员查询全部项目***********************");
+
+			count = projectInfoMapper.queryProjectInfoCount(param);
+			projectInfoList = projectInfoMapper.queryProjectInfoPage(param);
+		}
+		/**
+		 * 分享给我的
+		 */
+		else if (OaConstant.PROJECTMYSHAREPAGE.equals(type)) {
+			logger.info("*********************************分享给我的项目***********************");
+
+			count = projectInfoMapper.queryMyShareProjectInfoCount(param);
+			projectInfoList = projectInfoMapper.queryMyShareProjectInfoPage(param);
+		}
+		/**
+		 * 我关注的
+		 */
+		else if (OaConstant.PROJECTMYCONCERNPAGE.equals(type)) {
+			logger.info("*********************************我关注的项目***********************");
+
+			/**
+			 * 项目团队内 关注
+			 */
+			count = projectInfoMapper.queryMyConcernProjectInfoCount(param);
+			projectInfoList = projectInfoMapper.queryMyConcernProjectInfoPage(param);
+			/**
+			 * 共享人关注
+			 */
+		/*	int shareCount = projectInfoMapper.queryMyShareProjectInfoCount(param);
+			List<ProjectInfoDto> shareProjectInfoList = projectInfoMapper.queryMyShareProjectInfoPage(param);*/
+
+		}
+		/**
+			 * 我创建/负责/参与的
+			 */
+		else {
+			logger.info("*********************************我创建/负责/参与的项目***********************");
+
+			count = projectInfoMapper.queryMyProjectInfoCount(param);
+			projectInfoList = projectInfoMapper.queryMyProjectInfoPage(param);
+		}
+		count = count == null ? 0 : count;
+		Page page = new Page();
+		Integer pageTotal = count % pageCount > 0 ? count / pageCount + 1 : count / pageCount;
+		page.setList(projectInfoList);
+		page.setPageTotal(pageTotal);
+		page.setTotal(count);
+		page.setPageCount(pageCount);
+		page.setPageNum(pageNum);
+		return page;
+
+	}
+
+	/**
+	 * 获取项目信息列表
+	 * 
+	 * @return
+	 */
+	@Override
+	public List<ProjectInfoDto> queryAllProjectInfo() throws HioMybatisQueryException {
+
+		ProjectInfoPageParam param = new ProjectInfoPageParam();
+
+		return projectInfoMapper.queryProjectInfoPage(param);
+
+	}
+
+	/**
+	 * 根据负责人ID查询项目信息
+	 * 
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public List<ProjectInfo> queryProjectInfoByTeamPerson(String id) throws HioMybatisQueryException {
+
+		return projectInfoMapper.queryProjectInfoByTeamPerson(id);
+	}
+
+	/**
+	 * 发送cc消息（创建人、负责人、参与人、共享人）
+	 * 
+	 * @param sendMessageList
+	 * @param projectInfoMessageParam
+	 *            消息内容
+	 * @param loginUser
+	 * @param isOut  是否外部联系人
+	 *            登录用户
+	 */
+	public void sendMessage(Set<String> sendMessageList, ProjectInfoMessageParam projectInfoMessageParam, LoginUser loginUser ,boolean isOut) throws HioMybatisInsertException {
+
+		logger.info("************************调用cc发送消息接口开始**************************");
+
+		logger.info("************************redis获取租户名称开始**************************");
+		String imUserId = getUserIdIM();
+		/* 租户ID   */
+		String tendId = loginUser.getTendId();
+		/* 租户名称 */
+		String tendName = platformRedis.queryByTendId(tendId).getName();
+		logger.info("************************redis获取租户名称结束**************************");
+
+		ImNoticeMsgSendParam imNoticeMsgSendParam = new ImNoticeMsgSendParam();
+		List<ImNoticeMsgsParam> imNoticeMsgsList = new ArrayList<ImNoticeMsgsParam>();
+		List<IMToUserParam> iMToUserList = new ArrayList<IMToUserParam>();
+
+		Iterator<String> it = sendMessageList.iterator();
+		while (it.hasNext()) {
+			String str = it.next();
+
+			/**
+			 * 消息不发当前操作人员
+			 */
+			if (isNotEquals(str, imUserId)) {
+				IMToUserParam iMToUserParam = new IMToUserParam();
+				iMToUserParam.setToUserId(str);
+				iMToUserList.add(iMToUserParam);
+			}
+		}
+
+		if (isNotEmpty(iMToUserList)) {
+			ImNoticeMsgsParam imNoticeMsgsParam = new ImNoticeMsgsParam();
+			imNoticeMsgsParam.setToUsers(iMToUserList);
+			imNoticeMsgsParam.setMsg(projectInfoMessageParam.getProjectName());
+			imNoticeMsgsParam.setSendMsgType("text");
+			imNoticeMsgsParam.setFromUserId(imUserId);
+			imNoticeMsgsParam.setTendId(tendId);
+			imNoticeMsgsParam.setTendName(tendName);
+			if(isOut){
+				imNoticeMsgsParam.setMsgType("out");
+			}else{
+				imNoticeMsgsParam.setMsgType("msg");
+			}
+			imNoticeMsgsParam.setModuleType(MessageEnum.PROJECT.getValue() + "");
+			imNoticeMsgsParam.setModuleName(MessageEnum.PROJECT.getDes());
+
+			/**
+			 * 是否允许端上打开 0 移动和pc都不打开 1 移动和pc都可以打开 2.只能移动端打开 3.只能在pc端打开
+			 */
+			if (isEmpty(projectInfoMessageParam.getPcUrl())) {
+				imNoticeMsgsParam.setOpenStatus(2);
+			} else {
+				imNoticeMsgsParam.setOpenStatus(1);
+			}
+
+			Map ext = new HashMap();
+			ext.put("projectResponsiblePersonName", projectInfoMessageParam.getProjectResponsiblePersonName());
+			ext.put("projectStart", projectInfoMessageParam.getProjectStart());
+			ext.put("projectEnd", projectInfoMessageParam.getProjectEnd());
+			ext.put("tendId", tendId);
+			ext.put("tendName", tendName);
+			ext.put("pcUrl", projectInfoMessageParam.getPcUrl());
+			ext.put("mobileUrl", projectInfoMessageParam.getMobileUrl());
+
+			imNoticeMsgsParam.setExt(ext);
+			imNoticeMsgsList.add(imNoticeMsgsParam);
+
+			imNoticeMsgSendParam.setMsgs(imNoticeMsgsList);
+
+			ApiFeignResponse apiFeignResponse = messageFeignService.sendMessage(imNoticeMsgSendParam);
+			if (OaConstant.SUCCESSSTATUS != apiFeignResponse.getStatus()) {
+				logger.info("******************apiFeignResponse.isSuccess()={}*******************************", apiFeignResponse.isSuccess());
+				logger.info("******************apiFeignResponse.getStatus()={}********************************", apiFeignResponse.getStatus());
+				logger.info("******************apiFeignResponse.getMessage()={}********************************", apiFeignResponse.getMessage());
+				logger.info("******************apiFeignResponse.getResult()={}********************************", apiFeignResponse.getResult());
+				// throw new HioMybatisUpdateException("发送CC消息失败!");
+			}
+
+		}
+
+		logger.info("****************调用cc发送消息接口结束*******************");
+	}
+
+	/**
+	 * 创建IM群
+	 * 
+	 * @param projectInfoDto
+	 * @param loginUser
+	 *            登录用户
+	 */
+	public void createImTeam(ProjectInfoDto projectInfoDto, LoginUser loginUser) throws HioMybatisInsertException {
+
+		logger.info("******************************调用创建IM群接口开始********************************");
+		ImGroupCreate imGroupCreate = new ImGroupCreate();
+		imGroupCreate.setGroupname(projectInfoDto.getProjectName().trim());
+		imGroupCreate.setDesc(projectInfoDto.getProjectName().trim() + "团队群");
+		imGroupCreate.setOwner(projectInfoDto.getProjectCreatePersonImId());
+		logger.info("******************************imGroupCreate.setOwner:{}********************************", projectInfoDto.getProjectCreatePersonImId());
+		List<ProjectTeamPerson> teamPersonList = new ArrayList<>();
+		teamPersonList.addAll(projectInfoDto.getProjectParticipantPersonList());
+		ProjectTeamPerson responsiblePerson = new ProjectTeamPerson();
+		responsiblePerson.setTeamPersonImId(projectInfoDto.getProjectResponsiblePersonImId());
+		logger.info("******************************负责人IMID:,{}********************************", projectInfoDto.getProjectResponsiblePersonImId());
+		teamPersonList.add(responsiblePerson);
+		logger.info("******************************teamPersonList:,{}********************************", teamPersonList);
+
+		/**
+		 * 获取共享人
+		 */
+
+		/*共享人不进群 HIO-6768*/
+
+		/*if (isNotEmpty(projectInfoDto.getProjectSharePersonList())) {
+			Map shareMap = getShareUserList(projectInfoDto.getProjectSharePersonList());
+
+			List<ProjectTeamPerson> personUserList = (List<ProjectTeamPerson>) shareMap.get("personUserList");
+			List<OAUserDto> roleUserList = (List<OAUserDto>) shareMap.get("roleUserList");
+			List<OAUserDto> orgUserList = (List<OAUserDto>) shareMap.get("orgUserList");
+			if (isNotEmpty(personUserList)) {
+				teamPersonList.addAll(personUserList);
+			}
+
+			if (isNotEmpty(roleUserList)) {
+				for (OAUserDto shareUserPerson : roleUserList) {
+					ProjectTeamPerson projectTeamPerson = new ProjectTeamPerson();
+					projectTeamPerson.setTeamPersonImId(shareUserPerson.getImUserId());
+					teamPersonList.add(projectTeamPerson);
+
+				}
+			}
+			if (isNotEmpty(orgUserList)) {
+
+				for (OAUserDto shareUserPerson : orgUserList) {
+					ProjectTeamPerson projectTeamPerson = new ProjectTeamPerson();
+					projectTeamPerson.setTeamPersonImId(shareUserPerson.getImUserId());
+					teamPersonList.add(projectTeamPerson);
+
+				}
+			}
+
+		}*/
+
+		List<String> imIds = teamPersonList.stream().map(ProjectTeamPerson::getTeamPersonImId).distinct().collect(Collectors.toList());
+		logger.info("******************************imIds:,{}********************************", imIds);
+
+		imGroupCreate.setMembers(imIds);
+		ApiFeignResponse apiFeignResponse = messageFeignService.groupCreate(imGroupCreate);
+
+		if (OaConstant.SUCCESSSTATUS != apiFeignResponse.getStatus()) {
+			logger.error("******************apiFeignResponse.isSuccess()={}*******************************", apiFeignResponse.isSuccess());
+			logger.error("******************apiFeignResponse.getStatus()={}********************************", apiFeignResponse.getStatus());
+			logger.error("******************apiFeignResponse.getMessage()={}********************************", apiFeignResponse.getMessage());
+			logger.error("******************apiFeignResponse.getResult()={}********************************", apiFeignResponse.getResult());
+			throw new HioMybatisInsertException("创建IM群失败!");
+		}
+
+		logger.info("******************************调用创建IM群接口结束********************************");
+
+	}
+
+	/**
+	 * 创建同名网盘
+	 * 
+	 * @param projectInfoDto
+	 * @param loginUser
+	 * @throws HioMybatisInsertException
+	 */
+	private void createDisk(ProjectInfoDto projectInfoDto, LoginUser loginUser) throws HioMybatisInsertException {
+		/**
+		 *
+		 * 查询所有的文件夹权限组
+		 */
+		AuthorizeParam queryAuth = new AuthorizeParam();
+		AuthorizeParam downloadAuth = new AuthorizeParam();
+		AuthorizeParam updateAuth = new AuthorizeParam();
+		AuthorizeParam managementAuth = new AuthorizeParam();
+		logger.info("***********查询网盘权限调用开始***************");
+		ApiFeignResponse<List<AuthorizeDto>> authorizeResponse = diskFeignService.queryAuthorizeGroupList(loginUser.getTendId());
+		if (authorizeResponse.getStatus() == OaConstant.SUCCESSSTATUS) {
+			List<AuthorizeDto> authorizeDtoList = authorizeResponse.getResult();
+			if (isNotEmpty(authorizeDtoList)) {
+				for (AuthorizeDto authorizeDto : authorizeDtoList) {
+					if (isEquals(OaConstant.PROJECTDISKQUERY, authorizeDto.getAuthortiyGroupCode())) {
+						queryAuth.setAuthorizeId(authorizeDto.getAuthorityGroupId());
+					} else if (isEquals(OaConstant.PROJECTDISKDOWNLOAD, authorizeDto.getAuthortiyGroupCode())) {
+						downloadAuth.setAuthorizeId(authorizeDto.getAuthorityGroupId());
+					} else if (isEquals(OaConstant.PROJECTDISKUPDATE, authorizeDto.getAuthortiyGroupCode())) {
+						updateAuth.setAuthorizeId(authorizeDto.getAuthorityGroupId());
+					} else if (isEquals(OaConstant.PROJECTDISKMANAGEMENT, authorizeDto.getAuthortiyGroupCode())) {
+						managementAuth.setAuthorizeId(authorizeDto.getAuthorityGroupId());
+					}
+				}
+			}
+		} else {
+			logger.error("***********获取网盘权限失败***************");
+			logger.error("******************authorizeFeignResponse.isSuccess()={}*******************************", authorizeResponse.isSuccess());
+			logger.error("******************authorizeFeignResponse.getStatus()={}********************************", authorizeResponse.getStatus());
+			logger.error("******************authorizeFeignResponse.getMessage()={}********************************", authorizeResponse.getMessage());
+			logger.error("******************authorizeFeignResponse.getResult()={}********************************", authorizeResponse.getResult());
+			throw new HioMybatisInsertException("获取网盘权限失败!");
+		}
+		logger.info("***********查询网盘权限调用结束***************");
+
+		/**
+		 * 管理员权限
+		 */
+		List<AuthorizeParam> adminAuthorize = new ArrayList<>();
+		adminAuthorize.add(queryAuth);
+		adminAuthorize.add(downloadAuth);
+		adminAuthorize.add(updateAuth);
+		adminAuthorize.add(managementAuth);
+		/**
+		 * 参与人权限
+		 */
+		List<AuthorizeParam> participantAuthorize = new ArrayList<>();
+		participantAuthorize.add(queryAuth);
+		participantAuthorize.add(downloadAuth);
+		participantAuthorize.add(updateAuth);
+		/**
+		 * 共享人权限
+		 */
+		List<AuthorizeParam> shareAuthorize = new ArrayList<>();
+		shareAuthorize.add(queryAuth);
+
+		/**
+		 *
+		 * 创建项目目录
+		 */
+		SaveDirectoryParam saveDirectoryParam = new SaveDirectoryParam();
+		List<UserAndAuthorizeParam> userAndAuthorizeParamList = new ArrayList<>();
+
+		/**
+		 * 创建人授权
+		 */
+		UserAndAuthorizeParam createAndAuthorizeParam = new UserAndAuthorizeParam();
+		createAndAuthorizeParam.setUserId(projectInfoDto.getProjectCreatePersonId());
+		createAndAuthorizeParam.setUserName(projectInfoDto.getProjectCreatePersonName());
+		createAndAuthorizeParam.setOrgType(OaConstant.DISKUSERTYPE);
+		createAndAuthorizeParam.setOrgTypeName(OaConstant.DISKUSERTYPENAME);
+		createAndAuthorizeParam.setAuthorizeList(adminAuthorize);
+		userAndAuthorizeParamList.add(createAndAuthorizeParam);
+		/**
+		 * 负责人授权
+		 */
+		UserAndAuthorizeParam responsibleAndAuthorizeParam = new UserAndAuthorizeParam();
+		responsibleAndAuthorizeParam.setUserId(projectInfoDto.getProjectResponsiblePersonId());
+		responsibleAndAuthorizeParam.setUserName(projectInfoDto.getProjectResponsiblePersonName());
+		responsibleAndAuthorizeParam.setOrgType(OaConstant.DISKUSERTYPE);
+		responsibleAndAuthorizeParam.setOrgTypeName(OaConstant.DISKUSERTYPENAME);
+		responsibleAndAuthorizeParam.setAuthorizeList(adminAuthorize);
+		userAndAuthorizeParamList.add(responsibleAndAuthorizeParam);
+
+		/**
+		 * 获取参与人并授权
+		 */
+		List<ProjectTeamPerson> participantPersonList = projectInfoDto.getProjectParticipantPersonList();
+
+		if (isNotEmpty(participantPersonList)) {
+
+			for (ProjectTeamPerson participantPerson : participantPersonList) {
+
+				if (isNotEmpty(participantPerson.getTeamPersonId())) {
+					UserAndAuthorizeParam userAndAuthorizeParam = new UserAndAuthorizeParam();
+					userAndAuthorizeParam.setUserId(participantPerson.getTeamPersonId());
+					userAndAuthorizeParam.setUserName(participantPerson.getTeamPersonName());
+					if (isEquals(participantPerson.getOutType(), OaConstant.PROJECTINPERSON)) {
+						userAndAuthorizeParam.setOrgType(OaConstant.DISKUSERTYPE);
+					} else if (isEquals(participantPerson.getOutType(), OaConstant.PROJECTOUTPERSON)) {
+						userAndAuthorizeParam.setOrgType(OaConstant.DISKOUTUSERTYPE);
+					}
+					userAndAuthorizeParam.setOrgTypeName(OaConstant.DISKUSERTYPENAME);
+					userAndAuthorizeParam.setAuthorizeList(participantAuthorize);
+					userAndAuthorizeParamList.add(userAndAuthorizeParam);
+				}
+
+			}
+
+		}
+
+		/**
+		 * 获取共享人并授权
+		 */
+
+		if (isNotEmpty(projectInfoDto.getProjectSharePersonList())) {
+			Map shareMap = getShareUserList(projectInfoDto.getProjectSharePersonList());
+
+			List<ProjectTeamPerson> personUserList = (List<ProjectTeamPerson>) shareMap.get("personUserList");
+			List<OAUserDto> roleUserList = (List<OAUserDto>) shareMap.get("roleUserList");
+			List<OAUserDto> orgUserList = (List<OAUserDto>) shareMap.get("orgUserList");
+			if (isNotEmpty(personUserList)) {
+				for (ProjectTeamPerson shareUserPerson : personUserList) {
+
+					UserAndAuthorizeParam userAndAuthorizeParam = new UserAndAuthorizeParam();
+					userAndAuthorizeParam.setUserId(shareUserPerson.getTeamPersonId());
+					userAndAuthorizeParam.setUserName(shareUserPerson.getTeamPersonName());
+					userAndAuthorizeParam.setOrgType(OaConstant.DISKUSERTYPE);
+					if (isEquals(shareUserPerson.getOutType(), OaConstant.PROJECTINPERSON)) {
+						userAndAuthorizeParam.setOrgType(OaConstant.DISKUSERTYPE);
+					} else if (isEquals(shareUserPerson.getOutType(), OaConstant.PROJECTOUTPERSON)) {
+						userAndAuthorizeParam.setOrgType(OaConstant.DISKOUTUSERTYPE);
+					}
+					userAndAuthorizeParam.setAuthorizeList(shareAuthorize);
+					userAndAuthorizeParamList.add(userAndAuthorizeParam);
+
+				}
+			}
+			if (isNotEmpty(roleUserList)) {
+				for (OAUserDto shareUserPerson : roleUserList) {
+					UserAndAuthorizeParam userAndAuthorizeParam = new UserAndAuthorizeParam();
+					userAndAuthorizeParam.setUserId(shareUserPerson.getId());
+					userAndAuthorizeParam.setUserName(shareUserPerson.getName());
+					userAndAuthorizeParam.setOrgType(OaConstant.DISKUSERTYPE);
+					userAndAuthorizeParam.setOrgTypeName(OaConstant.DISKUSERTYPENAME);
+					userAndAuthorizeParam.setAuthorizeList(shareAuthorize);
+					userAndAuthorizeParamList.add(userAndAuthorizeParam);
+				}
+			}
+			if (isNotEmpty(orgUserList)) {
+				for (OAUserDto shareUserPerson : orgUserList) {
+					UserAndAuthorizeParam userAndAuthorizeParam = new UserAndAuthorizeParam();
+					userAndAuthorizeParam.setUserId(shareUserPerson.getId());
+					userAndAuthorizeParam.setUserName(shareUserPerson.getName());
+					userAndAuthorizeParam.setOrgType(OaConstant.DISKUSERTYPE);
+					userAndAuthorizeParam.setOrgTypeName(OaConstant.DISKUSERTYPENAME);
+					userAndAuthorizeParam.setAuthorizeList(shareAuthorize);
+					userAndAuthorizeParamList.add(userAndAuthorizeParam);
+				}
+			}
+
+		}
+
+		saveDirectoryParam.setTendId(loginUser.getTendId());
+		saveDirectoryParam.setCreatePersonId(projectInfoDto.getProjectCreatePersonId());
+		saveDirectoryParam.setCreatePersonName(projectInfoDto.getProjectCreatePersonName());
+		saveDirectoryParam.setProjectId(projectInfoDto.getId());
+		saveDirectoryParam.setFileName(projectInfoDto.getNetDiskName());
+		saveDirectoryParam.setRemark(projectInfoDto.getProjectName().trim());
+		saveDirectoryParam.setUserAuthorizeList(userAndAuthorizeParamList);
+
+		logger.info("***********创建项目同名网盘调用开始***************");
+		ApiFeignResponse<Object> createDiskResponse = diskFeignService.createProjectDirectory(saveDirectoryParam);
+
+		if (isNotEquals(OaConstant.SUCCESSSTATUS, createDiskResponse.getStatus())) {
+			logger.error("****************创建网盘失败!*******************");
+			logger.error("******************createDiskResponse.isSuccess()={}*******************************", createDiskResponse.isSuccess());
+			logger.error("******************createDiskResponse.getStatus()={}********************************", createDiskResponse.getStatus());
+			logger.error("******************createDiskResponse.getMessage()={}********************************", createDiskResponse.getMessage());
+			logger.error("******************createDiskResponse.getResult()={}********************************", createDiskResponse.getResult());
+			throw new HioMybatisInsertException("创建网盘失败!");
+		}
+		logger.info("***********创建项目同名网盘调用结束***************");
+
+	}
+
+	@Override
+	public int updateProjectStauts(ProjectInfoStautsParam projectInfoStautsParam, LoginUser loginUser) throws HioMybatisUpdateException {
+
+		int count = 0;
+		String permission = queryProjectPermission(projectInfoStautsParam.getProjectId(),OaConstant.PROJECTINPERSON , loginUser);
+		if (OaConstant.PROJECTADMIN.equals(permission) || OaConstant.PROJECTCREATEPERSON.equals(permission) || OaConstant.PROJECTRESPONSIBLEPERSON.equals(permission)) {
+			/**
+			 * 撤回已撤销,已完成,重新计算项目状态
+			 */
+			ProjectInfo projectInfo = getObjectById(projectInfoStautsParam.getProjectId());
+			String oldStatus = projectInfo.getProjectStatus();
+			if (OaConstant.PROJECTSTATUSROLLBACK.equals(projectInfoStautsParam.getProjectStatus())) {
+				try {
+					SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+					Date nowDate = new Date();
+					String now = sdf.format(nowDate);
+					String projectStart = projectInfo.getProjectStart();
+					String projectEnd = projectInfo.getProjectEnd();
+
+					long nowCompareStart = compareDate(now, projectStart);
+					long nowCompareEnd = compareDate(now, projectEnd);
+					// 项目状态 ：0进行中、1已延期、2未启动、3已完成、4已撤销。
+					/**
+					 * * 例如: compareDate("2018-04-01","2018-04-11") return 10; compareDate("2018-04-21","2018-04-11") return -10; compareDate("2018-04-11","2018-04-11") return 0;
+					 */
+					if (nowCompareStart > 0) {
+						projectInfo.setProjectStatus(OaConstant.PROJECTSTATUSNOTSTARTED);
+					} else if (nowCompareEnd < 0) {
+						projectInfo.setProjectStatus(OaConstant.PROJECTSTATUSPOSTPONED);
+					} else if (nowCompareStart <= 0 && nowCompareEnd >= 0) {
+						projectInfo.setProjectStatus(OaConstant.PROJECTSTATUSRUNNING);
+					}
+				} catch (Exception e) {
+					logger.error("*****updateProjectStauts******项目状态修改****时间转换格式失败" + projectInfo);
+					throw new HioMybatisUpdateException("项目状态改修改时间格式转换失败");
+				}
+
+			} else {
+				projectInfo.setProjectStatus(projectInfoStautsParam.getProjectStatus());
+
+			}
+			count = update(projectInfo);
+			if (count > 0) {
+				ProjectTrendsDto projectTrendsDto = new ProjectTrendsDto();
+				projectTrendsDto.setProjectId(projectInfo.getId());
+
+				projectTrendsDto.setTrendPersonId(loginUser.getUserId());
+				projectTrendsDto.setTrendPersonName(userUtil.selectUserName(loginUser.getUserId()));
+
+				projectTrendsDto.setCreatePersonId(projectTrendsDto.getTrendPersonId());
+				projectTrendsDto.setCreatePersonName(projectTrendsDto.getTrendPersonName());
+
+				String newStatus = projectInfo.getProjectStatus();
+
+				String oldStatusName = statusCode2Name(oldStatus);
+				String newStatusName = statusCode2Name(newStatus);
+
+				projectTrendsDto.setTrendContent(OaConstant.PROJECTSTATUS + "由 \"" + oldStatusName + "\" 变更为 \"" + newStatusName + "\" ");
+
+				projectTrendsService.saveProjectTrends(projectTrendsDto);
+			}
+
+		} else {
+			logger.error("非项目创建人/负责人不能修改项目状态!");
+			throw new HioMybatisUpdateException("非项目创建人/负责人不能修改项目状态!");
+		}
+
+		return count;
+	}
+
+	@Override
+	public int updateProjectOverdue(@DataSource String tendId) throws HioMybatisUpdateException {
+		int count = 0;
+
+		List<ProjectInfo> projectInfoList = projectInfoMapper.queryProjectInfoListByQuartz();
+
+		SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+
+		for (ProjectInfo projectInfo : projectInfoList) {
+			int oldStatus = Integer.parseInt(projectInfo.getProjectStatus());
+			try {
+				Date nowDate = new Date();
+				String now = sdf.format(nowDate);
+				String projectStart = projectInfo.getProjectStart();
+				String projectEnd = projectInfo.getProjectEnd();
+
+				long nowCompareStart = compareDate(now, projectStart);
+				long nowCompareEnd = compareDate(now, projectEnd);
+
+				if (nowCompareStart > 0) {
+					projectInfo.setProjectStatus(OaConstant.PROJECTSTATUSNOTSTARTED);
+				} else if (nowCompareEnd < 0) {
+					projectInfo.setProjectStatus(OaConstant.PROJECTSTATUSPOSTPONED);
+				} else if (nowCompareStart <= 0 && nowCompareEnd >= 0) {
+					projectInfo.setProjectStatus(OaConstant.PROJECTSTATUSRUNNING);
+				}
+			} catch (Exception e) {
+				logger.error("***********updateProjectOverdue************时间格式转换失败********{}*********", projectInfo);
+				throw new HioMybatisUpdateException("项目时间格式转换失败!");
+			}
+			int newStatus = Integer.parseInt(projectInfo.getProjectStatus());
+			logger.info("***********状态更新********************oldStatus:{}*********", oldStatus);
+			logger.info("***********状态更新********************newStatus:{}*********", newStatus);
+
+			if (oldStatus != newStatus) {
+				count += projectInfoMapper.updateByPrimaryKey(projectInfo);
+				logger.info("***********状态更新完成********************projectId:{}*********", projectInfo.getId());
+
+				ProjectTrendsDto projectTrendsDto = new ProjectTrendsDto();
+				projectTrendsDto.setProjectId(projectInfo.getId());
+				projectTrendsDto.setCreateDate(new Date());
+				projectTrendsDto.setUpdateDate(new Date());
+				projectTrendsDto.setTrendCreateTime(new Date());
+				projectTrendsDto.setTrendEndTime(new Date());
+				projectTrendsDto.setTrendPersonName("系统");
+
+				String oldStatusName = statusCode2Name(oldStatus + "");
+				String newStatusName = statusCode2Name(newStatus + "");
+
+				projectTrendsDto.setTrendContent(OaConstant.PROJECTSTATUS + "由 \"" + oldStatusName + "\" 变更为 \"" + newStatusName + "\" ");
+				logger.info("***********动态生成开始********************projectId:{}*********", projectInfo.getId());
+				projectTrendsMapper.insert(projectTrendsDto);
+				logger.info("***********动态生成完成********************projectId:{}*********", projectInfo.getId());
+
+			}
+
+		}
+		logger.info("******************项目超期共变更{}个状态*******************tendId:{}>>>>", count, tendId);
+		return count;
+	}
+
+	@Override
+	public String queryProjectPermission(String projectId, String isOut, LoginUser loginUser) throws HioMybatisQueryException {
+
+		String permission = "";
+		ProjectInfo projectInfo = projectInfoMapper.queryProjectInfoById(projectId,loginUser.getUserId());
+
+		if(isEmpty(projectInfo)){
+			logger.error("该项目已被删除!");
+			throw new HioMybatisUpdateException("该项目已被删除!");
+		}
+
+		if(isEquals(OaConstant.PROJECTINPERSON,isOut)){
+			/**
+			 * 获取登录用户
+			 */
+			String userId = loginUser.getUserId();
+			List<String> roleIds = loginUser.getRoleIds();
+			List<String> orgIds = userUtil.findAllOrgIds(loginUser.getTendId(),userId);
+
+			boolean admin = false;
+
+			if (loginUser.isSuper()) {
+				admin = true;
+			} else {
+				for (String roleId : roleIds) {
+					if (isEquals(roleId, OaConstant.ADMINROLEID)) {
+						admin = true;
+						logger.info("*********************************有项目管理员权限***********************");
+						break;
+					}
+				}
+			}
+
+			if (!admin) {
+
+				/**
+				 * 判断是否具备Role权限
+				 *
+				 * @param menuCode
+				 *            传入OaSysMenu表的code字段
+				 * @return
+				 */
+				admin = isRolePermission(BaseConstants.MYSQL_MENU_CODE_PROJECT_MANAGE);
+			}
+
+			if (admin) {
+				permission = OaConstant.PROJECTADMIN;
+			} else {
+
+				ProjectPermissionParam param = new ProjectPermissionParam();
+				param.setUserId(userId);
+				param.setRoleIds(roleIds);
+				param.setOrgIds(orgIds);
+				param.setProjectId(projectId);
+				permission = projectTeamPersonService.queryProjectPermission(param);
+			}
+		}else if(isEquals(OaConstant.PROJECTOUTPERSON,isOut)){
+			ProjectPermissionParam param = new ProjectPermissionParam();
+			param.setUserImId(getUserIdIM());
+			param.setProjectId(projectId);
+			permission = projectTeamPersonService.queryProjectPermission(param);
+		}
+
+
+		return permission;
+	}
+
+	/**
+	 * 根据项目名称查询项目
+	 * 
+	 * @param name
+	 * @return
+	 */
+	public List<ProjectInfoDto> queryProjectInfoByProjectName(String name) {
+
+		return projectInfoMapper.queryProjectInfoByProjectName(name.trim());
+	}
+
+	private void getPermission(LoginUser loginUser) {
+
+		ApiFeignResponse<List<RoleButtonDto>> apiFeignResponse = sysRoleFeignService.queryRoleButton(loginUser.getTendId(), loginUser.getUserId(), null);
+		System.out.println(apiFeignResponse);
+	}
+
+	/**
+	 * 时间对比方法
+	 * 
+	 * @param now
+	 *            当前时间
+	 * @param date
+	 *            对比时间
+	 * @return 负数: 当前时间晚于对比时间 天数 0: 当前时间与对比时间相等 正数: 当前时间早于对比时间 天数
+	 *
+	 *         例如: compareDate("2018-04-01","2018-04-11") return 10; compareDate("2018-04-21","2018-04-11") return -10; compareDate("2018-04-11","2018-04-11") return 0;
+	 */
+	private Long compareDate(String now, String date) {
+		LocalDate startDate = LocalDate.parse(now);
+		LocalDate endDate = LocalDate.parse(date);
+		return ChronoUnit.DAYS.between(startDate, endDate);
+	}
+
+	public Map<String, List<?>> getShareUserList(List<ProjectTeamPerson> shareList) {
+		Map<String, List<?>> map = new HashMap();
+		List<ProjectTeamPerson> sharePersonList = shareList;
+		List<ProjectTeamPerson> userList = new ArrayList<ProjectTeamPerson>();
+		List<ProjectTeamPerson> roleList = new ArrayList<ProjectTeamPerson>();
+		List<ProjectTeamPerson> orgList = new ArrayList<ProjectTeamPerson>();
+		for (ProjectTeamPerson sharePerson : sharePersonList) {
+			if (OaConstant.PROJECTSHAREUSER.equals(sharePerson.getShareType())) {
+				userList.add(sharePerson);
+			} else if (OaConstant.PROJECTSHAREROLE.equals(sharePerson.getShareType())) {
+				roleList.add(sharePerson);
+			} else if (OaConstant.PROJECTSHAREDEPT.equals(sharePerson.getShareType())) {
+				orgList.add(sharePerson);
+			}
+		}
+		/**
+		 * 存入类型为人员的共享人列表
+		 */
+		map.put("personUserList", userList);
+		List<String> roleIds = roleList.stream().map(role -> {
+			return role.getTeamPersonId();
+		}).collect(Collectors.toList());
+
+		OAUserParam roleParam = new OAUserParam();
+		roleParam.setRoleIds(roleIds);
+		roleParam.setTendId(getTendId());
+		ApiFeignResponse<List<OAUserDto>> roleUserList = sysFeignService.queryUserByOrgAndRoleAndUser(roleParam);
+		if (roleUserList.getStatus() == OaConstant.SUCCESSSTATUS) {
+			List<OAUserDto> resultList = roleUserList.getResult();
+			if (isNotEmpty(resultList)) {
+				/**
+				 * 存入类型为角色的共享人列表
+				 */
+				map.put("roleUserList", resultList);
+			}
+		} else {
+			logger.error("***** 查询角色下所有用户失败!  *****  OAUserParam:" + roleParam);
+			throw new HioMybatisInsertException("查询角色下所有用户失败!");
+		}
+		List<String> orgIds = orgList.stream().map(org -> {
+			return org.getTeamPersonId();
+		}).collect(Collectors.toList());
+		OAUserParam orgParam = new OAUserParam();
+		orgParam.setOrganizationIds(orgIds);
+		orgParam.setTendId(getTendId());
+		orgParam.setContainsChildOrgUser(true);
+		ApiFeignResponse<List<OAUserDto>> orgUserList = sysFeignService.queryUserByOrgAndRoleAndUser(orgParam);
+		if (orgUserList.getStatus() == OaConstant.SUCCESSSTATUS) {
+			List<OAUserDto> resultList = orgUserList.getResult();
+			if (isNotEmpty(resultList)) {
+				/**
+				 * 存入类型为部门的共享人列表
+				 */
+				map.put("orgUserList", resultList);
+			}
+		} else {
+			logger.error("查询部门下所有用户失败!  ***  OAUserParam:" + orgParam);
+			throw new HioMybatisInsertException("查询部门下所有用户失败!");
+		}
+		return map;
+	}
+
+	/**
+	 * 根据项目状态code 返回对应状态名称
+	 * 
+	 * @param statusCode
+	 * @return
+	 */
+	private String statusCode2Name(String statusCode) {
+		String statusName = "";
+
+		switch (statusCode) {
+		case OaConstant.PROJECTSTATUSRUNNING:
+			statusName = OaConstant.PROJECTSTATUSRUNNINGNAME;
+			break;
+		case OaConstant.PROJECTSTATUSPOSTPONED:
+			statusName = OaConstant.PROJECTSTATUSPOSTPONEDNAME;
+			break;
+		case OaConstant.PROJECTSTATUSNOTSTARTED:
+			statusName = OaConstant.PROJECTSTATUSNOTSTARTEDNAME;
+			break;
+		case OaConstant.PROJECTSTATUSFINISHED:
+			statusName = OaConstant.PROJECTSTATUSFINISHEDNAME;
+			break;
+		case OaConstant.PROJECTSTATUSCANCEL:
+			statusName = OaConstant.PROJECTSTATUSCANCELNAME;
+			break;
+		default:
+			break;
+		}
+
+		return statusName;
+	}
+
+	/**
+	 * 根据项目等级code 返回对应状态名称
+	 * 
+	 * @param levelCode
+	 * @return
+	 */
+	private String levelCode2Name(String levelCode) {
+		String levelName = "";
+
+		switch (levelCode) {
+		case OaConstant.PROJECTLEVELVERYURGENTCODE:
+			levelName = OaConstant.PROJECTLEVELVERYURGENT;
+			break;
+		case OaConstant.PROJECTLEVELURGENTCODE:
+			levelName = OaConstant.PROJECTLEVELURGENT;
+			break;
+		case OaConstant.PROJECTLEVELNORMALCODE:
+			levelName = OaConstant.PROJECTLEVELNORMAL;
+			break;
+		default:
+			break;
+		}
+
+		return levelName;
+	}
+
+	public static void main(String[] args) {
+
+		ProjectTeamPerson t = new ProjectTeamPerson();
+		t.setTeamPersonImId("1");
+		ProjectTeamPerson t1 = new ProjectTeamPerson();
+		t1.setTeamPersonImId("2");
+
+		List<ProjectTeamPerson> teamPersonList = new ArrayList<>();
+		teamPersonList.add(t);
+		teamPersonList.add(t1);
+		teamPersonList.forEach(string -> {
+			System.out.println(string.getTeamPersonImId());
+		});
+		List<String> imIds = teamPersonList.stream().map(ProjectTeamPerson::getTeamPersonImId).distinct().collect(Collectors.toList());
+		imIds.stream().forEach(string -> {
+			System.out.println(string);
+		});
+	}
+
+	/**
+	 * 调用sys接口 检查用户状态是否正确
+	 * @param oldTeamPersonList
+	 */
+	private void checkUserStatus(List<ProjectTeamPerson> oldTeamPersonList) {
+		List<String> inUserList = new ArrayList<>();
+		List<String> outUserList = new ArrayList<>();
+		for (ProjectTeamPerson projectTeamPerson : oldTeamPersonList) {
+				String outType = projectTeamPerson.getOutType();
+				if (isEquals(OaConstant.PROJECTINPERSON, outType)) {
+					inUserList.add(projectTeamPerson.getTeamPersonId());
+				} else if (isEquals(OaConstant.PROJECTOUTPERSON, outType)) {
+					outUserList.add(projectTeamPerson.getTeamPersonId());
+				}
+		}
+		UserIsNormalParam queryUserIsNormal = new UserIsNormalParam();
+		queryUserIsNormal.setTendId(getTendId());
+		queryUserIsNormal.setSysUserIds(inUserList);
+		queryUserIsNormal.setSysExternalIds(outUserList);
+		ApiFeignResponse<UserIsNormalDto> userStatusResponse = sysExtrenalFeignService.queryUserIsNormal(queryUserIsNormal);
+		if (userStatusResponse.getStatus() == OaConstant.SUCCESSSTATUS) {
+			UserIsNormalDto userIsNormalDto = userStatusResponse.getResult();
+			String names = "";
+			if(isNotEmpty(userIsNormalDto.getErrorName())){
+				names = userIsNormalDto.getErrorName();
+			}
+			if (isNotEmpty(userIsNormalDto.getErrorExternalName())) {
+				if(isEmpty(names)){
+					names = userIsNormalDto.getErrorExternalName();
+				}else{
+					names = names + "," + userIsNormalDto.getErrorExternalName();
+				}
+			}
+			if (isNotEmpty(names)) {
+				logger.error("用户:{}已离职或该联系人已删除", names);
+				throw new HioMybatisUpdateException("用户:" + names + "已离职或该联系人已删除!");
+			}
+			logger.info("********************************调用查询人员状态信息接口结束*****************************");
+		} else {
+			logger.info("调用查询人员状态信息接口返回状态" + userStatusResponse.getStatus() + "***********接口返回message." + userStatusResponse.getMessage());
+		}
+	}
+}

@@ -1,0 +1,1596 @@
+package com.xinleju.platform.flow.service.impl;
+
+import java.sql.Timestamp;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.log4j.Logger;
+import org.dom4j.Document;
+import org.dom4j.DocumentHelper;
+import org.dom4j.Element;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.platform.base.annotation.Description;
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.base.utils.LoginUtils;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.base.utils.SecurityUserBeanInfo;
+import com.xinleju.platform.base.utils.SecurityUserDto;
+import com.xinleju.platform.flow.dao.FlDao;
+import com.xinleju.platform.flow.dto.AcDto;
+import com.xinleju.platform.flow.dto.ApprovalList;
+import com.xinleju.platform.flow.dto.BusinessObjectDto;
+import com.xinleju.platform.flow.dto.BusinessObjectVariableDto;
+import com.xinleju.platform.flow.dto.FlDto;
+import com.xinleju.platform.flow.dto.InstanceDto;
+import com.xinleju.platform.flow.dto.InstanceVariableDto;
+import com.xinleju.platform.flow.dto.MobileFormDto;
+import com.xinleju.platform.flow.dto.NodeDto;
+import com.xinleju.platform.flow.dto.ParticipantDto;
+import com.xinleju.platform.flow.dto.PcFormDto;
+import com.xinleju.platform.flow.dto.PostDto;
+import com.xinleju.platform.flow.dto.UserDto;
+import com.xinleju.platform.flow.entity.Ac;
+import com.xinleju.platform.flow.entity.BusinessObject;
+import com.xinleju.platform.flow.entity.Fl;
+import com.xinleju.platform.flow.entity.Instance;
+import com.xinleju.platform.flow.entity.Participant;
+import com.xinleju.platform.flow.entity.Step;
+import com.xinleju.platform.flow.enumeration.FlAcType;
+import com.xinleju.platform.flow.enumeration.FlStatus;
+import com.xinleju.platform.flow.enumeration.InstanceStatus;
+import com.xinleju.platform.flow.exception.FlowException;
+import com.xinleju.platform.flow.service.AcService;
+import com.xinleju.platform.flow.service.BusinessObjectService;
+import com.xinleju.platform.flow.service.BusinessObjectVariableService;
+import com.xinleju.platform.flow.service.FlService;
+import com.xinleju.platform.flow.service.InstanceService;
+import com.xinleju.platform.flow.service.ParticipantService;
+import com.xinleju.platform.flow.service.StepService;
+import com.xinleju.platform.flow.utils.DateUtils;
+import com.xinleju.platform.flow.utils.FlowApproverUtils;
+import com.xinleju.platform.flow.utils.FlowPathUtils;
+import com.xinleju.platform.sys.org.dto.FlowAcPostDto;
+import com.xinleju.platform.sys.org.dto.FlowPostParticipantDto;
+import com.xinleju.platform.sys.org.dto.StandardRoleDto;
+import com.xinleju.platform.sys.org.dto.service.OrgnazationDtoServiceCustomer;
+import com.xinleju.platform.sys.org.dto.service.PostDtoServiceCustomer;
+import com.xinleju.platform.sys.security.dto.AuthenticationDto;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+@Service
+public class FlServiceImpl extends BaseServiceImpl<String, Fl> implements FlService {
+	private static Logger log = Logger.getLogger(FlServiceImpl.class);
+	@Autowired
+	private FlDao flDao;
+	@Autowired
+	private AcService acService;
+	@Autowired
+	private ParticipantService participantService;
+	@Autowired
+	private StepService stepService;
+	@Autowired
+	private BusinessObjectService businessObjectService;	
+	@Autowired
+	private BusinessObjectVariableService businessObjectVariableService;	
+	@Autowired
+	private InstanceService instanceService;
+	@Autowired
+	private PostDtoServiceCustomer postDtoServiceCustomer;
+	
+	@Autowired
+	private OrgnazationDtoServiceCustomer orgnazationDtoServiceCustomer;
+	
+	@Value("#{configuration['business.test.url']}")
+	private String businessTestUrl;
+	
+	@Override
+	@Description(instruction = "根据条件获取流程模板列表")
+	public Page queryFlList(Map<String, Object> paramater) throws Exception {
+		// 按修改时间及版本号降序排列
+//		Page page = flDao.queryFlList(paramater);
+		Page page = flDao.queryFlListNew(paramater);
+		List<FlDto> flDtos = JacksonUtils.fromJson(JacksonUtils.toJson(page.getList()), ArrayList.class,FlDto.class);
+		if (flDtos != null && flDtos.size() > 0) {
+//			int end=flDtos.size()>3?3:flDtos.size();
+			Map<String, FlDto> flDtoMap = new LinkedHashMap<String, FlDto>();
+			for (FlDto flDto : flDtos) {
+				String codeStr = flDto.getCode();
+				if (StringUtils.isNotBlank(codeStr) && flDtoMap.get(codeStr) == null) {
+					// 组装模板版本列表
+					Map<String, String> vasMap = new LinkedHashMap<String, String>();
+//					for (FlDto flDto2 : flDtos) {
+					for (int i=0,j=0;i<flDtos.size()&&j<3;i++) {
+						FlDto flDto2=flDtos.get(i);
+						if(codeStr.equals(flDto2.getCode())){
+							String idStr = flDto2.getId();
+							String vas = flDto2.getVersion() + "-";
+							if ("0".endsWith(flDto2.getStatus())) {
+								vas += FlStatus.DRAFT.getName();
+							} else if ("1".endsWith(flDto2.getStatus())) {
+								vas += FlStatus.PUBLISH.getName();
+							} else if ("2".endsWith(flDto2.getStatus())) {
+								vas += FlStatus.DISABLED.getName();
+							}
+							vasMap.put(idStr, vas);
+							j++;
+						}
+					}
+					flDto.setVersionAndStatus(JacksonUtils.toJson(vasMap));
+					flDtoMap.put(codeStr, flDto);
+				}
+			}
+			
+			page.setList(new ArrayList<FlDto>(flDtoMap.values()));
+		}
+		
+		return page;
+	}
+	@Override
+	@Description(instruction = "根据条件分组获取流程模板列表")
+	public Page queryFlByGroupList(Map<String, Object> paramater) throws Exception {
+		// 按修改时间及版本号降序排列
+//		Page page = flDao.queryFlList(paramater);
+		Page page = flDao.queryFlByGroupList(paramater);
+		List<FlDto> flDtos = JacksonUtils.fromJson(JacksonUtils.toJson(page.getList()), ArrayList.class,FlDto.class);
+		if (flDtos != null && flDtos.size() > 0) {
+//			int end=flDtos.size()>3?3:flDtos.size();
+			Map<String, FlDto> flDtoMap = new LinkedHashMap<String, FlDto>();
+			for (FlDto flDto : flDtos) {
+				String codeStr = flDto.getCode();
+				if (StringUtils.isNotBlank(codeStr) && flDtoMap.get(codeStr) == null) {
+					// 组装模板版本列表
+					Map<String, String> vasMap = new LinkedHashMap<String, String>();
+//					for (FlDto flDto2 : flDtos) {
+					for (int i=0,j=0;i<flDtos.size()&&j<3;i++) {
+						FlDto flDto2=flDtos.get(i);
+						if(codeStr.equals(flDto2.getCode())){
+							String idStr = flDto2.getId();
+							String vas = flDto2.getVersion() + "-";
+							if ("0".endsWith(flDto2.getStatus())) {
+								vas += FlStatus.DRAFT.getName();
+							} else if ("1".endsWith(flDto2.getStatus())) {
+								vas += FlStatus.PUBLISH.getName();
+							} else if ("2".endsWith(flDto2.getStatus())) {
+								vas += FlStatus.DISABLED.getName();
+							}
+							vasMap.put(idStr, vas);
+							j++;
+						}
+					}
+					flDto.setVersionAndStatus(JacksonUtils.toJson(vasMap));
+					flDtoMap.put(codeStr, flDto);
+				}
+			}
+			
+			page.setList(new ArrayList<FlDto>(flDtoMap.values()));
+		}
+		
+		return page;
+	}
+	@Override
+	@Description(instruction = "保存流程模板相关信息")
+	@Transactional(readOnly = false, propagation = Propagation.REQUIRED)
+	public void saveAll(String userInfo, FlDto flDto) throws Exception {
+		// 第1步:保存流程模板的基本信息
+		Timestamp currentTimestamp = new Timestamp(new Date().getTime());
+	   	flDto.setUpdateDate(currentTimestamp);
+		Fl fl = new Fl();
+		BeanUtils.copyProperties(flDto, fl);
+
+		// 删除草稿状态流程模板基本信息及相关信息
+		Map<String, Object> queryCond = new HashMap<String, Object>();
+		queryCond.put("code", fl.getCode());
+		queryCond.put("status", "0");
+		List<Fl> fls = flDao.queryList(queryCond);
+		if (fls.size() > 0) {
+			for (Fl fl2 : fls) {
+				flDao.deleteFl(fl2.getId());
+			}
+		}
+		if (flDto != null && "1".equals(flDto.getStatus())) {
+			// 设置生效版本为失效
+			queryCond.put("status", "1");
+			List<Fl> fls2 = flDao.queryList(queryCond);
+			if (fls2.size() > 0) {
+				for (Fl fl2 : fls2) {
+					fl2.setStatus("2");
+				}
+			}
+			flDao.updateBatch(fls2);
+		}
+		
+		log.debug("\n\n 开始进行flow_activity_Participant_Step_Reader的数据的更新和保存.....");
+		String flowId = fl.getId();
+		//此处增加判断Flow是否已经存在,用于处理从失效模板变为发布的模板
+		Fl checkFlow = flDao.getObjectById(flowId);
+		if(checkFlow!=null && checkFlow.getCode()!=null){
+			flDao.update(fl);
+			log.debug("-----0001  flDao.update(fl); is done .....");
+		}else{
+			flDao.save(fl);
+			log.debug("-----0001  flDao.save(fl); is done .....");
+		}
+		
+		// 第2步:批量保存环节信息和参与人信息
+		saveAcAndParticipantBatch(currentTimestamp,userInfo,flDto.getAc(), fl.getId());
+		
+		// 第3步:批量保存流程模板环节连线信息
+		saveStepBatch(currentTimestamp,userInfo,flDto.getStep());
+		
+		// 第4步:批量保存模版的可阅读人的数组信息
+		saveReaderBatch(currentTimestamp,userInfo,flDto.getParticipant());
+	}
+
+	/**
+	 * 批量保存环节信息和参与人信息
+	 * 
+	 * @param acJson
+	 * @throws Exception
+	 */
+	private void saveAcAndParticipantBatch(Timestamp currentTimestamp,String userInfo, String acJson, String flId) throws Exception{
+		List<AcDto> list = JacksonUtils.fromJson(acJson, ArrayList.class, AcDto.class);
+		List<Participant> personList = new ArrayList<Participant>();
+		for(AcDto acDto : list){
+			acDto.setUpdateDate(currentTimestamp);			
+			Ac ac = new Ac();
+			BeanUtils.copyProperties(acDto, ac);
+			String participantJson = acDto.getParticipant();
+			String ccPersonJson = acDto.getCcPerson();
+			List<Participant> dataList1 =  JacksonUtils.fromJson(participantJson, ArrayList.class, Participant.class);
+			if (dataList1 != null) {
+				personList.addAll(dataList1);
+			}
+			List<Participant> dataList2 =  JacksonUtils.fromJson(ccPersonJson, ArrayList.class, Participant.class);
+			if (dataList2 != null) {
+				personList.addAll(dataList2);
+			}
+			//此处增加判断Flow是否已经存在,用于处理从失效模板变为发布的模板
+			String activityId = ac.getId();
+			Ac activity = acService.getObjectById(activityId);
+			if(activity !=null && activity.getId()!=null){
+				acService.update(ac);
+			}else{
+				acService.save(ac);
+			}
+		}
+		
+		for(Participant participant : personList){
+			/*participant.setCreatePersonId(userInfoMap.get("id"));
+			participant.setCreatePersonName(userInfoMap.get("name"));*/
+			participant.setCreateDate(currentTimestamp);
+			/*participant.setUpdatePersonId(userInfoMap.get("id"));
+			participant.setUpdatePersonName(userInfoMap.get("name"));*/
+			participant.setUpdateDate(currentTimestamp);				
+			participant.setId(IDGenerator.getUUID());
+			participant.setFlId(flId);
+			participantService.save(participant);
+		}
+	}
+	
+	/**
+	 * 批量保存流程模板环节连线信息
+	 * 
+	 * @param stepJson
+	 * @throws Exception
+	 */
+	private void saveStepBatch(Timestamp currentTimestamp,String userInfo, String stepJson) throws Exception{
+		List<Step> stepList = JacksonUtils.fromJson(stepJson, ArrayList.class, Step.class);
+		for(Step step : stepList){
+			step.setId(IDGenerator.getUUID());
+			step.setCreateDate(currentTimestamp);
+			step.setUpdateDate(currentTimestamp);
+			String conditionExpression = step.getConditionExpression();
+			if (StringUtils.isNotBlank(conditionExpression)) {
+				conditionExpression = conditionExpression.replaceAll("\'", "\\\\'");
+			}
+			step.setConditionExpression(conditionExpression);
+			stepService.save(step);
+		}
+	}
+	
+	/**
+	 * 批量保存模版的可阅读人信息
+	 * 
+	 * @param readerJson
+	 * @throws Exception
+	 */
+	private void saveReaderBatch(Timestamp currentTimestamp,String userInfo, String readerJson) throws Exception{
+		List<Participant> readerList = JacksonUtils.fromJson(readerJson, ArrayList.class, Participant.class);
+		for(Participant reader : readerList){
+			reader.setCreateDate(currentTimestamp);
+			reader.setUpdateDate(currentTimestamp);			
+			reader.setId(IDGenerator.getUUID());
+			participantService.save(reader);
+		}
+	}
+
+	@Override
+	public FlDto getAll(String paramater) throws Exception {
+		FlDto result = null;
+		Fl fl = getObjectById(paramater);
+		if (fl != null) {
+
+			String flJsonStr = JacksonUtils.toJson(fl);
+			result = JacksonUtils.fromJson(flJsonStr, FlDto.class);
+			
+			Map<String, Object> queryCond = new HashMap<String, Object>();
+			queryCond.put("flId", fl.getId());
+
+			//查询业务对象信息
+			BusinessObject businessObject = businessObjectService.getObjectById(result.getBusinessObjectId());
+			//查询环节信息
+			List<Ac> oldAcs = acService.queryList(queryCond);
+			List<AcDto> acs = new  ArrayList<AcDto>();
+			Map<String, Object> acCond = new HashMap<String, Object>();
+			acCond.put("flId", fl.getId());
+			for (Ac ac : oldAcs) {
+				AcDto acDto = new AcDto();
+				BeanUtils.copyProperties(ac, acDto);
+				acCond.put("acId", acDto.getId());
+				String newAcId = IDGenerator.getUUID();
+				//查询环节审批人信息
+				acCond.put("type", "1");
+				acCond.put("sidx", "sort");
+				acCond.put("sord", "asc");
+				List<Participant> participants = participantService.queryList(acCond);
+				for (Participant participant : participants) {
+					participant.setAcId(newAcId);
+				}
+				acDto.setParticipant(JacksonUtils.toJson(participants));
+				//查询环节抄送人信息
+				acCond.put("type", "2");
+				List<Participant> ccPersons = participantService.queryList(acCond);
+				for (Participant participant : ccPersons) {
+					participant.setAcId(newAcId);
+				}
+				acDto.setCcPerson(JacksonUtils.toJson(ccPersons));
+				
+				acDto.setId(newAcId);
+				acs.add(acDto);
+			}
+			//查询环节连线信息
+			
+			List<Step> oldSteps = stepService.queryList(queryCond);
+			//处理环节连线源节点和目标节点ID为画布上的nodeId
+			List<Step> steps = new ArrayList<Step>();
+			for (Step step : oldSteps) {
+				step.setSourceId(acService.getObjectById(step.getSourceId()).getNodeId());
+				step.setTargetId(acService.getObjectById(step.getTargetId()).getNodeId());
+				step.setId(IDGenerator.getUUID());
+				steps.add(step);
+			}			
+			//查询模板参与人信息
+			queryCond.put("sidx", "sort");
+			queryCond.put("sord", "asc");
+			List<Participant> participants = participantService.queryList(queryCond);
+			//创建画布XML
+			Document document = DocumentHelper.createDocument();
+			Element root = document.addElement("mxGraphModel").addElement("root");
+			root.addElement("mxCell").addAttribute("id", "0");
+			root.addElement("mxCell").addAttribute("id", "1").addAttribute("parent", "0");
+			createXMLElement(root, acs, "ac");
+			createXMLElement(root, steps, "step");
+			
+			result.setBusinessObjectName(businessObject.getName());
+			result.setAc(JacksonUtils.toJson(acs));
+			result.setStep(JacksonUtils.toJson(steps));
+			result.setParticipant(JacksonUtils.toJson(participants));
+			result.setGraphXml(document.asXML());
+		}
+		return result;
+	}
+	/**
+	 * 创建画布XML节点
+	 * 
+	 * @param root     根节点
+	 * @param elements 结点元数据
+	 * @param type     节点类型 (ac-环节,step-环节连线)
+	 * @throws Exception 
+	 */
+	@SuppressWarnings("unchecked")
+	private void createXMLElement(Element root, Object elements, String type) throws Exception {
+		if (root != null && elements != null && StringUtils.isNotBlank(type)) {
+			if ("ac".equals(type)) {
+				List<AcDto> acs = (List<AcDto>) elements;
+				for (AcDto ac : acs) {
+					Element parentElem = null;
+					if (FlAcType.START.getAcType().equals(ac.getAcType())) {
+						parentElem = root.addElement(FlAcType.START.getNodeName())
+								.addAttribute("id", ac.getNodeId())
+								.addAttribute("label", ac.getName())
+								.addAttribute("description", ac.getName())
+								.addAttribute("nodeType", FlAcType.START.getNodeType());
+					} else if (FlAcType.TASK.getAcType().equals(ac.getAcType())) {
+						parentElem = root.addElement(FlAcType.TASK.getNodeName())
+								.addAttribute("id", ac.getNodeId())						
+								.addAttribute("label", ac.getName())
+								.addAttribute("description", ac.getName())
+								.addAttribute("nodeType", FlAcType.TASK.getNodeType());
+					} else if (FlAcType.FORK.getAcType().equals(ac.getAcType())) {
+						parentElem = root.addElement(FlAcType.FORK.getNodeName())
+								.addAttribute("id", ac.getNodeId())						
+								.addAttribute("label", ac.getName())
+								.addAttribute("description", ac.getName())
+								.addAttribute("nodeType", FlAcType.FORK.getNodeType());
+					} else if (FlAcType.JOIN.getAcType().equals(ac.getAcType())) {
+						parentElem = root.addElement(FlAcType.JOIN.getNodeName())
+								.addAttribute("id", ac.getNodeId())							
+								.addAttribute("label", ac.getName())
+								.addAttribute("description", ac.getName())
+								.addAttribute("nodeType", FlAcType.JOIN.getNodeType());
+					} else if (FlAcType.END.getAcType().equals(ac.getAcType())) {
+						parentElem = root.addElement(FlAcType.END.getNodeName())
+								.addAttribute("id", ac.getNodeId())							
+								.addAttribute("label", ac.getName())
+								.addAttribute("description", ac.getName())
+								.addAttribute("nodeType", FlAcType.END.getNodeType());
+					}
+					
+					Element cellElem = parentElem.addElement("mxCell")
+							.addAttribute("vertex", "1")
+							.addAttribute("parent", "1"); 
+					if (FlAcType.START.getAcType().equals(ac.getAcType())){
+						cellElem.addAttribute("style", FlAcType.START.getNodeType());
+					}else if (FlAcType.TASK.getAcType().equals(ac.getAcType())) {
+						cellElem.addAttribute("style", "rounded");
+					} else if (FlAcType.FORK.getAcType().equals(ac.getAcType())) {
+						cellElem.addAttribute("style", "symbol;image=images/symbols/fork.png");
+					} else if (FlAcType.JOIN.getAcType().equals(ac.getAcType())) {
+						cellElem.addAttribute("style", "symbol;image=images/symbols/merge.png");
+					} else if (FlAcType.END.getAcType().equals(ac.getAcType())){
+						cellElem.addAttribute("style", FlAcType.END.getNodeType());
+					}
+					cellElem.addElement("mxGeometry")
+							.addAttribute("x", String.valueOf(ac.getX()))
+							.addAttribute("y", String.valueOf(ac.getY()))
+							.addAttribute("width", String.valueOf(ac.getWidth()))
+							.addAttribute("height", String.valueOf(ac.getHeight()))
+							.addAttribute("as", "geometry");
+
+				}
+
+			} else if ("step".equals(type)) {
+				List<Step> steps = (List<Step>) elements;
+				for (Step step : steps) {
+					Element parentElem = root.addElement(FlAcType.CONNECTOR.getNodeName())
+							.addAttribute("id", step.getNodeId())
+							.addAttribute("label", step.getName())
+							.addAttribute("nodeType", FlAcType.CONNECTOR.getNodeType());
+					Element cellElem = parentElem.addElement("mxCell")
+							.addAttribute("style", "defaultEdge")
+							.addAttribute("edge", "1")
+							.addAttribute("parent", "1")
+							.addAttribute("source", step.getSourceId())
+							.addAttribute("target", step.getTargetId());
+					cellElem.addElement("mxGeometry")
+							.addAttribute("relative", "1")
+							.addAttribute("as", "geometry");
+				}
+			}
+		}
+	}
+
+	@Override
+	@Transactional(readOnly = false, propagation = Propagation.REQUIRED)
+	public String start(String businessObjectCode, String flCode, String businessId) throws FlowException {
+		SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+		String userInfo = JacksonUtils.toJson(securityUserBeanInfo);
+		
+		/**
+		 * 第1步：判断流程模板是否存在
+		 */
+		Fl fl = null;
+		BusinessObjectDto businessObjectDto = null;
+		try {
+			if (StringUtils.isNotBlank(businessObjectCode) && !StringUtils.isNotBlank(flCode)) {
+				// 获取业务对象下默认流程模板
+				fl = queryDefaultFlow(businessObjectCode);
+			} else {
+				fl = queryReadyFlow(flCode);
+			}
+
+			if (fl == null) {
+				throw new FlowException("未找到对应的模板：流程模板编码【 " + flCode + "】，业务对象编码：【" + businessObjectCode + "】");
+			} else {
+				if (StringUtils.isNotBlank(businessObjectCode) && !StringUtils.isNotBlank(flCode)) {
+					fl = queryDefaultFlow(businessObjectCode);
+					businessObjectDto = businessObjectService.getObjectByCode(businessObjectCode);
+				} else {
+					fl = queryReadyFlow(flCode);
+					businessObjectDto = businessObjectService.getObjectByFlCode(flCode);
+				}
+			}
+			fl = getObjectById(fl.getId());
+		} catch (Exception e1) {
+			throw new FlowException("获取流程模板信息失败！", e1);
+		}
+		/**
+		 * 第2步：校验流程发起条件,不符合条件时抛出异常
+		 */
+		String instanceIdBeforeReturn = validateFlowStartCondition(fl, businessId);
+		
+		/**
+		 * 第3步：获取业务变量值
+		 */
+		Map<String, Object> businessVariableValue = new HashMap<String, Object>();
+		List<Object> pcFormValue = new ArrayList<Object>();
+		List<Object> phoneFormValue = new ArrayList<Object>();
+		List<Object> phoneAttachment = new ArrayList<Object>();
+		if(StringUtils.isEmpty(businessObjectDto.getApproveClass())) {
+			throw new FlowException("业务对象【" + businessObjectDto.getName() + "】中的查询业务变量URL为空！");
+		}
+		getBusinessVariableValue(businessObjectDto.getApproveClass(), businessId, 
+				businessObjectDto.getCode(), flCode, businessVariableValue, 
+				pcFormValue, phoneFormValue, phoneAttachment);
+		log.info("调用业务系统变量查询接口返回数据：" + businessVariableValue);
+
+		/**
+		 * 第4步：解析流程审批路径
+		 */
+		List<AcDto> acDtos = new ArrayList<AcDto>();
+		try {
+			List<NodeDto>	nodeDtos = parsePassFlowNodeDto(fl.getId(), businessVariableValue);
+			for (NodeDto nodeDto : nodeDtos) {
+				AcDto acDto = nodeDto.getCurrentAcDto();
+				List<String> previousNodes = new ArrayList<String>();
+				for (AcDto acDto2 : nodeDto.getPreviousAcDtos()) {
+					previousNodes.add(acDto2.getNodeId());
+				}
+				acDto.setPreviousAcDtos(previousNodes);
+				List<String> nextNodes = new ArrayList<String>();
+				for (AcDto acDto3 : nodeDto.getNextNodeDtos()) {
+					nextNodes.add(acDto3.getNodeId());
+				}					
+				acDto.setNextNodeDtos(nextNodes);
+				acDtos.add(acDto);
+			}
+		} catch (Exception e) {
+			throw new FlowException("解析流程审批路径失败！", e);
+		}
+		/**
+		 * 第5步：获取环节参与人相关信息（审批人、抄送人、可阅人）
+		 */
+		String accessiblePosts = ""; // 可阅人岗位信息
+		List<AcDto> accessibleAcDtos = new ArrayList<AcDto>();
+		List<ParticipantDto> csList = new ArrayList<ParticipantDto>(); // 抄送人
+		List<ParticipantDto> participantList = new ArrayList<ParticipantDto>();// 审批人
+
+		try {
+			getParticipants(fl.getId(), acDtos, accessibleAcDtos, csList, participantList);
+		} catch (Exception e) {
+			throw new FlowException("获取环节审批人、抄送人、可阅人失败！", e);
+		}
+		
+		//给开始节点设置人员,让计算审批人与抄送人的逻辑不同
+		AcDto startAc = acDtos.get(0);
+		String starter = (String) businessVariableValue.get("start_user_id");
+		startAc.setParticipant(starter);
+		
+		/**
+		 * 第6步：获取审批人岗位信息
+		 */
+		FlowApproverUtils.setPostDtoServiceCustomer(postDtoServiceCustomer);
+		try {
+			log.info("==== 获取审批人岗位信息  FlowApproverUtils.parsePost() acDtos="+JacksonUtils.toJson(acDtos));
+			List<FlowAcPostDto> resultList = FlowApproverUtils.parsePost(businessVariableValue, acDtos);
+			if (resultList != null) {
+				for (AcDto acDto : acDtos) {
+					acDto.setParticipant("");
+					for (FlowAcPostDto flowAcPostDto : resultList) {
+						log.info("==== 获取审批人岗位信息 for loop 001 flowAcPostDto="+ JacksonUtils.toJson(flowAcPostDto));
+						List<FlowPostParticipantDto> flowPostParticipantDtos = flowAcPostDto.getFlowPostParticipantDtos();
+						log.info("==== 获取审批人岗位信息 for loop 002 flowPostParticipantDtos="+ JacksonUtils.toJson(flowPostParticipantDtos));
+						if (acDto.getId().equals(flowAcPostDto.getId()) && flowPostParticipantDtos != null
+								&& flowPostParticipantDtos.size() > 0) {
+							acDto.setFlowPostParticipantDtos(flowPostParticipantDtos);
+							acDto.setPosts(processAcPosts(flowPostParticipantDtos));
+							log.info("==== 获取审批人岗位信息 for loop 003 acDto.getFlowPostParticipantDtos()="+ JacksonUtils.toJson(acDto.getFlowPostParticipantDtos()));
+							log.info("==== 获取审批人岗位信息 for loop 004 acDto.getPosts()="+ JacksonUtils.toJson(acDto.getPosts()));
+						}
+					}
+				}
+			}
+		} catch (Exception e) {
+			throw new FlowException("获取审批人岗位信息失败！", e);
+		}
+		/**
+		 * 第7步：获取抄送人岗位信息
+		 */
+		try {
+			for (AcDto acDto : acDtos) {
+				acDto.setParticipant(acDto.getCcPerson());
+			}
+			log.info("==== 获取抄送人岗位信息  FlowApproverUtils.parsePost() acDtos="+JacksonUtils.toJson(acDtos));
+			List<FlowAcPostDto> csResultList = FlowApproverUtils.parsePost(businessVariableValue, acDtos);
+			if (csResultList != null) {
+				for (AcDto acDto : acDtos) {
+					acDto.setParticipant("");
+					for (FlowAcPostDto flowAcPostDto : csResultList) {
+						log.info("==== 获取抄送人岗位信息 for loop 001 flowAcPostDto="+ JacksonUtils.toJson(flowAcPostDto));
+						List<FlowPostParticipantDto> flowPostParticipantDtos = flowAcPostDto.getFlowPostParticipantDtos();
+						log.info("==== 获取抄送人岗位信息 for loop 002 flowPostParticipantDtos="+ JacksonUtils.toJson(flowPostParticipantDtos));
+						if (acDto.getId().equals(flowAcPostDto.getId()) && flowPostParticipantDtos != null
+								&& flowPostParticipantDtos.size() > 0) {
+							acDto.setCsPosts(processAcPosts(flowPostParticipantDtos));
+							log.info("==== 获取抄送人岗位信息 for loop 003 acDto.getCsPosts()="+ JacksonUtils.toJson(acDto.getCsPosts()));
+						}
+					}
+				}
+			}
+		} catch (Exception e) {
+			throw new FlowException("获取抄送人岗位信息失败！", e);
+		}
+		/**
+		 * 第8步：获取可阅人岗位信息
+		 */
+		try {
+			List<AcDto> readerAcDtos = new ArrayList<AcDto>();
+			if(accessibleAcDtos!=null && accessibleAcDtos.size()>0){
+				AcDto startAcDto = new AcDto();
+				//模拟一个开始环节,id不能使用已有的，否则会使真正的开始环节的审批人消失了
+				startAcDto.setId(IDGenerator.getUUID());
+				startAcDto.setAcType("1");
+				startAcDto.setParticipant(null);
+				startAcDto.setCcPerson(null);
+				startAcDto.setPosts(null);
+				startAcDto.setCsPosts(null);
+				startAcDto.setFlowPostParticipantDtos(null);
+				readerAcDtos.add(startAcDto);
+				
+				AcDto tempAcDto = accessibleAcDtos.get(0);//模拟的开始节点不需要设置审批人信息
+				AcDto approveAcDto = new AcDto(); //模拟一个审核节点
+				approveAcDto.setId(IDGenerator.getUUID());
+				approveAcDto.setParticipant(tempAcDto.getParticipant());
+				approveAcDto.setApproveTypeId("SH");
+				approveAcDto.setAcType("2");
+				readerAcDtos.add(approveAcDto);
+				
+				String accessibleAcDtosJSON2 = JacksonUtils.toJson(readerAcDtos);
+				log.info("==== 获取可阅人岗位信息 FlowApproverUtils.parsePost() accessibleAcDtosJSON2="+accessibleAcDtosJSON2);
+				List<FlowAcPostDto> accessibleResultList = FlowApproverUtils.parsePost(businessVariableValue, readerAcDtos);
+				if (accessibleResultList != null) {
+					for (FlowAcPostDto flowAcPostDto : accessibleResultList) {
+						log.info("====  获取可阅人岗位信息 for loop 001 flowAcPostDto="+ JacksonUtils.toJson(flowAcPostDto));
+						List<FlowPostParticipantDto> flowPostParticipantDtos = flowAcPostDto.getFlowPostParticipantDtos();
+						log.info("====  获取可阅人岗位信息 for loop 002 flowPostParticipantDtos="+ JacksonUtils.toJson(flowPostParticipantDtos));
+						if (flowPostParticipantDtos != null && flowPostParticipantDtos.size() > 0) {
+							accessiblePosts = processAcPosts(flowPostParticipantDtos);
+							log.info("====  获取可阅人岗位信息 for loop 003 accessiblePosts="+ accessiblePosts);
+						}
+					}
+				}
+			}
+		} catch (Exception e) {
+			throw new FlowException("获取可阅人岗位失败！", e);
+		}
+
+		/**
+		 * 第9步：返回
+		 */
+		
+		Map<String, Object> result = new HashMap<String, Object>();
+		
+		String flowTitle = parseFlowTitle(fl,businessVariableValue);
+		List<ApprovalList> approvalLists = generateApprovalList(flowTitle, acDtos, businessVariableValue);
+		
+		result.put("appId", fl.getAppId());
+		result.put("startUserId", businessVariableValue.get("start_user_id"));
+		result.put("businessObjectCode", businessObjectDto.getCode());
+		result.put("pcUrl", businessObjectDto.getPcUrl());
+		result.put("flId", fl.getId());
+		result.put("flCode", flCode);
+		result.put("flowTitle", flowTitle);
+		result.put("businessId", businessId);
+		result.put("acDtoList", acDtos);
+		result.put("approvalLists", approvalLists);
+		result.put("variableDtoList", businessVariableValue);
+		result.put("pcFormDtoList", pcFormValue);
+		result.put("mobileFormDtoList", phoneFormValue);
+		result.put("uploadAttachmentDtoList", phoneAttachment);
+		log.info("====>>> start()   uploadAttachmentDtoList 对应的值是="+phoneAttachment);
+		result.put("accessiblePosts", accessiblePosts);
+		result.put("postIsNull", fl.getPostIsNull()); // 岗位为空策略(1:不允许发起,2:允许发起，挂起,3:允许发起，跳过，并显示该行,4:允许发起，跳过，不显示该行)
+		result.put("approvalPersonIsNull", fl.getApprovalPersonIsNull()); // 审批人为空策略(1:不允许发起,2:允许发起，挂起,3:允许发起，跳过，并显示该行,4:允许发起，跳过，不显示该行)
+		result.put("instanceIdBeforeReturn", instanceIdBeforeReturn);
+		
+		return JacksonUtils.toJson(result);
+		
+	}
+	
+	@Override
+	@Transactional(readOnly = false, propagation = Propagation.REQUIRED)
+	public InstanceDto startForMobile(String businessObjectCode, String flCode, String businessId) throws FlowException {
+		
+		/**
+		 * 第1步：判断流程模板是否存在
+		 */
+		Fl fl = null;
+		BusinessObjectDto businessObjectDto = null;
+		try {
+			if (StringUtils.isNotBlank(businessObjectCode) && !StringUtils.isNotBlank(flCode)) {
+				// 获取业务对象下默认流程模板
+				fl = queryDefaultFlow(businessObjectCode);
+			} else {
+				fl = queryReadyFlow(flCode);
+			}
+
+			if (fl == null) {
+				throw new FlowException("未找到对应的模板：流程模板编码【 " + flCode + "】，业务对象编码：【" + businessObjectCode + "】");
+			} else {
+				if (StringUtils.isNotBlank(businessObjectCode) && !StringUtils.isNotBlank(flCode)) {
+					fl = queryDefaultFlow(businessObjectCode);
+					businessObjectDto = businessObjectService.getObjectByCode(businessObjectCode);
+				} else {
+					fl = queryReadyFlow(flCode);
+					businessObjectDto = businessObjectService.getObjectByFlCode(flCode);
+				}
+			}
+			fl = getObjectById(fl.getId());
+		} catch (Exception e1) {
+			throw new FlowException("获取流程模板信息失败！", e1);
+		}
+		/**
+		 * 第2步：校验流程发起条件,不符合条件时抛出异常
+		 */
+		String instanceIdBeforeReturn = validateFlowStartCondition(fl, businessId);
+		
+		/**
+		 * 第3步：获取业务变量值
+		 */
+		Map<String, Object> businessVariableValue = new HashMap<String, Object>();
+		List<Object> pcFormValue = new ArrayList<Object>();
+		List<Object> phoneFormValue = new ArrayList<Object>();
+		List<Object> phoneAttachment = new ArrayList<Object>();
+		if(StringUtils.isEmpty(businessObjectDto.getApproveClass())) {
+			throw new FlowException("业务对象【" + businessObjectDto.getName() + "】中的查询业务变量URL为空！");
+		}
+		getBusinessVariableValue(businessObjectDto.getApproveClass(), businessId, 
+				businessObjectDto.getCode(), flCode, businessVariableValue, 
+				pcFormValue, phoneFormValue, phoneAttachment);
+		log.info("调用业务系统变量查询接口返回数据：" + businessVariableValue);
+
+		/**
+		 * 第4步：解析流程审批路径
+		 */
+		List<AcDto> acDtos = new ArrayList<AcDto>();
+		try {
+			List<NodeDto>	nodeDtos = parsePassFlowNodeDto(fl.getId(), businessVariableValue);
+			for (NodeDto nodeDto : nodeDtos) {
+				AcDto acDto = nodeDto.getCurrentAcDto();
+				List<String> previousNodes = new ArrayList<String>();
+				for (AcDto acDto2 : nodeDto.getPreviousAcDtos()) {
+					previousNodes.add(acDto2.getNodeId());
+				}
+				acDto.setPreviousAcDtos(previousNodes);
+				List<String> nextNodes = new ArrayList<String>();
+				for (AcDto acDto3 : nodeDto.getNextNodeDtos()) {
+					nextNodes.add(acDto3.getNodeId());
+				}					
+				acDto.setNextNodeDtos(nextNodes);
+				acDtos.add(acDto);
+			}
+		} catch (Exception e) {
+			throw new FlowException("解析流程审批路径失败！", e);
+		}
+		/**
+		 * 第5步：获取环节参与人相关信息（审批人、抄送人、可阅人）
+		 */
+		String accessiblePosts = ""; // 可阅人岗位信息
+		List<AcDto> accessibleAcDtos = new ArrayList<AcDto>();
+		List<ParticipantDto> csList = new ArrayList<ParticipantDto>(); // 抄送人
+		List<ParticipantDto> participantList = new ArrayList<ParticipantDto>();// 审批人
+
+		try {
+			getParticipants(fl.getId(), acDtos, accessibleAcDtos, csList, participantList);
+		} catch (Exception e) {
+			throw new FlowException("获取环节审批人、抄送人、可阅人失败！", e);
+		}
+		
+		/**
+		 * 第6步：获取审批人岗位信息
+		 */
+		FlowApproverUtils.setPostDtoServiceCustomer(postDtoServiceCustomer);
+		try {
+			List<FlowAcPostDto> resultList = FlowApproverUtils.parsePost(businessVariableValue, acDtos);
+			if (resultList != null) {
+				for (AcDto acDto : acDtos) {
+					acDto.setParticipant("");
+					for (FlowAcPostDto flowAcPostDto : resultList) {
+						List<FlowPostParticipantDto> flowPostParticipantDtos = flowAcPostDto
+								.getFlowPostParticipantDtos();
+						if (acDto.getId().equals(flowAcPostDto.getId()) && flowPostParticipantDtos != null
+								&& flowPostParticipantDtos.size() > 0) {
+							acDto.setFlowPostParticipantDtos(flowPostParticipantDtos);
+							acDto.setPosts(processAcPosts(flowPostParticipantDtos));
+						}
+					}
+				}
+			}
+		} catch (Exception e) {
+			throw new FlowException("获取审批人岗位信息失败！", e);
+		}
+		/**
+		 * 第7步：获取抄送人岗位信息
+		 */
+		try {
+			for (AcDto acDto : acDtos) {
+				acDto.setParticipant(acDto.getCcPerson());
+			}
+			List<FlowAcPostDto> csResultList = FlowApproverUtils.parsePost(businessVariableValue, acDtos);
+			;
+			if (csResultList != null) {
+				for (AcDto acDto : acDtos) {
+					acDto.setParticipant("");
+					for (FlowAcPostDto flowAcPostDto : csResultList) {
+						List<FlowPostParticipantDto> flowPostParticipantDtos = flowAcPostDto
+								.getFlowPostParticipantDtos();
+						if (acDto.getId().equals(flowAcPostDto.getId()) && flowPostParticipantDtos != null
+								&& flowPostParticipantDtos.size() > 0) {
+							acDto.setCsPosts(processAcPosts(flowPostParticipantDtos));
+						}
+					}
+				}
+			}
+		} catch (Exception e) {
+			throw new FlowException("获取抄送人岗位信息失败！", e);
+		}
+		/**
+		 * 第8步：获取可阅人岗位信息
+		 */
+		try {
+			List<FlowAcPostDto> accessibleResultList = FlowApproverUtils.parsePost(businessVariableValue,
+					accessibleAcDtos);
+			;
+			if (accessibleResultList != null) {
+				for (FlowAcPostDto flowAcPostDto : accessibleResultList) {
+					List<FlowPostParticipantDto> flowPostParticipantDtos = flowAcPostDto
+							.getFlowPostParticipantDtos();
+					if (flowPostParticipantDtos != null && flowPostParticipantDtos.size() > 0) {
+						accessiblePosts = processAcPosts(flowPostParticipantDtos);
+					}
+				}
+			}
+		} catch (Exception e) {
+			throw new FlowException("获取可阅人岗位失败！", e);
+		}
+
+		String flowTitle = parseFlowTitle(fl,businessVariableValue);
+//		List<ApprovalList> approvalLists = generateApprovalList(flowTitle, acDtos, businessVariableValue);
+
+		/**
+		 * 第9步：返回
+		 */
+		List<InstanceVariableDto> varList = new ArrayList<InstanceVariableDto>();
+		for(String key : businessVariableValue.keySet()) {
+			InstanceVariableDto var = new InstanceVariableDto();
+			var.setName(key);
+			var.setVal((String)businessVariableValue.get(key).toString());
+			varList.add(var);
+		}
+		
+		List<PcFormDto> pcFormDtoList = new ArrayList<PcFormDto>();
+		for(Object obj : pcFormValue) {
+			PcFormDto pcFormDto = new PcFormDto();
+			Map<String, Object> map = (Map<String, Object>)obj;
+			pcFormDto.setName((String)map.get("name"));
+			pcFormDto.setValue((String)map.get("value"));
+			pcFormDtoList.add(pcFormDto);
+		}
+		
+		List<MobileFormDto> mobileFormList = new ArrayList<MobileFormDto>();
+		for(Object obj : phoneFormValue) {
+			MobileFormDto mobileFormDto = new MobileFormDto();
+			Map<String, Object> map = (Map<String, Object>)obj;
+			mobileFormDto.setName((String)map.get("name"));
+			mobileFormDto.setValue((String)map.get("value"));
+			mobileFormList.add(mobileFormDto);
+		}
+		
+		InstanceDto instanceDto = new InstanceDto();
+		instanceDto.setId(IDGenerator.getUUID());
+		instanceDto.setName(flowTitle);
+		instanceDto.setAppId(fl.getAppId());
+		instanceDto.setBusinessObjectCode(businessObjectDto.getCode());
+		instanceDto.setFlId(fl.getId());
+		instanceDto.setFlCode(fl.getCode());
+		instanceDto.setPcUrl(businessObjectDto.getPcUrl());
+		instanceDto.setBusinessId(businessId);
+		instanceDto.setInstanceIdBeforeReturn(instanceIdBeforeReturn);
+		instanceDto.setPostIsNull(fl.getPostIsNull());
+		instanceDto.setApprovalPersonIsNull(fl.getApprovalPersonIsNull());
+		instanceDto.setVariableDtoList(varList);
+		instanceDto.setPcFormDtoList(pcFormDtoList);
+		instanceDto.setMobileFormDtoList(mobileFormList);
+		instanceDto.setAccessiblePosts(accessiblePosts);
+		instanceDto.setAcDtoList(acDtos);
+		
+		return instanceDto;
+		
+	}
+
+	/**
+	 * 检查流程发起条件
+	 * 
+	 * @param fl
+	 * @param businessId
+	 * @return 如果是打回再发起情况下，返回打回前的流程实例ID
+	 * @throws FlowException
+	 */
+	public String validateFlowStartCondition(Fl fl, String businessId) throws FlowException {
+		
+		//1、检查流程模板
+		if(!fl.getUseStatus()) {
+			throw new FlowException("流程模板被禁用！");
+		}
+		if(!FlStatus.PUBLISH.getValue().equals(fl.getStatus())) {
+			String status=fl.getStatus();
+			status=status.equals("0")?"起草":"失效";
+			throw new FlowException("流程模板状态错误：" + fl.getStatus());
+		}
+		
+		//2、检查businessId对应的流程实例情况
+		String instanceIdBeforeReturn = null;
+		List<Instance> flowInstances = instanceService.queryInstanceBy(fl.getId(), businessId);
+		for(Instance instance : flowInstances) {
+			if(InstanceStatus.RUNNING.getValue().equals(instance.getStatus())
+					|| InstanceStatus.HANGUP.getValue().equals(instance.getStatus())) {
+				throw new FlowException("流程已运行instanceId=" + instance.getId());
+				
+				//打回再发起
+			} else if(InstanceStatus.REJECT.getValue().equals(instance.getStatus())) {
+				instanceIdBeforeReturn = instance.getId();
+			}
+		}
+		return instanceIdBeforeReturn;
+	}
+
+	/**
+	 * 解析流程审批路径
+	 * 
+	 * @param flId 流程模板Id
+	 * @param businessVariableMap 业务变量Map
+	 * @return
+	 * @throws Exception 
+	 */
+	/*private List<NodeDto> parseFlowPath(String flId, Map<String, Object> businessVariableMap) {
+		List<NodeDto> nodeDtos = new ArrayList<NodeDto>();
+		Map<String, Object> queryCond = new HashMap<String, Object>();	
+		queryCond.put("flId", flId);
+		*//**
+		 * 第1步：查询流程模板所有环节，并组装成Map
+		 *//*
+		List<AcDto> acDtos = new ArrayList<AcDto>();
+		Map<String, AcDto> acDtoMap = new HashMap<String, AcDto>();
+		try {
+			List<Ac> acs = acService.queryList(queryCond);
+			for (Ac ac : acs) {
+				AcDto acDto = new AcDto();
+				BeanUtils.copyProperties(ac, acDto);
+				acDtoMap.put(acDto.getId(), acDto);
+				acDtos.add(acDto);
+				// 创建路径环节
+				NodeDto nodeDto = new NodeDto();
+				nodeDto.setId(acDto.getId());
+				nodeDto.setName(acDto.getName());
+				nodeDto.setCurrentAcDto(acDto);
+				nodeDtos.add(nodeDto);
+			}
+		} catch (Exception e) {
+			throw new FlowException("解析流程审批路径【第1步：查询流程模板所有环节】错误！", e);
+		}
+		*//**
+		 * 第2步：查询流程模板所有环节连线，并组装条件表达式Map
+		 *//*		
+		// 条件表达式Map
+		ConcurrentHashMap<String, Step> stepMap = new ConcurrentHashMap<String, Step>();
+		// 条件表达式Map
+		Map<String, String> conExpMap = new HashMap<String, String>();
+		
+		try {
+			List<Step> steps = stepService.queryList(queryCond);
+			// Map化
+			for (Step step : steps) {
+				stepMap.put(step.getId(), step);
+				conExpMap.put(step.getSourceId() + "-" + step.getTargetId(), step.getConditionExpression());
+			}
+
+			// 剔除不符合条件的连线
+			FlowPathUtils.changeStep(stepMap, businessVariableMap);
+
+		} catch (Exception e) {
+			throw new FlowException("解析流程审批路径【第2步：查询流程模板所有环节连线】错误！", e);
+		}
+		*//**
+		 * 第3步：关联所有环节。【 1:开始,2:普通,3:结束,4:聚合网关，5:条件网关】
+		 *//*			
+		// 开始环节
+		NodeDto startNodeDto = null; 
+		// 结束环节
+		NodeDto endNodeDto = null;  
+		Map<String, NodeDto> nodeDtoMap = new HashMap<String, NodeDto>();
+		try {
+			// 连线去重
+			Map<String, Step> tmpStepMap = new HashMap<String, Step>();
+			for (Step step : stepMap.values()) {
+				tmpStepMap.put(step.getSourceId() + "-" + step.getTargetId(), step);
+			}
+			for (NodeDto nodeDto : nodeDtos) {
+				List<NodeDto> nextNodeDtos = new ArrayList<NodeDto>();
+				List<NodeDto> prevAcDtos = new ArrayList<NodeDto>();
+				for (Step step : tmpStepMap.values()) {
+					StepDto stepDto = new StepDto();
+					BeanUtils.copyProperties(step, stepDto);
+					stepDtos.add(stepDto);
+					if (step.getSourceId().equals(nodeDto.getCurrentAcDto().getId())) {
+						AcDto nextAcDto = acDtoMap.get(step.getTargetId());
+						NodeDto nextNodeDto = new NodeDto();
+						nextNodeDto.setId(nextAcDto.getId());
+						nextNodeDto.setName(nextAcDto.getName());
+						nextNodeDto.setCurrentAcDto(nextAcDto);
+						nextNodeDtos.add(nextNodeDto);
+					}
+					if (step.getTargetId().equals(nodeDto.getCurrentAcDto().getId())) {
+						AcDto prevAcDto = acDtoMap.get(step.getSourceId());
+						NodeDto prevNodeDto = new NodeDto();
+						prevNodeDto.setId(prevAcDto.getId());
+						prevNodeDto.setName(prevAcDto.getName());
+						prevNodeDto.setCurrentAcDto(prevAcDto);
+						prevAcDtos.add(prevNodeDto);
+					}
+				}
+				nodeDto.setNextNodeDtos(nextNodeDtos);
+				nodeDto.setPreviousAcDtos(prevAcDtos);
+				if ("1".equals(nodeDto.getCurrentAcDto().getAcType())) {
+					startNodeDto = nodeDto;
+				} else if ("3".equals(nodeDto.getCurrentAcDto().getAcType())) {
+					endNodeDto = nodeDto;
+				}
+				nodeDtoMap.put(nodeDto.getId(), nodeDto);
+			}
+		} catch (Exception e) {
+			throw new FlowException("解析流程审批路径【第3步：关联所有环节】错误！", e);
+		}
+		
+		*//**
+		 * 第4步：搜索流程审批路径
+		 *//*			
+		List<NodeDto> flowPath = null;
+		try {
+			FlowPathUtils flowPathUtils = new FlowPathUtils();
+			flowPathUtils.serachPath(startNodeDto, endNodeDto, nodeDtoMap);
+			flowPath = flowPathUtils.getFlowPath();
+		} catch (Exception e) {
+			throw new FlowException("解析流程审批路径【第4步：搜索流程审批路径】错误！", e);
+		}
+		
+		return flowPath;
+	}*/
+
+	
+	/**
+	 * 解析出可以执行的流程节点
+	 * 
+	 * @param flId 流程模板Id
+	 * @param businessVariableValue 业务变量
+	 * @return
+	 * @throws Exception 
+	 */
+	public List<NodeDto> parsePassFlowNodeDto(String flId, Map<String, Object> businessVariableValue) {
+		Map<String, Object> queryCond = new HashMap<String, Object>();	
+		queryCond.put("flId", flId);
+		/**
+		 * 第1步：查询流程模板所有环节，并组装成Map
+		 */
+		List<Ac> allAc=null;
+		Ac firstAc=null;
+		Map<String, Ac> acMap = new HashMap<String, Ac>();
+		try {
+			allAc = acService.queryList(queryCond);
+			for (Ac ac : allAc) {
+                 if(ac.getAcType().equals("1")){
+                	 firstAc=ac;
+                 }
+                 acMap.put(ac.getId(), ac);
+			}
+		} catch (Exception e) {
+			throw new FlowException("解析流程审批路径【第1步：查询流程模板所有环节】错误！", e);
+		}
+		/**
+		 * 第2步：查询流程模板所有环节连线，并组装条件表达式Map
+		 */		
+		// 环节连线Map
+		List<Step> allStep = new ArrayList<Step>();
+		// 条件表达式
+		Map<String, List<Step>> targetStepMap = new HashMap<String, List<Step>>();
+		Map<String, List<Step>> sourceStepMap = new HashMap<String, List<Step>>();
+		try {
+			allStep = stepService.queryList(queryCond);
+			// 获取关联节点
+			for (Step step : allStep) {
+				//数据源
+				if(sourceStepMap.get(step.getSourceId())!=null){
+					List<Step> nextStep=sourceStepMap.get(step.getSourceId());
+					nextStep.add(step);
+					sourceStepMap.put(step.getSourceId(), nextStep);
+				}else{
+					List<Step> nextStep=new ArrayList<Step>();
+					nextStep.add(step);
+					sourceStepMap.put(step.getSourceId(), nextStep);
+				}
+				//目标
+				if(targetStepMap.get(step.getTargetId())!=null){
+					List<Step> nextStep=targetStepMap.get(step.getTargetId());
+					nextStep.add(step);
+					targetStepMap.put(step.getTargetId(), nextStep);
+				}else{
+					List<Step> nextStep=new ArrayList<Step>();
+					nextStep.add(step);
+					targetStepMap.put(step.getTargetId(), nextStep);
+				}
+			}
+		} catch (Exception e) {
+			throw new FlowException("解析流程审批路径【第2步：查询流程模板所有环节连线】错误！", e);
+		}
+		/**
+		 * 第4步：搜索流程审批路径
+		 */			
+		List<NodeDto> flowPath = null;
+		try {
+			flowPath=FlowPathUtils.getPassAcDtoNode(firstAc, acMap, sourceStepMap,targetStepMap,businessVariableValue);
+		} catch (Exception e) {
+			throw new FlowException("解析流程审批路径【第4步：搜索流程审批路径】错误！", e);
+		}
+		
+		return flowPath;
+	}
+	
+	
+	public Fl queryReadyFlow(String flCode) {
+		return flDao.queryReadyFlowBy(flCode);
+	}
+
+	@Override
+	public Fl queryDefaultFlow(String businessObjectCode) {
+		return flDao.queryDefaultFlow(businessObjectCode);
+	}
+
+	@Override
+	public List<FlDto> queryListByApprover(Map<String, String> paramMap) {
+		String approverId = (String)paramMap.get("approverId");
+		if(approverId == null || "-1".equals(approverId) ){
+			return new ArrayList<FlDto>();
+		}
+		return flDao.queryListByApprover(paramMap);
+	}
+
+	/**
+	 * 获取参与人信息
+	 * 
+	 * @param flId
+	 * @param acDtos
+	 * @param accessibleAcDtos
+	 * @param csList
+	 * @param participantList
+	 */
+	private void getParticipants(String flId, List<AcDto> acDtos, List<AcDto> accessibleAcDtos,
+			List<ParticipantDto> csList, List<ParticipantDto> participantList) {
+		Map<String, Object> queryMap = new HashMap<String, Object>();
+		queryMap.put("flId", flId);
+		try {
+			queryMap.put("sidx", "sort");
+			queryMap.put("sord", "asc");
+			List<Participant> queryList = participantService.queryList(queryMap);
+			AcDto accessibleacDto = new AcDto();
+			accessibleacDto.setId(IDGenerator.getUUID());
+			for (Participant participant : queryList) {
+				String type = participant.getType();
+				if ("3".equals(type)) {
+					ParticipantDto accessible = new ParticipantDto();
+					BeanUtils.copyProperties(participant, accessible);
+					participantList.add(accessible);
+					
+				}
+			}
+			accessibleacDto.setParticipant(JacksonUtils.toJson(participantList));
+			accessibleAcDtos.add(accessibleacDto);
+			
+			for (AcDto acDto : acDtos) {
+				csList.clear();
+				participantList.clear();
+				for (Participant participant : queryList) {
+					ParticipantDto participantDto = new ParticipantDto();
+					BeanUtils.copyProperties(participant, participantDto);
+					String type = participantDto.getType();
+					String acId = participantDto.getAcId();
+					if ("2".equals(type) && acDto.getId().equals(acId)) {
+						csList.add(participantDto);
+					} else if ("1".equals(type) && acDto.getId().equals(acId)) {
+						participantList.add(participantDto);
+					}
+				}
+				if (csList.size() > 0) {
+					acDto.setCcPerson(JacksonUtils.toJson(csList));
+				}
+				if (participantList.size() > 0) {
+					acDto.setParticipant(JacksonUtils.toJson(participantList));
+				}
+			}
+		} catch (Exception e) {
+			throw new FlowException("获取环节审批人、抄送人、可阅人失败！", e);
+		}
+	}
+	
+	/**
+	 * 获取业务数据
+	 * 
+	 * @param userInfo
+	 * @param requestUrl
+	 * @param businessId
+	 * @param businessObjectCode
+	 * @param flCode
+	 * @param businessVariableValue
+	 * @param pcFormValue
+	 * @param phoneFormValue
+	 */
+	@SuppressWarnings("unchecked")
+	public void getBusinessVariableValue(String requestUrl, String businessId,
+			String businessObjectCode, String flCode, Map<String, Object> businessVariableValue,
+			List<Object> pcFormValue, List<Object> phoneFormValue, List<Object> phoneAttachment) {
+
+		String businessReturnStr = null;
+		Map<String, Object> businessMap = null;
+		Map<String, String> params = new HashMap<String, String>();
+		params.put("businessId", businessId);
+		params.put("businessObjectCode", businessObjectCode);
+		params.put("flCode", flCode);
+//		requestUrl ="http://192.168.3.62:8082//platform-app/sys/base/customFormInstance/getVariable";
+		try {
+			log.info("第3步：获取业务变量值(请求业务系统),requestUrl=" + requestUrl);
+			log.info("第3步：获取业务变量值(请求业务系统),params=" + JacksonUtils.toJson(params));
+			businessReturnStr = LoginUtils.httpPost(requestUrl, JacksonUtils.toJson(params));
+//			test();
+			if(StringUtils.isEmpty(businessReturnStr)) {
+				String message = "调用业务系统查询业务变量返回值为空！url=" + requestUrl + ", params=" + JacksonUtils.toJson(params);
+				log.info(message);
+				throw new FlowException(message);
+			}
+			Map<String, String> businessReturnMap = JacksonUtils.fromJson(businessReturnStr, Map.class);
+			if(businessReturnMap == null) {
+				throw new FlowException("调用业务系统查询业务变量返回异常:url=" + requestUrl + "参数=" + JacksonUtils.toJson(params) + "返回值=" + businessReturnStr);
+			}
+			businessMap = JacksonUtils.fromJson(businessReturnMap.get("result"), Map.class);
+			Map<String, Object> flow_business_variable_data = (Map<String, Object>) businessMap.get("flow_business_variable_data");
+			List<Object> flow_business_data = (List<Object>) ((Map<String, Object>) businessMap.get("flow_business_data")).get("dataList");
+//			List<Object> flow_business_attachment = (List<Object>) ((Map<String, Object>) businessMap.get("flow_business_data")).get("uploadEntityList");
+			List<Object> flow_phone_data = (List<Object>) ((Map<String, Object>) businessMap.get("flow_phone_data")).get("dataList");
+			List<Object> flow_phone_attachment = (List<Object>) ((Map<String, Object>) businessMap.get("flow_phone_data")).get("uploadEntityList");
+			log.info("====== 获取 flow_phone_data>>uploadEntityList'json = "+JacksonUtils.toJson(flow_phone_attachment));
+			if (flow_business_variable_data != null) {
+				businessVariableValue.putAll(flow_business_variable_data);
+				BusinessObjectDto businessObjectDto = businessObjectService.getObjectByCode(businessObjectCode);
+				businessVariableValue.put("business_object_name", businessObjectDto.getName());
+				// 变量类型适配
+				HashMap<String, String> condMap = new HashMap<String, String>();
+				condMap.put("businessObjectCode", businessObjectCode);
+				List<BusinessObjectVariableDto> variables = businessObjectVariableService.queryListByCondition(condMap);
+				businessVariableValue = variableTypeAdapter(variables, businessVariableValue);
+				
+				//处理流程发起人：如果为空，取当前用户
+				if(StringUtils.isEmpty((String)businessVariableValue.get("start_user_id"))) {
+					if(LoginUtils.getSecurityUserBeanInfo() != null) {
+						SecurityUserDto securityUserDto = LoginUtils.getSecurityUserBeanInfo().getSecurityUserDto();
+						if(securityUserDto != null) {
+							businessVariableValue.put("start_user_id", securityUserDto.getId());
+							businessVariableValue.put("start_user_name", securityUserDto.getRealName());
+						}
+					}
+				}
+			}
+			if (flow_business_data != null) {
+				pcFormValue.addAll(flow_business_data);
+			}
+			if (flow_phone_data != null) {
+				phoneFormValue.addAll(flow_phone_data);
+			}
+			if (flow_phone_attachment != null) {
+				phoneAttachment.addAll(flow_phone_attachment);
+			}
+			log.info("第3步：获取业务变量值(请求业务系统), result=" + businessMap);
+		} catch (Exception e) {
+			throw new FlowException("调用业务系统查询业务变量返回异常:url=" + requestUrl + "参数=" + JacksonUtils.toJson(params) + "返回值=" + businessReturnStr, e);
+		}
+	}
+	
+	public void test() {
+//		ApplicationContext context = 
+//			    new ClassPathXmlApplicationContext(new String[] {"applicationContext.xml"});  
+//		FlServiceImpl service = context.getBean(FlServiceImpl.class);
+		String url = "http://192.168.3.134:8080/platform-app/sys/base/customFormInstance/getVariable";
+		String businessId = "8bfddef3b1504d08b5ed4a04c6ed134f";
+		String businessObjectCode = "xm21";
+		String flCode = "";
+		List<Object> phoneAttachment = new ArrayList<Object>();
+		this.getBusinessVariableValue(url, businessId, businessObjectCode, 
+				flCode, new HashMap<String, Object>(), 
+				new ArrayList<Object>(), new ArrayList<Object>(), phoneAttachment);
+	}
+	
+	/**
+	 * 生成ApprovalList对象
+	 * 
+	 * @param userInfo
+	 * @param fl
+	 * @param flowTitle
+	 * @param acDtos
+	 * @param businessVariableValue
+	 * @return
+	 */
+	private List<ApprovalList> generateApprovalList(String flowTitle, List<AcDto> acDtos,
+			Map<String, Object> businessVariableValue) {
+		List<ApprovalList> approvalLists = new ArrayList<ApprovalList>();
+		for (AcDto acDto : acDtos) {
+			if (!"4".equals(acDto.getAcType()) && !"5".equals(acDto.getAcType())) {
+				List<FlowPostParticipantDto> posts = acDto.getFlowPostParticipantDtos();
+				if (posts != null && posts.size() > 0) {
+					for (FlowPostParticipantDto post : posts) {
+						ApprovalList approvalList = new ApprovalList();
+						approvalList.setInstanceName(flowTitle);
+						approvalList.setAcId(acDto.getId());
+						approvalList.setAcName(acDto.getName());
+						approvalList.setAcType(acDto.getAcType());
+						approvalList.setPostId(post.getPostId());
+						approvalList.setPostName(post.getPostPrefixName());
+						approvalList.setApproverId(post.getUserId());
+						approvalList.setApproverName(post.getUserName());
+						Boolean isAddLabel = acDto.getIsAddLabel();
+						if(isAddLabel == null) {
+							approvalList.setSetApproverWhenStart(false);
+							
+						} else {
+							approvalList.setSetApproverWhenStart(isAddLabel);
+						}
+						log.info("流程发起时环节审批人是否手动指定：acName=" + acDto.getName() + ":" + isAddLabel);
+						approvalLists.add(approvalList);
+					}
+				} else {
+					ApprovalList approvalList = new ApprovalList();
+					approvalList.setInstanceName(flowTitle);
+					approvalList.setAcId(acDto.getId());
+					approvalList.setAcName(acDto.getName());
+					approvalList.setAcType(acDto.getAcType());
+					
+					Boolean isAddLabel = acDto.getIsAddLabel();
+					if(isAddLabel == null) {
+						approvalList.setSetApproverWhenStart(false);
+						
+					} else {
+						approvalList.setSetApproverWhenStart(isAddLabel);
+					}
+					log.info("流程发起时环节审批人是否手动指定：acName=" + acDto.getName() + ":" + isAddLabel);
+
+					approvalLists.add(approvalList);
+				}
+			}
+		}
+		return approvalLists;
+	}	
+	/**
+	 * 结构化人员岗位信息
+	 * @param flowPostParticipantDtos
+	 * @return
+	 */
+	private static String processAcPosts(List<FlowPostParticipantDto> flowPostParticipantDtos) {
+		Map<String, PostDto> postMap = new LinkedHashMap<String, PostDto>();
+		for (FlowPostParticipantDto flowPostParticipantDto : flowPostParticipantDtos) {
+			Map<String, UserDto> userMap = new HashMap<String, UserDto>();
+			PostDto postDto = new PostDto();
+			postDto.setId(flowPostParticipantDto.getPostId());
+			postDto.setName(flowPostParticipantDto.getPostPrefixName());
+			for (FlowPostParticipantDto flowPostParticipantDto1 : flowPostParticipantDtos) {
+				if (flowPostParticipantDto1.getPostId().equals(flowPostParticipantDto.getPostId())) {
+					UserDto userDto = new UserDto();
+					userDto.setId(flowPostParticipantDto1.getUserId());
+					userDto.setName(flowPostParticipantDto1.getUserName());
+					userMap.put(userDto.getId(), userDto);
+				}
+			}
+			postDto.setUsers(new ArrayList<UserDto>(userMap.values()));
+			postMap.put(postDto.getId(), postDto);
+		}
+		return JacksonUtils.toJson(postMap.values());
+	}
+	
+	/**
+	 * 翻译流程标题
+	 * 
+	 * @param flTitle
+	 * @param businessVariableMap
+	 * @return
+	 */
+	@SuppressWarnings("finally")
+	public String parseFlowTitle(Fl fl, Map<String, Object> businessVariableMap) {
+		StringBuffer flowTitle = new StringBuffer();
+		try {
+			BusinessObject businessObject = businessObjectService.getObjectById(fl.getBusinessObjectId());
+			
+			flowTitle.append("【"+businessObject.getName()+"】");
+			int index = 0;
+			Pattern pat = Pattern.compile("@[^@]*@");
+			Matcher mat = pat.matcher(fl.getFlowTitle());
+			while (mat.find()) {
+				String varName = mat.group(0).replaceAll("@", "");
+				Object obj = businessVariableMap.get(varName);
+				if(obj != null && !obj.toString().equals("")) {
+					if(index==0){//第一个变量去掉-
+						flowTitle.append(obj);
+					}else{
+						flowTitle.append("-").append(obj);
+					}
+					index++;
+				}
+			}
+		} catch (Exception e) {
+
+		}finally{
+			return flowTitle.toString();
+		}
+	}
+
+	@Override
+	public List<FlDto> queryViewList(Map<String, String> paraMap) {
+		return flDao.queryViewList(paraMap);
+	}
+
+	@Override
+	public List<FlDto> queryFlowBusiObjectList(Map<String, String> paramMap) {
+		return flDao.queryFlowBusiObjectList(paramMap);
+	}
+	@Override
+	public Map<String, String>  getFlowRetractForInstance(Map<String, String> map){
+		return flDao.getFlowRetractForInstance(map);
+	}
+
+	@Override
+	public List<String> queryFlByApprover(String userId) {
+		List<String> posts = queryPostBy(userId);
+		List<String> roles = queryRoleBy(userId);
+		List<String> params = new ArrayList<String>();
+		params.add(userId);
+		params.addAll(posts);
+		params.addAll(roles);
+		return flDao.queryFlListBy(params);
+	}
+
+	@Override
+	public List<String> queryPostBy(String userId) {
+		SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+		String userInfo = JacksonUtils.toJson(userBeanInfo);
+		Map<String, Object> paramater = new HashMap<String, Object>();
+		paramater.put("userId", userId);
+		paramater.put("searchType", "Post");
+		String dubboResultInfo;
+		try {
+			dubboResultInfo = orgnazationDtoServiceCustomer.getUserRPOMInfoByUserId(userInfo, JacksonUtils.toJson(paramater));
+		} catch (Exception e) {
+			throw new FlowException("调用权限接口查询指定人员异常", e);
+		}
+		DubboServiceResultInfo resultInfo = JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+		List<String> postIds = new ArrayList<String>();
+		if(resultInfo.isSucess()) {
+			AuthenticationDto authenticationDto = JacksonUtils.fromJson(resultInfo.getResult(), AuthenticationDto.class);
+			List<com.xinleju.platform.sys.org.dto.PostDto> postDtoList = authenticationDto.getPostDtoList();
+			for(com.xinleju.platform.sys.org.dto.PostDto post : postDtoList) {
+				postIds.add(post.getId());
+			}
+		}
+		return postIds;
+	}
+
+	@Override
+	public List<String> queryRoleBy(String userId) {
+		SecurityUserBeanInfo userBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+		String userInfo = JacksonUtils.toJson(userBeanInfo);
+		Map<String, Object> paramater = new HashMap<String, Object>();
+		paramater.put("userId", userId);
+		paramater.put("searchType", "Role");
+		String dubboResultInfo;
+		try {
+			dubboResultInfo = orgnazationDtoServiceCustomer.getUserRPOMInfoByUserId(userInfo, JacksonUtils.toJson(paramater));
+		} catch (Exception e) {
+			throw new FlowException("调用权限接口查询指定人员角色异常", e);
+		}
+		DubboServiceResultInfo resultInfo = JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+		List<String> roleIds = new ArrayList<String>();
+		if(resultInfo.isSucess()) {
+			AuthenticationDto authenticationDto = JacksonUtils.fromJson(resultInfo.getResult(), AuthenticationDto.class);
+			List<StandardRoleDto> roleDtoList = authenticationDto.getStandardRoleDtoList();
+			for(StandardRoleDto role : roleDtoList) {
+				roleIds.add(role.getId());
+			}
+		}
+		return roleIds;
+	}
+	
+	/**
+	 * 变量类型适配
+	 * 
+	 * @param variables
+	 * @param value
+	 */
+	private Map<String, Object> variableTypeAdapter(List<BusinessObjectVariableDto> variables, Map<String, Object> value) {
+		for (String key : value.keySet()) {
+			for (BusinessObjectVariableDto variableDto : variables) {
+				if (key.equals(variableDto.getCode())) {
+					Object object = value.get(key);
+					if(object instanceof Double) {
+						value.put(key, ((Double) object).doubleValue());
+						continue;	
+					}
+					if(object instanceof Integer) {
+						value.put(key, ((Integer) object).intValue());
+						continue;	
+					}
+					if(object instanceof Date) {
+						value.put(key, object);
+						continue;	
+					}
+					if(object instanceof Float) {
+						value.put(key, object);
+						continue;	
+					}
+					if(object == null || StringUtils.isEmpty((String)object)) {
+						continue;
+					}
+					try {
+						// 变量类型: 1:字符串，2:整数，3:浮点数,4:布尔，5:日期，6:日期(带秒)
+						if (variableDto.getType().equals("1")) {
+							value.put(key, (String) object);
+						} else if (variableDto.getType().equals("2")) {
+//							value.put(key, Integer.parseInt((String) object));
+							//去掉字符串中的逗号
+							value.put(key, Integer.parseInt(object.toString().replace(",", "")));
+						} else if (variableDto.getType().equals("3")) {
+//							value.put(key, Float.parseFloat((String) object));
+							value.put(key, Float.parseFloat(object.toString().replace(",", "")));
+						} else if (variableDto.getType().equals("4")) {
+							value.put(key, Boolean.parseBoolean((String) object));
+						} else if (variableDto.getType().equals("5")) {
+							//value.put(key, DateUtils.parseDate((String) object, "yyyy-MM-dd HH:mm"));
+							//因为传进来的是字符串,所以不需要在转换
+							value.put(key, (String) object);
+						} else if (variableDto.getType().equals("6")) {
+							//value.put(key, DateUtils.parseDate((String) object, "yyyy-MM-dd HH:mm:ss"));
+							//因为传进来的是字符串,所以不需要在转换
+							value.put(key, (String) object);
+						}
+					} catch (Exception e) {
+						throw new FlowException(
+								"流程发起过程中，业务变量类型转换异常：type=" + variableDto.getType() + ", value=" + object, e);
+					}
+				}
+			}
+		}
+		return value;
+	}
+	
+}	

@@ -1,0 +1,189 @@
+/**
+ * 
+ */
+package com.jzy.hio.platform.running.service.impl;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.entity.RunningPraise;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.platform.constant.UserOrFriendConstant;
+import com.jzy.hio.platform.dto.userinfo.ImUserInfoDto;
+import com.jzy.hio.platform.running.dto.RunningPraiseDto;
+import com.jzy.hio.platform.running.mapper.RunningPraiseMapper;
+import com.jzy.hio.platform.running.service.RunningPraiseService;
+import com.jzy.hio.platform.userinfo.service.UserInfoService;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.sys.organization.dto.OrganizationDto;
+import com.jzy.hio.sys.organization.dto.SkyDriveDto;
+import com.jzy.hio.sys.organization.param.SkyDriveParam;
+
+/**
+ * 运动点赞
+ * @author 马长习
+ * @date 2017年10月30日
+ */
+@Service
+public class RunningPraiseServiceImpl extends BaseServiceImpl<RunningPraise> implements RunningPraiseService {
+	
+	@Autowired
+	private RunningPraiseMapper runningPraiseMapper;
+	
+	@Autowired
+	private UserInfoService userInfoService;
+	
+	@Autowired
+	private SysFeignService sysFeignService;
+	
+	/* (non-Javadoc)
+	 * @see com.xyre.www.api.service.RunningPraiseService#getRunningPraise(java.lang.String, java.lang.String, int)
+	 */
+	@Override
+	public List<RunningPraiseDto> getRunningPraise(String enterpriseId, String uid, int praiseType, String praiseDate) {
+		List<RunningPraise> praiseList = null;
+		List<RunningPraiseDto> runPraiseList = new ArrayList<RunningPraiseDto>();
+		if(1 == praiseType){
+			praiseList = runningPraiseMapper.getRunningPraiseForOthers(enterpriseId, uid, praiseDate);
+			if(praiseList != null){
+				for(RunningPraise praise : praiseList){
+					RunningPraiseDto praiseDto = new RunningPraiseDto();
+					BeanUtils.copyProperties(praise, praiseDto);
+					if(Base.isNotEmpty(praise.getPraiseTime())){
+						praiseDto.setPraiseTime(praise.getPraiseTime().getTime());
+					}
+					runPraiseList.add(praiseDto);
+				}
+				return runPraiseList;
+			}else{
+				return null;
+			}
+		}else{
+			praiseList = runningPraiseMapper.getMyRunningPraise(enterpriseId, uid, praiseDate);
+			if(praiseList != null){
+				for(RunningPraise praise : praiseList){
+					RunningPraiseDto praiseDto = new RunningPraiseDto();
+					BeanUtils.copyProperties(praise, praiseDto);
+					if(Base.isNotEmpty(praise.getPraiseTime())){
+						praiseDto.setPraiseTime(praise.getPraiseTime().getTime());
+					}
+					String praiseUid = praise.getPraiseUid();
+					String userJson = JedisUtil.fetchRow(UserOrFriendConstant.IM_USER_INFO, praiseUid);
+					ImUserInfoDto userDto = new ImUserInfoDto();
+					if(StringUtils.isBlank(userJson)) {
+						userDto = userInfoService.getUserInfoById(praiseUid);
+					}else {
+						userDto = json2obj(userJson, ImUserInfoDto.class);
+					}
+					
+					praiseDto.setPraiseUserHeadUrl(userDto.getResourceImgUrl());
+					praiseDto.setGender(userDto.getSex());
+					
+					ApiFeignResponse<String> response = sysFeignService.queryOaUserIdByImUserId(userDto.getId(), enterpriseId);
+					//名称 非昵称
+					if(Base.isNotEmpty(response) && Base.isNotEmpty(response.getResult())){
+						//获取用户名称
+						String userName = this.selectUserNameByTendIdAndStatus(response.getResult(),enterpriseId,3);
+						praiseDto.setPraiseUserName(userName);
+					}else{
+						praiseDto.setPraiseUserName(userDto.getName());
+					}		
+					
+					ApiFeignResponse<List<OrganizationDto>> orgResponse = sysFeignService.queryOrganizationsByUserId(enterpriseId, response.getResult());
+					List<OrganizationDto> orgList = orgResponse.getResult();
+					if(orgList != null && orgList.size() > 0) {
+						for(OrganizationDto org : orgList) {
+							if(org.isDefault()) {
+								praiseDto.setPraiseUserOrgName(org.getName());
+								break;
+							}
+						}
+					}
+					runPraiseList.add(praiseDto);
+				}
+				return runPraiseList;
+			}else{
+				return null;
+			}
+		}
+	}
+	
+	/**
+	 * 
+	 * <p>根据status 人员查询状态控制--->
+	 * 0 表示查询正常状态人员(不包含删除以及离职的)；
+	 * 1表示查询包含离职人员但不包含删除的；
+	 * 2表示查询包含删除但不包含离职的；
+	 * 3表示不需要状态（包含删除以及离职的）
+	 * @author wliang
+	 * @date 2018年7月18日 下午7:25:30 
+	 * @param userId
+	 * @param tendId
+	 * @param status
+	 * @return
+	 */
+	private String selectUserNameByTendIdAndStatus(String userId, String tendId,int status) {
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用selectUserNameByTendIdAndStatus feign接口开始>>>>userId:>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>>>", userId);
+		
+		String userName = null;
+		if (Base.isNotEmpty(userId)) {
+			List<String> userIdList = new ArrayList<String>();
+			userIdList.add(userId);
+			SkyDriveParam skyDriveParam = new SkyDriveParam();
+			skyDriveParam.setUserIds(userIdList);
+			skyDriveParam.setTendId(tendId);
+			skyDriveParam.setStatus(status);
+			ApiFeignResponse<List<SkyDriveDto>> apiFeignResponse = sysFeignService.queryNameByOrgAndRoleAndUser(skyDriveParam);
+			if (Base.isNotEmpty(apiFeignResponse)) {
+				if (Base.isEquals(200,apiFeignResponse.getStatus())) {
+					List<SkyDriveDto> skyDriveDtoList = apiFeignResponse.getResult();
+					if (Base.isNotEmpty(skyDriveDtoList)) {
+						userName = skyDriveDtoList.get(0).getName();
+					}
+				} else {
+					throw new HioException("调用selectUserNameByTendIdAndStatus feign接口失败" + apiFeignResponse.getMessage());
+				}
+
+			}
+		}
+
+		logger.info(">>>>>>>>>>>>>>>>>>>>调用selectUserNameByTendIdAndStatus feign接口结束>>>>>userName:>>>>{}>>>>>>>>>>>>>>>>>>>>>>>>>>>", userName);
+		return userName;
+	}
+
+	@Override
+	public void saveRunningPraise(RunningPraise runPraise) {
+		super.save(runPraise);
+	}
+	
+	@Override
+	public boolean isPraiseForUser(String enterpriseId, String praiseUid, String bePraisedUid, String praiseDate){
+		return runningPraiseMapper.isPraiseForUser(enterpriseId, praiseUid, bePraisedUid, praiseDate);
+	}
+
+	@Override
+	public void deleteRunningPraise(String enterpriseId, String praiseUid, String bePraisedUid, String praiseDate) {
+		runningPraiseMapper.deleteRunningPraise(enterpriseId, praiseUid, bePraisedUid, praiseDate);
+	}
+	
+	@Override
+	public void deletePraise(String enterpriseId, String praiseDate){
+		runningPraiseMapper.deletePraise(enterpriseId, praiseDate);
+	}
+	
+	@Override
+	public void deleteExpiredPraise(String runMonth) {
+		runningPraiseMapper.deleteExpiredPraise(runMonth);
+	}
+
+}

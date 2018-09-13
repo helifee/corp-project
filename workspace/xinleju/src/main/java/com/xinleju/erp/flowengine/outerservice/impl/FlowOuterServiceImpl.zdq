@@ -1,0 +1,318 @@
+package com.xinleju.erp.flowengine.outerservice.impl;
+
+import java.util.LinkedList;
+import java.util.List;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.flow.flowutils.bean.DebugInfo;
+import com.xinleju.erp.flow.flowutils.bean.FlowResult;
+import com.xinleju.erp.flow.service.api.extend.FlowOuterService;
+import com.xinleju.erp.flow.service.api.extend.dto.UserDTO;
+import com.xinleju.erp.flowengine.dao.FlowInstanceDao;
+import com.xinleju.erp.flowengine.dao.FlowInstanceStepDao;
+import com.xinleju.erp.flowengine.dto.FlowInstanceStepDto;
+import com.xinleju.erp.flowengine.models.FlowInstance;
+import com.xinleju.erp.flowengine.models.FlowInstanceStep;
+import com.xinleju.erp.flowengine.models.FlowInstanceStepWork;
+import com.xinleju.erp.flowengine.models.FlowInstanceStepWorkTask;
+import com.xinleju.erp.flowengine.service.FlowInstanceFiService;
+import com.xinleju.erp.flowengine.service.FlowInstanceStepService;
+import com.xinleju.erp.flowengine.utils.FlowInstanceConstant;
+import com.xinleju.erp.flowengine.utils.FlowInstanceStatus;
+import com.xinleju.erp.flowengine.utils.StepTypeStatus;
+import com.xinleju.erp.flowengine.utils.TaskTypeStatus;
+
+@Service
+public class FlowOuterServiceImpl  extends BaseService  implements FlowOuterService {
+	
+	private static Logger logger = Logger.getLogger(FlowOuterServiceImpl.class);
+	
+	@Autowired
+	private FlowInstanceDao flowInstanceDao;
+	
+	@Autowired
+	private FlowInstanceFiService flowInstanceFiService;
+	@Autowired
+	private FlowInstanceStepService flowInstanceStepService;
+	
+	@Autowired
+	private FlowInstanceStepDao flowInstanceStepDao;
+	@Override
+	public FlowResult<Boolean> giveBackFiNew(String bizId, String flowCode,
+			String endTag, Long userId) {
+		// TODO Auto-generated method stub
+		FlowResult<Boolean>  flowResult=new FlowResult<Boolean> ();
+		try {
+			FlowInstance flowInstance = flowInstanceFiService.getflowInstanceByFlowCodeAndBizId(bizId, flowCode, FlowInstanceStatus.STATUS_RUNNING);
+			boolean flag=false;
+			if(flowInstance!=null){
+				FlowInstanceStep fiStep = getDao().findFirst(FlowInstanceStep.class,"fiId = ? and branchEndFlg =? and status =? ",new Object[]{flowInstance.getGuid(),endTag,StepTypeStatus.STATUS_RUNNING});
+				if(fiStep!=null){
+					List<FlowInstanceStepWork> works= fiStep.getLstFlowInstanceStepWork();
+					if(works!=null && works.size()>0){
+						for(FlowInstanceStepWork work: works){
+							List<FlowInstanceStepWorkTask> flowInstanceStepWorkTasks=	work.getLstFlowInstanceStepWorkTask();
+							if(flowInstanceStepWorkTasks!=null && flowInstanceStepWorkTasks.size()>0){
+								for(FlowInstanceStepWorkTask flowInstanceStepWorkTask :flowInstanceStepWorkTasks){
+									if(userId!=null &&flowInstanceStepWorkTask.getParticipant().equals(userId.toString())){
+										if(flowInstanceStepWorkTask.getStatus()!=TaskTypeStatus.STATUS_COMPLETE 
+												&& flowInstanceStepWorkTask.getStatus()!=TaskTypeStatus.STATUS_OVERDUE){
+											UserDTO currUser=new UserDTO();
+											currUser.setId(Long.valueOf(flowInstanceStepWorkTask.getParticipant()));
+											currUser.setLoginName(flowInstanceStepWorkTask.getParticipantLoginName());
+											currUser.setRealName(flowInstanceStepWorkTask.getParticipantUserName());
+											flowInstanceStepWorkTask.setOpCode("BH;打回");
+											flowInstanceStepWorkTask.setUserNote("系统自动打回");
+											flowInstanceStepWorkTask.setCompleteUserId(Long.valueOf(flowInstanceStepWorkTask.getParticipant()));
+											flowInstanceStepWorkTask.setCompleteUserLoginName(flowInstanceStepWorkTask.getParticipantLoginName());
+											flowInstanceStepWorkTask.setCompleteUserName(flowInstanceStepWorkTask.getParticipantUserName());
+											//获取流程首节点
+											List<FlowInstanceStepDto>  flowInstanceStepDtos= flowInstanceStepDao.getFlowInstanceStepDtoByFiId(flowInstance.getGuid());
+											for(FlowInstanceStepDto flowInstanceStepDto :flowInstanceStepDtos){
+												
+												FlowInstance flowInstanceBack =getDao().getById(FlowInstance.class,flowInstance.getGuid());
+												flowInstanceStepService.tryBacktoFlowInstanceStep(flowInstanceBack,fiStep,work,flowInstanceStepWorkTask,flowInstanceStepDto.getGuid(),true,currUser);
+												flag=true;
+												break;
+											}
+									}
+								 }
+								}
+							}
+						}
+					}
+				}
+			
+			}
+			
+			if(flag){
+				flowResult.setResult(true);
+			}else{
+				DebugInfo debugInfo=new DebugInfo();
+				flowResult.setResult(false);
+				flowResult.setDebugInfo(debugInfo);
+			}
+			
+		} catch (Exception e) {
+			logger.error("系统自动驳回发生异常",e);
+			DebugInfo debugInfo=new DebugInfo();
+			flowResult.setResult(false);
+			flowResult.setDebugInfo(debugInfo);
+		}
+
+		return flowResult;
+	}
+
+	@Override
+	public FlowResult<Boolean> finishFiBranchNew(String bizId, String flowCode,
+			String endTag, Long userId) {
+		// TODO Auto-generated method stub
+		FlowResult<Boolean>  flowResult=new FlowResult<Boolean> ();
+		try {
+			FlowInstance flowInstance = flowInstanceFiService.getflowInstanceByFlowCodeAndBizId(bizId, flowCode, FlowInstanceStatus.STATUS_RUNNING);
+			boolean flag=false;
+			if(flowInstance!=null){
+				FlowInstanceStep fiStep = getDao().findFirst(FlowInstanceStep.class,"fiId = ? and branchEndFlg =? and status =? ",new Object[]{flowInstance.getGuid(),endTag,StepTypeStatus.STATUS_RUNNING});
+				if(fiStep!=null){
+				List<FlowInstanceStepWork> works= fiStep.getLstFlowInstanceStepWork();
+				if(works!=null && works.size()>0){
+					for(FlowInstanceStepWork work: works){
+						List<FlowInstanceStepWorkTask> flowInstanceStepWorkTasks=	work.getLstFlowInstanceStepWorkTask();
+						if(flowInstanceStepWorkTasks!=null && flowInstanceStepWorkTasks.size()>0){
+							for(FlowInstanceStepWorkTask flowInstanceStepWorkTask :flowInstanceStepWorkTasks){
+								if(userId!=null &&flowInstanceStepWorkTask.getParticipant().equals(userId.toString())){
+									UserDTO currUser=new UserDTO();
+									currUser.setId(Long.valueOf(flowInstanceStepWorkTask.getParticipant()));
+									currUser.setLoginName(flowInstanceStepWorkTask.getParticipantLoginName());
+									currUser.setRealName(flowInstanceStepWorkTask.getParticipantUserName());
+									flowInstanceStepWorkTask.setOpCode("TG;通过");
+									flowInstanceStepWorkTask.setUserNote("系统自动通过");
+									flowInstanceStepWorkTask.setCompleteUserId(Long.valueOf(flowInstanceStepWorkTask.getParticipant()));
+									flowInstanceStepWorkTask.setCompleteUserLoginName(flowInstanceStepWorkTask.getParticipantLoginName());
+									flowInstanceStepWorkTask.setCompleteUserName(flowInstanceStepWorkTask.getParticipantUserName());
+									flowInstanceStepService.tryComplementFlowInstanceStep(fiStep,work,flowInstanceStepWorkTask,currUser);
+									flag=true;
+									break;
+								}
+							}
+						}
+					}
+				}
+				}
+			}
+			
+			if(flag){
+				flowResult.setResult(true);
+			}else{
+				DebugInfo debugInfo=new DebugInfo();
+				flowResult.setResult(false);
+				flowResult.setDebugInfo(debugInfo);
+			}
+			
+		} catch (Exception e) {
+			logger.error("系统自动通过发生异常",e);
+			// TODO Auto-generated catch block
+			DebugInfo debugInfo=new DebugInfo();
+			flowResult.setResult(false);
+			flowResult.setDebugInfo(debugInfo);
+		}
+		
+		
+		return flowResult;
+	}
+	
+	@Override
+	public FlowResult<Boolean> isFiComplete(String flowCode, String bizId) {
+		
+		logger.info("isFiComplete start");
+		
+		FlowResult<Boolean> result = new FlowResult<Boolean>();
+		LinkedList<String> lstErrorInfoList = new LinkedList<String>();
+		if(StringUtils.isBlank(bizId)){
+			lstErrorInfoList.add("业务ID为空");
+		}
+		if(StringUtils.isBlank(flowCode)){
+			lstErrorInfoList.add("流程编码为空");
+		}
+		if(lstErrorInfoList.size()>0){
+			
+			DebugInfo debugInfo = new DebugInfo();
+			debugInfo.setErrDesc(lstErrorInfoList);
+			result.faliure();
+			result.setDebugInfo(debugInfo);
+			
+			return result;
+		}
+		
+		logger.info("flowCode=["+flowCode+"],bizId=["+bizId+"]");
+		
+		try {
+			Integer fiCount = flowInstanceDao.getNoSubmitFi(flowCode, bizId, FlowInstanceStatus.STATUS_RUNNING);
+			if(fiCount == null || fiCount == 0){
+				result.setResult(true);
+			}else{
+				result.setResult(false);
+			}
+			logger.info("result=["+result.getResult()+"]");
+			result.success();
+		} catch (Exception e) {
+			logger.error("isFiComplete", e);
+			result.faliure();
+		}
+		
+		logger.info("isFiComplete end");
+		return result;
+	}
+	
+	@Override
+	public FlowResult<Boolean> isExistsRunningProofreadStep(String bizId, String flowCode,Long currLoginName) {
+		
+		logger.info("isExistsRunningProofreadStep start");
+		
+		FlowResult<Boolean> result = new FlowResult<Boolean>();
+		
+		LinkedList<String> lstErrorInfoList = new LinkedList<String>();
+		if(StringUtils.isBlank(bizId)){
+			lstErrorInfoList.add("业务ID为空");
+		}
+		if(StringUtils.isBlank(flowCode)){
+			lstErrorInfoList.add("流程编码为空");
+		}
+		if(currLoginName == null){
+			lstErrorInfoList.add("当前登录账号为空");
+		}
+		if(lstErrorInfoList.size()>0){
+			DebugInfo debugInfo = new DebugInfo();
+			debugInfo.setErrDesc(lstErrorInfoList);
+			result.faliure();
+			result.setDebugInfo(debugInfo);
+			return result;
+		}
+		logger.info("bizId=[" + bizId + "],flowCode=[" + flowCode+"],currLoginName=["+currLoginName+"]");
+		try {
+			Integer proofreadStepCont = getDao().findIntBySQL("SELECT\n" +
+					"	COUNT(1)\n" +
+					"FROM\n" +
+					"	tf_fl fl,\n" +
+					"	flow_instance fi,\n" +
+					"	flow_instance_step fis,\n" +
+					"	flow_instance_step_work fisw,\n" +
+					"	flow_instance_step_work_task fiswt\n"+
+					"WHERE\n" +
+					"	fl.id = fi.fl_id\n" +
+					"AND fi.guid = fis.fi_id\n" +
+					"AND fis.guid = fisw.step_id\n" +
+					"AND fisw.guid = fiswt.work_id\n" +
+					"AND fl.flow_code = ?\n" +
+					"AND fi.biz_id = ?\n" +
+					"AND fiswt.participant = ?\n" +
+					"AND fis.approval_code = 'JG'\n" +
+					"AND fi.status = 1\n" +
+					"AND fis.status = 1\n" +
+					"AND fisw.status = 1\n" +
+					"AND fiswt.status = 1",
+					flowCode,bizId, currLoginName);
+			logger.info("proofreadStepCont=[" + proofreadStepCont + "]");
+			if (proofreadStepCont == FlowInstanceConstant.NO_EXISTS_RUNNING_PROOFREAD_STEP) {
+				result.setResult(false);
+			} else {
+				result.setResult(true);
+			}
+		} catch (Exception ex) {
+			result.faliure();
+			logger.error("isExistsRunningProofreadStep error",ex);
+		}
+		
+		logger.info("isExistsRunningProofreadStep end");
+		
+		return result;
+	}
+	
+	@Override
+	public FlowResult<Boolean> isExistsFi(String bizId, String flowCode) {
+		
+		logger.info("isExistsFi start");
+		
+		FlowResult<Boolean> result = new FlowResult<Boolean>();
+		
+		LinkedList<String> lstErrorInfoList = new LinkedList<String>();
+		if(StringUtils.isBlank(bizId)){
+			lstErrorInfoList.add("业务ID为空");
+		}
+		if(StringUtils.isBlank(flowCode)){
+			lstErrorInfoList.add("流程编码为空");
+		}
+		if(lstErrorInfoList.size()>0){
+			DebugInfo debugInfo = new DebugInfo();
+			debugInfo.setErrDesc(lstErrorInfoList);
+			result.faliure();
+			result.setDebugInfo(debugInfo);
+			return result;
+		}
+		logger.info("bizId=[" + bizId + "],flowCode=[" + flowCode+"]");
+		try {
+			
+			// 通过流程编码和业务ID判断是否存在流程实例
+			List<String> lstBizId = flowInstanceDao.getNewestFlowBizId(bizId, flowCode);
+			if (lstBizId == null || lstBizId.size() == 0) {
+				result.setResult(false);
+			} else {
+				result.setResult(true);
+			}
+			
+		} catch (Exception ex) {
+			result.faliure();
+			logger.error("isExistsFi error",ex);
+		}
+		
+		logger.info("isExistsFi end");
+		
+		return result;
+	}
+
+}

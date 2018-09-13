@@ -1,0 +1,38 @@
+package com.xinleju.platform.flow.enumeration;
+
+/**
+ * 流程监控类型
+ * 
+ * @author daoqi
+ *
+ */
+public enum FlowMonitorType {
+
+	PERSON("按人员", "1"), 
+	TEMPLATE("按模板", "2"), 
+	EXCEPTION("按异常", "3");
+
+	private String name;
+	private String value;
+
+	private FlowMonitorType(String name, String value) {
+		this.name = name;
+		this.value = value;
+	}
+
+	public String getName() {
+		return name;
+	}
+
+	public void setName(String name) {
+		this.name = name;
+	}
+
+	public String getValue() {
+		return value;
+	}
+
+	public void setValue(String value) {
+		this.value = value;
+	}
+}

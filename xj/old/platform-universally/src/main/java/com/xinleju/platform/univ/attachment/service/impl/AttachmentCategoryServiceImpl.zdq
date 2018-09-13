@@ -1,0 +1,34 @@
+package com.xinleju.platform.univ.attachment.service.impl;
+
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.univ.attachment.dao.AttachmentCategoryDao;
+import com.xinleju.platform.univ.attachment.entity.AttachmentCategory;
+import com.xinleju.platform.univ.attachment.service.AttachmentCategoryService;
+
+/**
+ * @author haoqp
+ * 
+ * 
+ */
+@Transactional
+@Service
+public class AttachmentCategoryServiceImpl extends  BaseServiceImpl<String,AttachmentCategory> implements AttachmentCategoryService{
+	
+
+	@Autowired
+	private AttachmentCategoryDao attachmentCategoryDao;
+
+	@Override
+	public int getCountOfCodeForUpdate(Map<String, Object> parameter) throws Exception {
+		int count = attachmentCategoryDao.getCount(AttachmentCategory.class.getName() + ".getCountOfCodeForUpdate", parameter);
+		return count;
+	}
+	
+
+}

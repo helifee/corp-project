@@ -1,0 +1,41 @@
+package com.xinleju.platform.finance.dao.impl;
+
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.platform.base.dao.impl.BaseDaoImpl;
+import com.xinleju.platform.finance.dao.CashFlowItemDao;
+import com.xinleju.platform.finance.dto.CashFlowItemDto;
+import com.xinleju.platform.finance.entity.CashFlowItem;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Repository
+public class CashFlowItemDaoImpl extends BaseDaoImpl<String,CashFlowItem> implements CashFlowItemDao{
+
+	public CashFlowItemDaoImpl() {
+		super();
+	}
+
+	@Override
+	public List<Map<String, Object>> queryTreeList(Map<String, Object> map) {
+		return  getSqlSession().selectList("com.xinleju.platform.finance.entity.CashFlowItem.queryTreeList", map);
+	}
+
+	@Override
+	public List<CashFlowItem> queryBudgetcapByBudget(Map<String, Object> map){
+		return  getSqlSession().selectList("com.xinleju.platform.finance.entity.CashFlowItem.getpageList", map);
+	}
+
+	@Override
+	public List<CashFlowItem> queryCashFlowItemList(Map<String, Object> map) {
+		return  getSqlSession().selectList("com.xinleju.platform.finance.entity.CashFlowItem.queryCashFlowItemList", map);
+	}
+	
+}

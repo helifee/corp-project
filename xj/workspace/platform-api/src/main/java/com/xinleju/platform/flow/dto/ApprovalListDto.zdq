@@ -1,0 +1,40 @@
+package com.xinleju.platform.flow.dto;
+
+import java.util.List;
+
+import org.apache.commons.lang.builder.ReflectionToStringBuilder;
+import org.apache.commons.lang.builder.ToStringStyle;
+
+/**
+ * 审批信息列表
+ * 
+ * @author daoqi
+ *
+ */
+public class ApprovalListDto {
+	
+	private String customFormURL;
+	
+	private List<ApprovalList> list;
+
+	@Override
+	public String toString() {
+		return ReflectionToStringBuilder.toString(this, ToStringStyle.MULTI_LINE_STYLE);
+	}
+
+	public String getCustomFormURL() {
+		return customFormURL;
+	}
+
+	public void setCustomFormURL(String customFormURL) {
+		this.customFormURL = customFormURL;
+	}
+
+	public List<ApprovalList> getList() {
+		return list;
+	}
+
+	public void setList(List<ApprovalList> list) {
+		this.list = list;
+	}
+}

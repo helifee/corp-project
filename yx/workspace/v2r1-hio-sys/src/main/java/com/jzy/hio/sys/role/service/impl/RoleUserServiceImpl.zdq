@@ -1,0 +1,306 @@
+package com.jzy.hio.sys.role.service.impl;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.annotation.DataSource;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.service.impl.BaseSysServiceImpl;
+import com.jzy.hio.entity.OaSysRole;
+import com.jzy.hio.entity.OaSysRoleUser;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.redis.service.RedisSetService;
+import com.jzy.hio.sys.app.service.AppUserService;
+import com.jzy.hio.sys.message.MessageService;
+import com.jzy.hio.sys.role.dto.RoleUserDto;
+import com.jzy.hio.sys.role.mapper.RoleUserMapper;
+import com.jzy.hio.sys.role.service.RoleService;
+import com.jzy.hio.sys.role.service.RoleUserService;
+
+import tk.mybatis.mapper.entity.Example;
+
+/**
+ * 组织机构
+ *
+ * @author wt.coffee<br />
+ *         2018年3月8日下午1:02:17
+ */
+@Service
+public class RoleUserServiceImpl extends BaseSysServiceImpl<OaSysRoleUser> implements RoleUserService {
+
+	@Autowired
+	private RoleService roleService;
+	@Autowired
+	private RoleUserMapper roleUserMapper;
+	@Autowired
+	private RedisSetService redisSetService;
+	@Autowired
+	private AppUserService appUserService;
+	@Autowired
+	private MessageService messageService;
+
+	/**
+	 * 权限变更以后 同步表oa_sys_app_user、发送通知
+	 * 
+	 * @param newUsers
+	 *            新增的用户
+	 * @param oldNews
+	 *            删除的用户
+	 */
+	private void syncAppUser(String tendId, List<OaSysRoleUser> newUsers, List<OaSysRoleUser> oldUsers) {
+		List<OaSysRoleUser> allUsers = new ArrayList<>();
+		if (isNotEmpty(oldUsers)) {
+			allUsers.addAll(oldUsers);
+		}
+		if (isNotEmpty(newUsers)) {
+			allUsers.addAll(newUsers);
+		}
+		if (isNotEmpty(allUsers)) {
+			Set<String> userIds = new HashSet<>();
+			for (OaSysRoleUser roleUser : allUsers) {
+				userIds.add(roleUser.getUserId());
+			}
+			appUserService.deleteWithoutRole(tendId, userIds);
+			// 通知用户app权限变更
+			messageService.noticeAppChanage(tendId,allUsers);
+		}
+
+	}
+
+	/**
+	 * 这个方法需要排重
+	 */
+	@Override
+	public int saveAppendRoleUser(@DataSource String tendId, List<OaSysRoleUser> users) {
+		if (isEmpty(users)) {
+			logger.info("saveAppendRoleUser 参数为空");
+			return 0;
+		}
+		String roleId = users.get(0).getRoleId();
+		List<RoleUserDto> roleUsers = queryRoleUsers(tendId, roleId);
+		// 1、先统计当前角色的所有用户
+		Set<String> userIds = new HashSet<>();
+		for (RoleUserDto roleUser : roleUsers) {
+			userIds.add(roleUser.getUserId());
+		}
+		// 2、排重、已经包含的用户 不需要重复添加
+		for (Iterator<OaSysRoleUser> it = users.iterator(); it.hasNext();) {
+			OaSysRoleUser user = it.next();
+			if (userIds.contains(user.getUserId())) {
+				logger.info("角色{}中已经存在用户{}", roleId, user.getUserId());
+				it.remove();
+			}
+		}
+		// 3 把排重后的角色用户保存到数据库
+		saveBatch(tendId, users);
+		// 4、同步redis
+		redisSetService.addRoleUser(tendId, users);
+		// 5 同步 appUser表
+		syncAppUser(tendId, users, null);
+		return 1;
+	}
+
+	@Override
+	public int saveBatch(@DataSource String tendId, List<OaSysRoleUser> users) {
+		return this.saveBatch(users);
+	}
+
+	/**
+	 * 给用户赋权新的角色--之前的角色会被删除
+	 */
+	@Override
+	public Object saveReplaceRoleUser(@DataSource String tendId, String userId, String roleIds) {
+		List<OaSysRole> roles = roleService.queryRoleByUserId(tendId, userId);
+		List<String> newIds = new ArrayList<>();
+		newIds.addAll(Arrays.asList(roleIds.split(",")));
+		if (isEmpty(newIds)) {
+			throw new HioException("roleIds参数错误");
+		}
+		// roleId
+		List<String> oldIds = new ArrayList<>();
+		for (OaSysRole role : roles) {
+			oldIds.add(role.getId());
+		}
+		// 待添加
+		List<String> addIds = new ArrayList<>();
+		addIds.addAll(newIds);
+		addIds.removeAll(oldIds);//// 剩下的就是需要添加的role
+		// 待删除
+		List<String> delIds = new ArrayList<>();
+		delIds.addAll(oldIds);
+		delIds.removeAll(newIds);// 剩下的就是需要删除的role
+
+		List<OaSysRoleUser> addRoleUsers = new ArrayList<>();
+		for (String roleId : addIds) {
+			OaSysRoleUser user = new OaSysRoleUser();
+			user.setRoleId(roleId);
+			user.setUserId(userId);
+			addRoleUsers.add(user);
+		}
+		logger.info("先删除旧的角色{}", delIds);
+		for (String roleId : delIds) {
+			deleteByRoleIdAndUserId(roleId, userId);
+		}
+		logger.info("赋予新角色{}", addRoleUsers);
+		saveAppendRoleUser(tendId, addRoleUsers);
+		logger.info("ok");
+		return null;
+	}
+
+	@Override
+	public int saveAppendRoleUser(@DataSource String tendId, String userId, String roleIds, boolean isPusys) {
+		List<String> roleIdArr = Arrays.asList(roleIds.split(","));
+		List<OaSysRoleUser> roleUsers = new ArrayList<>();
+		for (String roleId : roleIdArr) {
+			OaSysRole oaSysRole = roleService.getObjectById(tendId, roleId);
+			if (oaSysRole == null || oaSysRole.getDelflag().intValue() == BaseConstants.MYSQL_DELFLAG_DELETED){
+				continue;
+			}
+			OaSysRoleUser roleUser = new OaSysRoleUser();
+			roleUser.setRoleId(roleId);
+			roleUser.setUserId(userId);
+			if (isPusys) {
+				roleUser.setCreatePersonId("1001");
+				roleUser.setCreatePersonName("管理员");
+				roleUser.setUpdatePersonId("1001");
+				roleUser.setUpdatePersonName("管理员");
+			}
+			roleUsers.add(roleUser);
+		}
+		this.saveAppendRoleUser(tendId, roleUsers);
+		return roleIdArr.size();
+	}
+
+	/**
+	 * redis相关的逻辑、写在调用该方法的地方
+	 */
+	@Override
+	public int deleteByRoleId(String roleId) {
+		return roleUserMapper.deleteByRoleId(roleId);
+	}
+
+	/**
+	 * 重写父类方法
+	 */
+	@Override
+	public int deleteObjectById(String id) {
+		OaSysRoleUser roleUser = getObjectById(id);
+		int result = super.deleteObjectById(id);
+		redisSetService.deleteRoleUser(getTendId(), roleUser.getRoleId(), roleUser.getUserId());
+		return result;
+	}
+
+	@Override
+	public int deleteByUserId(@DataSource String tendId, String userId) {
+		// List<OaSysRoleUser> oaSysRoleUsers = roleUserService.queryRoleUsersByUserId(tendId, oaSysUser.getId());
+		// // redis删除角色权限
+		// redisSetService.syncRole(tendId, oaSysUser.getId(), oaSysRoleUsers);
+		int result = roleUserMapper.deleteByUserId(userId);
+		if (result > 0) {
+			redisSetService.deleteRoleUserAll(tendId, userId);
+		}
+		// 同步oaSysAppUser
+		List<OaSysRoleUser> oldUsers = new ArrayList<>();
+		OaSysRoleUser user = new OaSysRoleUser();
+		user.setUserId(userId);
+		oldUsers.add(user);
+		syncAppUser(tendId, null, oldUsers);
+		return result;
+	}
+
+	@Override
+	public int deleteByRoleIdAndUserId(String roleId, String userId) {
+		Map<String, Object> map = new HashMap<>();
+		map.put("roleId", roleId);
+		map.put("userId", userId);
+		OaSysRoleUser roleUser = getObjectByExample(map);
+		if (roleUser != null) {
+			// 删除数据库
+			int result = deleteObjectById(roleUser.getId());
+			// 同步oaSysAppUser
+			List<OaSysRoleUser> oldUsers = new ArrayList<>();
+			OaSysRoleUser user = new OaSysRoleUser();
+			user.setUserId(userId);
+			oldUsers.add(user);
+			syncAppUser(getTendId(), null, oldUsers);
+			return result;
+		}
+		return 0;
+	}
+
+	@Override
+	public boolean queryIsExists(String roleId, String userId) {
+		int count = roleUserMapper.queryIsxist(roleId, userId);
+		return count > 0;
+	}
+
+	/**
+	 * 
+	 */
+	@Override
+	public boolean queryIsSuper(@DataSource String tendId, String userId) {
+		List<OaSysRoleUser> roleUsers = queryRoleUsersByUserId(tendId, userId);
+		for (OaSysRoleUser user : roleUsers) {
+			if (isEquals(user.getRoleId(), BaseConstants.MYSQL_ROLE_SUPERID)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	@Override
+	public List<RoleUserDto> queryRoleUsers(@DataSource String tendId, String roleId) {
+		Map<String, Object> paramMap = new HashMap<>();
+		paramMap.put("roleId", roleId);
+		return queryRoleUsers(paramMap);
+	}
+
+	@Override
+	public List<RoleUserDto> queryRoleUsers(Map<String, Object> paramMap) {
+		return roleUserMapper.queryRoleUsers(paramMap);
+	}
+
+	@Override
+	public List<RoleUserDto> queryRoleUserByMenuCode(String menuCode) {
+		return roleUserMapper.queryRoleUserByMenuCode(menuCode);
+	}
+
+	@Override
+	public List<OaSysRoleUser> queryRoleUsersByUserId(@DataSource String tendId, String userId) {
+		Example example = new Example(OaSysRoleUser.class);
+		Example.Criteria criteria = example.createCriteria();
+		criteria.andEqualTo("userId", userId);
+		criteria.andEqualTo("delflag", 0);
+		List<OaSysRoleUser> oaSysRoleUsers = roleUserMapper.selectByExample(example);
+		return oaSysRoleUsers;
+	}
+
+	@Override
+	public boolean queryUserCanDelete(@DataSource String tendId, String userId) {
+		// 判断当前人如果是管理员，是不是最后一个管理员；如果是最后一个管理员，不允许删除；
+		Example example = new Example(OaSysRoleUser.class);
+		Example.Criteria criteria = example.createCriteria();
+		criteria.andNotEqualTo("userId", userId);
+		criteria.andEqualTo("delflag", 0);
+		int count = roleUserMapper.selectCountByExample(example);
+		return count > 0 ? true : false;
+	}
+
+	/**
+	 * 判断是否可以删除超级管理员
+	 */
+	@Override
+	public boolean querySuperIsCanDelete(@DataSource String tendId, String userId) {
+		int result = roleUserMapper.querySuperIsCanDelete(userId);
+		return result > 0;
+	}
+}

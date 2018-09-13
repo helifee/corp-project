@@ -1,0 +1,949 @@
+package com.xinleju.platform.out.app.org.service;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.out.app.org.entity.UserAuthDataOrgList;
+import com.xinleju.platform.sys.org.dto.OrgnazationDto;
+import com.xinleju.platform.sys.org.dto.PostDto;
+import com.xinleju.platform.sys.org.service.OrgnazationService;
+import com.xinleju.platform.sys.org.service.PostService;
+import com.xinleju.platform.sys.res.utils.InvalidCustomException;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+public class OrgnazationOutServiceProducer implements OrgnazationOutServiceCustomer {
+	private static Logger log = Logger.getLogger(OrgnazationOutServiceProducer.class);
+
+	@Autowired
+	private OrgnazationService orgnazationService;
+	@Autowired
+	private PostService postService;
+	
+	
+	/**
+	 * 获取所有公司
+	 * @param userJson
+	 * @param paramJson:{isLeaf:true(如果true,返回所有公司，如果是false，返回顶级公司}
+	 * @return
+	 */
+	@Override
+	public String getAllCompanyList(String userJson, String paramJson) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			param.put("typeS", "'zb','company'");//公司和集团
+			List<OrgnazationDto> list=orgnazationService.getAllOrgListDto(param);
+			info.setResult(JacksonUtils.toJson(list));
+		    info.setSucess(true);
+		    info.setMsg("获取所有公司成功!");
+		} catch (Exception e) {
+			 log.error("获取所有公司失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取所有公司失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	
+	/**
+	 * 根据ID获取组织机构（可以多个）
+	 * @param userJson
+	 * @param paramJson:{ids}
+	 * @return
+	 */
+	@Override
+	public String getOrgsByIds(String userJson, String paramJson) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			String ids = (String)param.get("ids");
+			String orgIds[] = ids.split(",");
+			param.put("orgIds", orgIds);
+			List<OrgnazationDto> list=orgnazationService.getOrgsByIds(param);
+			info.setResult(JacksonUtils.toJson(list));
+		    info.setSucess(true);
+		    info.setMsg("获取组织机构成功!");
+		} catch (Exception e) {
+			 log.error("获取组织机构失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取组织机构失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	
+	/**
+	 * 获取所有部门
+	 * @param userJson
+	 * @param paramJson:{isLeaf:true(如果true,返回所有公司，如果是false，返回顶级公司}
+	 * @return
+	 */
+	@Override
+	public String getAllDeptList(String userJson, String paramJson) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			param.put("type", "dept");//部门
+			List<OrgnazationDto> list=orgnazationService.getAllOrgListDto(param);
+			info.setResult(JacksonUtils.toJson(list));
+			info.setSucess(true);
+			info.setMsg("获取所有部门成功!");
+		} catch (Exception e) {
+			log.error("获取所有部门失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取所有部门失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	/**
+	 * 获取所有项目
+	 * @param userJson
+	 * @param 
+	 * @return
+	 */
+	@Override
+	public String getAllProjectList(String userJson, String paramJson) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			param.put("type", "group");//项目
+			List<OrgnazationDto> list=orgnazationService.getAllOrgListDto(param);
+			info.setResult(JacksonUtils.toJson(list));
+			info.setSucess(true);
+			info.setMsg("获取所有项目成功!");
+		} catch (Exception e) {
+			log.error("获取所有项目失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取所有项目失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	/**
+	 * 获取指定公司的下级公司
+	 * @param userJson
+	 * @param paramJson:{companyIds:"指定公司Ids",isLeaf:true(如果true,返回指定公司的所有下级公司，如果是false，返回指定公司的直接公司)}
+	 * @return
+	 */
+	@Override
+	public String getChildCompanyList(String userJson, String paramJson) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			if(!param.containsKey("companyIds")|| param.get("companyIds")==null || StringUtils.isBlank(param.get("companyIds").toString())){
+				throw new InvalidCustomException("公司Id不可为空");
+			}
+			param.put("typeS", "'zb','company'");//公司和集团
+			Map<String, Object> res=orgnazationService.getChildOrgList(param);
+			info.setResult(JacksonUtils.toJson(res));
+			info.setSucess(true);
+			info.setMsg("获取指定公司的下级公司成功!");
+		} catch (Exception e) {
+			log.error("获取指定公司的下级公司公司失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取指定公司的所有下级公司失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	/**
+	 * 获取指定公司的部门
+	 * @param userJson
+	 * @param paramJson:{companyIds:"指定公司Ids"，isLeaf:true(如果true,返回指定公司所有部门，如果是false，指定公司所有顶级部门}
+	 * @return
+	 */
+	@Override
+	public String getDeptList(String userJson, String paramJson) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			if(!param.containsKey("companyIds")|| param.get("companyIds")==null || StringUtils.isBlank(param.get("companyIds").toString())){
+				throw new InvalidCustomException("公司Id不可为空");
+			}
+			param.put("type", "dept");//部门
+			Map<String, Object> res=orgnazationService.getChildOrgList(param);
+			info.setResult(JacksonUtils.toJson(res));
+			info.setSucess(true);
+			info.setMsg("获取指定公司的部门成功!");
+		} catch (Exception e) {
+			log.error("获取指定公司的部门失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取指定公司的部门失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	/**
+	 * 获取指定公司的项目
+	 * @param userJson
+	 * @param paramJson:{companyIds:"指定公司Ids"}
+	 * @return
+	 */
+	@Override
+	public String getProjectList(String userJson, String paramJson) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			if(!param.containsKey("companyIds")|| param.get("companyIds")==null || StringUtils.isBlank(param.get("companyIds").toString())){
+				throw new InvalidCustomException("公司Id不可为空");
+			}
+			param.put("type", "group");//项目
+			param.put("isLeaf", false);
+			Map<String, Object> res=orgnazationService.getChildOrgList(param);
+			info.setResult(JacksonUtils.toJson(res));
+			info.setSucess(true);
+			info.setMsg("获取指定公司的项目成功!");
+		} catch (Exception e) {
+			log.error("获取指定公司的项目失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取指定公司的项目失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	/**
+	 * 获取项目对应所有分期
+	 * @param userJson
+	 * @param paramJson:{projectIds:"指定项目Ids"}
+	 * @return
+	 */
+	@Override
+	public String getAllProjectBrachListByProjectIds(String userJson, String paramJson) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			if(!param.containsKey("projectIds")|| param.get("projectIds")==null || StringUtils.isBlank(param.get("projectIds").toString())){
+				throw new InvalidCustomException("项目Id不可为空");
+			}
+			param.put("type", "branch");//分期
+			param.put("companyIds", param.get("projectIds").toString());//分期
+			param.put("isLeaf", false);
+			Map<String, Object> res=orgnazationService.getChildOrgList(param);
+			info.setResult(JacksonUtils.toJson(res));
+			info.setSucess(true);
+			info.setMsg("获取项目对应所有分期成功!");
+		} catch (Exception e) {
+			log.error("获取项目对应所有分期失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取项目对应所有分期失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	/**
+	 * 获取指定公司的所有分期
+	 * @param userJson
+	 * @param paramJson:{companyIds:"指定公司Ids"}
+	 * @return
+	 */
+	@Override
+	public String getAllProjectBrachListByCompanyIds(String userJson, String paramJson) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			if(!param.containsKey("companyIds")|| param.get("companyIds")==null || StringUtils.isBlank(param.get("companyIds").toString())){
+				throw new InvalidCustomException("公司Id不可为空");
+			}
+			param.put("type", "branch");//分期
+			Map<String, Object> res=orgnazationService.getChildBranchList(param);
+			info.setResult(JacksonUtils.toJson(res));
+			info.setSucess(true);
+			info.setMsg("获取指定公司的所有分期成功!");
+		} catch (Exception e) {
+			log.error("获取指定公司的所有分期失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取指定公司的所有分期失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	
+	//------------------------
+	/**
+	 * 获取用户岗位对应公司 
+	 * @param userJson
+	 * @param paramJson:{userIds:"指用户Ids"}
+	 * @return
+	 */
+	@Override
+	public String getUserPostRelationCompanyList(String userJson, String paramJson) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			if(!param.containsKey("userIds")|| param.get("userIds")==null || StringUtils.isBlank(param.get("userIds").toString())){
+				throw new InvalidCustomException("用户Id不可为空");
+			}
+			param.put("typeS", "'zb','company'");//公司和集团
+			Map<String, Object> res=orgnazationService.getUserPostRelationOrgList(param);
+			info.setResult(JacksonUtils.toJson(res));
+			info.setSucess(true);
+			info.setMsg("获取用户岗位对应公司成功!");
+		} catch (Exception e) {
+			log.error("获取用户岗位对应公司失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取用户岗位对应公司失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	/**
+	 * 获取用户岗位对应部门
+	 * @param userJson
+	 * @param paramJson:{userIds:"指用户Ids"}
+	 * @return
+	 */
+	@Override
+	public String getUserPostRelationDeptList(String userJson, String paramJson) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			if(!param.containsKey("userIds")|| param.get("userIds")==null || StringUtils.isBlank(param.get("userIds").toString())){
+				throw new InvalidCustomException("用户Id不可为空");
+			}
+			param.put("type", "dept");//部门
+			Map<String, Object> res=orgnazationService.getUserPostRelationOrgList(param);
+			info.setResult(JacksonUtils.toJson(res));
+			info.setSucess(true);
+			info.setMsg("获取用户岗位对应部门成功!");
+		} catch (Exception e) {
+			log.error("获取用户岗位对应部门失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取用户岗位对应部门失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	
+	/**
+	 * 获取用户直属组织(集团/公司/部门/项目/分期)
+	 * @param userJson
+	 * @param paramJson:{userIds:"指用户Ids"}
+	 * @return
+	 */
+	@Override
+	public String getUserOrgnazationList(String userJson, String paramJson){
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			if(!param.containsKey("userIds")|| param.get("userIds")==null || StringUtils.isBlank(param.get("userIds").toString())){
+				throw new InvalidCustomException("用户Id不可为空");
+			}
+			Map<String, Object> res=orgnazationService.getUserOrgnazationList(param);
+			info.setResult(JacksonUtils.toJson(res));
+			info.setSucess(true);
+			info.setMsg("获取用户直属组织(集团/公司/部门/项目/分期)成功!");
+		} catch (Exception e) {
+			log.error("获取用户直属组织(集团/公司/部门/项目/分期)失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取用户直属组织(集团/公司/部门/项目/分期)失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	/**
+	 * 获取指定岗位的组织信息
+	 * @param userJson
+	 * @param paramJson:{postIds:"指岗位Ids"}
+	 * @return
+	 */
+	@Override
+	public String getOrgRelationByPostId(String userJson, String paramJson){
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			if(!param.containsKey("postIds")|| param.get("postIds")==null || StringUtils.isBlank(param.get("postIds").toString())){
+				throw new InvalidCustomException("岗位Id不可为空");
+			}
+			Map<String, Object> res=orgnazationService.getOrgRelationByPostId(param);
+			info.setResult(JacksonUtils.toJson(res));
+			info.setSucess(true);
+			info.setMsg("获取指定岗位的组织信息成功!");
+		} catch (Exception e) {
+			log.error("获取指定岗位的组织信息失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取指定岗位的组织信息失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	
+	/**
+	 * 获取所有的项目和分期
+	 * @param userJson
+	 * @return
+	 */
+	@Override
+	public String getProjectAndBranchList(String userJson, String paramJson) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			param.put("typeS", "'group','branch'");//项目和分期
+			List<OrgnazationDto> list=orgnazationService.getAllOrgListDto(param);
+			info.setResult(JacksonUtils.toJson(list));
+			info.setSucess(true);
+			info.setMsg("获取所有项目和分期成功!");
+		} catch (Exception e) {
+			log.error("获取所有项目和分期失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取所有项目和分期失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	
+	/**
+	 * 获取指定公司所有的项目和分期
+	 * @param userJson
+	 * @param  paramJson:{companyIds:"指定公司Ids"}
+	 * @return
+	 */
+	@Override
+	public String getProjectAndBranchListByComId(String userJson, String paramJson){
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			if(!param.containsKey("companyIds")|| param.get("companyIds")==null || StringUtils.isBlank(param.get("companyIds").toString())){
+				throw new InvalidCustomException("公司Id不可为空");
+			}
+			param.put("typeS", "'group','branch'");//项目和分期
+			param.put("isLeaf", true);
+			Map<String, Object> res=orgnazationService.getChildOrgList(param);
+			info.setResult(JacksonUtils.toJson(res));
+			info.setSucess(true);
+			info.setMsg("获取指定公司的所有项目和分期成功!");
+		} catch (Exception e) {
+			log.error("获取指定公司的所有项目和分期失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取指定公司的所有项目和分期失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	/**
+	 * 根据组织id查询组织dto：公司/部门/项目/分期
+	 * @param userJson
+	 * @param paramJson:{orgIds:"组织ids"}
+	 * @return
+	 */
+	@Override
+	public String getOrgDtoByOrgIds(String userJson, String paramJson){
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			if(!param.containsKey("orgIds")|| param.get("orgIds")==null || StringUtils.isBlank(param.get("orgIds").toString())){
+				throw new InvalidCustomException("组织Id不可为空");
+			}
+			Map<String, Object> res=orgnazationService.getOrgDtoByOrgIds(param);
+			info.setResult(JacksonUtils.toJson(res));
+			info.setSucess(true);
+			info.setMsg("根据组织id查询组织成功!");
+		} catch (Exception e) {
+			log.error("根据组织id查询组织失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("根据组织id查询组织失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	/**
+	 * 获取所有组织机构
+	 * @param userJson
+	 * @return
+	 */
+	@Override
+	public String getAllOrgList(String userJson, String paramJson){
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			List<OrgnazationDto> res=orgnazationService.getAllOrgList(param);
+			info.setResult(JacksonUtils.toJson(res));
+			info.setSucess(true);
+			info.setMsg("获取所有组织机构成功!");
+		} catch (Exception e) {
+			log.error("获取所有组织机构失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取所有组织机构失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	/**
+	 * 获取组织下岗位
+	 * @param userJson
+	 * @param paramJson:{orgIds:"组织ids"}
+	 * @return
+	 */
+	@Override
+	public String getPostListByOrgId(String userJson, String paramJson) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			if(!param.containsKey("orgIds")|| param.get("orgIds")==null || StringUtils.isBlank(param.get("orgIds").toString())){
+				throw new InvalidCustomException("组织Id不可为空");
+			}
+			Map<String,List<PostDto>> res=postService.getPostListByOrgId(param);
+			info.setResult(JacksonUtils.toJson(res));
+			info.setSucess(true);
+			info.setMsg("获取组织下岗位成功!");
+		} catch (Exception e) {
+			log.error("获取组织下岗位失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取组织下岗位失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	
+	/**
+	 * 获取指定用户下岗位
+	 * @param userJson
+	 * @param paramJson:{userIds:"用户ids"}
+	 * @return
+	 */
+	@Override
+	public String getPostListByUserId(String userJson, String paramJson){
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			if(!param.containsKey("userIds")|| param.get("userIds")==null || StringUtils.isBlank(param.get("userIds").toString())){
+				throw new InvalidCustomException("用户Id不可为空");
+			}
+			Map<String,Object> res=postService.getPostListByUserId(param);
+			info.setResult(JacksonUtils.toJson(res));
+			info.setSucess(true);
+			info.setMsg("获取指定用户下岗位成功!");
+		} catch (Exception e) {
+			log.error("获取指定用户下岗位失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取指定用户下岗位失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	/**
+	 * 获取指定用户的主岗对应组织信息
+	 * @param userJson
+	 * @param paramJson:{userIds:"用户ids"}
+	 * @return
+	 */
+	@Override
+	public String getMainOrgRelationByUserId(String userJson, String paramJson){
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			if(!param.containsKey("userIds")|| param.get("userIds")==null || StringUtils.isBlank(param.get("userIds").toString())){
+				throw new InvalidCustomException("用户Id不可为空");
+			}
+			Map<String,Object> res=orgnazationService.getMainOrgRelationByUserId(param);
+			info.setResult(JacksonUtils.toJson(res));
+			info.setSucess(true);
+			info.setMsg("获取指定用户的主岗对应组织信息成功!");
+		} catch (Exception e) {
+			log.error("获取指定用户的主岗对应组织信息失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取指定用户的主岗对应组织信息失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	/**
+	 * 获取上级组织信息
+	 * @param userJson
+	 * @param paramJson:{orgIds:"组织ids"}
+	 * @return
+	 */
+	@Override
+	public String getParentOrgByOrgId(String userJson, String paramJson){
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			if(!param.containsKey("orgIds")|| param.get("orgIds")==null || StringUtils.isBlank(param.get("orgIds").toString())){
+				throw new InvalidCustomException("组织Id不可为空");
+			}
+			Map<String,Object> res=orgnazationService.getParentOrgByOrgId(param);
+			info.setResult(JacksonUtils.toJson(res));
+			info.setSucess(true);
+			info.setMsg("获取上级组织信息成功!");
+		} catch (Exception e) {
+			log.error("获取上级组织信息失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取上级组织信息失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	/**
+	 * 获取指定组织的下级组织机构
+	 * @param userJson
+	 * @param paramJson:{orgIds:"组织ids"，isLeaf:true(如果true,返回所有下级，如果是false，返回直接下级）}
+	 * @return
+	 */
+	@Override
+	public String getChildOrgListByOrgId(String userJson, String paramJson){
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			if(!param.containsKey("orgIds")|| param.get("orgIds")==null || StringUtils.isBlank(param.get("orgIds").toString())){
+				throw new InvalidCustomException("组织Id不可为空");
+			}
+			param.put("companyIds",param.get("orgIds"));
+			Map<String,Object> res=orgnazationService.getChildOrgList(param);
+			info.setResult(JacksonUtils.toJson(res));
+			info.setSucess(true);
+			info.setMsg("获取指定组织的下级组织机构成功!");
+		} catch (Exception e) {
+			log.error("获取指定组织的下级组织机构失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取指定组织的下级组织机构失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	/**
+	 * 获取用户数据授权公司、部门
+	 * @param userJson
+	 * @param paramJson:{userIds:"指用户Ids"，appId:"系统id"}
+	 * @return
+	 */
+	@Override
+	public String getUserDataAuthCoAndDeptList(String userJson, String paramJson) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			if(!param.containsKey("userIds")|| param.get("userIds")==null || StringUtils.isBlank(param.get("userIds").toString())){
+				throw new InvalidCustomException("用户Id不可为空");
+			}
+			if(!param.containsKey("appCode")|| param.get("appCode")==null || StringUtils.isBlank(param.get("appCode").toString())){
+				throw new InvalidCustomException("系统编码不可为空");
+			}
+			Map<String,UserAuthDataOrgList> res=orgnazationService.getUserDataAuthCoAndDeptList(param);
+			info.setResult(JacksonUtils.toJson(res));
+			info.setSucess(true);
+			info.setMsg("获取用户数据授权公司和部门成功!");
+		} catch (Exception e) {
+			log.error("获取用户数据授权公司和部门失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取用户数据授权公司和部门失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	
+	/**
+	 * 获取用户数据授权项目、分期
+	 * @param userJson
+	 * @param paramJson:{userIds:"指用户Ids"，appId:"系统id"}
+	 * @return
+	 */
+	@Override
+	public String getUserDataAuthGroupAndBranchList(String userJson, String paramJson){
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			if(!param.containsKey("userIds")|| param.get("userIds")==null || StringUtils.isBlank(param.get("userIds").toString())){
+				throw new InvalidCustomException("用户Id不可为空");
+			}
+			if(!param.containsKey("appCode")|| param.get("appCode")==null || StringUtils.isBlank(param.get("appCode").toString())){
+				throw new InvalidCustomException("系统编码不可为空");
+			}
+			Map<String,UserAuthDataOrgList> res=orgnazationService.getUserDataAuthGroupAndBranchList(param);
+			info.setResult(JacksonUtils.toJson(res));
+			info.setSucess(true);
+			info.setMsg("获取用户数据授权项目和分期成功!");
+		} catch (Exception e) {
+			log.error("获取用户数据授权项目和分期失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取用户数据授权项目和分期失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	/**
+	 * 根据授权点获取用户数据授权公司、部门
+	 * @param userJson
+	 * @param paramJson:{userIds:"指用户Ids"，appId:"系统id",itemCode:"数据授权点code"}
+	 * @return
+	 */
+	@Override
+	public String getUserDataAuthCoAndDeptListByItemCode(String userJson, String paramJson) {
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			if(!param.containsKey("userIds")|| param.get("userIds")==null || StringUtils.isBlank(param.get("userIds").toString())){
+				throw new InvalidCustomException("用户Id不可为空");
+			}
+			if(!param.containsKey("appCode")|| param.get("appCode")==null || StringUtils.isBlank(param.get("appCode").toString())){
+				throw new InvalidCustomException("系统编码不可为空");
+			}
+			if(!param.containsKey("itemCode")|| param.get("itemCode")==null || StringUtils.isBlank(param.get("itemCode").toString())){
+				throw new InvalidCustomException("数据授权点编码不可为空");
+			}
+			Map<String,UserAuthDataOrgList> res=orgnazationService.getUserDataAuthCoAndDeptList(param);
+			info.setResult(JacksonUtils.toJson(res));
+			info.setSucess(true);
+			info.setMsg("获取用户数据授权公司和部门成功!");
+		} catch (Exception e) {
+			log.error("获取用户数据授权公司和部门失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取用户数据授权公司和部门失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	
+	/**
+	 * 根据授权点获取用户数据授权项目、分期
+	 * @param userJson
+	 * @param paramJson:{userIds:"指用户Ids"，appId:"系统id",itemCode:"数据授权点code"}
+	 * @return
+	 */
+	@Override
+	public String getUserDataAuthGroupAndBranchListByItemCode(String userJson, String paramJson){
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			if(!param.containsKey("userIds")|| param.get("userIds")==null || StringUtils.isBlank(param.get("userIds").toString())){
+				throw new InvalidCustomException("用户Id不可为空");
+			}
+			if(!param.containsKey("appCode")|| param.get("appCode")==null || StringUtils.isBlank(param.get("appCode").toString())){
+				throw new InvalidCustomException("系统编码不可为空");
+			}
+			if(!param.containsKey("itemCode")|| param.get("itemCode")==null || StringUtils.isBlank(param.get("itemCode").toString())){
+				throw new InvalidCustomException("数据授权点编码不可为空");
+			}
+			Map<String,UserAuthDataOrgList> res=orgnazationService.getUserDataAuthGroupAndBranchList(param);
+			info.setResult(JacksonUtils.toJson(res));
+			info.setSucess(true);
+			info.setMsg("获取用户数据授权项目和分期成功!");
+		} catch (Exception e) {
+			log.error("获取用户数据授权项目和分期失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取用户数据授权项目和分期失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	/**
+	 * 获取公司下的分期
+	 * @param userJson
+	 * @param paramJson:{companyId:"公司id"}
+	 * @return
+	 */
+	@Override
+	public String getSubGroupAndBranchByCompany(String userJson, String paramJson){
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			if( param.get("companyId")==null || StringUtils.isBlank(param.get("companyId").toString())){
+				throw new InvalidCustomException("公司Id不可为空");
+			}
+			param.put("type", "branch");
+			List<Map<String, Object>> res=orgnazationService.getSubBranchByComId(param);
+			info.setResult(JacksonUtils.toJson(res));
+			info.setSucess(true);
+			info.setMsg("获取项目和分期成功!");
+		} catch (Exception e) {
+			log.error("获取项目和分期失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取项目和分期失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	/**
+	 * 获取公司下的公司
+	 * @param userJson
+	 * @param paramJson:{companyId:"公司id"}
+	 * @return
+	 */
+	@Override
+	public String getSubCompanyByCompany(String userJson, String paramJson){
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			if( param.get("companyId")==null || StringUtils.isBlank(param.get("companyId").toString())){
+				throw new InvalidCustomException("公司Id不可为空");
+			}
+			param.put("type", "company");
+			List<Map<String, Object>> res=orgnazationService.getSubOrgByComId(param);
+			info.setResult(JacksonUtils.toJson(res));
+			info.setSucess(true);
+			info.setMsg("获取公司成功!");
+		} catch (Exception e) {
+			log.error("获取公司失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取公司失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	/**
+	 * 获取所有一级公司
+	 * @param userJson
+	 * @param paramJson
+	 * @return
+	 */
+	@Override
+	public String getTopCompany(String userJson, String paramJson){
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			param.put("type", "company");
+			List<Map<String, Object>> res=orgnazationService.getSubOrgByComId(param);
+			info.setResult(JacksonUtils.toJson(res));
+			info.setSucess(true);
+			info.setMsg("获取公司成功!");
+		} catch (Exception e) {
+			log.error("获取公司失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取公司失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	/**
+	 * 获取公司下的部门
+	 * @param userJson
+	 * @param paramJson:{companyId:"公司id"}
+	 * @return
+	 */
+	@Override
+	public String getSubDeptByCompany(String userJson, String paramJson){
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			if( param.get("companyId")==null || StringUtils.isBlank(param.get("companyId").toString())){
+				throw new InvalidCustomException("公司Id不可为空");
+			}
+			param.put("type", "dept");
+			List<Map<String, Object>> res=orgnazationService.getSubOrgByComId(param);
+			info.setResult(JacksonUtils.toJson(res));
+			info.setSucess(true);
+			info.setMsg("获取部门成功!");
+		} catch (Exception e) {
+			log.error("获取部门失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取部门失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	/**
+	 * 获取公司下的人员
+	 * @param userJson
+	 * @param paramJson:{companyId:"公司id"}
+	 * @return
+	 */
+	@Override
+	public String getSubUserByCompany(String userJson, String paramJson){
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			if( param.get("companyId")==null || StringUtils.isBlank(param.get("companyId").toString())){
+				throw new InvalidCustomException("公司Id不可为空");
+			}
+			List<Map<String, Object>> res=orgnazationService.getSubUserByComId(param);
+			info.setResult(JacksonUtils.toJson(res));
+			info.setSucess(true);
+			info.setMsg("获取人员成功!");
+		} catch (Exception e) {
+			log.error("获取人员失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取人员失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	/**
+	 * 根据用户获取其所有组织的顶级部门和顶级公司
+	 * add by gyh 2017-7-14
+	 * @param userJson
+	 * @param paramJson:{userId:"指用户Id"}
+	 * @return
+	 */
+	@Override
+	public String getTopDeptAnaTopComByUser(String userJson, String paramJson){
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			if( param.get("userId")==null || StringUtils.isBlank(param.get("userId").toString())){
+				throw new InvalidCustomException("用户Id不可为空");
+			}
+			List<Map<String, Object>> res=orgnazationService.getTopDeptAnaTopComByUser(param);
+			info.setResult(JacksonUtils.toJson(res));
+			info.setSucess(true);
+			info.setMsg("获取顶级部门和顶级公司成功!");
+		} catch (Exception e) {
+			log.error("获取顶级部门和顶级公司失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取顶级部门和顶级公司失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	/**
+	 * 根据用户获取其所有组织的直属部门和直属公司
+	 * add by gyh 2017-8-4
+	 * @param userJson
+	 * @param paramJson:{userId:"指用户Id"}
+	 * @return
+	 */
+	@Override
+	public String getDirectDeptAnaDirectComByUser(String userJson, String paramJson){
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			if( param.get("userId")==null || StringUtils.isBlank(param.get("userId").toString())){
+				throw new InvalidCustomException("用户Id不可为空");
+			}
+			List<Map<String, Object>> res=orgnazationService.getDirectDeptAnaDirectComByUser(param);
+			info.setResult(JacksonUtils.toJson(res));
+			info.setSucess(true);
+			info.setMsg("获取直属部门和直属公司成功!");
+		} catch (Exception e) {
+			log.error("获取直属部门和直属公司失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取直属部门和直属公司失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	
+	/**
+	 * 根据岗位ids获取岗位信息
+	 * add by sy 2017-9-11
+	 * @param userJson
+	 * @param paramJson:{postId:"指定postId"}
+	 * @return
+	 */
+	@Override
+	public String getPostInfoBypostIds(String userJson, String paramJson){
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			Map<String,Object> param=JacksonUtils.fromJson(paramJson,HashMap.class);
+			if( param.get("postIds")==null || StringUtils.isBlank(param.get("postIds").toString())){
+				throw new InvalidCustomException("岗位id不可为空");
+			}
+			Map<String,Object> m= new HashMap<String, Object>();
+			m.put("ids", param.get("postIds").toString().split(","));
+			List<Map<String,String>> listPost=postService.queryPostsByIds(m);
+			info.setResult(JacksonUtils.toJson(listPost));
+			info.setSucess(true);
+			info.setMsg("获取直属部门和直属公司成功!");
+		} catch (Exception e) {
+			log.error("获取直属部门和直属公司失败!"+e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取直属部门和直属公司失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+}
+

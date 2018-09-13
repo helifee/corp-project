@@ -1,0 +1,123 @@
+package com.xinleju.erp.flow.service;
+
+import java.util.Date;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.util.Assert;
+
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.base.utils.JsonUtils;
+import com.xinleju.erp.flow.flowutils.bean.WiBean;
+import com.xinleju.erp.flow.flowutils.utils.WsConstant;
+import com.xinleju.erp.flow.models.FlowEvent;
+import com.xinleju.erp.flow.models.FlowMonitor;
+
+/**
+ * 
+ * 
+ * <p>
+ * </p>
+ * <p>
+ * </p>
+ * 
+ * @author 孙朝辉
+ * @version $Id: FlowEventService.java 2277 2015-01-01 11:29:06Z zhongjun $
+ * @since
+ * 
+ */
+@Service
+public class FlowEventService extends BaseService {
+    
+    @Autowired
+    private FlowService flowService;
+    
+    @Autowired
+    private IFlowMonitorService iFlowMonitorService;
+    
+    /**
+     * 
+     * <p>
+     * 发布一个事件
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param code
+     *            事件Code
+     * @param srcId
+     *            事件实体ID
+     * @param json
+     *            事件实体json
+     * @param fiName
+     *            流程名
+     * @param fiId
+     *            流程ID
+     */
+    public boolean publish(String code, Long srcId, String json, String fiName, Long fiId, String appCode, Boolean isBizFl) {
+        Assert.notNull(srcId);
+        boolean publish = false;
+        FlowEvent fe = getDao().findFirst(FlowEvent.class, "code = ? and srcId= ? and (isScan is null or isScan = 0)", new Object[] { code, srcId});
+        if (fe == null) {
+            fe = new FlowEvent();
+            fe.setCode(code);
+            fe.setSrcId(srcId);
+            fe.setJson(json);
+            fe.setFiName(fiName);
+            fe.setFiId(fiId);
+            fe.setIsScan(0);
+            fe.setCreateTime(new Date());
+            fe.setAppCode(appCode);
+            getDao().save(fe);
+            if (null != isBizFl && isBizFl){
+                getDao().executeSQL("update tf_flow_event set is_scan = 1 where id  = ?", fe.getId());
+            } else {
+                try {
+                	WiBean wi = null;
+                	try {
+                		wi = JsonUtils.parseObject(json, WiBean.class);
+                	} catch ( Exception e ) {
+                	}
+
+                	// 发起流程的时候，不要给流程发起人发消息。此时要判断wi是否是发起工作(只限制正常的发起节点，不过滤传阅、催办)
+                	if ( !FlowEvent.EVENT_CODE_FS.equals(code) && !( FlowEvent.EVENT_CODE_WS.equals(code) && wi != null && wi.getIsStart() == 1 && 
+                			WsConstant.WiType.ZC.getCode().equals(wi.getWiType())
+                			) ) {
+                		FlowEventMsgService flowEventMsgService = (FlowEventMsgService)App.getBean(FlowEventMsgService.class);
+                		flowEventMsgService.sendMsg(fe);
+                	}
+                	if (null != wi){
+                    	//非发起节点
+                        if (FlowEvent.EVENT_CODE_WS.equals(code)){
+                        	if (WsConstant.WiType.ZC.getCode().equals(wi.getWiType())){
+                        		if (wi.getIsStart() != 1){
+                        			iFlowMonitorService.flowMoitor(FlowMonitor.MONITOR_POINT_ACCEPT_SP, wi.getFiId(), wi.getWiId());
+                        		}
+                        	}
+                        } else if (FlowEvent.EVENT_CODE_WE.equals(code)){
+                        	if (WsConstant.WiType.ZC.getCode().equals(wi.getWiType())){
+                        		if (wi.getIsStart() != 1){
+                        			iFlowMonitorService.flowMoitor(FlowMonitor.MONITOR_POINT_SP_FINISH, wi.getFiId(), wi.getWiId());
+                        		} else {
+                        			iFlowMonitorService.flowMoitor(FlowMonitor.MONITOR_POINT_FLOW_START, wi.getFiId(), wi.getWiId());
+                        		}
+                        	}
+                        }
+                	}
+                	if (FlowEvent.EVENT_CODE_FE.equals(code)){
+                		iFlowMonitorService.flowMoitor(FlowMonitor.MONITOR_POINT_FLOW_FINISH, fiId, null);
+                	}
+                } catch (Exception e){
+                    e.printStackTrace();
+                }
+            }
+            publish = true;
+        }
+        if (FlowEvent.EVENT_CODE_WS.equals(code) || FlowEvent.EVENT_CODE_WO.equals(code)){
+            flowService.updateFiHistoryUserIds(fiId, null);
+        }
+        return publish;
+    }
+}

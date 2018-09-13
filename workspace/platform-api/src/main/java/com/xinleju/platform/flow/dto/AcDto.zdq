@@ -1,0 +1,383 @@
+package com.xinleju.platform.flow.dto;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.commons.lang.builder.ReflectionToStringBuilder;
+import org.apache.commons.lang.builder.ToStringStyle;
+
+import com.xinleju.platform.base.dto.BaseDto;
+import com.xinleju.platform.sys.org.dto.FlowPostParticipantDto;
+
+/**
+ * @author admin
+ * 
+ *
+ */
+public class AcDto extends BaseDto {
+
+	// 编号
+	private String code;
+
+	// 手工选择审批人 --环节内加签 true:发起时指定；false:在模板中设置
+	private Boolean isAddLabel;
+
+	// 手工选择审批人为空是否发起 true:必须指定审批人，否则不允许发起流程；false:可以不指定审批人，依旧可以发起流程
+	private Boolean isStart;
+
+	// 多岗策略: 1:抢占,2:串行,3:竞争
+	private String approveStrategy;
+
+	// 同岗多人策略: 1:抢占,2:串行,3:竞争
+	private String postMultiPerson;
+
+	private String personRepeatIsSkipped;// 环节内人员重复是否跳过 1-跳过 0-不跳过
+
+	// 备注
+	private String remark;
+
+	// 环节名称
+	private String name;
+
+	// 流程模板Id
+	private String flId;
+
+	// 节点类型: 1:开始,2:普通,3:结束,4:聚合网关，5:并发网关
+	private String acType;
+
+	// 审批类型id
+	private String approveTypeId;
+
+	private String participant;// 环节审批人
+	private String ccPerson;// 环节抄送人
+	private String posts;// 审批人岗位信息 岗位可以全部为空
+	private String csPosts;// 抄送人岗位信息
+	private List<FlowPostParticipantDto> flowPostParticipantDtos;// 解析人员岗位接受属性
+
+	// x坐标
+	private Long x;
+
+	// y坐标
+	private Long y;
+
+	// 宽
+	private Long width;
+
+	// 高
+	private Long height;
+
+	// 流程设计图中环节ID
+	private String nodeId;
+
+	// 直接前序环节
+	// @JsonIgnore
+	private List<String> previousAcDtos = new ArrayList<String>();
+
+	// 直接后序环节
+	// @JsonIgnore
+	private List<String> nextNodeDtos = new ArrayList<String>();
+
+	// 逾期时间默认为6小时
+	private Integer overdueTime = 6;
+
+	// 逾期处理方式：0：通知当前处理人，1：打回发起人，2：自动通过
+	private String overdueHandle;
+	
+	// 岗位为空策略
+	private String postIsNull = "1"; //默认不允许发起
+
+	// 审批人为空策略
+	private String approvalPersonIsNull ="1"; //默认不允许发起
+
+	private List<StepDto> stepDtoList = new ArrayList<StepDto>();
+
+	public String getCode() {
+		return code;
+	}
+
+	public void setCode(String code) {
+		this.code = code;
+	}
+
+	public Boolean getIsAddLabel() {
+		return isAddLabel;
+	}
+
+	public void setIsAddLabel(Boolean isAddLabel) {
+		this.isAddLabel = isAddLabel;
+	}
+
+	public Boolean getIsStart() {
+		return isStart;
+	}
+
+	public void setIsStart(Boolean isStart) {
+		this.isStart = isStart;
+	}
+
+	public String getApproveStrategy() {
+		return approveStrategy;
+	}
+
+	public void setApproveStrategy(String approveStrategy) {
+		this.approveStrategy = approveStrategy;
+	}
+
+	public String getPostMultiPerson() {
+		return postMultiPerson;
+	}
+
+	public void setPostMultiPerson(String postMultiPerson) {
+		this.postMultiPerson = postMultiPerson;
+	}
+
+	public String getRemark() {
+		return remark;
+	}
+
+	public void setRemark(String remark) {
+		this.remark = remark;
+	}
+
+	public String getName() {
+		return name;
+	}
+
+	public void setName(String name) {
+		this.name = name;
+	}
+
+	public String getFlId() {
+		return flId;
+	}
+
+	public void setFlId(String flId) {
+		this.flId = flId;
+	}
+
+	public String getAcType() {
+		return acType;
+	}
+
+	public void setAcType(String acType) {
+		this.acType = acType;
+	}
+
+	public String getApproveTypeId() {
+		return approveTypeId;
+	}
+
+	public void setApproveTypeId(String approveTypeId) {
+		this.approveTypeId = approveTypeId;
+	}
+
+	public String getPosts() {
+		return posts;
+	}
+
+	public void setPosts(String posts) {
+		this.posts = posts;
+	}
+
+	public Long getX() {
+		return x;
+	}
+
+	public void setX(Long x) {
+		this.x = x;
+	}
+
+	public Long getY() {
+		return y;
+	}
+
+	public void setY(Long y) {
+		this.y = y;
+	}
+
+	public Long getWidth() {
+		return width;
+	}
+
+	public void setWidth(Long width) {
+		this.width = width;
+	}
+
+	public Long getHeight() {
+		return height;
+	}
+
+	public void setHeight(Long height) {
+		this.height = height;
+	}
+
+	public String getParticipant() {
+		return participant;
+	}
+
+	public void setParticipant(String participant) {
+		this.participant = participant;
+	}
+
+	public String getCcPerson() {
+		return ccPerson;
+	}
+
+	public void setCcPerson(String ccPerson) {
+		this.ccPerson = ccPerson;
+	}
+
+	public String getNodeId() {
+		return nodeId;
+	}
+
+	public void setNodeId(String nodeId) {
+		this.nodeId = nodeId;
+	}
+
+	public List<FlowPostParticipantDto> getFlowPostParticipantDtos() {
+		return flowPostParticipantDtos;
+	}
+
+	public void setFlowPostParticipantDtos(List<FlowPostParticipantDto> flowPostParticipantDtos) {
+		this.flowPostParticipantDtos = flowPostParticipantDtos;
+	}
+
+	public String getCsPosts() {
+		return csPosts;
+	}
+
+	public void setCsPosts(String csPosts) {
+		this.csPosts = csPosts;
+	}
+
+	public List<String> getPreviousAcDtos() {
+		return previousAcDtos;
+	}
+
+	public void setPreviousAcDtos(List<String> previousAcDtos) {
+		this.previousAcDtos = previousAcDtos;
+	}
+
+	public List<String> getNextNodeDtos() {
+		return nextNodeDtos;
+	}
+
+	public void setNextNodeDtos(List<String> nextNodeDtos) {
+		this.nextNodeDtos = nextNodeDtos;
+	}
+
+	@Override
+	public int hashCode() {
+		final int prime = 31;
+		int result = 1;
+		result = prime * result + ((acType == null) ? 0 : acType.hashCode());
+		result = prime * result + ((code == null) ? 0 : code.hashCode());
+		result = prime * result + ((flId == null) ? 0 : flId.hashCode());
+		result = prime * result + ((name == null) ? 0 : name.hashCode());
+		result = prime * result + ((nodeId == null) ? 0 : nodeId.hashCode());
+		result = prime * result + ((x == null) ? 0 : x.hashCode());
+		result = prime * result + ((y == null) ? 0 : y.hashCode());
+		return result;
+	}
+
+	@Override
+	public boolean equals(Object obj) {
+		if (this == obj)
+			return true;
+		if (obj == null)
+			return false;
+		if (getClass() != obj.getClass())
+			return false;
+		AcDto other = (AcDto) obj;
+		if (acType == null) {
+			if (other.acType != null)
+				return false;
+		} else if (!acType.equals(other.acType))
+			return false;
+		if (code == null) {
+			if (other.code != null)
+				return false;
+		} else if (!code.equals(other.code))
+			return false;
+		if (flId == null) {
+			if (other.flId != null)
+				return false;
+		} else if (!flId.equals(other.flId))
+			return false;
+		if (name == null) {
+			if (other.name != null)
+				return false;
+		} else if (!name.equals(other.name))
+			return false;
+		if (nodeId == null) {
+			if (other.nodeId != null)
+				return false;
+		} else if (!nodeId.equals(other.nodeId))
+			return false;
+		if (x == null) {
+			if (other.x != null)
+				return false;
+		} else if (!x.equals(other.x))
+			return false;
+		if (y == null) {
+			if (other.y != null)
+				return false;
+		} else if (!y.equals(other.y))
+			return false;
+		return true;
+	}
+
+	@Override
+	public String toString() {
+		return ReflectionToStringBuilder.toString(this, ToStringStyle.MULTI_LINE_STYLE);
+	}
+
+	public Integer getOverdueTime() {
+		return overdueTime;
+	}
+
+	public void setOverdueTime(Integer overdueTime) {
+		this.overdueTime = overdueTime;
+	}
+
+	public String getOverdueHandle() {
+		return overdueHandle;
+	}
+
+	public void setOverdueHandle(String overdueHandle) {
+		this.overdueHandle = overdueHandle;
+	}
+
+	public String getPersonRepeatIsSkipped() {
+		return personRepeatIsSkipped;
+	}
+
+	public void setPersonRepeatIsSkipped(String personRepeatIsSkipped) {
+		this.personRepeatIsSkipped = personRepeatIsSkipped;
+	}
+
+	public String getPostIsNull() {
+		return postIsNull;
+	}
+
+	public void setPostIsNull(String postIsNull) {
+		this.postIsNull = postIsNull;
+	}
+
+	public String getApprovalPersonIsNull() {
+		return approvalPersonIsNull;
+	}
+
+	public void setApprovalPersonIsNull(String approvalPersonIsNull) {
+		this.approvalPersonIsNull = approvalPersonIsNull;
+	}
+
+	public List<StepDto> getStepDtoList() {
+		return stepDtoList;
+	}
+
+	public void setStepDtoList(List<StepDto> stepDtoList) {
+		this.stepDtoList = stepDtoList;
+	}
+}

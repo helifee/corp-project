@@ -1,0 +1,313 @@
+package com.xinleju.erp.frame.dao;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.utils.StringHelper;
+import com.xinleju.erp.flow.dao.impl.BaseDAO;
+import com.xinleju.erp.flow.service.api.extend.dto.CtrlDTO;
+import com.xinleju.erp.flow.service.api.extend.dto.DataAuthDTO;
+import com.xinleju.erp.flow.service.api.extend.dto.FieldDTO;
+import com.xinleju.erp.flow.service.api.extend.dto.FuncDTO;
+import com.xinleju.erp.flow.service.api.extend.dto.ScopeDTO;
+import com.xinleju.erp.flow.service.api.utils.CtrlUtils;
+import com.xinleju.erp.flow.service.api.utils.FieldUtils;
+import com.xinleju.erp.flow.service.api.utils.FuncUtils;
+import com.xinleju.erp.flow.service.api.utils.ScopeUtils;
+import com.xinleju.erp.frame.models.BizDataCtrl;
+import com.xinleju.erp.frame.models.BizDataField;
+import com.xinleju.erp.frame.models.FuncButton;
+import com.xinleju.erp.frame.models.FuncModule;
+
+/**
+ * 版权：(C) 版权所有 2000-2014 上海天好电子商务有限公司苏州分公司 权限数据层操作
+ * 
+ * @author hongbin
+ * @version $Id$
+ * @since
+ * @see
+ */
+@Repository
+public class AuthDao extends BaseDAO {
+
+	/**
+	 * 获得指定角色的功能权限
+	 * 
+	 * @author hongbin
+	 * @param roleIds
+	 *            角色ID集合
+	 * @param recursion
+	 *            是否递归查询
+	 * @return
+	 */
+	public List<FuncDTO> getAuthFunc(List<Long> roleIds, String moduleCode,
+			Long parentId, boolean recursion) {
+		List<FuncDTO> result = new ArrayList<FuncDTO>();
+		StringBuffer hqlStringBuffer = new StringBuffer();
+		List<Object> param = new ArrayList<Object>();
+		hqlStringBuffer
+				.append("from FuncModule f where exists(")
+				.append("select 'X' from  RoleModule rm where rm.funcModuleId = f.id and rm.roleId in("
+						+ StringHelper.join(roleIds.toArray(), ",") + ")")
+				.append(")  ");
+		if (parentId == null) {
+			hqlStringBuffer.append(" and f.parentId is null");
+		} else {
+			hqlStringBuffer.append(" and f.parentId = ?");
+			param.add(parentId);
+		}
+		hqlStringBuffer.append(" and f.systemCode = ?");
+		param.add(moduleCode);
+		hqlStringBuffer.append(" order by f.sort asc");
+		List<FuncModule> funcModules = getDao().findByHQL(FuncModule.class,
+				hqlStringBuffer.toString(), param.toArray());
+		FuncDTO fDto = null;
+		for (FuncModule func : funcModules) {
+			fDto = FuncUtils.buildFuncDto(func);
+			if (func.getSubRoleCount() > 0 && recursion) {
+				fDto.setChildren(getAuthFunc(roleIds, moduleCode, func.getId(),
+						recursion));
+			}
+			result.add(fDto);
+		}
+		return result;
+	}
+
+	public List<FuncDTO> getAuthFuncByModuleCode(String moduleCode,
+			Long parentId, boolean recursion) {
+		List<FuncDTO> result = new ArrayList<FuncDTO>();
+		StringBuffer hqlStringBuffer = new StringBuffer();
+		List<Object> param = new ArrayList<Object>();
+		hqlStringBuffer.append("from FuncModule f where 1=1  ");
+		if (parentId == null) {
+			hqlStringBuffer.append(" and f.parentId is null");
+		} else {
+			hqlStringBuffer.append(" and f.parentId = ?");
+			param.add(parentId);
+		}
+		hqlStringBuffer.append(" and f.systemCode = ?");
+		param.add(moduleCode);
+		hqlStringBuffer.append(" order by f.sort asc");
+		List<FuncModule> funcModules = getDao().findByHQL(FuncModule.class,
+				hqlStringBuffer.toString(), param.toArray());
+		FuncDTO fDto = null;
+		for (FuncModule func : funcModules) {
+			fDto = FuncUtils.buildFuncDto(func);
+			if (func.getSubRoleCount() > 0 && recursion) {
+				fDto.setChildren(getAuthFuncByModuleCode(moduleCode,
+						func.getId(), recursion));
+			}
+			result.add(fDto);
+		}
+		return result;
+	}
+
+	/**
+	 * 获得指定角色的操作权限
+	 * 
+	 * @author hongbin
+	 * @param roleIds
+	 *            角色ID集合
+	 * @param moduleCode
+	 *            模块编码
+	 * @param funcCode
+	 *            功能编码
+	 * @return
+	 */
+	public List<FuncButton> getAuthOp(List<Long> roleIds, String moduleCode,
+			String funcCode) {
+		StringBuffer hqlStringBuffer = new StringBuffer();
+		List<Object> param = new ArrayList<Object>();
+		hqlStringBuffer
+				.append("from FuncButton b where exists(")
+				.append("select 'X' from  RoleButton rb where rb.funcButtonId = b.id and rb.roleId in("
+						+ StringHelper.join(roleIds.toArray(), ",") + ")")
+				.append(")  ").append(" and b.moduleCode = ?");
+		if (StringUtils.isNotBlank(funcCode)) {
+			hqlStringBuffer.append(" and b.funcModule.code = ?");
+		}
+
+		param.add(moduleCode);
+		if (StringUtils.isNotBlank(funcCode)) {
+			param.add(funcCode);
+		}
+
+		return getDao().findByHQL(FuncButton.class, hqlStringBuffer.toString(),
+				param.toArray());
+	}
+
+	/**
+	 * 获得指定App下的的按钮权限
+	 * 
+	 * @author luocheng
+	 * @param moduleCode
+	 *            模块编码
+	 * @return
+	 */
+	public List<FuncButton> getAuthOpByModuleCode(String moduleCode) {
+		StringBuffer hqlStringBuffer = new StringBuffer();
+		List<Object> param = new ArrayList<Object>();
+		hqlStringBuffer.append("from FuncButton b where "
+				+ "  b.moduleCode = ?");
+
+		param.add(moduleCode);
+
+		return getDao().findByHQL(FuncButton.class, hqlStringBuffer.toString(),
+				param.toArray());
+	}
+
+	/**
+	 * 数据授权
+	 * 
+	 * @param roleIds
+	 * @param moduleCode
+	 * @return
+	 */
+	public DataAuthDTO getDataAuth(List<Long> roleIds, String moduleCode) {
+		DataAuthDTO dto = new DataAuthDTO();
+		Map<CtrlDTO, Map<FieldDTO, List<ScopeDTO>>> detail = new HashMap<CtrlDTO, Map<FieldDTO, List<ScopeDTO>>>();
+		BizDataRoleDao bizDataRoleDao = App.getBean(BizDataRoleDao.class);
+		List<BizDataCtrl> ctrls = bizDataRoleDao.getBizDataCtrls(roleIds, moduleCode);
+		if (ctrls != null && !ctrls.isEmpty()) {
+			BizDataCtrl ctrl = null;
+			for (int i = 0; i < ctrls.size(); i++) {
+			    ctrl = ctrls.get(i);
+			    if (null != ctrl){
+			        detail.put(CtrlUtils.buildCtrlDto(ctrl), getAuthFieldByCtrlId(roleIds, ctrl.getModuleCode(), ctrl.getId()));
+			    }
+			}
+		}
+		dto.setDetail(detail);
+		return dto;
+	}
+
+	/**
+	 * 根据控制点获取数据授权维度
+	 * 
+	 * @param roleIds
+	 * @param moduleCode
+	 * @param ctrlId
+	 * @return
+	 */
+	public Map<FieldDTO, List<ScopeDTO>> getAuthFieldByCtrlId(
+			List<Long> roleIds, String moduleCode, Long ctrlId) {
+		Map<FieldDTO, List<ScopeDTO>> fieldMap = new HashMap<FieldDTO, List<ScopeDTO>>();
+		BizDataRoleDao bizDataRoleDao = App.getBean(BizDataRoleDao.class);
+		List<BizDataField> fields = bizDataRoleDao.getBizDataFields(roleIds, moduleCode, ctrlId);
+		if (fields != null && !fields.isEmpty()) {
+			BizDataField field = null;
+			for (int i = 0; i < fields.size(); i++) {
+			    field = fields.get(i);
+			    if (null != field) {
+			        fieldMap.put(FieldUtils.buildFieldDto(field), ScopeUtils
+			            .buildScopeDtoList(bizDataRoleDao.getBizDataRoles(
+			                roleIds, field.getModuleCode(), field.getId())));
+			    }
+			}
+		}
+		return fieldMap;
+	}
+
+	/**
+	 * 根据角色id获取菜单ids列表 〈简述〉 〈详细描述〉
+	 * 
+	 * @author zhengxj
+	 * @param roleId
+	 *            角色id
+	 * @param systemCode
+	 *            业务模块编码
+	 * @return
+	 */
+	public List<Long> getRMIdsList(Long roleId, String systemCode) {
+		return getDao()
+				.findByHQL(
+						Long.class,
+						// "select funcModuleId from RoleModule rm where roleId = ? and exists(select 'X' from FuncModule fm where fm.id = rm.funcModuleId and fm.systemCode = ?)",
+						// roleId, systemCode);
+						"select funcModuleId from RoleModule rm where roleId = ? and exists(select 'X' from FuncModule fm where fm.id = rm.funcModuleId )",
+						roleId);
+	}
+
+	/**
+	 * 根据角色id获取按钮ids列表 〈详细描述〉
+	 * 
+	 * @author zhengxj
+	 * @param roleId
+	 *            角色id
+	 * @param systemCode
+	 *            业务模块编码
+	 * @return
+	 */
+	public List<Long> getRBIdsList(Long roleId, String systemCode) {
+		return getDao()
+				.findByHQL(
+						Long.class,
+						// "select funcButtonId from RoleButton rb where rb.roleId = ? and exists(select 'X' from FuncButton fb,FuncModule fm where fb.funcModuleId = fm.id and fb.id = rb.funcButtonId and fm.systemCode = ?)",
+						// roleId, systemCode);
+						"select funcButtonId from RoleButton rb where rb.roleId = ? and exists(select 'X' from FuncButton fb,FuncModule fm where fb.funcModuleId = fm.id and fb.id = rb.funcButtonId)",
+						roleId);
+	}
+
+	/**
+	 * 根据角色id获取按钮ids列表 〈详细描述〉
+	 * 
+	 * @author zhengxj
+	 * @param roleId
+	 *            角色id
+	 * @param moduleid
+	 *            菜单id
+	 * @param systemCode
+	 *            业务模块编码
+	 * @return
+	 */
+	public List<Long> getRBIdsList(Long roleId, Long moduleid, String systemCode) {
+		return getDao()
+				.findByHQL(
+						Long.class,
+						"select funcButtonId from RoleButton rb where rb.roleId = ? and exists(select 'X' from FuncButton fb,FuncModule fm where fb.funcModuleId = fm.id and fb.id = rb.funcButtonId and fb.funcModuleId = ? and fm.systemCode = ?)",
+						roleId, moduleid, systemCode);
+	}
+
+	/**
+	 * 获取菜单列表 〈详细描述〉
+	 * 
+	 * @author zhengxj
+	 * @param systemCode
+	 *            业务模块code
+	 * @param parentId
+	 *            父菜单id
+	 * @return
+	 */
+	public List<FuncModule> getFuncModuleList(String systemCode, Long parentId) {
+		DetachedCriteria dc = DetachedCriteria.forClass(FuncModule.class);
+		dc.add(Restrictions.eq("systemCode", systemCode));
+		if (parentId != null) {
+			dc.add(Restrictions.eq("parentId", parentId));
+		} else {
+			dc.add(Restrictions.isNull("parentId"));
+		}
+		return getDao().findByCriteria(dc);
+	}
+
+	/**
+	 * 获取增删改查按钮 〈详细描述〉
+	 * 
+	 * @author zhengxj
+	 * @param moduleId
+	 *            菜单id
+	 * @return
+	 */
+	public List<FuncButton> getFuncButtonList(Long moduleId) {
+		return getDao().findByHQL(FuncButton.class,
+				"from FuncButton where funcModuleId = ?", moduleId);
+	}
+
+}

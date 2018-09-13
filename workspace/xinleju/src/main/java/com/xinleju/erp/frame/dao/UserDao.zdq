@@ -1,0 +1,360 @@
+package com.xinleju.erp.frame.dao;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.erp.base.app.bean.Page;
+import com.xinleju.erp.base.utils.CollectionUtils;
+import com.xinleju.erp.base.utils.StringHelper;
+import com.xinleju.erp.flow.dao.impl.BaseDAO;
+import com.xinleju.erp.form.utils.DbType;
+import com.xinleju.erp.frame.models.Dept;
+import com.xinleju.erp.frame.models.PartyEntity;
+import com.xinleju.erp.frame.models.PartyType;
+import com.xinleju.erp.frame.models.Role;
+import com.xinleju.erp.frame.models.User;
+
+@Repository
+public class UserDao extends BaseDAO {
+
+    public String findUserLoginNameByUserId(Long userId){
+        String userLoginName = "";
+        if (null == userId){
+            userLoginName = getDao().findString("select min(loginname) from User where id = ?", userId);
+        }
+        return userLoginName;
+    }
+    
+	public Long findUserIdByLoginName(String loginName){
+		Long userId = 0L;
+		if (StringUtils.isNotBlank(loginName)){
+			userId = getDao().findFirstByHQL(Long.class, "select min(id) from User where loginname = ?", loginName.trim());
+		}
+		if (null == userId){
+			userId = 0L;
+		}
+		return userId;
+	}
+
+
+	/**
+	 * 根据用户名查找用户
+	 * @param loginName
+	 * @return
+	 */
+	public User findUserByLoginName(String loginName){
+		if (StringUtils.isNotBlank(loginName)){
+			return getDao().findFirstByHQL(User.class, "from User where loginname = ?", loginName.trim());
+		}
+		return null;
+	}
+	
+	/**
+	 * 根据姓名查找用户
+	 * @param loginName
+	 * @return
+	 */
+	public List<User> findUserByRealName(String realName){
+		DetachedCriteria dc = DetachedCriteria.forClass(User.class);
+		 if(StringUtils.isNotBlank(realName)) {
+         	dc.add(Restrictions.or(Restrictions.like("realName", "%" + realName + "%")));
+         }
+    	return getDao().findByCriteria(dc);
+	}
+
+	/**
+	 * 根据用户名查找用户
+	 * @param loginName
+	 * @return
+	 */
+	public List<User> findUserByLoginNames(String[] loginNames){
+		if (loginNames!=null && loginNames.length>0){
+			return getDao().findByHQL(User.class, "from User where loginname in ('"+StringHelper.join(loginNames, "','")+"')");
+		}
+		return null;
+	}
+
+	/**
+	 * 根据用户名查找用户
+	 * @param loginName
+	 * @return
+	 */
+	public List<User> findUserByIds(String[] ids){
+		if (ids!=null && ids.length>0){
+			return getDao().findByHQL(User.class, "from User where id in ('"+StringHelper.join(ids, "','")+"')");
+		}
+		return null;
+	}
+
+
+	/**
+	 * 查询用户主岗
+	 * @param loginName
+	 * @return
+	 */
+	public Role findUserMainRoleByLoginName(String loginName) {
+		User user = findUserByLoginName(loginName);
+		return (user == null || user.getMainRole() == null) ? null :user.getMainRole();
+	}
+
+	/**
+	 * 查询用户主岗
+	 * @param loginName
+	 * @return
+	 */
+	public Role findUserMainRoleById(Long userId) {
+		User user = getDao().getById(User.class, userId);
+		return (user == null || user.getMainRole() == null) ? null :user.getMainRole();
+	}
+
+	/**
+	 * 查询用户主岗
+	 * @param loginName
+	 * @return
+	 */
+	public List<Long> findUserMainRoleByIds(String[] userIds) {
+		if (userIds!=null && userIds.length>0){
+			return getDao().findByHQL(Long.class, "select r.id from Role r where r.id in (select u.mainRoleId from User u where u.id in  ('"+StringHelper.join(userIds, "','")+"'))");
+		}
+		return null;
+
+	}
+
+
+    /**
+     * 根据组织机构ID获取用户
+     * @author hongbin
+     * @param peId 组织机构ID
+     * @param name 姓名、登录名
+     * @param start 从start开始
+     * @param limit 查询多少条
+     * @param includeAllSubOrgns 是否包含子孙
+     * @return
+     */
+    public Page findUserByOrgnId(Long peId,String name,Integer start,Integer limit,Boolean includeAllSubOrgns){
+        List<Object> params = new ArrayList<Object>();
+        StringBuffer hqlBuffer = new StringBuffer();
+        hqlBuffer.append("from com.xinleju.erp.frame.models.User u where 1=1 and u.status=0 ");
+        if(StringUtils.isNotBlank(name)) {
+            hqlBuffer.append(" and( u.loginname like ? or u.realName like ?)");
+            params.add("%"+name+"%");
+            params.add("%"+name+"%");
+        }
+        if(peId!=null&&peId!=8){
+		    hqlBuffer.append(" and u.id in(")
+		             .append("      select ps.childEntity.refId from PartyStruct ps ")
+		            // .append("      where ps.childEntity.refId = u.id")
+		             .append("      where ps.childEntity.partyType.type = ?")
+		             .append(includeAllSubOrgns ? (" and ps.childEntity.prefix like ?") : " and ps.parentEntityId = ?")
+		             .append( "                        )");
+		    params.add(PartyType.TYPE_USER);
+		    params.add(includeAllSubOrgns ? ("1".equals(""+peId)?"%"+peId+"-%":"%-"+peId+"-%") : peId);
+        }
+       return getDao().findPageByHQL(User.class, hqlBuffer.toString(), params.toArray(), start, limit);
+    }
+    
+    /**
+     * 根据组织机构ID获取用户
+     * //张方志需求，需要查出已离职的人员 2017.01.18 extParm不为null
+     * @author hongbin
+     * @param peId 组织机构ID
+     * @param name 姓名、登录名
+     * @param start 从start开始
+     * @param limit 查询多少条
+     * @param includeAllSubOrgns 是否包含子孙
+     * @return
+     */
+    public Page findUserByOrgnId(Long peId,String name,Integer start,Integer limit,Boolean includeAllSubOrgns, Map<String, Object> extParm){
+        List<Object> params = new ArrayList<Object>();
+        StringBuffer hqlBuffer = new StringBuffer();
+        if(extParm==null){
+        	hqlBuffer.append("from com.xinleju.erp.frame.models.User u where 1=1 and u.status=0 ");
+        }else{
+        	hqlBuffer.append("from com.xinleju.erp.frame.models.User u where 1=1 ");//and u.status=0 ");
+        }
+        if(StringUtils.isNotBlank(name)) {
+            hqlBuffer.append(" and( u.loginname like ? or u.realName like ?)");
+            params.add("%"+name+"%");
+            params.add("%"+name+"%");
+        }
+        if(peId!=null&&peId!=8){
+		    hqlBuffer.append(" and u.id in(")
+		             .append("      select ps.childEntity.refId from PartyStruct ps ")
+		            // .append("      where ps.childEntity.refId = u.id")
+		             .append("      where ps.childEntity.partyType.type = ?")
+		             .append(includeAllSubOrgns ? (" and ps.childEntity.prefix like ?") : " and ps.parentEntityId = ?")
+		             .append( "                        )");
+		    params.add(PartyType.TYPE_USER);
+		    params.add(includeAllSubOrgns ? ("1".equals(""+peId)?"%"+peId+"-%":"%-"+peId+"-%") : peId);
+        }
+       return getDao().findPageByHQL(User.class, hqlBuffer.toString(), params.toArray(), start, limit);
+    }
+
+	/**
+	 * 获得用户所有的岗位ID
+	 * @author hongbin
+	 * @param loginName
+	 * @return
+	 */
+	@SuppressWarnings("unchecked")
+    public List<Long> getRoleIds(String loginName){
+		
+		Date startDate=new Date ();
+		List<Long> roleIds = new ArrayList<Long>();
+
+		User user =  getDao().findFirst(User.class, "loginName = ?", new Object[]{loginName});
+		if(user != null) {
+			//主角色
+			if(user.getMainRoleId() != null) {
+				roleIds.add(user.getMainRoleId());
+			}
+			//兼职角色
+			String hql = "select ps.parentEntity.refId from PartyStruct ps where ps.childEntity.refId = ? and ps.parentEntity.partyType.type = ? and ps.childEntity.partyType.type = ?";
+			List<Long> jzRoleIds = getDao().findByHQL(Long.class, hql, user.getId(), PartyType.TYPE_ROLE, PartyType.TYPE_USER);
+			if(jzRoleIds != null && !jzRoleIds.isEmpty()){
+				roleIds.addAll(jzRoleIds);
+			}
+		}
+		roleIds = CollectionUtils.distinct(roleIds);
+		
+		
+		
+		return roleIds;
+	}
+	
+	
+
+	/**
+	 * 获得人员的标准角色
+	 * @param loginName
+	 * @return
+	 */
+	public List<Long> getStandRoleIds(String loginName) {
+        return this.getStandRoleIds(loginName, true);
+	}
+
+
+   /**
+    * 获得人员的标准角色,不包括禁用的
+    * @author lwp
+    * @param loginName
+    * @param includeDisable
+    * @return
+    */
+    public List<Long> getStandRoleIds(String loginName, boolean includeDisabled) {
+       List<Long> roleIds = getRoleIds(loginName);
+       if(roleIds != null && !roleIds.isEmpty()) {
+           String hql = "select distinct r.parentId from com.xinleju.erp.frame.models.Role r"
+                      + " where r.id in(" + StringHelper.join(roleIds.toArray(), ",") + ") "
+                      + " and r.parentRole.type = '" + Role.TYPE_STANDARD+"'";
+           if (!includeDisabled) {
+               hql += " and (r.status is null or r.status != 1)";
+           }
+           return getDao().findByHQL(Long.class, hql);
+       }
+       return null;
+       
+    }
+
+	/**
+	 * 获得所有的用户角色
+	 * @param loginName
+	 * @return
+	 */
+	public List<Long> getAllRoleIds(String loginName) {
+		List<Long> roleIds = getRoleIds(loginName);
+		List<Long> standRoleIds = getStandRoleIds(loginName);
+		if(standRoleIds != null && !standRoleIds.isEmpty()) {
+			roleIds.addAll(standRoleIds);
+		}
+		return roleIds;
+	}
+
+
+	/**
+	 * 查询所有用户，缓存使用
+	 * @return
+	 */
+	public List<User> getAllUser(){    	
+		String hql ="from User u where 1=1";
+		List<User> users  = getDao().findByHQL(User.class,hql);
+		return users;
+	}
+
+	/**
+	 * 根据ID查询用户
+	 * @return
+	 */
+	public List<User> getUserById(Long[] userIds){ 
+		List<User> userList=new ArrayList<User>();
+		for(Long id : userIds) {
+			if(id!=null) {
+				User user=getDao().getById(User.class, id);
+				userList.add(user);
+			}
+		}
+		return userList;
+	}
+	public Long getUserCountWithId(String loginname, Long id){
+		if (StringUtils.isNotBlank(loginname) && null != id){
+			return getDao().findLong("select count(u.id) from User u where u.loginname = ? and u.id != ?", loginname, id);
+		}
+		return 0L;
+	}
+
+	public Long getUserCount(String loginname){
+		if (StringUtils.isNotBlank(loginname)){
+			return getDao().findLong("select count(u.id) from User u where u.loginname = ?", loginname);
+		}
+		return 0L;
+	}
+    public List<Long> findRepoByUserId(Long userId){
+		if (null != userId){
+			return getDao().findByHQL(Long.class, "select ur.repoId from UserRepo ur where ur.userId = ?", userId);
+		}
+		return new ArrayList<Long>();
+	}
+    
+    public List<Dept> getUserDepts(String loginName) {
+    	User user = findUserByLoginName(loginName);
+    	if(user != null) {
+    		String hql = "from Dept d where exists (select 'X' from PartyStruct ps where ps.childEntity.refId = ? and ps.childEntity.partyType.type = ? and ps.parentEntity.partyType.type = ? and ps.parentEntity.refId = d.id)";
+    		List<Dept> depts = getDao().findByHQL(Dept.class, hql, user.getId(),PartyType.TYPE_USER,PartyType.TYPE_DEPARTMENT);
+    		return depts;
+    	}
+		return null;
+    }
+    
+    
+    
+    public List<User> getUserListByCompanyIdAndRoleId(Long companyId,Long roleId){
+    	List<User> users=new ArrayList();
+		if (companyId!=null && roleId!=null){
+			List<PartyEntity> partyEntitys=getDao().findByHQL(PartyEntity.class, "from PartyEntity where refId = ?",new Object[]{companyId});
+			if(partyEntitys!=null && partyEntitys.size()>0){
+				for(PartyEntity partyEntity:partyEntitys){
+					String prefix=partyEntity.getPrefix();
+					//select y.name,u.name,y.name_prefix,u.name_prefix,y.ref_parent_id from sm_party_entity y ,sm_party_entity u where y.party_type_id=5 and dbo.locate('1-465-466',y.prefix)>0 and dbo.locate(y.prefix,u.prefix)>0
+						//	and u.party_type_id=6  and y.ref_parent_id= 43
+					 List<User> userList=getDao().findByHQL(User.class, "from User where exists(select 1 from PartyEntity y ,PartyEntity u where y.partyTypeId=5 and "+DbType.getType()+"locate('"+prefix+"',y.prefix)>0 and "+DbType.getType()+"locate(y.prefix,u.prefix)>0 and u.partyTypeId=6  and y.refParentId= "+roleId+")");
+					 return userList;
+				}
+			}
+			
+		}else if(roleId!=null){
+			 List<User> userList=getDao().findByHQL(User.class, "from User where exists(select 1 from PartyEntity y ,PartyEntity u where y.partyTypeId=5  and "+DbType.getType()+"locate(y.prefix,u.prefix)>0 and u.partyTypeId=6  and y.refParentId= "+roleId+")");
+			 return userList;
+		}else  if(companyId!=null){
+			 List<User> userList=getDao().findByHQL(User.class, "from User where exists(select 1 from PartyEntity y ,PartyEntity u where y.partyTypeId=5 and u.partyTypeId=6 and "+DbType.getType()+"locate(y.prefix,u.prefix)>0 and u.partyTypeId=6 )");
+			 return userList;
+		}
+    	return users;
+    }
+}

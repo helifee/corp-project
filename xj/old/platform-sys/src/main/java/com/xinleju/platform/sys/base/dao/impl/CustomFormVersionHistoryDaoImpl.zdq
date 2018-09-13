@@ -1,0 +1,36 @@
+package com.xinleju.platform.sys.base.dao.impl;
+
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.platform.base.dao.impl.BaseDaoImpl;
+import com.xinleju.platform.sys.base.dao.CustomFormVersionHistoryDao;
+import com.xinleju.platform.sys.base.entity.CustomFormVersionHistory;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Repository
+public class CustomFormVersionHistoryDaoImpl extends BaseDaoImpl<String,CustomFormVersionHistory> implements CustomFormVersionHistoryDao{
+
+	public CustomFormVersionHistoryDaoImpl() {
+		super();
+	}
+
+	@Override
+	public List<CustomFormVersionHistory> getPageSort(Map map) {
+		return  getSqlSession().selectList("com.xinleju.platform.sys.base.entity.CustomFormVersionHistory.getPageSort", map);
+	}
+
+	@Override
+	public Integer getPageSortCount(Map map) {
+		return  getSqlSession().selectOne("com.xinleju.platform.sys.base.entity.CustomFormVersionHistory.getPageSortCount", map);
+	}
+
+	
+}

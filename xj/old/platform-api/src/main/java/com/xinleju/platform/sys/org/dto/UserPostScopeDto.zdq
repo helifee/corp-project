@@ -1,0 +1,52 @@
+package com.xinleju.platform.sys.org.dto;
+
+import com.xinleju.platform.base.dto.BaseDto;
+
+
+
+
+
+/**
+ * @author admin
+ * 
+ *
+ */
+public class UserPostScopeDto extends BaseDto{
+
+		
+	//类型
+	private String type;
+    
+  		
+	//组织机构Id
+	private String refId;
+    
+  		
+	//用户岗位关联id
+	private String postUserId;
+		
+	public String getType() {
+		return type;
+	}
+	public void setType(String type) {
+		this.type = type;
+	}
+    
+  		
+	public String getRefId() {
+		return refId;
+	}
+	public void setRefId(String refId) {
+		this.refId = refId;
+	}
+    
+  		
+	public String getPostUserId() {
+		return postUserId;
+	}
+	public void setPostUserId(String postUserId) {
+		this.postUserId = postUserId;
+	}
+    
+  		
+}

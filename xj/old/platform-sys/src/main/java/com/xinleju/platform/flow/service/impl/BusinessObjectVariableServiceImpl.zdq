@@ -1,0 +1,425 @@
+package com.xinleju.platform.flow.service.impl;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.alibaba.dubbo.common.utils.StringUtils;
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.flow.dao.BusinessObjectVariableDao;
+import com.xinleju.platform.flow.dto.BusinessObjectVariableDto;
+import com.xinleju.platform.flow.entity.BusinessObject;
+import com.xinleju.platform.flow.entity.BusinessObjectVariable;
+import com.xinleju.platform.flow.service.BusinessObjectVariableService;
+import com.xinleju.platform.flow.utils.SortType;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class BusinessObjectVariableServiceImpl extends  BaseServiceImpl<String,BusinessObjectVariable> implements BusinessObjectVariableService{
+	
+
+	@Autowired
+	private BusinessObjectVariableDao businessObjectVariableDao;
+
+	@Override
+	public List<BusinessObjectVariable> queryBusiVariableListByTemlateId(String flId) {
+		return businessObjectVariableDao.queryBusiVariableListByTemlateId(flId);
+	}
+
+	@Override
+	public List<BusinessObjectVariable> queryVariableUsedInExpressionBy(String businessObjectId) {
+		return businessObjectVariableDao.queryVariableUsedInExpressionBy(businessObjectId);
+	}
+
+	@Override
+	public void deleteVariableListByObjectId(String busiObjectId) throws Exception {
+		System.out.println("\n\n --002 deleteVariableListByObjectId is called..."+busiObjectId);
+		businessObjectVariableDao.deleteVariableListByObjectId(busiObjectId);
+	}
+
+	@Override
+	public List<BusinessObjectVariableDto> queryListByCondition(Map paramMap) throws Exception{
+		return businessObjectVariableDao.queryListByCondition(paramMap);
+	}
+
+	@Override
+	public List<String> selectAllParentId(Map paramMap) throws Exception{
+		return businessObjectVariableDao.selectAllParentId(paramMap);
+	}
+
+	@Override
+	public List<BusinessObjectVariableDto> getVariableTreeByBusiObject(Map<String, String> paramMap) throws Exception {
+		return businessObjectVariableDao.getVariableTreeByBusiObject(paramMap);
+	}
+
+	@Override
+	public void prepareAndSaveData(BusinessObjectVariable variable) throws Exception {
+		String parentId = variable.getParentId();
+		String parentPrefixId = variable.getBusinessObjectId();
+		String parentPrefixSort = variable.getBusinessObjectId();
+		System.out.println("prepareAndSaveData>>> parentId="+parentId+"; parentPrefixId="+parentPrefixId);
+		if(parentId!=null && !"".equals(parentId) && parentId.length()>=32){//parentId的值有效
+			BusinessObjectVariable parentObj = this.getObjectById(parentId);
+			parentPrefixId = parentObj.getPrefixId();
+			parentPrefixSort = parentObj.getPrefixSort();
+		}
+		variable.setPrefixId(parentPrefixId+"-"+variable.getId());
+		variable.setPrefixSort(parentPrefixSort+"-"+variable.getName());
+		int result = this.save(variable); 
+	}
+
+	@Override
+	public int updateAllRelatedData(BusinessObjectVariable variable) throws Exception {
+		String parentId = variable.getParentId();
+		String parentPrefixId = variable.getBusinessObjectId();
+		String parentPrefixSort = variable.getBusinessObjectId();
+		System.out.println("updateAllRelatedData>>> parentId="+parentId+"; parentPrefixId="+parentPrefixId);
+		if(parentId!=null && !"".equals(parentId) && parentId.length()>=32){//parentId的值有效
+			BusinessObjectVariable parentObj = this.getObjectById(parentId);
+			parentPrefixId = parentObj.getPrefixId();
+			parentPrefixSort = parentObj.getPrefixSort();
+		}
+		variable.setPrefixId(parentPrefixId+"-"+variable.getId());
+		variable.setPrefixSort(parentPrefixSort+"-"+variable.getName());
+		String newPrefixId = variable.getPrefixId();
+		String newPrefixSort = variable.getPrefixSort();
+		
+		BusinessObjectVariable oldObject = this.getObjectById(variable.getId());
+		String oldPrefixId = oldObject.getPrefixId();
+		String oldPrefixSort = oldObject.getPrefixSort();
+		Map<String ,String> paramMap = new HashMap<String ,String>();
+		paramMap.put("oldPrefixId", oldPrefixId);
+		paramMap.put("newPrefixId", newPrefixId);
+		paramMap.put("oldPrefixSort", oldPrefixSort);
+		paramMap.put("newPrefixSort", newPrefixSort);
+		//先更新需要被更新的那些相关数据记录
+		int result = businessObjectVariableDao.updateObjectPrefixIdByParamMap(paramMap);
+		//最后更新业务变量数据
+		return this.update(variable);
+	}
+
+	@Override
+	public Integer queryRelatedCountByPrefixMap(Map paramMap) throws Exception {
+		return businessObjectVariableDao.queryRelatedCountByPrefixMap(paramMap);
+	}
+
+	@Override
+	public Integer deleteObjectAndChileren(Map<String, String> paramMap) throws Exception {
+		return businessObjectVariableDao.deleteObjectAndChileren(paramMap);
+	}
+
+	@Override
+	public List<BusinessObjectVariableDto> queryListByParamMap(Map<String, Object> paramMap) {
+		String variableIds = (String)paramMap.get("variableIds");
+		if(variableIds!=null && variableIds.length()>10){
+			paramMap.put("variableIds", variableIds.split(","));
+		}
+		
+		String variableNames = (String)paramMap.get("variableNames");
+		if(variableNames!=null && variableNames.length()>2){//@经办公司@-@经办部门@-@经办项目@
+			variableNames = variableNames.replaceAll("@", "");
+			paramMap.put("variableNames", variableNames.split("-"));
+		}
+		
+		return businessObjectVariableDao.queryListByParamMap(paramMap);
+	}
+
+	@Override
+	public int saveBusinessObjectVariable(BusinessObjectVariable businessVariable) throws Exception {
+		businessVariable.setId(IDGenerator.getUUID());
+		businessVariable.setDelflag(false);
+		int j=0;
+		String parentId = businessVariable.getParentId();
+		BusinessObjectVariable parentBusinessVariable = null;
+		String sortText = calculateSortTextByParam(parentId, businessVariable.getBusinessObjectId());
+		System.out.println("\n\n 001 calculateSortTextByParam() sortText="+sortText);
+		businessVariable.setSort(sortText);
+			
+		if(parentId != null && parentId.length()>10){
+			parentBusinessVariable = businessObjectVariableDao.getObjectById(parentId);
+			businessVariable.setPrefixId(parentBusinessVariable.getPrefixId()+"-"+businessVariable.getId());
+		}else{
+			businessVariable.setPrefixId(businessVariable.getId());
+		}
+		
+		System.out.println("002 .... businessObject = "+businessVariable.getPrefixId());
+		List<BusinessObjectVariable> repeatObject = this.getRepeatObject(businessVariable);
+		if(repeatObject!=null && repeatObject.size()>0){
+			j=5;
+		}else{
+			System.out.println("002 .... businessObjectDao.save() is done. "+businessVariable.getPrefixId());
+			String saveParentId = businessVariable.getParentId();
+			if("".equals(saveParentId) || "null".equals(saveParentId)){
+				businessVariable.setParentId(null); 
+			}
+			j = businessObjectVariableDao.save(businessVariable);
+		}
+		return j;
+	}
+
+	//根据相应的参数计算出正确的sort的值
+	private String calculateSortTextByParam(String parentId, String businessObjectId) {
+		BusinessObjectVariable parentBusinessVariable = null;
+		String sortText = "";
+		Map<String,Object> param=new HashMap<>();
+		param.put("businessObjectId", businessObjectId);
+		if(parentId != null && parentId.length()>10){
+			param.put("parentId", parentId);
+			parentBusinessVariable = businessObjectVariableDao.getObjectById(parentId);
+		} else {
+			param.put("parentId", "-1");//-1表示去查询parent_id为空的
+		}
+		
+		List<BusinessObjectVariable> businessVariableList = businessObjectVariableDao.queryBusinessObjectVariableListByParam(param);
+		if(businessVariableList!=null && businessVariableList.size()>0){
+			BusinessObjectVariable lastObject = businessVariableList.get(businessVariableList.size()-1);
+			String sort = lastObject.getSort();
+			if(StringUtils.isNotEmpty(sort)) {
+				if(parentId != null && parentId.length()>10){
+					int i=sort.lastIndexOf("-");
+				    String parentSort = sort.substring(0,i);
+				    String oldSort = sort.substring(i+1,sort.length());
+				    int oldNumber =Integer.parseInt(oldSort);
+				    int newNumber=(oldNumber+1);
+				    sortText = parentSort+"-"+ String.format("%04d", newNumber);
+				} else {
+					String[] s =sort.split("\\$");
+					int oldNumber =Integer.parseInt(s[1]);
+					int newNumber=(oldNumber+1);
+					sortText = "$"+String.format("%04d", newNumber);
+				}
+			}
+		}else{
+			if(parentId != null && parentId.length()>10){
+				String parentSort = parentBusinessVariable.getSort();
+				sortText = parentSort + "-" + "0001";
+			}else{
+				sortText = "$0001";
+			}
+		}
+		return sortText;
+	}
+	
+	public List<BusinessObjectVariable> getRepeatObject(BusinessObjectVariable businessVariable){
+		String name = businessVariable.getName();
+		String code = businessVariable.getCode();
+		Map<String,Object> map = new HashMap<>();
+		//map.put("name", name);
+		map.put("code", code);
+		map.put("businessObjectId", businessVariable.getBusinessObjectId());
+		map.put("delflag", 0);
+	    List<BusinessObjectVariable> resultProjectTypeList = businessObjectVariableDao.queryList(map);
+		 return resultProjectTypeList;
+	}
+
+	/**
+	 * author:zhengjiajie
+	 * describe: 修改排序
+	 * param:ids
+	 * thinking：排序  需要把子集的编号 也变化   这样 拿到变动的对象的排序号  然后查询所有like 这个排序号的子集  然后统一把第一个“-”前面的排序号 换成新的排序号  updateBatch
+	 */
+	@Override
+	public int updateSort(BusinessObjectVariable baseBusinessVariable, Map<String, Object> map) throws Exception{
+		String  sortType= String.valueOf(map.get("sortType"));
+		String sort1 = baseBusinessVariable.getSort();
+		String parentId = baseBusinessVariable.getParentId();
+		Map<String,Object> param=new HashMap<>();
+		
+		param.put("businessObjectId", baseBusinessVariable.getBusinessObjectId());
+		if(parentId != null && parentId.length()>10){
+			param.put("parentId", parentId);
+		} else {
+			param.put("parentId", "-1");//-1表示去查询parent_id为空的
+		}
+		List<BusinessObjectVariable> baseProjectList = businessObjectVariableDao.queryBusinessObjectVariableListByParam(param);
+		System.out.println("001 sortType="+sortType+" baseProjectList.size()="+baseProjectList.size());
+		if(SortType.UP_ONE.getCode().equals(sortType)){//上移一位
+			for (int i = 0; i < baseProjectList.size(); i++) {
+				String sort2 = baseProjectList.get(i).getSort();
+				if(sort2.equals(sort1)&&i!=0){
+					String sort3 = baseProjectList.get(i-1).getSort();
+					baseProjectList.get(i-1).setSort(sort2);
+					baseProjectList.get(i).setSort(sort3);
+					businessObjectVariableDao.update(baseProjectList.get(i-1));
+					businessObjectVariableDao.update(baseProjectList.get(i));	
+					Map<String,Object> params1=new HashMap<String, Object>();
+					params1.put("oldSort", sort2);
+					params1.put("newSort", sort3);
+					params1.put("prefixId",baseProjectList.get(i).getPrefixId());
+					businessObjectVariableDao.updateAllNodes(params1);
+					Map<String,Object> params2=new HashMap<String, Object>();
+					params2.put("oldSort", sort3);
+					params2.put("newSort", sort2);
+					params2.put("prefixId",baseProjectList.get(i-1).getPrefixId());
+					businessObjectVariableDao.updateAllNodes(params2);
+					break;
+				}
+			}	
+			System.out.println("0033 sortType="+sortType+" is done...");
+		}else if(SortType.DOWN_ONE.getCode().equals(sortType)){//下移一位
+			 for (int i = 0; i < baseProjectList.size(); i++) {
+				String sort2 = baseProjectList.get(i).getSort();
+				if(sort2.equals(sort1)){
+					if(i!=baseProjectList.size()-1){
+						String sort3 = baseProjectList.get(i+1).getSort();
+						String PrefixId1=baseProjectList.get(i).getPrefixId();
+						String PrefixId2=baseProjectList.get(i+1).getPrefixId();
+						baseProjectList.get(i+1).setSort(sort2);
+						baseProjectList.get(i).setSort(sort3);
+						businessObjectVariableDao.update(baseProjectList.get(i+1));
+						businessObjectVariableDao.update(baseProjectList.get(i));	
+						Map<String,Object> params1=new HashMap<String, Object>();
+						params1.put("oldSort", sort2);
+						params1.put("newSort", sort3);
+						params1.put("prefixId",PrefixId1);
+						businessObjectVariableDao.updateAllNodes(params1);
+						Map<String,Object> params2=new HashMap<String, Object>();
+						params2.put("oldSort", sort3);
+						params2.put("newSort", sort2);
+						params2.put("prefixId",PrefixId2);
+						businessObjectVariableDao.updateAllNodes(params2);
+						break;
+					}	
+				}
+			}
+			System.out.println("0033 sortType="+sortType+" is done...");
+		}else if(SortType.TO_TOP.getCode().equals(sortType)){//置顶
+			String firstSort = baseProjectList.get(0).getSort();
+			for (int i = 0; i < baseProjectList.size(); i++) {
+				String sort2 = baseProjectList.get(i).getSort();
+				if(sort2.equals(sort1)){
+					if(i!=0){
+						Map<String,Object> params1=new HashMap<String, Object>();
+					    String oldSort = baseProjectList.get(i).getSort();
+					    baseProjectList.get(i).setSort(firstSort);
+					    businessObjectVariableDao.update(baseProjectList.get(i));
+					    params1.put("newSort",firstSort);
+					    params1.put("oldSort",oldSort);
+						params1.put("prefixId",baseProjectList.get(i).getPrefixId());
+						businessObjectVariableDao.updateAllNodes(params1);
+						break;
+					}else{
+						break;
+				    }
+				}else{
+					String newSort=baseProjectList.get(i+1).getSort();
+					String oldSort=baseProjectList.get(i).getSort();
+					String prefixId = baseProjectList.get(i).getPrefixId();
+					baseProjectList.get(i).setSort(baseProjectList.get(i+1).getSort());
+					businessObjectVariableDao.update(baseProjectList.get(i));
+					Map<String,Object> params2=new HashMap<String, Object>();
+					params2.put("oldSort", oldSort);
+					params2.put("newSort", newSort);
+					params2.put("prefixId",prefixId);
+					businessObjectVariableDao.updateAllNodes(params2);
+				}	
+			}
+			System.out.println("0033 sortType="+sortType+" is done...");
+		}else if(SortType.TO_BOTTOM.getCode().equals(sortType)){//置底
+			String endSort = baseProjectList.get(baseProjectList.size()-1).getSort();
+			for (int i = baseProjectList.size()-1; i >-1; i--) {
+				String sort2 = baseProjectList.get(i).getSort();
+				if(sort2.equals(sort1)){
+					if(i!=baseProjectList.size()-1){
+						String oldSort = baseProjectList.get(i).getSort();
+						baseProjectList.get(i).setSort(endSort);
+						businessObjectVariableDao.update(baseProjectList.get(i));
+						Map<String,Object> params1=new HashMap<String, Object>();
+						params1.put("oldSort", oldSort);
+						params1.put("newSort", endSort);
+						params1.put("prefixId",baseProjectList.get(i).getPrefixId());
+						businessObjectVariableDao.updateAllNodes(params1);
+						break;
+					}else{
+						break;
+					}
+				}else{
+					String newSort=baseProjectList.get(i-1).getSort();
+					String oldSort=baseProjectList.get(i).getSort();
+					baseProjectList.get(i).setSort(newSort);
+					businessObjectVariableDao.update(baseProjectList.get(i));
+					Map<String,Object> params2=new HashMap<String, Object>();
+					params2.put("oldSort", oldSort);
+					params2.put("newSort", newSort);
+					params2.put("prefixId",baseProjectList.get(i).getPrefixId());
+					businessObjectVariableDao.updateAllNodes(params2);
+				}	
+			}
+			System.out.println("0033 sortType="+sortType+" is done...");
+		}
+		return 1;
+	}
+
+	@Override
+	public int updateBusinessObjectVariable(BusinessObjectVariable businessVariable) throws Exception {
+		BusinessObjectVariable oldBusinessVariable = this.getObjectById(businessVariable.getId());
+		String oldParentId = oldBusinessVariable.getParentId();
+		String newParentId = businessVariable.getParentId();
+		if(oldParentId == null || "null".equals(oldParentId)){
+			oldParentId = "";
+		}
+		if(newParentId == null || "null".equals(newParentId)){
+			newParentId = "";
+		}
+		System.out.println("oldParentId="+oldParentId+"; newParentId="+newParentId);
+		if(!oldParentId.equals(newParentId)){//parentId发生变化,则要调整相应的sort和prefix_id的值
+			Map<String,Object> updateMap=new HashMap<String, Object>();
+			String oldPrefixId = businessVariable.getPrefixId();
+			String newPrefixId = businessVariable.getId();
+			if(!"".equals(newParentId)){
+				newPrefixId = newParentId+"-"+businessVariable.getId();
+			}
+			String newSort = this.calculateSortTextByParam(newParentId, businessVariable.getBusinessObjectId());
+			System.out.println("newSort="+newSort);
+			updateMap.put("oldSort", businessVariable.getSort());
+			updateMap.put("newSort", newSort);
+			updateMap.put("oldPrefixId", oldPrefixId);
+			updateMap.put("newPrefixId", newPrefixId);
+			System.out.println(JacksonUtils.toJson(updateMap));
+			businessObjectVariableDao.updateAllNodesSortAndPrefix(updateMap);
+			businessVariable.setPrefixId(newPrefixId);
+			businessVariable.setSort(newSort);
+		}
+		businessVariable.setParentId(newParentId);
+		businessObjectVariableDao.update(businessVariable);
+		return 1;
+	}
+
+	@Override
+	public void fixVariableData() throws Exception {
+		List<BusinessObjectVariable> dataList = businessObjectVariableDao.queryToFixDataList();
+		int startIdx = 13;
+		String objectId = "";
+		String sortText = "";
+		String dataId = "";
+		for(BusinessObjectVariable variable : dataList){
+			String tempObjectId = variable.getBusinessObjectId();
+			dataId = variable.getId();
+			if(objectId.equals(tempObjectId)){//继续添加
+				startIdx++;
+			}else{
+				startIdx=13;
+				objectId = tempObjectId;
+			}
+			sortText = "$00"+startIdx;
+			Map<String, Object> udpateMap = new HashMap<String, Object>();
+			udpateMap.put("sort", sortText);
+			udpateMap.put("businessObjectId", objectId);
+			udpateMap.put("dataId", dataId);
+			System.out.println("---  sort="+sortText+"; businessObjectId="+objectId+"; dataId="+dataId);
+			businessObjectVariableDao.doFixDataUpdate(udpateMap);
+		}
+	}
+	
+
+}

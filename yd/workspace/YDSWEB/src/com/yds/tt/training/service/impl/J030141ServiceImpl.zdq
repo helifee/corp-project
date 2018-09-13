@@ -1,0 +1,209 @@
+/*
+ * @(#) J030141ServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 教育考试培训系统
+ *    SubSystem: 教育子系统
+ */
+
+package com.yds.tt.training.service.impl;
+
+import org.springframework.stereotype.Service;
+
+import com.yds.base.service.AbstractBaseService;
+import com.yds.common.service.SessionConstants;
+import com.yds.tt.manager.bean.MessageReminding;
+import com.yds.tt.manager.dao.TtCommonDao;
+import com.yds.tt.manager.service.TtCommonService;
+import com.yds.tt.manager.service.TtCommonUtil;
+import com.yds.tt.manager.service.TtConstants;
+import com.yds.tt.manager.service.TtExclusiveException;
+import com.yds.tt.training.bean.BookInfo;
+import com.yds.tt.training.dao.J030141Dao;
+import com.yds.tt.training.service.J030141Service;
+import com.yds.util.service.FileUtil;
+import com.yds.util.service.Session;
+
+/**
+ * @see com.yds.tt.training.service.J030141Service
+ * 
+ */
+@Service("j030141Service")
+public class J030141ServiceImpl extends AbstractBaseService implements
+		J030141Service {
+
+	private J030141Dao j030141Dao;
+
+	private TtCommonService ttCommonService;
+
+	private TtCommonDao ttCommonDao;
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public BookInfo init(BookInfo bookInfo) {
+
+		// 检索数据
+		BookInfo bookInfoTemp = this.j030141Dao.getBookInfo(bookInfo);
+
+		// 检索不到此记录
+		if (null == bookInfoTemp) {
+			return null;
+		}
+		// 保存时间戳检查用的更新时间
+		ttCommonService.setTimestamp(TtConstants.PageId.J030141, bookInfo
+				.getUpdateTime());
+
+		// 保存更新教材信息
+		Session.set(SessionConstants.TT_J030141_UPDATEBOOKINFO, bookInfo);
+
+		return bookInfoTemp;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public BookInfo updateBookInfo(BookInfo updateBookInfo, Integer option) {
+
+		BookInfo bookInfo = (BookInfo) Session
+				.get(SessionConstants.TT_J030141_UPDATEBOOKINFO);
+
+		// 检索DB
+		BookInfo bookInfoTemp = this.j030141Dao.getBookInfo(bookInfo);
+
+		// 时间戳检查
+		if (!ttCommonService.checkTimeStamp(TtConstants.PageId.J030141,
+				bookInfoTemp.getUpdateTime())) {
+			// 清除SESSION中教材信息
+			Session.delete(SessionConstants.TT_J030141_UPDATEBOOKINFO);
+			throw new TtExclusiveException();
+		}
+		
+		if (option == 1) {
+			// 设置版本号
+			bookInfo.setVersionNo(updateBookInfo.getPreVersionNo());
+			// 更新号加1
+			bookInfo.setUpdateNo(updateBookInfo.getPreUpdateNo() + 1);
+		} else {
+			// 设置版本号加1
+			bookInfo.setVersionNo(updateBookInfo.getPreVersionNo() + 1);
+
+			// 更新号置为0
+			bookInfo.setUpdateNo(0);
+		}
+
+		// 设置更新履历
+		bookInfo.setModifyHistory(updateBookInfo.getModifyHistory());
+
+		// 设置更新者ID
+		bookInfo.setUpdateUserId(TtCommonUtil.getLoginUserId());
+
+		// 设置申请者
+		bookInfo.setApplyUserId(TtCommonUtil.getLoginUserId());
+
+		// 设置教材状态(2:待审批)
+		bookInfo.setBookStatus(TtConstants.R01.R01_2.value());
+
+		// 清除SESSION中教材信息
+		Session.delete(SessionConstants.TT_J030141_UPDATEBOOKINFO);
+
+		// 封面文件名
+		String imgFileName = bookInfo.getBookCover();
+		boolean needToCopyFile = false;
+
+		// 若文件名长度与文件名格式的长度不一致，并且不是默认图片，则说明上传了新封面文件
+		if (imgFileName.substring(0, bookInfo.getBookCover().lastIndexOf("."))
+				.length() != TtConstants.FILENAMEFORMAT.length() && 
+			!imgFileName.equals(TtConstants.DEFAULTCOVERNAME)) {
+			// 临时文件名改为正式文件名
+			bookInfo.setBookCover(TtCommonUtil.generateFileName(imgFileName));
+			needToCopyFile = true;
+		}
+
+		// 更新记录
+		this.j030141Dao.updateBookInfo(bookInfo);
+
+		if (needToCopyFile) {
+			// 把临时目录下的教材封面图片拷贝到教育系统图片目录下
+			FileUtil.saveFile(imgFileName, propMgr
+					.getParameter(TtConstants.FILE_PATH.BOOK_IMAGE.value()),
+					bookInfo.getBookCover().substring(0,
+							bookInfo.getBookCover().lastIndexOf(".")));
+		}
+
+		// 登录提醒信息
+		this.insertMessageReminding(bookInfo, "yds.tt.remind.JYY01",
+				TtConstants.REMIND_MODE.JYY01.value());
+
+		return bookInfo;
+	}
+
+	/**
+	 * 登录提醒信息
+	 * 
+	 * @param BookInfo
+	 *            关联教材信息
+	 * @param String
+	 *            信息ID
+	 * @param String
+	 *            信息模式
+	 * @return String 处理后文件名
+	 */
+	private void insertMessageReminding(BookInfo bookInfo, String messageCode,
+			String mode) {
+
+		MessageReminding message = new MessageReminding();
+
+		// 消息内容
+		message.setContent(propMgr.getMessage(messageCode, bookInfo
+				.getBookName()));
+
+		// 消息模式
+		message.setMode(mode);
+
+		// 消息参数 教材ID
+		message.setParameter(bookInfo.getBookId());
+
+		// Id采番
+		message.setInformationId(ttCommonService
+				.getSequence(TtConstants.SEQID.Information));
+
+		// 用户ID 审批者ID
+		message.setUserId(j030141Dao.getReviewer(bookInfo.getBookId()));
+
+		// 主页面左侧显示
+		message.setInformationFlg(TtConstants.REMIND_FLG.LEFT.value());
+
+		// 设置失效日期为无穷大
+		message.setLosetime(TtCommonUtil.getMaxDate());
+
+		ttCommonDao.insertMessageReminding(message);
+	}
+
+	/**
+	 * @param ttCommonService
+	 *            the ttCommonService to set
+	 */
+	public void setTtCommonService(TtCommonService ttCommonService) {
+		this.ttCommonService = ttCommonService;
+	}
+
+	/**
+	 * @param dao
+	 *            the j030141Dao to set
+	 */
+	public void setJ030141Dao(J030141Dao dao) {
+		j030141Dao = dao;
+	}
+
+	/**
+	 * @param ttCommonDao
+	 *            the ttCommonDao to set
+	 */
+	public void setTtCommonDao(TtCommonDao ttCommonDao) {
+		this.ttCommonDao = ttCommonDao;
+	}
+
+}

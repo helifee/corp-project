@@ -1,0 +1,252 @@
+package com.xinleju.erp.flow.service.api;
+
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.base.utils.DateUtils;
+import com.xinleju.erp.flow.dao.impl.WiDAO;
+import com.xinleju.erp.flow.flowutils.utils.WsConstant;
+import com.xinleju.erp.flow.models.Ai;
+import com.xinleju.erp.flow.models.Fi;
+import com.xinleju.erp.flow.models.Wi;
+import com.xinleju.erp.flow.utils.FlowConstant;
+import com.xinleju.erp.flow.utils.FlowExceptionUtils;
+import com.xinleju.erp.form.utils.DbType;
+import com.xinleju.erp.frame.models.InterfaceLog;
+
+/**
+ * 
+ * 版权：(C) 版权所有 2000-2014 上海天好电子商务有限公司苏州分公司
+ * 流程状态改变接口
+ * @author   zhongjun
+ * @version  $Id$
+ * @since
+ * @see
+ */
+@Service
+public class FiStatusChangeService extends BaseService {
+	
+	/**
+	 * 其他业务系统servicebean
+	 */
+	@Autowired
+	private SmObjectService smObjectService;
+	
+    /**
+     * 工作组WiDAO
+     */
+    @Autowired
+    private WiDAO wiDAO;
+    /**
+     * 流程状态改变事件
+     * @author jun
+     * @param statusChangeType
+     */
+    public void statusChange(Fi fi, int statusChangeType, Object... objects){
+    	System.out.println("===============流程状态改变事件");
+        if (null != fi && !(null != fi.getFl() && null != fi.getFl().getServiceObjectDefine())){
+            fi = getDao().getById(Fi.class, fi.getId(), "fl", "fl.serviceObjectDefine");
+        }
+        InterfaceLog ifl = new InterfaceLog();
+        ifl.setCreateAt(new Date());
+        ifl.setStartAt(new Date());
+        ifl.setModuleCode(FlowConstant.APP_CODE_PT);
+        ifl.setParams("appCode:" + (null != fi && null != fi.getFl() ? fi.getFl().getAppCode() : "") + ";fiId:" + fi.getId() + ";statusChangeType:" + statusChangeType);
+        ifl.setRetryTimes(0);
+        ifl.setStatus(InterfaceLog.STATUS_SUCCESS);
+        ifl.setFailureNote("");
+        switch (statusChangeType) {
+            //发起
+            case WsConstant.FI_STATUS_CHANGE_TYPE_FQ:{
+                ifl.setName(fi.getFiName() + "-流程发起");
+                try {
+
+                    Map<String, Object> map = new HashMap<String, Object>();
+                	smObjectService.sendFiStatus(fi.getFl().getAppCode(), fi.getBizId(), fi.getFl().getServiceObjectDefine().getCode(), 1, null, null, map);
+                } catch (Exception e){
+                	System.out.println(e.toString());
+                    ifl.setStatus(InterfaceLog.STATUS_FAIL);
+                    ifl.setFailureNote(FlowExceptionUtils.getExceptionMsg(e));
+                }
+                ifl.setFinishAt(new Date());
+                getDao().save(ifl);
+                break;
+            }
+            //驳回
+            case WsConstant.FI_STATUS_CHANGE_TYPE_BH:{
+                ifl.setName(fi.getFiName() + "-流程驳回");
+                Map<String, Object> map = new HashMap<String, Object>();
+                map.put("FINAL_SP_USER_NAME", fi.getCompleteUserName());
+                map.put("FINAL_SP_USER_ID", fi.getCompleteUserId());
+                try {
+                	smObjectService.sendFiStatus(fi.getFl().getAppCode(), fi.getBizId(), fi.getFl().getServiceObjectDefine().getCode(), 2, 2, DateUtils.formatDate(new Date(), "yyyy-MM-dd HH:mm:ss"), map);
+                } catch (Exception e){
+                    ifl.setStatus(InterfaceLog.STATUS_FAIL);
+                    ifl.setFailureNote(FlowExceptionUtils.getExceptionMsg(e));
+                }
+                ifl.setFinishAt(new Date());
+                getDao().save(ifl);
+                break;
+            }
+            //撤回
+            case WsConstant.FI_STATUS_CHANGE_TYPE_CH:{
+                ifl.setName(fi.getFiName() + "-流程撤回");
+                Map<String, Object> map = new HashMap<String, Object>();
+                map.put("FINAL_SP_USER_NAME", fi.getCompleteUserName());
+                map.put("FINAL_SP_USER_ID", fi.getCompleteUserId());
+                try {
+                	smObjectService.sendFiStatus(fi.getFl().getAppCode(), fi.getBizId(), fi.getFl().getServiceObjectDefine().getCode(), 2, 3, DateUtils.formatDate(new Date(), "yyyy-MM-dd HH:mm:ss"), map);
+                } catch (Exception e){
+                    ifl.setStatus(InterfaceLog.STATUS_FAIL);
+                    ifl.setFailureNote(FlowExceptionUtils.getExceptionMsg(e));
+                }
+                ifl.setFinishAt(new Date());
+                getDao().save(ifl);
+                break;
+            }
+            //作废
+            case WsConstant.FI_STATUS_CHANGE_TYPE_ZF:{
+                ifl.setName(fi.getFiName() + "-流程作废");
+                Map<String, Object> map = new HashMap<String, Object>();
+                map.put("FINAL_SP_USER_NAME", fi.getCompleteUserName());
+                map.put("FINAL_SP_USER_ID", fi.getCompleteUserId());
+                try {
+                    map.put("PART_USERS", getCurrentFlowUsers(fi));
+                	smObjectService.sendFiStatus(fi.getFl().getAppCode(), fi.getBizId(), fi.getFl().getServiceObjectDefine().getCode(), 2, 4, DateUtils.formatDate(new Date(), "yyyy-MM-dd HH:mm:ss"), map);
+                } catch (Exception e){
+                    ifl.setStatus(InterfaceLog.STATUS_FAIL);
+                    ifl.setFailureNote(FlowExceptionUtils.getExceptionMsg(e));
+                }
+                ifl.setFinishAt(new Date());
+                getDao().save(ifl);
+                break;
+            }
+            //结束
+            case WsConstant.FI_STATUS_CHANGE_TYPE_JS:{
+                ifl.setName(fi.getFiName() + "-流程结束");
+                Map<String, Object> map = new HashMap<String, Object>();
+                map.put("FINAL_SP_USER_NAME", fi.getCompleteUserName());
+                map.put("FINAL_SP_USER_ID", fi.getCompleteUserId());
+                try {
+                	smObjectService.sendFiStatus(fi.getFl().getAppCode(), fi.getBizId(), fi.getFl().getServiceObjectDefine().getCode(), 2, 1, DateUtils.formatDate(new Date(), "yyyy-MM-dd HH:mm:ss"), map);
+                } catch (Exception e){
+                    ifl.setStatus(InterfaceLog.STATUS_FAIL);
+                    ifl.setFailureNote(FlowExceptionUtils.getExceptionMsg(e));
+                }
+                ifl.setFinishAt(new Date());
+                getDao().save(ifl);
+                break;
+            }
+            //审批分支结束
+            case WsConstant.FI_STATUS_CHANGE_TYPE_FZJS:{
+            	if (null != objects && objects.length > 0){
+                    ifl.setName(fi.getFiName() + "-分支" + String.valueOf(objects[0]) + "结束");
+                    Map<String, Object> map = new HashMap<String, Object>();
+                    map.put("ENDTAG", String.valueOf(objects[0]));
+                    try {
+                    	smObjectService.sendFiStatus(fi.getFl().getAppCode(), fi.getBizId(), fi.getFl().getServiceObjectDefine().getCode(), 9, null, null, map);
+                    } catch (Exception e){
+                        ifl.setStatus(InterfaceLog.STATUS_FAIL);
+                        ifl.setFailureNote(FlowExceptionUtils.getExceptionMsg(e));
+                    }
+            	} else {
+            		ifl.setName(fi.getFiName() + "-分支结束");
+            	}
+                ifl.setFinishAt(new Date());
+                getDao().save(ifl);
+                break;
+            }
+            //节点通过
+            case WsConstant.FI_STATUS_CHANGE_TYPE_JT:{
+            	
+        		ifl.setName(fi.getFiName() + "-节点通过");
+                try {
+                	if (null != objects && objects.length > 0){
+	                    Map<String, Object> map = new HashMap<String, Object>();
+	                    
+	                    Ai ai = (Ai) objects[0];
+	            		List<Wi> lstWi = wiDAO.getWiByAiId(ai.getId());
+
+	            		if(lstWi != null && lstWi.size() > 0){
+	            			StringBuffer sb = new StringBuffer();
+	            			sb.append("fiId_"+fi.getId()+"_wiId_"+ lstWi.get(0).getId());
+	            			
+	            			for(int i=1;i<lstWi.size();i++){
+	                			
+	                			sb.append(",").append("fiId_"+fi.getId()+"_wiId_"+ lstWi.get(i).getId());
+	                		}
+	            		
+	            			map.put("category", FlowConstant.ATT_CODE_SP);
+	            			map.put("ownerIds", sb.toString());
+	            			map.put("opCode", ai.getAc().getOpGroup().getCode());
+	            			
+	            			System.out.println("ownerIds=" + sb.toString() + ",opCode="+ai.getAc().getOpGroup().getCode());
+	            		}
+	            		
+	                	smObjectService.sendAiStatus(fi.getFl().getAppCode(), fi.getBizId(), fi.getFl().getServiceObjectDefine().getCode(), 1, null, null, map);
+                	}
+                } catch (Exception e){
+                    ifl.setStatus(InterfaceLog.STATUS_FAIL);
+                    ifl.setFailureNote(FlowExceptionUtils.getExceptionMsg(e));
+                } finally{
+                	ifl.setFinishAt(new Date());
+                    getDao().save(ifl);
+                }
+                break;
+            }
+            default:{
+                break;
+            }
+        }
+    }
+    
+    
+   
+    
+    /**
+     * 流程状态改变事件
+     * @param fiId
+     * @param statusChangeType
+     * @param objects
+     */
+    public void statusChange(Long fiId, int statusChangeType, Object... objects){
+    	if (statusChangeType > 0){
+    		Fi fi = getDao().getById(Fi.class,fiId , new String[]{"fl", "fl.serviceObjectDefine"});
+    		this.statusChange(fi, statusChangeType, objects);
+    	}
+    }
+    
+	public String getCurrentFlowUsers(Fi fi) {
+		App.DB_PRODUCT_NAME = "";
+		try {
+			if (fi != null) {
+				getDao().flush();
+				List<String> strList = App.getBean(JdbcTemplate.class).queryForList(
+						"select distinct w.participant_user_name from  tf_wi w where w.fi_id=? and w.status = 1  and w.wi_type in('" + WsConstant.WiType.ZC.getCode() + "', '"
+								+ WsConstant.WiType.CS.getCode() + "', '" + WsConstant.WiType.CY.getCode() + "', '" + WsConstant.WiType.CB.getCode() + "')", new Object[] { fi.getId() }, String.class);
+				StringBuffer stringBuffer = new StringBuffer();
+				if (!strList.isEmpty()) {
+					for (String str : strList) {
+						stringBuffer.append(str + ",");
+					}
+				}
+				if(!StringUtils.isEmpty(stringBuffer)){
+					stringBuffer=stringBuffer.deleteCharAt(stringBuffer.length()-1);
+				}
+				return stringBuffer.toString();
+			}
+    	}catch(Exception ex){
+    		ex.printStackTrace();
+    	}
+		return "";
+    }
+}

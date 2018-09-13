@@ -1,0 +1,66 @@
+package com.xinleju.platform.flow.dto;
+
+import com.xinleju.platform.base.dto.BaseDto;
+
+
+
+
+
+/**
+ * @author admin
+ * 
+ *
+ */
+public class MonitoredPersonDto extends BaseDto{
+
+		
+	//被监控人
+	private String monitoredName;
+    
+  		
+	//被监控人id
+	private String monitoredId;
+    
+  		
+	//被监控人类型(1-人员 2-岗位 3-角色)
+	private String monitoredType;
+    
+  		
+	//监控设置id
+	private String monitorSettingId;
+    
+  		
+		
+	public String getMonitoredName() {
+		return monitoredName;
+	}
+	public void setMonitoredName(String monitoredName) {
+		this.monitoredName = monitoredName;
+	}
+    
+  		
+	public String getMonitoredId() {
+		return monitoredId;
+	}
+	public void setMonitoredId(String monitoredId) {
+		this.monitoredId = monitoredId;
+	}
+    
+  		
+	public String getMonitoredType() {
+		return monitoredType;
+	}
+	public void setMonitoredType(String monitoredType) {
+		this.monitoredType = monitoredType;
+	}
+    
+  		
+	public String getMonitorSettingId() {
+		return monitorSettingId;
+	}
+	public void setMonitorSettingId(String monitorSettingId) {
+		this.monitorSettingId = monitorSettingId;
+	}
+    
+  		
+}

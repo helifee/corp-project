@@ -1,0 +1,207 @@
+package com.xinleju.erp.report.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import javax.annotation.Resource;
+
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.erp.flow.dao.impl.AcDAO;
+import com.xinleju.erp.flow.dao.impl.TrDAO;
+import com.xinleju.erp.flow.models.Ac;
+import com.xinleju.erp.flow.models.Tr;
+import com.xinleju.erp.report.dao.FlowModelStepDao;
+import com.xinleju.erp.report.dto.FlowModelStepDto;
+import com.xinleju.erp.report.service.FlowModelStepService;
+import com.xinleju.erp.report.utils.Node;
+import com.xinleju.erp.report.utils.SearchStartToEndPath;
+
+@Service
+public class FlowModelStepServiceImpl implements FlowModelStepService {
+    
+	private static final int isStart = 1;
+	private static final int isEnd = 1;
+	@Resource
+	private FlowModelStepDao flowModelStepDao;
+	@Resource
+	private AcDAO acDAO;
+	@Resource
+	private TrDAO trDAO;
+	
+	public  List<List<FlowModelStepDto>> parseFlowModel() throws Exception {
+		// TODO Auto-generated method stub
+		List<Map<String, Object>>  list=flowModelStepDao.getByListMaxVersionFL();
+		List<List<FlowModelStepDto>> lisFlowModelStepDtos=new ArrayList<List<FlowModelStepDto>>();
+		if(list!=null && list.size()>0){
+			for(Map<String, Object> map:list){
+				String flowCode=(String) map.get("flow_code");
+				String flowVersion=(String) map.get("flow_version");
+				String flowName=(String) map.get("flow_name");
+				String type1=(String) map.get("type1");
+				String type2=(String) map.get("type2");
+				String fiId=String.valueOf(map.get("id")) ;
+				List<Ac> acList = acDAO.getAcList(flowCode, flowVersion);
+				Map<String, Ac> mapAc = new HashMap<String, Ac>();
+				Map<String, Tr> mapTr = new HashMap<String, Tr>();
+				// 活的流程模板对应所有Tr
+				List<Tr> trList = trDAO.getListByFlowCodeAndFlowVersion(flowCode,
+						flowVersion);
+				//所有的线
+				Map<String, String> condMap=new HashMap<String, String>();
+				for (Tr tr : trList) {
+					mapTr.put(tr.getTrId(), tr);
+					condMap.put(tr.getSource()+"_"+tr.getTarget(), tr.getCond());
+				}
+
+				int i=0;
+				Node[] nodes = new Node[acList.size()]; 
+				//说有节点
+				for (Ac ac : acList) {
+					mapAc.put(ac.getNodeId(), ac);
+					Node node=new Node();
+					node.setId(ac.getNodeId());
+					node.setName(ac.getNodeName());
+					node.setAc(ac);
+					nodes[i]=node;
+					i++;
+				}
+				
+				Node  firstNodeAC=null;
+				List<Node>  lastNodeACs=new ArrayList<Node>();
+				Node[] newnodes = new Node[acList.size()]; 
+				//关联
+				for(int j=0;j<nodes.length;j++){
+					    //获取当前结点
+					    Node nodeAC=nodes[j];
+					    String next_trs = nodeAC.getAc().getNext_tr_1();
+					    String[] next_tr = next_trs.split("-");
+					    if(next_tr!=null && next_tr.length>0){
+						    List<Node> relationACs=new ArrayList<Node>();
+							for(String tr_id :next_tr){
+								if(StringUtils.isNotBlank(tr_id)){
+									 Tr tr=mapTr.get(tr_id);
+									 if(tr!=null){
+										 Ac nextAc=mapAc.get(tr.getTarget());
+										 Node nextnodeAC=new Node();
+										 nextnodeAC.setId(nextAc.getNodeId());
+										 nextnodeAC.setName(nextAc.getNodeName());
+										 nextnodeAC.setAc(nextAc);
+										 relationACs.add(nextnodeAC);
+									 }
+								}
+							}
+							nodeAC.setRelationNodes(relationACs);
+					    }
+					    newnodes[j]=nodeAC;
+				}
+				Map<String,Node> nodeMaps=new HashMap<String,Node>();
+				for(int j=0;j<newnodes.length;j++){
+					Node nodeAC=nodes[j];
+					if(nodeAC.getAc().getIsEnd()==isEnd){
+						lastNodeACs.add(nodeAC);
+					}
+					if (isStart == nodeAC.getAc().getIsStart()) {
+						firstNodeAC = nodeAC;
+					}
+					nodeMaps.put(nodeAC.getId(), nodeAC);
+				}
+				List<FlowModelStepDto> flows=new ArrayList<FlowModelStepDto>();
+				
+			    
+				for(Node ac :lastNodeACs){
+					SearchStartToEndPath search=new SearchStartToEndPath();
+					search.getPaths(firstNodeAC, null, firstNodeAC, ac,nodeMaps);
+					List<Object[]> ll=search.getSers();
+				   
+					for(Object[] objs :ll){
+						FlowModelStepDto flowModelStepDto=new FlowModelStepDto();
+						StringBuffer sb=new StringBuffer();
+						StringBuffer conditions=new StringBuffer();
+						int flag=1;
+						for(int b=0;b<objs.length;b++){
+							Node node=(Node)objs[b];
+							Ac cc=node.getAc();
+							StringBuilder sbb=new StringBuilder();
+							String paticipantList=cc.getPaticipantList();
+							if(StringUtils.isNotBlank(paticipantList)){
+								String[] ps=paticipantList.split(";");
+								if(ps!=null){
+									for(String p:ps){
+										if(StringUtils.isNotBlank(p)){
+											String[] parts=p.split(":");
+											if(parts!=null){
+												String part=parts[1];
+												sbb.append(part+",");
+											}
+										}
+									}
+								}
+								
+							}
+							if(sbb.toString().endsWith(",")){
+								sbb.deleteCharAt(sbb.toString().length()-1);
+							}
+							sb.append(sbb.toString()+"["+(cc.getOpGroup()!=null ?cc.getOpGroup().getName():"")+"]"+"-->");
+							if(b==0){
+								
+							}else{
+								String key=((Node)objs[b-1]).getId()+"_"+((Node)objs[b]).getId();
+								if(StringUtils.isNotBlank(condMap.get(key))){
+							    	conditions.append("("+flag+"):"+condMap.get(key)+";");
+							    	flag++;
+								}
+							}
+						}
+						flowModelStepDto.setCondtions(conditions.toString());
+						flowModelStepDto.setFiId(fiId);
+						if(StringUtils.isNotBlank(sb)){
+							flowModelStepDto.setNodes(sb.subSequence(0, sb.length()-3).toString());
+						}
+						flowModelStepDto.setFlowName(flowName);
+						flowModelStepDto.setType1(type1);
+						flowModelStepDto.setType2(type2);
+						flows.add(flowModelStepDto);
+					}
+					
+				}
+				lisFlowModelStepDtos.add(flows);	
+			}
+		}
+		
+		
+		
+		return lisFlowModelStepDtos;
+	}
+
+	
+	@SuppressWarnings("unused")
+	private Map<String,List<Ac>> getPassAC(Map<String,List<Ac>> acPath ,Ac currentAC,Map<String, Ac> acMap, Map<String, Tr> trMap) {
+		String next_trs = currentAC.getNext_tr_1();// 链接的线条
+		if(next_trs!=null && !"".equals(next_trs)){
+		    String[] next_tr = next_trs.split("-");
+			for(String tr_id :next_tr){
+				Tr tr=trMap.get(tr_id);
+				Ac nextAc=acMap.get(tr.getTarget());
+				Ac uperAc=acMap.get(tr.getSource());
+				List<Ac> list=acPath.get(uperAc.getNodeId());
+				List<Ac> newAcList=new ArrayList<Ac>();
+				for( Ac ac:list){
+					newAcList.add(ac);
+				}
+				newAcList.add(nextAc);
+				acPath.put(nextAc.getNodeId(), newAcList);
+				return getPassAC(acPath ,nextAc,acMap, trMap);
+			}
+		}else{
+			return acPath;
+		}
+		return acPath;
+	}
+	
+
+
+}

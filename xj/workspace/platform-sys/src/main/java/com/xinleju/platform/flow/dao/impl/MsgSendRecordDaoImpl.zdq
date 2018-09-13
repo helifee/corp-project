@@ -1,0 +1,34 @@
+package com.xinleju.platform.flow.dao.impl;
+
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.platform.base.dao.impl.BaseDaoImpl;
+import com.xinleju.platform.flow.dao.MsgSendRecordDao;
+import com.xinleju.platform.flow.entity.MsgSendRecord;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Repository
+public class MsgSendRecordDaoImpl extends BaseDaoImpl<String,MsgSendRecord> implements MsgSendRecordDao{
+
+	public MsgSendRecordDaoImpl() {
+		super();
+	}
+
+	@Override
+	public List<String> queryMsgIdList(Map<String, Object> queryMap) {
+		String method = MsgSendRecord.class.getName()+".queryMsgIdList";
+		return this.getSqlSession().selectList(method, queryMap);
+		
+	}
+
+	
+	
+}

@@ -1,0 +1,24 @@
+package com.xinleju.platform.finance.service;
+
+import java.util.Map;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.finance.entity.BusinessObject;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface BusinessObjectService extends  BaseService <String,BusinessObject>{
+
+	public int updateStatus(BusinessObject billBean) throws Exception;
+
+	public int saveMasterTable(String saveJson) throws Exception;
+
+	public Page getGridList(Map<String, Object> map)throws Exception;
+
+	
+}

@@ -1,0 +1,33 @@
+package com.xinleju.platform.flow.dao.impl;
+
+import com.xinleju.platform.base.dao.impl.BaseDaoImpl;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.flow.dao.SysNoticeMsgDao;
+import com.xinleju.platform.flow.dao.SysNoticeMsgTempDao;
+import com.xinleju.platform.flow.dto.SysNoticeMsgDto;
+import com.xinleju.platform.flow.dto.SysNoticeMsgStatDto;
+import com.xinleju.platform.flow.entity.SysNoticeMsg;
+import com.xinleju.platform.flow.entity.SysNoticeMsgTemp;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+import java.util.Map;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Repository
+public class SysNoticeMsgTempDaoImpl extends BaseDaoImpl<String,SysNoticeMsgTemp> implements SysNoticeMsgTempDao {
+
+	public SysNoticeMsgTempDaoImpl() {
+		super();
+	}
+
+	@Override
+	public List<SysNoticeMsgTemp> queryMsgTempList(Map map) {
+		return this.getSqlSession ().selectList (SysNoticeMsgTemp.class.getName ()+".queryMsgTempList",map);
+	}
+}

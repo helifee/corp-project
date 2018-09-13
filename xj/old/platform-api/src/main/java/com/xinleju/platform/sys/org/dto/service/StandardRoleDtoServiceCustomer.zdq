@@ -1,0 +1,15 @@
+package com.xinleju.platform.sys.org.dto.service;
+
+import com.xinleju.platform.base.dto.service.BaseDtoServiceCustomer;
+
+public interface StandardRoleDtoServiceCustomer extends BaseDtoServiceCustomer{
+
+	
+	/**
+	 * 根据组织机构获取角色
+	 * 
+	 * @param paramater
+	 * @return
+	 */
+	public String queryRoleListByOrgId(String userInfo, String paramater);
+}

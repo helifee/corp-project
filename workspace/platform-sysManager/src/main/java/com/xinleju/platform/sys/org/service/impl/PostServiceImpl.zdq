@@ -1,0 +1,128 @@
+package com.xinleju.platform.sys.org.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.platform.base.annotation.Description;
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.sys.org.dao.PostDao;
+import com.xinleju.platform.sys.org.dto.OrgnazationDto;
+import com.xinleju.platform.sys.org.dto.OrgnazationNodeDto;
+import com.xinleju.platform.sys.org.dto.PostDto;
+import com.xinleju.platform.sys.org.dto.PostQueryDto;
+import com.xinleju.platform.sys.org.entity.Post;
+import com.xinleju.platform.sys.org.service.PostService;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class PostServiceImpl extends  BaseServiceImpl<String,Post> implements PostService{
+	
+
+	@Autowired
+	private PostDao postDao;
+	
+	@Override
+	public List<PostQueryDto> queryPostListByUserId(Map<String, Object> paramater)  throws Exception{
+		return postDao.queryPostListByUserId(paramater);
+	}
+	
+	@Override
+	public List<PostDto> queryAuthPostListByUserId(Map<String, Object> paramater)  throws Exception{
+		return postDao.queryAuthPostListByUserId(paramater);
+	}
+	@Override
+	public List<Map<String,Object>> queryPostRoleListByUserId(Map<String, Object> paramater)  throws Exception{
+		return postDao.queryPostRoleListByUserId(paramater);
+	}
+	
+	@Override
+	@Description(instruction = "根据组织结构查询岗位列表")
+	public List<PostQueryDto> queryPostListByOrgId(Map<String, Object> paramater) throws Exception {
+		return postDao.queryPostListByOrgId(paramater);
+	}	
+
+	@Override
+	@Description(instruction = "根据角色查询岗位列表")
+	public List<PostQueryDto> queryPostListByRoleId(Map<String, Object> paramater) throws Exception {
+		return postDao.queryPostListByRoleId(paramater);
+	}	
+	
+	@Override
+	public List<OrgnazationNodeDto> queryAllPostList(Map<String, Object> map) throws Exception {
+		return postDao.queryAllPostList(map);
+		
+	}
+	@Override
+	public List<Map<String,String>> queryPostsByIds(Map map)throws Exception{
+		return postDao.queryPostsByIds(map);
+	}
+	
+	/**
+	 * 查询用户主岗组织
+	 * @param paramater
+	 * @return
+	 */
+	@Override
+	public String getDefaultPostOrg(Map map)throws Exception{
+		return postDao.getDefaultPostOrg(map);
+	}
+	/**
+	 * 获取组织下岗位
+	 * @param param
+	 * @return
+	 */
+	@Override
+	public Map<String,List<PostDto>> getPostListByOrgId(Map param)throws Exception{
+		String[] orgIds=param.get("orgIds").toString().split(",");
+		Map<String,List<PostDto>> res=new HashMap<String,List<PostDto>>();
+		param.put("orgIds",orgIds);
+		List<PostDto> list=postDao.selectPostDtoListByOrgId(param);
+		String key=null;
+		for (int i = 0; i < list.size(); i++) {
+			key=list.get(i).getRefId();
+			if (res.containsKey(key)) {
+				res.get(key).add(list.get(i));
+			}else{
+				List<PostDto> l=new ArrayList<PostDto>();
+				l.add(list.get(i));
+				res.put(key, l);
+			}
+		}
+		return res;
+	}
+	/**
+	 * 获取用户下岗位
+	 * @param param
+	 * @return
+	 */
+	@Override
+	public Map<String,Object> getPostListByUserId(Map param)throws Exception{
+		String[] userIds=param.get("userIds").toString().split(",");
+		Map<String,Object> res=new HashMap<String,Object>();
+		for (int i = 0; i < userIds.length; i++) {
+			param.put("userId", userIds[i]);
+			List<PostDto> list=postDao.selectPostDtoListByUserId(param);
+			res.put(userIds[i],list);
+		}
+		return res;
+	}
+	
+	/**
+	 * 批量设置领导岗位
+	 */
+	@Override
+	public Integer updateBatchLeaderId(Map map)throws Exception{
+		return postDao.updateBatchLeaderId(map);
+	}
+}

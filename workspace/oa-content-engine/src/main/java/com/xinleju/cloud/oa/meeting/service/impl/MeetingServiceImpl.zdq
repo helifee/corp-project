@@ -1,0 +1,336 @@
+package com.xinleju.cloud.oa.meeting.service.impl;
+
+
+import java.sql.Timestamp;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.cloud.oa.meeting.dao.MeetingDao;
+import com.xinleju.cloud.oa.meeting.dao.MeetingReplyDao;
+import com.xinleju.cloud.oa.meeting.dto.MeetingDto;
+import com.xinleju.cloud.oa.meeting.entity.Meeting;
+import com.xinleju.cloud.oa.meeting.entity.MeetingReply;
+import com.xinleju.cloud.oa.meeting.service.MeetingService;
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.base.utils.LoginUtils;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.base.utils.SecurityUserBeanInfo;
+import com.xinleju.platform.flow.dto.SysNoticeMsgDto;
+import com.xinleju.platform.flow.dto.service.SysNoticeMsgDtoServiceCustomer;
+import com.xinleju.platform.out.app.notice.service.MailAndPhoneServiceCustomer;
+import com.xinleju.platform.sys.org.dto.service.UserDtoServiceCustomer;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+/**
+ * @author wangw
+ * 
+ * 
+ */
+
+@Service
+public class MeetingServiceImpl extends BaseServiceImpl<String, Meeting>
+		implements MeetingService {
+
+	@Autowired
+	private MeetingDao meetingDao;
+
+	@Autowired
+	private MeetingReplyDao meetingReplyDao;
+	@Autowired
+	private MailAndPhoneServiceCustomer mailAndPhoneServiceCustomer;
+	@Autowired
+	private SysNoticeMsgDtoServiceCustomer sysNoticeMsgDtoServiceCustomer;
+	@Autowired
+	private UserDtoServiceCustomer userDtoServiceCustomer;
+
+	/**
+	 * 待发会议列表
+	 * 
+	 * @param paramater
+	 * @return
+	 */
+	@Override
+	public List getWaitSendPage(Map map) {
+		return meetingDao.getWaitSendPage(map);
+	}
+
+	/**
+	 * 待开会议列表
+	 * 
+	 * @param paramater
+	 * @return
+	 */
+	@Override
+	public List getWaitBeginPage(Map map) {
+		return meetingDao.getWaitBeginPage(map);
+	}
+
+	/**
+	 * 已开会议列表
+	 * 
+	 * @param paramater
+	 * @return
+	 */
+	@Override
+	public List getOpenPage(Map map) {
+		return meetingDao.getOpenPage(map);
+	}
+
+	@Override
+	public Page getMeetingByPage(Map map) throws Exception {
+		// TODO Auto-generated method stub
+		Page page = new Page();
+		List<Map<String, Object>> list = meetingDao.getMeetingPage(map);
+		
+		
+		if(list.size() >0){
+			SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");//设置日期格式
+			String currentTime = df.format(new Date());// new Date()为获取当前系统时间
+			for (Map<String, Object> mapMeeting : list) {
+				if(mapMeeting.get("status") != null && !"".equals(mapMeeting.get("status")) && !"4".equals(mapMeeting.get("status").toString())){
+					String beginData =mapMeeting.get("beginDate").toString() ;//开始时间
+                    String endData = mapMeeting.get("endDate").toString() ;//结束时间
+                    if(df.parse(beginData).getTime() > df.parse(currentTime).getTime()){
+                   	mapMeeting.put("status", "1");
+                    }else if(df.parse(beginData).getTime() < df.parse(currentTime).getTime() && df.parse(endData).getTime() > df.parse(currentTime).getTime()){
+                   	mapMeeting.put("status", "2");
+                    }else if(df.parse(endData).getTime() < df.parse(currentTime).getTime()){
+                   	mapMeeting.put("status", "3");
+                    }
+				}else if(mapMeeting.get("status") != null && "4".equals(mapMeeting.get("status"))){
+					mapMeeting.put("status", "4");
+				}
+			}
+		}
+		
+		
+		
+		Integer count = meetingDao.getMeetingCount(map);
+		page.setLimit((Integer) map.get("limit"));
+		page.setList(list);
+		page.setStart((Integer) map.get("start"));
+		page.setTotal(count);
+		return page;
+	}
+
+	@Override
+	public List getAllMeetingPage(Map map) {
+		// TODO Auto-generated method stub
+		return meetingDao.getAllMeetingPage(map);
+	}
+
+	@Override
+	public int saveMeetingAndUser(String userInfo, String saveJson) {
+		// String user = userDtoServiceCustomer.getObjectById(null,
+		// "13103df55c8848cd9b920c548fc300e7");
+
+		MeetingDto meetingDto = JacksonUtils.fromJson(saveJson,
+				MeetingDto.class);
+		Meeting meeting = new Meeting();
+		BeanUtils.copyProperties(meetingDto, meeting);
+		int result = meetingDao.save(meeting);
+
+		
+		if(meetingDto.getAttendees() != null && !"".equals(meetingDto.getAttendees())){
+			List<MeetingReply> reployList = new ArrayList<MeetingReply>();
+			String userId = meetingDto.getAttendees();
+			String[] userids = userId.split(",");
+			for (String userIdTem : userids) {
+				MeetingReply meetingReply = new MeetingReply();
+				meetingReply.setId(IDGenerator.getUUID());
+				meetingReply.setMeetingId(meeting.getId());
+				meetingReply.setUserId(userIdTem);
+				//默认与会人员参加会议
+				meetingReply.setFeedBackFlag("1");
+				reployList.add(meetingReply);
+				
+			}
+			meetingReplyDao.saveBatch(reployList);
+		}
+		// 会议创建完之后推送一条代办到流程
+		saveSysNoticeMsg(userInfo,meeting,meetingDto.getAttendees());
+		return result;
+	}
+
+	public void saveSysNoticeMsg(String userInfo,Meeting meeting,String userIds){
+		if(userIds != null && !"".equals(userIds)){
+			//根据userId获取用户信息
+			Map<String,String> mapIds = new HashMap<String,String>();
+			mapIds.put("ids", userIds);
+			String dubboResultInfo=userDtoServiceCustomer.getUserInfoByUserIds(userInfo, JacksonUtils.toJson(mapIds));
+		    DubboServiceResultInfo dubboServiceResultInfo= JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+		    
+		    List<String> listPhones = new ArrayList<String>();
+		    
+		    if(dubboServiceResultInfo.isSucess()){
+		    	String resultInfo= dubboServiceResultInfo.getResult();
+				List<Map> list=JacksonUtils.fromJson(resultInfo, ArrayList.class,Map.class);
+				if(list.size()>0){
+					for (Map map : list) {
+						if(map.get("mobile").toString() != null && !"".equals(map.get("mobile").toString())){
+							listPhones.add(map.get("mobile").toString());
+						}
+						SysNoticeMsgDto sysNoticeMsgDto = new SysNoticeMsgDto();
+						String noticeId = IDGenerator.getUUID();
+						sysNoticeMsgDto.setId(noticeId);
+						//sysNoticeMsgDto.setCode("");
+						sysNoticeMsgDto.setTitle(meeting.getTitle());
+						sysNoticeMsgDto.setLoginName(map.get("name").toString());
+						sysNoticeMsgDto.setUserId(map.get("id").toString());
+						sysNoticeMsgDto.setUserName(map.get("name").toString());
+						sysNoticeMsgDto.setMsgType(false);
+						sysNoticeMsgDto.setOpType("DB");
+						sysNoticeMsgDto.setSource("FQ");
+						sysNoticeMsgDto.setAppCode("");
+						sysNoticeMsgDto.setBusinessId(meeting.getId());
+						//暂时传空IP
+						sysNoticeMsgDto.setIpAddress("");
+						
+						SimpleDateFormat dateFormater = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+						Date date=new Date();
+						Timestamp timestamp = Timestamp.valueOf(dateFormater.format(date));
+						
+						sysNoticeMsgDto.setSendDate(timestamp);
+						sysNoticeMsgDto.setExtendInfo("meeting");
+						sysNoticeMsgDto.setUrl("/meeting/meeting/meeting_notice.html?meetingId="+meeting.getId()+""+"&noticeId="+noticeId);
+						sysNoticeMsgDto.setIsOpen(true);
+						String sysNoticeMsgJson= JacksonUtils.toJson(sysNoticeMsgDto);
+						sysNoticeMsgDtoServiceCustomer.save(userInfo, sysNoticeMsgJson);
+					}
+				}
+		    }
+		    //推送完流程之后，给与会人员发送短信
+		    if(listPhones.size() > 0){
+		    	String phones = StringUtils.join(listPhones.toArray(),",");
+		    	 Map<String, String> map = new HashMap<String, String>();
+				 map.put("msg", meeting.getTitle()+",请您准时参加！");
+				 map.put("phones", phones);
+				 String paramaterJson = JacksonUtils.toJson(map);
+				 mailAndPhoneServiceCustomer.sendPhoneMsg(userInfo, paramaterJson);
+		    }
+		}
+	}
+	
+	
+	@Override
+	public String sendMsg() throws Exception {
+		Map<String, String> map = new HashMap<String, String>();
+		map.put("msg", "测试短信");
+		map.put("phones", "13718007959");
+		String paramaterJson = JacksonUtils.toJson(map);
+		mailAndPhoneServiceCustomer.sendPhoneMsg(null, paramaterJson);
+		return "success";
+	}
+
+	@Override
+	public int updateMeetingStatusByTimer(String userInfo, Map map)
+			throws Exception {
+		List<Map<String, Object>> list = meetingDao.getMeetingPage(map);
+		if(list.size() > 0){
+			for (Map<String, Object> map2 : list) {
+				String paramaterJson = JacksonUtils.toJson(map2);
+				Meeting meetingInfo=JacksonUtils.fromJson(paramaterJson, Meeting.class);
+				meetingInfo.setStatus("3");
+				meetingDao.update(meetingInfo);
+			}
+		}
+		return list.size();
+	}
+
+	@Override
+	public int updateMeeingStatusOfNoticeMsg(String userInfo, Map map)
+			throws Exception {
+		String updateJson= JacksonUtils.toJson(map);
+		int result = 0;
+		//获取用户对象
+		SecurityUserBeanInfo user=LoginUtils.getSecurityUserBeanInfo();
+		//如果选择不参加会议，则与会人员表中更新状态
+		if(map.get("feedBackFlag").equals("2")){
+			//获取与会人员的信息，此人员就为登录人id
+			Map<String,Object> mapReploy = new HashMap<String,Object>();
+			mapReploy.put("userId", user.getSecurityUserDto().getId());
+			mapReploy.put("meetingId", map.get("id").toString());
+			List<MeetingReply> mapReployList = meetingReplyDao.queryList(mapReploy);
+			if(mapReployList.size() > 0){
+				MeetingReply meetingReply = (MeetingReply)meetingReplyDao.queryList(mapReploy).get(0);
+				meetingReply.setFeedBackFlag(map.get("feedBackFlag").toString());
+				meetingReply.setFeedBack(map.get("feedBack").toString());
+				result = meetingReplyDao.update(meetingReply);
+			}
+			//如果是拒绝的话，则要更新待办状态
+			updateStatusOfNoticeMsg(userInfo, map);
+		}else if(map.get("feedBackFlag").equals("1")){
+			//获取与会人员的信息，此人员就为登录人id
+			Map<String,Object> mapReploy = new HashMap<String,Object>();
+			mapReploy.put("userId", user.getSecurityUserDto().getId().toString());
+			mapReploy.put("meetingId", map.get("id").toString());
+			List<MeetingReply> mapReployList = meetingReplyDao.queryList(mapReploy);
+			if(mapReployList.size() > 0){
+				MeetingReply meetingReply = meetingReplyDao.queryList(mapReploy).get(0);
+				meetingReply.setFeedBackFlag(map.get("feedBackFlag").toString());
+				result = meetingReplyDao.update(meetingReply);
+			}
+			updateStatusOfNoticeMsg(userInfo, map);
+		}else if(map.get("feedBackFlag").equals("3")){
+			//获取会议信息
+			Meeting meeting = meetingDao.getObjectById(map.get("id").toString());
+			//同时自己的表中要更新指代人
+			//获取与会人员的信息，此人员就为登录人id
+			Map<String,Object> mapReploy = new HashMap<String,Object>();
+			mapReploy.put("userId", user.getSecurityUserDto().getId().toString());
+			mapReploy.put("meetingId", map.get("id").toString());
+			List<MeetingReply> mapReployList = meetingReplyDao.queryList(mapReploy);
+			if(mapReployList.size() > 0){
+				MeetingReply meetingReplyTem = meetingReplyDao.queryList(mapReploy).get(0);
+				meetingReplyTem.setFeedBackFlag(map.get("feedBackFlag").toString());
+				meetingReplyTem.setReplacePersonId(map.get("replacePersonId").toString());
+				result = meetingReplyDao.update(meetingReplyTem);
+			}
+			//如果指定他人，则与会人员表中也要添加指代人信息
+			MeetingReply meetingReply = new MeetingReply();
+			meetingReply.setId(IDGenerator.getUUID());
+			meetingReply.setMeetingId(meeting.getId());
+			meetingReply.setUserId(map.get("replacePersonId").toString());
+			//默认与会人员参加会议
+			meetingReply.setFeedBackFlag("1");
+			result = meetingReplyDao.save(meetingReply);
+			//如果是指定替代人，则重新发起待办通知
+			saveSysNoticeMsg(userInfo,meeting,map.get("replacePersonId").toString());
+			//指代替代人之后，本人的待办信息要改为 已办
+			updateStatusOfNoticeMsg(userInfo, map);
+		}
+		return result;
+	}
+
+	//代办人处理后，更新待办状态
+	public void updateStatusOfNoticeMsg(String userInfo, Map map){
+		Map<String,String> noticeMap = new HashMap<String,String>();
+		noticeMap.put("newStatus", "YB");
+		noticeMap.put("oldStatus", "DB");
+		noticeMap.put("id", map.get("noticeId").toString());
+		noticeMap.put("businessId", map.get("meetingId").toString());
+		noticeMap.put("extendInfo", "meeting");
+		String noticeMapJson= JacksonUtils.toJson(noticeMap);
+		sysNoticeMsgDtoServiceCustomer.updateStatusOfNoticeMsg(userInfo, noticeMapJson);
+	}
+	
+	
+	
+	@Override
+	public List<Meeting> getAllMeetingByParameter(String userInfo, Map map) {
+		// TODO Auto-generated method stub
+		return meetingDao.getAllMeetingByParameter(map);
+	}
+
+}

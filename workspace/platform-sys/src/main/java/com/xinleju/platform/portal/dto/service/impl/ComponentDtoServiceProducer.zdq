@@ -1,0 +1,280 @@
+package com.xinleju.platform.portal.dto.service.impl;
+
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.utils.IDGenerator;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.base.utils.ErrorInfoCode;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.portal.dto.service.ComponentDtoServiceCustomer;
+import com.xinleju.platform.portal.entity.Component;
+import com.xinleju.platform.portal.service.ComponentService;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+/**
+ * @author admin
+ */
+
+public class ComponentDtoServiceProducer implements ComponentDtoServiceCustomer {
+    private static Logger log = Logger.getLogger(ComponentDtoServiceProducer.class);
+    @Autowired
+    private ComponentService componentService;
+
+    @Override
+    public String save(String userInfo, String saveJson) {
+        DubboServiceResultInfo info = new DubboServiceResultInfo();
+        try {
+            Component component = JacksonUtils.fromJson(saveJson, Component.class);
+            if (component.getId() == null) {
+                component.setId(IDGenerator.getUUID());
+            }
+            final Component existComponent = componentService.getComponentBySerialNo(component);
+            if (existComponent != null) {
+                info.setSucess(false);
+                info.setMsg("对象编码重复!");
+                info.setCode(ErrorInfoCode.UNIQUE_ERROR.getValue());
+            } else {
+                componentService.save(component);
+                info.setResult(JacksonUtils.toJson(component));
+                info.setSucess(true);
+                info.setMsg("保存对象成功!");
+            }
+
+        } catch (Exception e) {
+            log.error("保存对象失败!" + e.getMessage());
+            info.setSucess(false);
+            info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+            info.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+            info.setExceptionMsg(e.getMessage());
+        }
+        return JacksonUtils.toJson(info);
+    }
+
+    @Override
+    public String saveBatch(String userInfo, String saveJsonList) {
+        // TODO Auto-generated method stub
+        return null;
+    }
+
+    @Override
+    public String updateBatch(String userInfo, String updateJsonList) {
+        // TODO Auto-generated method stub
+        return null;
+    }
+
+    @Override
+    public String update(String userInfo, String updateJson) {
+        DubboServiceResultInfo info = new DubboServiceResultInfo();
+        try {
+            Component component = JacksonUtils.fromJson(updateJson, Component.class);
+            final Component existComponent = componentService.getComponentBySerialNo(component);
+            if (existComponent != null) {
+                info.setCode(ErrorInfoCode.UNIQUE_ERROR.getValue());
+                info.setSucess(false);
+                info.setMsg("对象编码重复!");
+            } else {
+                int result = componentService.update(component);
+                info.setResult(JacksonUtils.toJson(result));
+                info.setSucess(true);
+                info.setMsg("更新对象成功!");
+            }
+        } catch (Exception e) {
+            log.error("更新对象失败!" + e.getMessage());
+            info.setSucess(false);
+            info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+            info.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+            info.setExceptionMsg(e.getMessage());
+        }
+        return JacksonUtils.toJson(info);
+    }
+
+    @Override
+    public String deleteObjectById(String userInfo, String deleteJson) {
+        // TODO Auto-generated method stub
+        DubboServiceResultInfo info = new DubboServiceResultInfo();
+        try {
+            Component component = JacksonUtils.fromJson(deleteJson, Component.class);
+            int result = componentService.deleteObjectById(component.getId());
+            info.setResult(JacksonUtils.toJson(result));
+            info.setSucess(true);
+            info.setMsg("删除对象成功!");
+        } catch (Exception e) {
+            log.error("更新对象失败!" + e.getMessage());
+            info.setSucess(false);
+            info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+            info.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+            info.setExceptionMsg(e.getMessage());
+        }
+        return JacksonUtils.toJson(info);
+    }
+
+    @Override
+    public String deleteAllObjectByIds(String userInfo, String deleteJsonList) {
+        // TODO Auto-generated method stub
+        DubboServiceResultInfo info = new DubboServiceResultInfo();
+        try {
+            if (StringUtils.isNotBlank(deleteJsonList)) {
+                Map map = JacksonUtils.fromJson(deleteJsonList, HashMap.class);
+                List<String> list = Arrays.asList(map.get("id").toString().split(","));
+                int result = componentService.deleteAllObjectByIds(list);
+                info.setResult(JacksonUtils.toJson(result));
+                info.setSucess(true);
+                info.setMsg("删除对象成功!");
+            }
+        } catch (Exception e) {
+            log.error("删除对象失败!" + e.getMessage());
+            info.setSucess(false);
+            info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+            info.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+            info.setExceptionMsg(e.getMessage());
+        }
+        return JacksonUtils.toJson(info);
+    }
+
+    @Override
+    public String getObjectById(String userInfo, String getJson) {
+        // TODO Auto-generated method stub
+        DubboServiceResultInfo info = new DubboServiceResultInfo();
+        try {
+            Component component = JacksonUtils.fromJson(getJson, Component.class);
+            Component result = componentService.getObjectById(component.getId());
+            info.setResult(JacksonUtils.toJson(result));
+            info.setSucess(true);
+            info.setMsg("获取对象成功!");
+        } catch (Exception e) {
+            // TODO Auto-generated catch block
+            log.error("获取对象失败!" + e.getMessage());
+            info.setSucess(false);
+            info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+            info.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+            info.setExceptionMsg(e.getMessage());
+        }
+        return JacksonUtils.toJson(info);
+    }
+
+    @Override
+    public String getPage(String userInfo, String paramater) {
+        // TODO Auto-generated method stub
+        DubboServiceResultInfo info = new DubboServiceResultInfo();
+        try {
+            Map map = JacksonUtils.fromJson(paramater, HashMap.class);
+            Page page = componentService.getSearchPage(map);
+            info.setResult(JacksonUtils.toJson(page));
+            info.setSucess(true);
+            info.setMsg("获取分页对象成功!");
+        } catch (Exception e) {
+            // TODO Auto-generated catch block
+            log.error("获取分页对象失败!" + e.getMessage());
+            info.setSucess(false);
+            info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+            info.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+            info.setExceptionMsg(e.getMessage());
+        }
+        return JacksonUtils.toJson(info);
+    }
+
+    @Override
+    public String queryList(String userInfo, String paramater) {
+        // TODO Auto-generated method stub
+        DubboServiceResultInfo info = new DubboServiceResultInfo();
+        try {
+            if (StringUtils.isNotBlank(paramater)) {
+                Map map = JacksonUtils.fromJson(paramater, HashMap.class);
+                List list = componentService.queryList(map);
+                info.setResult(JacksonUtils.toJson(list));
+                info.setSucess(true);
+                info.setMsg("获取列表对象成功!");
+            } else {
+                List list = componentService.queryList(null);
+                info.setResult(JacksonUtils.toJson(list));
+                info.setSucess(true);
+                info.setMsg("获取列表对象成功!");
+            }
+        } catch (Exception e) {
+            // TODO Auto-generated catch block
+            log.error("获取列表对象失败!" + e.getMessage());
+            info.setSucess(false);
+            info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+            info.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+            info.setExceptionMsg(e.getMessage());
+        }
+        return JacksonUtils.toJson(info);
+    }
+
+    @Override
+    public String getCount(String userInfo, String paramater) {
+        // TODO Auto-generated method stub
+        return null;
+    }
+
+    @Override
+    public String deletePseudoObjectById(String userInfo, String deleteJson) {
+        // TODO Auto-generated method stub
+        DubboServiceResultInfo info = new DubboServiceResultInfo();
+        try {
+            Component component = JacksonUtils.fromJson(deleteJson, Component.class);
+            int result = componentService.deletePseudoObjectById(component.getId());
+            info.setResult(JacksonUtils.toJson(result));
+            info.setSucess(true);
+            info.setMsg("删除对象成功!");
+        } catch (Exception e) {
+            log.error("更新对象失败!" + e.getMessage());
+            info.setSucess(false);
+            info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+            info.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+            info.setExceptionMsg(e.getMessage());
+        }
+        return JacksonUtils.toJson(info);
+    }
+
+    @Override
+    public String deletePseudoAllObjectByIds(String userInfo, String deleteJsonList) {
+        // TODO Auto-generated method stub
+        DubboServiceResultInfo info = new DubboServiceResultInfo();
+        try {
+            if (StringUtils.isNotBlank(deleteJsonList)) {
+                Map map = JacksonUtils.fromJson(deleteJsonList, HashMap.class);
+                List<String> list = Arrays.asList(map.get("id").toString().split(","));
+                int result = componentService.deletePseudoAllObjectByIds(list);
+                info.setResult(JacksonUtils.toJson(result));
+                info.setSucess(true);
+                info.setMsg("删除对象成功!");
+            }
+        } catch (Exception e) {
+            log.error("删除对象失败!" + e.getMessage());
+            info.setSucess(false);
+            info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+            info.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+            info.setExceptionMsg(e.getMessage());
+        }
+        return JacksonUtils.toJson(info);
+    }
+
+    @Override
+    public String queryAllList(String userInfo) {
+        // TODO Auto-generated method stub
+        DubboServiceResultInfo info = new DubboServiceResultInfo();
+        try {
+            List list = componentService.queryAllList();
+            info.setResult(JacksonUtils.toJson(list));
+            info.setSucess(true);
+            info.setMsg("获取列表对象成功!");
+        } catch (Exception e) {
+            // TODO Auto-generated catch block
+            log.error("获取列表对象失败!" + e.getMessage());
+            info.setSucess(false);
+            info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+            info.setMsg(ErrorInfoCode.SYSTEM_ERROR.getName());
+            info.setExceptionMsg(e.getMessage());
+        }
+        return JacksonUtils.toJson(info);
+    }
+}

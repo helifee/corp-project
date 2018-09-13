@@ -1,0 +1,15 @@
+package com.xinleju.platform.univ.attachment.dao;
+
+import com.xinleju.platform.base.dao.BaseDao;
+import com.xinleju.platform.univ.attachment.entity.AttachmentTemp;
+
+/**
+ * @author haoqp
+ *
+ */
+
+public interface AttachmentTempDao extends BaseDao<String, AttachmentTemp> {
+	
+	
+
+}

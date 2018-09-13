@@ -1,0 +1,286 @@
+package com.xinleju.cloud.oa.office.util;
+
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.text.DecimalFormat;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
+
+import org.apache.log4j.Logger;
+import org.apache.poi.hssf.usermodel.HSSFWorkbook;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+
+import com.xinleju.cloud.oa.office.dto.OfficeRecordDto;
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.base.utils.IDGenerator;
+  
+  
+public class ImportExcelUtil {  
+	private static Logger log = Logger.getLogger(ImportExcelUtil.class);
+    private final static String excel2003L =".xls";    //2003- 版本的excel  
+    private final static String excel2007U =".xlsx";   //2007+ 版本的excel  
+    
+    
+    
+    public static Map importOfficeRecordByExcel(InputStream in,
+			String fileName) {
+		// TODO Auto-generated method stub
+    	Map map = new HashMap();
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		ImportExcelUtil importExcelUtil = new ImportExcelUtil();
+		List<List<Object>> listob = null;
+		List<OfficeRecordDto> officeRecordList = new ArrayList<OfficeRecordDto>();
+		try {
+			listob = importExcelUtil.getBankListByExcel(in, fileName);
+			in.close();
+			//定义结存表中  用户编号为key，入库数量为value，同一种用户编号下面，value值一直相加
+			Map<String,Integer> stockMap = new HashMap<String,Integer>();
+
+			//该处可调用service相应方法进行数据保存到数据库中，现只对数据输出
+	        for (int i = 0; i < listob.size(); i++) {
+	            List<Object> lo = listob.get(i);
+	            OfficeRecordDto vo = new OfficeRecordDto();
+	            vo.setId(IDGenerator.getUUID());
+	            vo.setStockName(String.valueOf(lo.get(0)));
+	     //       vo.setHouseName(String.valueOf(lo.get(1)));
+	            vo.setStockNum(String.valueOf(lo.get(2)));
+	            //入库数量
+	            vo.setInCount(String.valueOf(lo.get(3)));
+	            officeRecordList.add(vo);
+	            //同一种用户编号的入库数量一直累加
+	            if(stockMap.containsKey(String.valueOf(lo.get(2)))){
+	            	stockMap.put(String.valueOf(lo.get(2)), stockMap.get(String.valueOf(lo.get(2)))+Integer.parseInt(String.valueOf(lo.get(3))));
+	            }else{
+	            	stockMap.put(String.valueOf(lo.get(2)), Integer.parseInt(String.valueOf(lo.get(3))));
+	            }
+	        }
+	        if(officeRecordList.size() > 0){
+	        	map.put("officeRecordList", officeRecordList);
+	        	map.put("stockMap", stockMap);
+	        }
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取列表对象失败!"+e.getMessage());
+		}
+		return map;
+	}
+    
+    
+    
+    
+      
+    /** 
+     * 描述：获取IO流中的数据，组装成List<List<Object>>对象 
+     * @param in,fileName 
+     * @return 
+     * @throws IOException  
+     */  
+    /** 
+     * 描述：获取IO流中的数据，组装成List<List<Object>>对象 
+     * @param in,fileName 
+     * @return 
+     * @throws IOException  
+     */  
+    public  List<List<Object>> getBankListByExcel(InputStream in,String fileName) throws Exception{  
+        List<List<Object>> list = null; 
+        //创建Excel工作薄  
+        Workbook work = getWorkbook(in,fileName);  
+        if(null == work){  
+            throw new Exception("创建Excel工作薄为空！");  
+        }  
+        Sheet sheet = null;  
+        Row row = null;  
+        Cell cell = null;  
+          
+        list = new ArrayList<List<Object>>();
+        
+        //遍历Excel中所有的sheet  
+        for (int i = 0; i < work.getNumberOfSheets(); i++) {  
+            sheet = work.getSheetAt(i);  
+            if(sheet==null){continue;}  
+              
+            //遍历当前sheet中的所有行  
+            for (int j = sheet.getFirstRowNum(); j < sheet.getLastRowNum()+1; j++) {  
+                row = sheet.getRow(j);  
+                if(row==null||row.getFirstCellNum()==j){continue;} 
+                //遍历所有的列  
+                List<Object> li = new ArrayList<Object>();
+                for (int y = row.getFirstCellNum(); y < row.getLastCellNum(); y++) {  
+                    cell = row.getCell(y);  
+                    li.add(getCellValue(cell));  
+                }  
+                list.add(li);  
+            }  
+        } 
+        work.close();
+        return list;  
+    }  
+      
+    /** 
+     * 描述：根据文件后缀，自适应上传文件的版本  
+     * @param inStr,fileName 
+     * @return 
+     * @throws Exception 
+     */  
+    public static  Workbook getWorkbook(InputStream inStr,String fileName) throws Exception{  
+        Workbook wb = null;  
+        String fileType = fileName.substring(fileName.lastIndexOf("."));  
+        if(excel2003L.equals(fileType)){  
+            wb = new HSSFWorkbook(inStr);  //2003-  
+        }else if(excel2007U.equals(fileType)){  
+            wb = new XSSFWorkbook(inStr);  //2007+  
+        }else{  
+            throw new Exception("解析的文件格式有误！");  
+        }  
+        return wb;  
+    }  
+  
+    /** 
+     * 描述：对表格中数值进行格式化 
+     * @param cell 
+     * @return 
+     */  
+    public static Object getCellValue(Cell cell){  
+        Object value = null;  
+        DecimalFormat df = new DecimalFormat("0");  //格式化number String字符  
+        SimpleDateFormat sdf = new SimpleDateFormat("yyy-MM-dd");  //日期格式化  
+        DecimalFormat df2 = new DecimalFormat("0.00");  //格式化数字  
+          
+        switch (cell.getCellType()) {  
+        case Cell.CELL_TYPE_STRING:  
+            value = cell.getRichStringCellValue().getString();  
+            break;  
+        case Cell.CELL_TYPE_NUMERIC:  
+            if("General".equals(cell.getCellStyle().getDataFormatString())){  
+                value = df.format(cell.getNumericCellValue());  
+            }else if("m/d/yy".equals(cell.getCellStyle().getDataFormatString())){  
+                value = sdf.format(cell.getDateCellValue());  
+            }else{  
+                value = df2.format(cell.getNumericCellValue());  
+            }  
+            break;  
+        case Cell.CELL_TYPE_BOOLEAN:  
+            value = cell.getBooleanCellValue();  
+            break;  
+        case Cell.CELL_TYPE_BLANK:  
+            value = "";  
+            break;  
+        default:  
+            break;  
+        }  
+        return value;  
+    }  
+    
+    /**
+	 * 将一个文件inName拷贝到另外一个文件outName中
+	 * 
+	 * @param inName
+	 *            源文件路径
+	 * @param outName
+	 *            目标文件路径
+	 * @throws FileNotFoundException
+	 * @throws IOException
+	 */
+	public static void copyFile(String inName, String outName)throws FileNotFoundException, IOException {
+		BufferedInputStream is = new BufferedInputStream(new FileInputStream(
+				inName));
+		BufferedOutputStream os = new BufferedOutputStream(
+				new FileOutputStream(outName));
+		copyFile(is, os, true);
+	}
+	
+	/**
+	 * Copy a file from an opened InputStream to opened OutputStream
+	 * 
+	 * @param is
+	 *            source InputStream
+	 * @param os
+	 *            target OutputStream
+	 * @param close
+	 *            写入之后是否需要关闭OutputStream
+	 * @throws IOException
+	 */
+	public static void copyFile(InputStream is, OutputStream os, boolean close)
+			throws IOException {
+		int b;
+		while ((b = is.read()) != -1) {
+			os.write(b);
+		}
+		
+		is.close();
+		if (close){
+			os.flush();
+			os.close();
+		}
+			
+	}
+	
+	/**
+	 * 根据基数产生一定范围之内的随机正整数，区间[0,nbase)
+	 */
+	public static int randomInteger(int nbase) {
+		int nResult = 0;
+		if (nbase > 0) {
+			Random rd = new Random();
+			nResult = rd.nextInt(nbase);
+		}
+		return nResult;
+	}
+	
+	/**
+	 * 判断指定的文件是否存在。
+	 * 
+	 * @param fileName
+	 *            要判断的文件的文件名
+	 * @return 存在时返回true，否则返回false。
+	 * @since 0.1
+	 */
+	public static boolean isFileExist(String fileName) {
+		return new File(fileName).isFile();
+	}
+	/**
+	 * 删除指定路径的文件
+	 * 
+	 * @param filename
+	 *            要删除的文件路径
+	 * @return 删除成功时返回true，否则返回false
+	 */
+	public static boolean deleteFile(String filename) {
+		if(isFileExist(filename)==true){
+			return deleteFile(new File(filename));
+		}else{
+			return false;
+		}
+	}
+	
+
+	/**
+	 * 删除指定文件
+	 * 
+	 * @param file
+	 *            要删除的文件
+	 * @return 删除成功时返回true，否则返回false。
+	 */
+	public static boolean deleteFile(File file) {
+		if ((file == null) || file.isDirectory()) {
+			throw new IllegalArgumentException("Argument " + file
+					+ " is a directory. ");
+		}
+		return file.delete();
+	}
+}  

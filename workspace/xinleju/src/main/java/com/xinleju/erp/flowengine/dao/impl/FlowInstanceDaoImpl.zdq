@@ -1,0 +1,749 @@
+package com.xinleju.erp.flowengine.dao.impl;
+
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.EmptyResultDataAccessException;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowCallbackHandler;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.erp.flow.flowutils.utils.WsConstant;
+import com.xinleju.erp.flowengine.dao.FlowInstanceDao;
+import com.xinleju.erp.flowengine.dto.FlowInstanceDto;
+import com.xinleju.erp.flowengine.dto.FlowInstanceStepDto;
+import com.xinleju.erp.flowengine.dto.FlowInstanceStepWorkDto;
+import com.xinleju.erp.flowengine.dto.FlowInstanceStepWorkTaskDto;
+import com.xinleju.erp.flowengine.dto.UploadDto;
+import com.xinleju.erp.form.utils.DbType;
+
+@Repository
+public class FlowInstanceDaoImpl implements FlowInstanceDao {
+
+	@Autowired
+	private JdbcTemplate jt;
+
+	public Map<String, Object> getBizParam(String fiId) {
+
+		Map<String, Object> mapBizMap = null;
+
+		try {
+
+			mapBizMap = jt.queryForMap("SELECT\n" + "	sod.url_sp,\n"
+					+ "	fi.biz_id,\n" + "	fi.fi_name,\n"+ "	fi.fl_id ,\n" + "	fl.flow_code\n"
+					+ "FROM\n" + "	flow_instance fi,\n"
+					+ "	sm_service_object_define sod,\n" + "	tf_fl fl\n"
+					+ "WHERE\n" + "	fi.biz_type = sod.id\n"
+					+ "AND fi.fl_id = fl.id\n" + "AND fi.guid = ?", fiId);
+
+		} catch (EmptyResultDataAccessException ex) {
+
+			mapBizMap = new HashMap<String, Object>();
+		}
+
+		return mapBizMap;
+	}
+
+	public String getSodCode(Long id) {
+
+		return jt.queryForObject("SELECT\n" + "	CODE\n" + "FROM\n"
+				+ "	sm_service_object_define\n" + "WHERE\n" + "	ID =?",
+				String.class, id);
+	}
+
+	public Integer getNoSubmitFi(String flowCode, String bizId, Integer status) {
+		return jt.queryForObject("SELECT\n" + "	COUNT(1)\n" + "FROM\n"
+				+ "	tf_fl fl,\n" + "	flow_instance fi\n" + "WHERE\n"
+				+ "	fl.id = fi.fl_id\n" + "AND flow_code = ?\n"
+				+ "AND biz_id = ?\n" + "AND fi.status = ?", Integer.class,
+				flowCode, bizId, status);
+	}
+
+	public String getCurrentFlowUsers(String fiId, Integer status) {
+         StringBuilder sb=new StringBuilder();
+		 List<String> participants= jt.queryForList("SELECT\n"
+				+ "	participant_user_name\n" + "FROM\n"
+				+ "	flow_instance_step_work_task\n" + "WHERE\n"
+				+ "	fi_id = ?\n" + "AND status = ?\n" + "AND type IN ('"
+				+ WsConstant.WiType.ZC.getCode() + "', '"
+				+ WsConstant.WiType.CS.getCode() + "', '"
+				+ WsConstant.WiType.CY.getCode() + "', '"
+				+ WsConstant.WiType.CB.getCode() + "')", String.class, fiId,
+				status);
+		
+		 if(CollectionUtils.isNotEmpty(participants)){
+			 for(String participant:participants){
+				 sb.append(","+participant);
+			 }
+			 if(sb.toString().endsWith(",")){
+				 sb.deleteCharAt(sb.toString().length()-1);
+			 }
+		 }
+		 return sb.toString();
+	}
+
+	public List<String> getNewestFlowBizId(String bizId, String flowCode) {
+		//如果字符串传递了单引号，需要处理，有的未传递单引号
+		return jt
+				.queryForList(
+						"SELECT DISTINCT biz_id bizId FROM flow_instance fi,tf_fl fl WHERE fi.fl_id = fl.id AND fi.biz_id = '"
+								+ bizId + "' AND fl.flow_code = ?",
+						new Object[] { flowCode }, String.class);
+	}
+
+	
+	
+	@Override
+	public List<String> getNewestFlowBizIds(String bizIds, String flowCode) {
+		// TODO Auto-generated method stub
+		String sql="SELECT DISTINCT biz_id bizId FROM flow_instance fi,tf_fl fl WHERE fi.fl_id = fl.id AND fi.biz_id IN ("
+				+ bizIds + ") AND fl.flow_code = ?";
+		return jt.queryForList(sql,new Object[] { flowCode }, String.class);
+	}
+	
+	
+	
+	/**
+	 * 
+	 * 流程审批结束人
+	 * @param bizIds
+	 * @param flowCodes
+	 * @return
+	 */
+	public List<com.xinleju.erp.flow.flowutils.bean.FlowInstanceDto> getFlowInstanceInfo(String bizIds, String flowCodes) {	
+		String sql="select f.biz_id,l.flow_code ,f.complete_user_name  from flow_instance f  ,tf_fl l where f.fl_id=l.id and f.status='2' and biz_id in("+bizIds+") and flow_code in("+flowCodes+") order by f.create_time;";
+		 return jt.query(sql, new RowMapper<com.xinleju.erp.flow.flowutils.bean.FlowInstanceDto>(){
+			@Override
+			public com.xinleju.erp.flow.flowutils.bean.FlowInstanceDto mapRow(ResultSet rs, int rowNum) throws SQLException {
+				// TODO Auto-generated method stub
+				com.xinleju.erp.flow.flowutils.bean.FlowInstanceDto dto=new com.xinleju.erp.flow.flowutils.bean.FlowInstanceDto();		
+				dto.setBizId(rs.getString("biz_id"));
+				dto.setFlowCode(rs.getString("flow_code"));
+				dto.setComplementUserName(rs.getString("complete_user_name"));
+				return dto;
+			}
+			
+		});
+	}
+	
+	@Override
+	public Map<String, Object> getFlowInstanceInfo(String fiId) {
+		// TODO Auto-generated method stub
+		return jt
+				.queryForMap(
+						"select  guid,start_user_login_name ,status,fl_id from flow_Instance e where e.guid = ?",
+						new Object[] { fiId });
+	}
+
+	public Map<String, String> getNewFlowCurrentUsers(String flowCode,
+			String bizIds, Integer fiStatus, Integer taskStatus, String type) {
+
+		final Map<String, String> mapResult = new HashMap<String, String>();
+		String sql = "SELECT\n"
+				+ "	fi.biz_id bizId,\n"
+				+ "	 fiswt.participant_user_name participantUserName\n"
+				+ "FROM\n"
+				+ "	flow_instance fi\n"
+				+ "INNER JOIN tf_fl fl ON fi.fl_id = fl.id\n"
+				+ "INNER JOIN flow_instance_step_work_task fiswt ON fi.guid = fiswt.fi_id\n"
+				+ "WHERE\n" + "	fl.flow_code = ?\n" + "AND fi.biz_id IN ("
+				+ bizIds + ")\n" + "AND fiswt.type = ?\n"
+				+ "AND fi.status = ?\n" + "AND fiswt.status = ?\n";
+				//+ "GROUP BY fi.biz_id";
+
+		jt.query(sql, new RowCallbackHandler() {
+			@Override
+			public void processRow(ResultSet rs) throws SQLException {
+				       if(mapResult.get(rs.getString("bizId"))!=null){
+				    	   mapResult.put(rs.getString("bizId"),mapResult.get(rs.getString("bizId"))+","+rs.getString("participantUserName"));
+				       }else {
+				    	   mapResult.put(rs.getString("bizId"),rs.getString("participantUserName"));
+				       }
+				       
+			}
+		}, flowCode, type, fiStatus, taskStatus);
+
+		return mapResult;
+	}
+
+	/* (non-Javadoc)
+	 * 
+	 * 旧流程暂时不做修改
+	 * @see com.xinleju.erp.flowengine.dao.FlowInstanceDao#getOldFlowCurrentUsers(java.lang.String, java.lang.String, java.lang.Integer, java.lang.Integer, java.lang.String)
+	 */
+	public Map<String, String> getOldFlowCurrentUsers(String flowCode,
+			String bizIds, Integer fiStatus, Integer taskStatus, String type) {
+		final Map<String, String> mapResult = new HashMap<String, String>();
+		String sql = "SELECT\n"
+				+ "	fi.biz_id bizId,\n"
+				+ "	 wi.participant_user_name participantUserName\n"
+				+ "FROM\n" + "	tf_fi fi\n"
+				+ "INNER JOIN tf_fl fl ON fi.fl_id = fl.id\n"
+				+ "INNER JOIN tf_wi wi ON wi.fi_id = fi.id\n" + "WHERE\n"
+				+ "	fl.flow_code = ?\n" + "AND fi.biz_id IN (" + bizIds + ")\n"
+				+ "AND fi.status = ?\n" + "AND wi.status = ?\n"
+				+ "AND wi.wi_type = ?\n";
+				//+ "GROUP BY\n" + "	fi.biz_id";
+		jt.query(sql, new RowCallbackHandler() {
+			@Override
+			public void processRow(ResultSet rs) throws SQLException {
+				 if(mapResult.get(rs.getString("bizId"))!=null){
+			    	   mapResult.put(rs.getString("bizId"),mapResult.get(rs.getString("bizId"))+","+rs.getString("participantUserName"));
+			       }else {
+			    	   mapResult.put(rs.getString("bizId"),rs.getString("participantUserName"));
+			       }
+			       
+			}
+		}, flowCode, fiStatus, taskStatus, type);
+
+		return mapResult;
+	}
+
+	public String getOpGroupCode(Long id) {
+
+		return jt.queryForObject("SELECT\n" + "	CODE\n" + "FROM\n"
+				+ "	tf_op_group\n" + "WHERE\n" + "	id =?", String.class, id);
+	}
+
+	public List<String> getTaskIdsByStepId(String stepId, Integer status) {
+
+		List<String> lstTaskId = jt.queryForList("SELECT\n" + "	guid\n"
+				+ "FROM\n" + "	flow_instance_step_work_task\n" + "WHERE\n"
+				+ "	step_id = ?\n" + "AND status = ?", String.class, stepId,
+				status);
+
+		return lstTaskId;
+	}
+
+	public List<FlowInstanceDto> getFlowInstanceByIds(String fiIds) {
+
+		StringBuffer sb = new StringBuffer();
+		String param = new String();
+		if (fiIds != null && !"".equals(fiIds)) {
+			String[] ids = fiIds.split(",");
+			for (String id : ids) {
+				sb.append("'" + id + "',");
+			}
+			if (sb.toString().endsWith(",")) {
+				param = sb.toString().substring(0, sb.toString().length() - 1);
+			} else {
+				param = sb.toString();
+			}
+
+		}
+
+		String sql = "SELECT\n"
+				+ "	fi.guid fiId,\n"
+				+ "	fi.back_fi_ids backFiIds,\n"
+				+ "	fis.guid stepId,\n"
+				+ " fis.status stepStatus,\n"
+				+ "	fis.display_name displayName,\n"
+				+ "	fis.is_start isStart,\n"
+				+ "	fis.is_end isEnd,\n"
+				+ "	fis.is_auto isAuto,\n"
+				+ " fis.status stepStatus,\n"
+				+ "	fisw.guid workId,\n"
+				+ " fisw.status workStatus,\n"
+				+ "	fisw.participants_name participantsName,\n"
+				+ "	fisw.participant_post_name participantPostName,\n"
+				+ "	fisw.participants_define_name wParticipantsDefineName,\n"
+				+ "	fiswt.guid taskId,\n"
+				+ " fiswt.flow_business_type flow_business_type,\n"
+				+ " fiswt.status taskStatus,\n"
+				+ "	fiswt.op_code opCode,\n"
+				+ " fiswt.user_note userNote,\n"
+				+ "	fiswt.participant_user_name participantUserName,\n"
+				+ "	fiswt.complete_user_name completeUserName,\n"
+				+ "	fiswt.origin_participant_name participantsDefineName,\n"
+				+ "	fiswt.complete_time completeTime,\n"
+				+ "	u.file_name fileName,\n"
+				+ "	u.id uploadId,\n"
+				+ "	u.ext,\n"
+				+ "	u.user_label userLabel\n"
+				+ "FROM\n"
+				+ "	flow_instance fi\n"
+				+ "INNER JOIN flow_instance_step fis ON fi.guid = fis.fi_id\n"
+				+ "LEFT JOIN flow_instance_step_work fisw ON fis.guid = fisw.step_id\n"
+				+ "LEFT JOIN flow_instance_step_work_task fiswt ON fisw.guid = fiswt.work_id\n"
+				+ "LEFT JOIN sm_upload u ON u.owner_id = fiswt.owner_id\n"
+				+ "WHERE\n" + "fi.guid in (" + param.toString() + ") \n"
+				+ "AND (fi.status = 2 or fi.status = 9 ) \n"
+				+ "AND	fis.status != 7\n" + "AND fisw.status != 7\n"
+				+ "AND (\n" + "	fiswt.status != 7\n"
+				+ "	OR fiswt.status IS NULL\n" + ")\n" + "ORDER BY\n"
+				+ "	fi.sort,\n" + "	fis.sort,\n" + "	fis.num,\n" + "	fisw.sort,\n"+ "	fisw.num,\n"
+				+ "	fiswt.complete_time,\n" + "	fiswt.sort,u.upload_time";
+
+		FlowInstanceMapper flowInstanceMapper = new FlowInstanceMapper();
+		jt.query(sql, flowInstanceMapper);
+		List<FlowInstanceDto> lstFlowInstance = flowInstanceMapper
+				.getLstFlowInstance();
+
+		if (CollectionUtils.isEmpty(lstFlowInstance)) {
+			return null;
+		}
+
+		Map<String, List<FlowInstanceStepDto>> mapFlowInstanceStep = flowInstanceMapper
+				.getMapFlowInstanceStep();
+		Map<String, List<FlowInstanceStepWorkDto>> mapFlowInstanceWork = flowInstanceMapper
+				.getMapFlowInstanceStepWork();
+		Map<String, List<FlowInstanceStepWorkTaskDto>> mapFlowInstanceStepWorkTask = flowInstanceMapper
+				.getMapFlowInstanceStepWorkTask();
+		Map<String, List<UploadDto>> mapUpload = flowInstanceMapper
+				.getMapUpload();
+
+		// 流程实例遍历
+		for (FlowInstanceDto flowInstance : lstFlowInstance) {
+			List<FlowInstanceStepDto> lstFlowInstanceStep = mapFlowInstanceStep
+					.get(flowInstance.getGuid());
+			// 流程环节遍历
+			for (FlowInstanceStepDto flowInstanceStep : lstFlowInstanceStep) {
+				List<FlowInstanceStepWorkDto> lstFlowInstanceStepWork = mapFlowInstanceWork
+						.get(flowInstanceStep.getGuid());
+				// 流程任务组遍历
+				for (FlowInstanceStepWorkDto flowInstanceStepWork : lstFlowInstanceStepWork) {
+					List<FlowInstanceStepWorkTaskDto> lstFlowInstanceStepWorkTask = mapFlowInstanceStepWorkTask
+							.get(flowInstanceStepWork.getGuid());
+					// 流程任务遍历
+					if (lstFlowInstanceStepWorkTask != null
+							&& lstFlowInstanceStepWorkTask.size() > 0) {
+						for (FlowInstanceStepWorkTaskDto flowInstanceStepWorkTask : lstFlowInstanceStepWorkTask) {
+							flowInstanceStepWorkTask.setLstUpload(mapUpload
+									.get(flowInstanceStepWorkTask.getGuid()));
+						}
+						flowInstanceStepWork
+								.setLstFlowInstanceStepWorkTask(lstFlowInstanceStepWorkTask);
+					}
+				}
+				flowInstanceStep
+						.setLstFlowInstanceStepWork(lstFlowInstanceStepWork);
+			}
+			flowInstance.setLstFlowInstanceStep(lstFlowInstanceStep);
+		}
+		return lstFlowInstance;
+	}
+
+	private class FlowInstanceMapper implements RowMapper<FlowInstanceDto> {
+
+		List<FlowInstanceDto> lstFlowInstance = new ArrayList<FlowInstanceDto>();
+		Map<String, List<FlowInstanceStepDto>> mapFlowInstanceStep = new HashMap<String, List<FlowInstanceStepDto>>();
+		Map<String, List<FlowInstanceStepWorkDto>> mapFlowInstanceStepWork = new HashMap<String, List<FlowInstanceStepWorkDto>>();
+		Map<String, List<FlowInstanceStepWorkTaskDto>> mapFlowInstanceStepWorkTask = new HashMap<String, List<FlowInstanceStepWorkTaskDto>>();
+		Map<String, List<UploadDto>> mapUpload = new HashMap<String, List<UploadDto>>();
+
+		@Override
+		public FlowInstanceDto mapRow(ResultSet arg0, int arg1)
+				throws SQLException {
+
+			// 流程实例
+			String fiId = arg0.getString("fiId");
+			FlowInstanceDto flowInstance = new FlowInstanceDto();
+			flowInstance.setGuid(fiId);
+			flowInstance.setBackFiIds(arg0.getString("backFiIds"));
+
+			if (!lstFlowInstance.contains(flowInstance)) {
+				lstFlowInstance.add(flowInstance);
+			}
+
+			// 流程实例环节
+			String stepId = arg0.getString("stepId");
+			FlowInstanceStepDto flowInstanceStep = new FlowInstanceStepDto();
+			flowInstanceStep.setGuid(stepId);
+			flowInstanceStep.setStatus(arg0.getInt("stepStatus"));
+			flowInstanceStep.setDisplayName(arg0.getString("displayName"));
+			flowInstanceStep.setIsStart(arg0.getInt("isStart"));
+			flowInstanceStep.setIsEnd(arg0.getInt("isEnd"));
+			flowInstanceStep.setIsAuto(arg0.getInt("isAuto"));
+			List<FlowInstanceStepDto> lstFlowInstanceStep = null;
+			if (mapFlowInstanceStep.containsKey(fiId)) {
+				lstFlowInstanceStep = mapFlowInstanceStep.get(fiId);
+				if (!lstFlowInstanceStep.contains(flowInstanceStep)) {
+					lstFlowInstanceStep.add(flowInstanceStep);
+				}
+			} else {
+				lstFlowInstanceStep = new ArrayList<FlowInstanceStepDto>();
+				lstFlowInstanceStep.add(flowInstanceStep);
+				mapFlowInstanceStep.put(fiId, lstFlowInstanceStep);
+			}
+
+			// 流程实例工作组
+			String workId = arg0.getString("workId");
+			FlowInstanceStepWorkDto flowInstanceStepWork = new FlowInstanceStepWorkDto();
+			flowInstanceStepWork.setGuid(workId);
+			flowInstanceStepWork.setStatus(arg0.getInt("workStatus"));
+			flowInstanceStepWork.setParticipantsName(arg0
+					.getString("participantsName"));
+			flowInstanceStepWork.setParticipantPostName(arg0
+					.getString("participantPostName"));
+			flowInstanceStepWork.setParticipantsDefineName(arg0
+					.getString("wParticipantsDefineName"));
+
+			List<FlowInstanceStepWorkDto> lstFlowInstanceStepWork = null;
+			if (mapFlowInstanceStepWork.containsKey(stepId)) {
+				lstFlowInstanceStepWork = mapFlowInstanceStepWork.get(stepId);
+				if (!lstFlowInstanceStepWork.contains(flowInstanceStepWork)) {
+					lstFlowInstanceStepWork.add(flowInstanceStepWork);
+				}
+			} else {
+				lstFlowInstanceStepWork = new ArrayList<FlowInstanceStepWorkDto>();
+				lstFlowInstanceStepWork.add(flowInstanceStepWork);
+				mapFlowInstanceStepWork.put(stepId, lstFlowInstanceStepWork);
+			}
+
+			// 流程实例工作组任务
+			String taskId = arg0.getString("taskId");
+			if (StringUtils.isBlank(taskId)) {
+				return flowInstance;
+			}
+			FlowInstanceStepWorkTaskDto flowInstanceStepWorkTask = new FlowInstanceStepWorkTaskDto();
+			flowInstanceStepWorkTask.setGuid(taskId);
+			flowInstanceStepWorkTask.setStatus(arg0.getInt("taskStatus"));
+			flowInstanceStepWorkTask.setFlowBusinessType(arg0.getString("flow_business_type"));
+			
+			
+			flowInstanceStepWorkTask.setParticipantUserName(arg0
+					.getString("participantUserName"));
+			flowInstanceStepWorkTask.setCompleteUserName(arg0
+					.getString("completeUserName"));
+			flowInstanceStepWorkTask.setOriginParticipantName(arg0
+					.getString("participantsDefineName"));
+			flowInstanceStepWorkTask.setCompleteTime(arg0
+					.getTimestamp("completeTime"));
+			flowInstanceStepWorkTask.setOpCode(arg0.getString("opCode"));
+			flowInstanceStepWorkTask.setUserNote(arg0.getString("userNote"));
+
+			List<FlowInstanceStepWorkTaskDto> lstFlowInstanceStepWorkTask = null;
+			if (mapFlowInstanceStepWorkTask.containsKey(workId)) {
+				lstFlowInstanceStepWorkTask = mapFlowInstanceStepWorkTask
+						.get(workId);
+				if (!lstFlowInstanceStepWorkTask
+						.contains(flowInstanceStepWorkTask)) {
+					lstFlowInstanceStepWorkTask.add(flowInstanceStepWorkTask);
+				}
+			} else {
+				lstFlowInstanceStepWorkTask = new ArrayList<FlowInstanceStepWorkTaskDto>();
+				lstFlowInstanceStepWorkTask.add(flowInstanceStepWorkTask);
+				mapFlowInstanceStepWorkTask.put(workId,
+						lstFlowInstanceStepWorkTask);
+			}
+
+			// 任务相关附件
+			String uploadId = arg0.getString("uploadId");
+			if (StringUtils.isBlank(uploadId)) {
+				return flowInstance;
+			}
+
+			String fileName = arg0.getString("fileName");
+			String ext = arg0.getString("ext");
+			String userLabel = arg0.getString("userLabel");
+
+			UploadDto upload = new UploadDto();
+			upload.setId(uploadId);
+			upload.setFileName(fileName);
+			upload.setExt(ext);
+			upload.setUserLabel(userLabel);
+
+			List<UploadDto> lstUpload = null;
+			if (mapUpload.containsKey(taskId)) {
+				lstUpload = mapUpload.get(taskId);
+				if (!lstUpload.contains(upload)) {
+					lstUpload.add(upload);
+				}
+			} else {
+				lstUpload = new ArrayList<UploadDto>();
+				lstUpload.add(upload);
+				mapUpload.put(taskId, lstUpload);
+			}
+
+			return flowInstance;
+		}
+
+		public Map<String, List<FlowInstanceStepWorkDto>> getMapFlowInstanceStepWork() {
+			return mapFlowInstanceStepWork;
+		}
+
+		public Map<String, List<FlowInstanceStepWorkTaskDto>> getMapFlowInstanceStepWorkTask() {
+			return mapFlowInstanceStepWorkTask;
+		}
+
+		public Map<String, List<FlowInstanceStepDto>> getMapFlowInstanceStep() {
+			return mapFlowInstanceStep;
+		}
+
+		public Map<String, List<UploadDto>> getMapUpload() {
+			return mapUpload;
+		}
+
+		public List<FlowInstanceDto> getLstFlowInstance() {
+			return lstFlowInstance;
+		}
+	}
+
+	public FlowInstanceDto getFlowInstanceById(String id) {
+		String sql = "SELECT\n"
+				+ "	fi.guid fiId,\n"
+				+ "	fi.app_code appCode,\n"
+				+ "	fi.biz_code bizCode,\n"
+				+ "	fi.biz_id bizId,\n"
+				+ "	fi.back_fi_ids backFiIds,\n"
+				+ "	fis.guid stepId,\n"
+				+ "	fis.is_auto isAuto,\n"
+				+ " fis.status stepStatus,\n"
+				+ "	fis.display_name displayName,\n"
+				+ "	fis.is_start isStart,\n"
+				+ "	fis.is_end isEnd,\n"
+				+ "	fisw.guid workId,\n"
+				+ " fisw.status workStatus,\n"
+				+ "	fisw.participants_name participantsName,\n"
+				+ "	fisw.participant_post_name participantPostName,\n"
+				+ "	fisw.participants_define_name wParticipantsDefineName,\n"
+				+ "	fiswt.guid taskId,\n"
+				+ " fiswt.flow_business_type flow_business_type,\n"
+				+ " fiswt.status taskStatus,\n"
+				+ "	fiswt.op_code opCode,\n"
+				+ " fiswt.user_note userNote,\n"
+				+ "	fiswt.participant_user_name participantUserName,\n"
+				+ "	fiswt.complete_user_name completeUserName,\n"
+				+ "	fiswt.origin_participant_name participantsDefineName,\n"
+				+ "	fiswt.complete_time completeTime,\n"
+				+ "	u.file_name fileName,\n"
+				+ "	u.id uploadId,\n"
+				+ "	u.ext,\n"
+				+ "	u.user_label userLabel\n"
+				+ "FROM\n"
+				+ "	flow_instance fi\n"
+				+ "INNER JOIN flow_instance_step fis ON fi.guid = fis.fi_id\n"
+				+ "LEFT JOIN flow_instance_step_work fisw ON fis.guid = fisw.step_id\n"
+				+ "LEFT JOIN flow_instance_step_work_task fiswt ON fisw.guid = fiswt.work_id\n"
+				+ "LEFT JOIN sm_upload u ON u.owner_id = fiswt.owner_id\n"
+				+ "WHERE\n" + "fi.guid = ? \n" + "AND	fis.status != 7\n"
+				+ "AND (\n fisw.status != 7\n" + "OR fisw.status IS NULL\n"
+				+ ")\n" + "AND (\n" + "	fiswt.status != 7\n"
+				+ "	OR fiswt.status IS NULL\n" + ")\n" + "ORDER BY\n"
+				+ "	fis.sort,\n"+ "	fis.num,\n" + DbType.getType()+"IFNULL(fisw.pass_date,9),\n"
+				+ "	fisw.sort,\n" + "	fisw.num,\n"+ DbType.getType()+"IFNULL(fiswt.complete_time,9),\n"
+				+ "	fiswt.sort,u.upload_time";
+		
+		FlowInstanceStepMapper flowInstanceStepMapper = new FlowInstanceStepMapper();
+		jt.query(sql, flowInstanceStepMapper, id);
+		List<FlowInstanceStepDto> lstFlowInstanceStep = flowInstanceStepMapper
+				.getLstFlowInstanceStep();
+		FlowInstanceDto flowInstance = flowInstanceStepMapper.getFlowInstance();
+
+		if (CollectionUtils.isEmpty(lstFlowInstanceStep)) {
+			return null;
+		}
+
+		Map<String, List<FlowInstanceStepWorkDto>> mapFlowInstanceWork = flowInstanceStepMapper
+				.getMapFlowInstanceWork();
+		Map<String, List<FlowInstanceStepWorkTaskDto>> mapFlowInstanceStepWorkTask = flowInstanceStepMapper
+				.getMapFlowInstanceStepWorkTask();
+		Map<String, List<UploadDto>> mapUpload = flowInstanceStepMapper
+				.getMapUpload();
+
+		// 流程环节遍历
+		for (FlowInstanceStepDto flowInstanceStep : lstFlowInstanceStep) {
+			List<FlowInstanceStepWorkDto> lstFlowInstanceStepWork = mapFlowInstanceWork
+					.get(flowInstanceStep.getGuid());
+			// 流程Work遍历
+			if (CollectionUtils.isEmpty(lstFlowInstanceStepWork)) {
+				continue;
+			}
+			for (FlowInstanceStepWorkDto flowInstanceStepWork : lstFlowInstanceStepWork) {
+				List<FlowInstanceStepWorkTaskDto> lstFlowInstanceStepWorkTask = mapFlowInstanceStepWorkTask
+						.get(flowInstanceStepWork.getGuid());
+				// 流程任务遍历
+				if (CollectionUtils.isEmpty(lstFlowInstanceStepWorkTask)) {
+					continue;
+				}
+				for (FlowInstanceStepWorkTaskDto flowInstanceStepWorkTask : lstFlowInstanceStepWorkTask) {
+					flowInstanceStepWorkTask.setLstUpload(mapUpload
+							.get(flowInstanceStepWorkTask.getGuid()));
+				}
+				flowInstanceStepWork
+						.setLstFlowInstanceStepWorkTask(lstFlowInstanceStepWorkTask);
+			}
+			flowInstanceStep
+					.setLstFlowInstanceStepWork(lstFlowInstanceStepWork);
+		}
+
+		flowInstance.setLstFlowInstanceStep(lstFlowInstanceStep);
+
+		return flowInstance;
+	}
+
+	private class FlowInstanceStepMapper implements
+			RowMapper<FlowInstanceStepDto> {
+
+		private List<FlowInstanceStepDto> lstFlowInstanceStep = new ArrayList<FlowInstanceStepDto>();
+
+		private FlowInstanceDto flowInstance = new FlowInstanceDto();
+
+		private Map<String, List<FlowInstanceStepWorkDto>> mapFlowInstanceWork = new HashMap<String, List<FlowInstanceStepWorkDto>>();
+		private Map<String, List<FlowInstanceStepWorkTaskDto>> mapFlowInstanceStepWorkTask = new HashMap<String, List<FlowInstanceStepWorkTaskDto>>();
+		private Map<String, List<UploadDto>> mapUpload = new HashMap<String, List<UploadDto>>();
+
+		@Override
+		public FlowInstanceStepDto mapRow(ResultSet arg0, int arg1)
+				throws SQLException {
+
+			flowInstance.setGuid(arg0.getString("fiId"));
+			flowInstance.setBackFiIds(arg0.getString("backFiIds"));
+			flowInstance.setAppCode(arg0.getString("appCode"));
+			flowInstance.setBizCode(arg0.getString("bizCode"));
+			flowInstance.setBizId(arg0.getString("bizId"));
+
+			// 流程实例环节
+			FlowInstanceStepDto flowInstanceStep = new FlowInstanceStepDto();
+			String stepId = arg0.getString("stepId");
+			flowInstanceStep.setGuid(stepId);
+			flowInstanceStep.setStatus(arg0.getInt("stepStatus"));
+			flowInstanceStep.setDisplayName(arg0.getString("displayName"));
+			flowInstanceStep.setIsEnd(arg0.getInt("isEnd"));
+			flowInstanceStep.setIsStart(arg0.getInt("isStart"));
+			flowInstanceStep.setIsAuto(arg0.getInt("isAuto"));
+
+			if (!lstFlowInstanceStep.contains(flowInstanceStep)) {
+				lstFlowInstanceStep.add(flowInstanceStep);
+			}
+
+			// 流程实例工作组
+			String workId = arg0.getString("workId");
+			if (StringUtils.isBlank(workId)) {
+
+				return flowInstanceStep;
+			}
+			FlowInstanceStepWorkDto flowInstanceStepWork = new FlowInstanceStepWorkDto();
+			flowInstanceStepWork.setGuid(workId);
+			flowInstanceStepWork.setStatus(workId != null ? arg0
+					.getInt("workStatus") : null);
+			flowInstanceStepWork.setParticipantsName(arg0
+					.getString("participantsName"));
+			flowInstanceStepWork.setParticipantPostName(arg0
+					.getString("participantPostName"));
+			flowInstanceStepWork.setParticipantsDefineName(arg0
+					.getString("wParticipantsDefineName"));
+
+			List<FlowInstanceStepWorkDto> lstFlowInstanceStepWork = null;
+			if (mapFlowInstanceWork.containsKey(stepId)) {
+				lstFlowInstanceStepWork = mapFlowInstanceWork.get(stepId);
+				if (!lstFlowInstanceStepWork.contains(flowInstanceStepWork)) {
+					lstFlowInstanceStepWork.add(flowInstanceStepWork);
+				}
+			} else {
+				lstFlowInstanceStepWork = new ArrayList<FlowInstanceStepWorkDto>();
+				lstFlowInstanceStepWork.add(flowInstanceStepWork);
+				mapFlowInstanceWork.put(stepId, lstFlowInstanceStepWork);
+			}
+
+			// 流程实例工作组任务
+			String taskId = arg0.getString("taskId");
+			if (StringUtils.isBlank(taskId)) {
+
+				return flowInstanceStep;
+			}
+			FlowInstanceStepWorkTaskDto flowInstanceStepWorkTask = new FlowInstanceStepWorkTaskDto();
+			flowInstanceStepWorkTask.setGuid(taskId);
+			flowInstanceStepWorkTask.setFlowBusinessType(arg0.getString("flow_business_type"));
+			flowInstanceStepWorkTask.setStatus(arg0.getInt("taskStatus"));
+			flowInstanceStepWorkTask.setParticipantUserName(arg0
+					.getString("participantUserName"));
+			flowInstanceStepWorkTask.setCompleteUserName(arg0
+					.getString("completeUserName"));
+			flowInstanceStepWorkTask.setOriginParticipantName(arg0
+					.getString("participantsDefineName"));
+			flowInstanceStepWorkTask.setCompleteTime(arg0
+					.getTimestamp("completeTime"));
+			flowInstanceStepWorkTask.setOpCode(arg0.getString("opCode"));
+			flowInstanceStepWorkTask.setUserNote(arg0.getString("userNote"));
+
+			List<FlowInstanceStepWorkTaskDto> lstFlowInstanceStepWorkTask = null;
+			if (mapFlowInstanceStepWorkTask.containsKey(workId)) {
+				lstFlowInstanceStepWorkTask = mapFlowInstanceStepWorkTask
+						.get(workId);
+				if (!lstFlowInstanceStepWorkTask
+						.contains(flowInstanceStepWorkTask)) {
+					lstFlowInstanceStepWorkTask.add(flowInstanceStepWorkTask);
+				}
+			} else {
+				lstFlowInstanceStepWorkTask = new ArrayList<FlowInstanceStepWorkTaskDto>();
+				lstFlowInstanceStepWorkTask.add(flowInstanceStepWorkTask);
+				mapFlowInstanceStepWorkTask.put(workId,
+						lstFlowInstanceStepWorkTask);
+			}
+
+			// 任务相关附件
+			String uploadId = arg0.getString("uploadId");
+			if (uploadId == null) {
+				return flowInstanceStep;
+			}
+
+			String fileName = arg0.getString("fileName");
+			String ext = arg0.getString("ext");
+			String userLabel = arg0.getString("userLabel");
+
+			UploadDto upload = new UploadDto();
+			upload.setId(uploadId);
+			upload.setFileName(fileName);
+			upload.setExt(ext);
+			upload.setUserLabel(userLabel);
+
+			List<UploadDto> lstUpload = null;
+			if (mapUpload.containsKey(taskId)) {
+				lstUpload = mapUpload.get(taskId);
+				if (!lstUpload.contains(upload)) {
+					lstUpload.add(upload);
+				}
+			} else {
+				lstUpload = new ArrayList<UploadDto>();
+				lstUpload.add(upload);
+				mapUpload.put(taskId, lstUpload);
+			}
+
+			return flowInstanceStep;
+		}
+
+		public Map<String, List<FlowInstanceStepWorkDto>> getMapFlowInstanceWork() {
+			return mapFlowInstanceWork;
+		}
+
+		public Map<String, List<FlowInstanceStepWorkTaskDto>> getMapFlowInstanceStepWorkTask() {
+			return mapFlowInstanceStepWorkTask;
+		}
+
+		public Map<String, List<UploadDto>> getMapUpload() {
+			return mapUpload;
+		}
+
+		public List<FlowInstanceStepDto> getLstFlowInstanceStep() {
+			return lstFlowInstanceStep;
+		}
+
+		public FlowInstanceDto getFlowInstance() {
+			return flowInstance;
+		}
+	}
+
+	@Override
+	public Map<String, Object> getFlowStatus(String fiId) {
+
+		Map<String, Object> rMap = null;
+		String sqlStr = "select (case i.status when 1 then '审批中' when 2 then '已审批' when 7 then '作废' when 8 then '撤回' when 9 then '驳回' end) as status ,d.name as type  from flow_instance i,sm_service_object_define d where i.biz_type=d.id and i.guid = ? ";
+		List<Map<String, Object>> list = jt.queryForList(sqlStr, new Object[] { fiId });
+		
+		if (list != null && list.size() >0 ) {
+			for (Map<String, Object> map : list) {
+				rMap = map;
+			}
+		}
+		return rMap;
+	}
+}

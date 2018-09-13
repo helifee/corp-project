@@ -1,0 +1,10 @@
+package com.xinleju.platform.flow.service;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.flow.entity.SysNoticeMsgUserConfig;
+
+/**
+ * Created by luoro on 2017/9/24.
+ */
+public interface SysNoticeMsgUserConfigService extends BaseService<String,SysNoticeMsgUserConfig> {
+}

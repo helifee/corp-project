@@ -1,0 +1,1546 @@
+package com.jzy.hio.oa.content.dto.service.impl;
+
+import java.io.BufferedInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.lang.reflect.Field;
+import java.sql.Timestamp;
+import java.text.MessageFormat;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.TreeMap;
+import java.util.concurrent.ExecutorService;
+
+import javax.annotation.PostConstruct;
+
+import org.apache.commons.collections.map.HashedMap;
+import org.apache.commons.lang.StringUtils;
+import org.apache.log4j.Logger;
+import org.csource.common.NameValuePair;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.datasource.DataSourceContextHolder;
+import com.jzy.hio.base.utils.AttachmentDto;
+import com.jzy.hio.base.utils.DubboServiceResultInfo;
+import com.jzy.hio.base.utils.ErrorInfoCode;
+import com.jzy.hio.base.utils.FastDFSClient;
+import com.jzy.hio.base.utils.IDGenerator;
+import com.jzy.hio.base.utils.Page;
+import com.jzy.hio.base.utils.SecurityUserBeanInfo;
+import com.jzy.hio.base.utils.ThreadPoolUtil;
+import com.jzy.hio.oa.content.dto.ContentRowTypeDto;
+import com.jzy.hio.oa.content.dto.SearchIndexDto;
+import com.jzy.hio.oa.content.dto.SysNoticeMsgDto;
+import com.jzy.hio.oa.content.dto.service.ContentRowTypeDtoServiceCustomer;
+import com.jzy.hio.oa.content.entity.ContentRowAttribute;
+import com.jzy.hio.oa.content.entity.ContentRowType;
+import com.jzy.hio.oa.content.entity.ContentRowTypeAssociated;
+import com.jzy.hio.oa.content.entity.ContentType;
+import com.jzy.hio.oa.content.service.ContentRowAttributeService;
+import com.jzy.hio.oa.content.service.ContentRowTypeAssociatedService;
+import com.jzy.hio.oa.content.service.ContentRowTypeService;
+import com.jzy.hio.oa.content.service.ContentTypeService;
+import com.jzy.hio.oa.favorite.dto.service.FavoriteDtoServiceCustomer;
+import com.jzy.tools.data.JacksonUtils;
+
+/**
+ * @author admin
+ */
+@Service
+public class ContentRowTypeDtoServiceProducer implements ContentRowTypeDtoServiceCustomer {
+	private static Logger log = Logger.getLogger(ContentRowTypeDtoServiceProducer.class);
+	@Autowired
+	private ContentRowTypeService contentRowTypeService;
+	@Autowired
+	private ContentRowAttributeService contentRowAttributeService;
+	// @Autowired
+	// private SearchIndexDtoServiceCustomer searchIndexDtoServiceCustomer;
+	// @Autowired
+	// private AttachmentDtoServiceCustomer attachmentDtoServiceCustomer;
+	// @Autowired
+	// private AttachmentTempDtoServiceCustomer attachmentTempDtoServiceCustomer;
+	@Autowired
+	private FavoriteDtoServiceCustomer favoriteDtoServiceCustomer;
+	@Autowired
+	private ContentRowTypeAssociatedService contentRowTypeAssociatedService;
+	// @Autowired
+	// private OrgnazationOutServiceCustomer orgnazationOutServiceCustomer;
+	// @Autowired
+	// private OrgnazationService orgnazationService;
+	// @Autowired
+	// private DataPointDtoServiceCustomer dataPointDtoServiceCustomer;
+	// @Autowired
+	// private UserDtoServiceCustomer userDtoServiceCustomer;
+	// @Autowired
+	// private SysNoticeMsgDtoServiceCustomer sysNoticeMsgDtoServiceCustomer;
+	// @Autowired
+	// private SysNoticeMsgService sysNoticeMsgService;
+	@Autowired
+	private ContentTypeService contentTypeService;
+	@Autowired
+	private RedisTemplate<String, String> redisTemplate;
+
+	private Map<String, String> statusMap = new HashMap<String, String>();
+//	@Value("#{configuration['indexKnowledgeUrl']}")
+	private String indexKnowledgeUrl;
+//	@Value("#{configuration['indexNewsUrl']}")
+	private String indexNewsUrl;
+//	@Value("#{configuration['attachmentUrl']}")
+	private String attachmentUrl;
+//	@Value("#{configuration['redis.host']}")
+	private String redisHost;
+//	@Value("#{configuration['redis.port']}")
+	private int redisPort;
+//	@Value("#{configuration['redis.pass']}")
+	private String redisPass;
+	private ExecutorService threadPool = ThreadPoolUtil.getInstance();
+	static final String LOCK_KEY = "redis.lock";
+	static final long LOCK_EXPIRE = 5 * 1000;
+
+	@PostConstruct
+	public void init() {
+		statusMap.put("1", "APPROVALING");
+		statusMap.put("2", "APPROVED");
+		statusMap.put("3", "DRAFT");
+		statusMap.put("4", "DRAFT");
+		statusMap.put("7", "DRAFT");
+		statusMap.put("9", "APPROVALING");
+	}
+
+	public String save(String userInfo, String saveJson) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		SecurityUserBeanInfo securityUserInfo = JacksonUtils.fromJson(userInfo, SecurityUserBeanInfo.class);
+		try {
+			// Map<String,Object> contentTypeMap = JacksonUtils.fromJson(saveJson, Map.class);
+			// saveJson = saveJson.replaceAll("\\\\'","'").replaceAll("\\\\\\\\", "\\\\");
+
+			ContentRowType contentRowType = JacksonUtils.fromJson(saveJson, ContentRowType.class);
+
+			Integer checkResult = contentRowTypeService.checkUniqueCode(contentRowType);
+			if (checkResult == 1) {
+				info.setSucess(false);
+				info.setMsg("编码重复!");
+				info.setCode(ErrorInfoCode.UNIQUE_ERROR.getValue());
+				return JacksonUtils.toJson(info);
+			}
+			contentRowTypeService.deleteObjectById(contentRowType.getId());
+
+			/**
+			 * 验证及修正编码
+			 */
+			String codeType = contentRowType.getCodeType();
+			/*
+			 * if (StringUtils.isNotEmpty(codeType)) { Jedis jedis = new Jedis(redisHost, redisPort); if(StringUtils.isNotEmpty(redisPass))jedis.auth(redisPass); Lock lock = new
+			 * RedisReentrantLock(jedis, LOCK_KEY, LOCK_EXPIRE); if (lock.tryLock(3, TimeUnit.SECONDS)) { try { String code = contentRowType.getCode(); if (code.indexOf("〔") > 0 &&
+			 * code.indexOf("〕") > 0 && code.indexOf("〔") < code.indexOf("〕")) { String year = code.substring(code.indexOf("〔")+1, code.indexOf("〕")); String key =
+			 * securityUserInfo.getTendId() + year + codeType; if (year.length() == 4) { Long redisValue = 1L; log.info("redis验证编码key是否存在,key：" + key); Map map = new
+			 * HashMap<String, String>(); map.put("codeType",codeType); map.put("year",year); Map<String, Object> maxCodeMap =
+			 * contentRowTypeService.getMaxCodeByNowYearAndCodeType(map);//查询库中该年度中已存在此类型编码的最大值 if(maxCodeMap==null || maxCodeMap.size()<1){ }else{ String maxCode =
+			 * maxCodeMap.get("code").toString(); redisValue = Long.parseLong(maxCode.substring(maxCode.indexOf("〕")+1,maxCode.length()-1)); redisValue = redisValue+1L; } code =
+			 * code.substring(0,code.indexOf("〕")+1)+(redisValue)+code.substring(code.length()-1); log.info("redis验证编码key不存在,初始化后key：" + key+",value:"+redisValue);
+			 * contentRowType.setCode(code); contentRowTypeService.saveBean(contentRowType); log.info("持久化数据库code：" + code);
+			 * redisTemplate.opsForValue().set(key,String.valueOf(redisValue+1L)); } } else { info.setSucess(false); info.setMsg("编码格式不正确，请检查后填写!");
+			 * info.setCode(ErrorInfoCode.PARAMETER_ERROR.getValue()); return JacksonUtils.toJson(info); }
+			 * 
+			 * } catch (InterruptedException e) { e.printStackTrace(); } finally { lock.unlock(); } } }else{ contentRowTypeService.saveBean(contentRowType); }
+			 */
+
+			// saveJson = saveJson.replaceAll("\\\\","\\\\\\\\");
+			/*
+			 * String updateJsonStr = saveJson.replaceAll("\\\\","\\\\\\\\"); contentRowType.setAttributeValue(updateJsonStr);
+			 */
+			contentRowTypeService.saveBean(contentRowType);
+
+			final String tempSaveJson = saveJson;
+			// new Thread (()->{
+			threadPool.execute(new Runnable() {
+				@Override
+				public void run() {
+					// 创建全文检索的索引开始
+					SearchIndexDto dto = new SearchIndexDto();
+					dto.setEsDocId(contentRowType.getId());
+					dto.setEsDocIndex(securityUserInfo.getTendId());
+					dto.setCreatePersonName(securityUserInfo.getSecurityUserDto().getRealName());
+					dto.setCreateDate(Timestamp.valueOf(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date())));
+					Map map = JacksonUtils.fromJson(tempSaveJson, Map.class);
+					String type = String.valueOf(map.get("type"));
+					String url = "";
+					if (Objects.equals(type, "news")) {
+						url = MessageFormat.format(indexNewsUrl, contentRowType.getId());
+
+					} else {
+						url = MessageFormat.format(indexKnowledgeUrl, contentRowType.getId());
+					}
+					map.put("url", url);
+					map.put("createPersonName", contentRowType.getCreatePersonName());
+					map.put("createDate", System.currentTimeMillis());
+					map.put("title", contentRowType.getTitle());
+					map.put("content",
+							StringUtils.isNotBlank(contentRowType.getDocContent()) ? contentRowType.getDocContent()
+									: ((contentRowType.getDocDesc() == null ? "" : contentRowType.getDocDesc())
+											+ (contentRowType.getKeywords() == null ? "" : contentRowType.getKeywords())));
+					dto.setEsDocType(type);
+					dto.setContent(JacksonUtils.toJson(map));
+					try {
+						if (Objects.equals(contentRowType.getStatus(), "PUBLISHED")) {// 正式发布的文档才会创建索引
+//							String resultStr = searchIndexDtoServiceCustomer.save(userInfo, JacksonUtils.toJson(dto));
+//							log.info(resultStr);
+						}
+					} catch (Exception e) {
+						log.error("新闻/知识创建全文索引失败", e);
+					}
+					// 创建全文检索的索引结束
+				}
+			});
+
+			// }).start ();
+
+			// 推送新闻待阅消息
+			Map<String, Object> paramMap = JacksonUtils.fromJson(saveJson, HashMap.class);
+			paramMap.put("ids", contentRowType.getId());
+			paramMap.put("state", "PUBLISHED".equals(contentRowType.getStatus()) ? "publish" : null);
+			// sendSysNoticeForNews(paramMap,userInfo);
+
+			sendNewsNoticeByDataAuth(paramMap, userInfo);
+
+			info.setResult(JacksonUtils.toJson(contentRowType));
+			info.setSucess(true);
+			info.setMsg("保存对象成功!");
+		} catch (Exception e) {
+			log.error("保存对象失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("保存对象失败!");
+			info.setExceptionMsg(e.getMessage());
+			info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	/**
+	 * 根据编码类型获取redis中的编码
+	 * 
+	 * @return
+	 */
+	public String getCodeByCodeType(String userInfo, String saveJson) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+			SecurityUserBeanInfo securityUserInfo = JacksonUtils.fromJson(userInfo, SecurityUserBeanInfo.class);
+			ContentRowType contentRowType = JacksonUtils.fromJson(saveJson, ContentRowType.class);
+			/**
+			 * 验证及修正编码
+			 */
+			String codeType = contentRowType.getCodeType();
+			if (StringUtils.isNotEmpty(codeType)) {
+				String code = contentRowType.getCode();
+				String year = code.substring(code.indexOf("〔") + 1, code.indexOf("〕"));
+				String key = securityUserInfo.getTendId() + year + codeType;
+				Long redisValue = 0L;
+				// if (redisTemplate.hasKey(key)) {//判断是否存在key
+				// log.info("redis中编码key存在,key：" + key);
+				// info.setResult(JacksonUtils.toJson(code.substring(0,code.indexOf("〕")+1)+(redisTemplate.opsForValue().get(key))+code.substring(code.length()-1)));
+				// info.setSucess(true);
+				// info.setMsg("获取编码成功!");
+				// } else {
+				Map map = new HashMap<String, String>();
+				map.put("codeType", codeType);
+				map.put("year", year);
+				Map<String, Object> maxCodeMap = null;// 查询库中该年度中已存在此类型编码的最大值
+
+				maxCodeMap = contentRowTypeService.getMaxCodeByNowYearAndCodeType(map);
+
+				if (maxCodeMap == null || maxCodeMap.size() < 1) {
+				} else {
+					String maxCode = maxCodeMap.get("code").toString();
+					redisValue = Long.parseLong(maxCode.substring(maxCode.indexOf("〕") + 1, maxCode.length() - 1));
+				}
+				info.setResult(JacksonUtils.toJson(code.substring(0, code.indexOf("〕") + 1) + (redisValue + 1L) + code.substring(code.length() - 1)));
+				info.setSucess(true);
+				info.setMsg("获取编码成功!");
+			}
+			// }
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String saveBatch(String userInfo, String saveJsonList) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public String updateBatch(String userInfo, String updateJsonList) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public String update(String userInfo, String updateJson) {
+
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+
+			ContentRowType contentRowType = JacksonUtils.fromJson(updateJson, ContentRowType.class);
+			/*
+			 * JSONObject jo = JSONObject.parseObject(updateJson); jo.remove("attributeValue"); jo.remove("docContent"); Map<String,Object> contentRowTypeMap =
+			 * JacksonUtils.fromJson(updateJson, Map.class); contentRowTypeMap.remove("attributeValue"); contentRowTypeMap.remove("docContent");
+			 * contentRowType.setAttributeValue(jo.toString().replaceAll("\\\\'","'").replaceAll("\\\\\\\\", "\\\\"));
+			 */
+
+			final Integer existNum = contentRowTypeService.checkUniqueCode(contentRowType);
+			if (existNum == 1) {
+				info.setSucess(false);
+				info.setMsg("编码重复!");
+				info.setCode(ErrorInfoCode.UNIQUE_ERROR.getValue());
+				return JacksonUtils.toJson(info);
+			}
+
+			String updateJsonStr = updateJson.replaceAll("\\\\", "\\\\\\\\");
+			contentRowType.setAttributeValue(updateJsonStr);
+			int result = contentRowTypeService.update(contentRowType);
+			SecurityUserBeanInfo securityUserInfo = JacksonUtils.fromJson(userInfo, SecurityUserBeanInfo.class);
+			final String tempUpdateJson = updateJson;
+			// new Thread (()->{
+			threadPool.execute(new Runnable() {
+				@Override
+				public void run() {
+					try {
+						// 更新全文检索的索引
+						SearchIndexDto dto = new SearchIndexDto();
+						dto.setEsDocId(contentRowType.getId());
+						dto.setEsDocIndex(securityUserInfo.getTendId());
+						dto.setCreatePersonName(securityUserInfo.getSecurityUserDto().getRealName());
+						dto.setCreateDate(Timestamp.valueOf(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date())));
+						Map map = JacksonUtils.fromJson(tempUpdateJson, HashMap.class);
+						String type = String.valueOf(map.get("type"));
+						String url = "";
+						if (Objects.equals(type, "news")) {
+							url = MessageFormat.format(indexNewsUrl, contentRowType.getId());
+
+						} else {
+							url = MessageFormat.format(indexKnowledgeUrl, contentRowType.getId());
+						}
+						map.put("url", url);
+						map.put("createPersonName", contentRowType.getCreatePersonName());
+						map.put("createDate", contentRowType.getCreateDate().getTime());
+						map.put("title", contentRowType.getTitle());
+						map.put("content",
+								StringUtils.isNotBlank(contentRowType.getDocContent()) ? contentRowType.getDocContent()
+										: ((contentRowType.getDocDesc() == null ? "" : contentRowType.getDocDesc())
+												+ (contentRowType.getKeywords() == null ? "" : contentRowType.getKeywords())));
+						dto.setEsDocType(type);
+						dto.setContent(JacksonUtils.toJson(map));
+						if (Objects.equals(contentRowType.getStatus(), "PUBLISHED")) {// 正式发布的文档才会修改索引
+//							String resultStr = searchIndexDtoServiceCustomer.update(userInfo, JacksonUtils.toJson(dto));
+//							log.info(resultStr);
+						}
+						// 更新全文检索的索引结束
+					} catch (Exception e) {
+						log.error("新闻/知识创建全文索引失败", e);
+					}
+
+				}
+			});
+			// }).start ();
+
+			// 推送新闻待阅消息
+			Map<String, Object> paramMap = JacksonUtils.fromJson(updateJson, HashMap.class);
+			paramMap.put("ids", contentRowType.getId());
+			paramMap.put("state", "PUBLISHED".equals(contentRowType.getStatus()) ? "publish" : "");
+			// sendSysNoticeForNews(paramMap,userInfo);
+			sendNewsNoticeByDataAuth(paramMap, userInfo);
+
+			info.setResult(JacksonUtils.toJson(result));
+			info.setSucess(true);
+			info.setMsg("更新对象成功!");
+		} catch (Exception e) {
+			log.error("更新对象失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("更新对象失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+
+	}
+
+	@Override
+	public String deleteObjectById(String userInfo, String deleteJson) {
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+			ContentRowType contentRowType = JacksonUtils.fromJson(deleteJson, ContentRowType.class);
+			int result = contentRowTypeService.deleteObjectById(contentRowType.getId());
+			info.setResult(JacksonUtils.toJson(result));
+			info.setSucess(true);
+			info.setMsg("删除对象成功!");
+		} catch (Exception e) {
+			log.error("更新对象失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("删除更新对象失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deleteAllObjectByIds(String userInfo, String deleteJsonList) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+			if (StringUtils.isNotBlank(deleteJsonList)) {
+				Map map = JacksonUtils.fromJson(deleteJsonList, HashMap.class);
+				List<String> list = Arrays.asList(map.get("id").toString().split(","));
+				int result = contentRowTypeService.deleteAllObjectByIds(list);
+				info.setResult(JacksonUtils.toJson(result));
+				info.setSucess(true);
+				info.setMsg("删除对象成功!");
+			}
+		} catch (Exception e) {
+			log.error("删除对象失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("删除更新对象失败!");
+			info.setExceptionMsg(e.getMessage());
+			info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getObjectById(String userInfo, String getJson) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+			ContentRowType contentRowType = JacksonUtils.fromJson(getJson, ContentRowType.class);
+			ContentRowType result = contentRowTypeService.getObjectById(contentRowType.getId());
+			if (result != null) {
+				info.setResult(JacksonUtils.toJson(result));
+				info.setSucess(true);
+				info.setMsg("获取对象成功!");
+			} else {
+				info.setSucess(false);
+				info.setCode(ErrorInfoCode.NULL_ERROR.getValue());
+				info.setMsg("获取对象失败!");
+			}
+
+		} catch (Exception e) {
+			log.error("获取对象失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取对象失败!");
+			info.setExceptionMsg(e.getMessage());
+			info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getPage(String userInfo, String paramater) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+			if (StringUtils.isNotBlank(paramater)) {
+				Map map = JacksonUtils.fromJson(paramater, HashMap.class);
+				Page page = contentRowTypeService.getContentRowTypeByPage(map);
+				info.setResult(JacksonUtils.toJson(page));
+				info.setSucess(true);
+				info.setMsg("获取分页对象成功!");
+			} else {
+				Page page = contentRowTypeService.getPage(new HashMap(), null, null);
+				info.setResult(JacksonUtils.toJson(page));
+				info.setSucess(true);
+				info.setMsg("获取分页对象成功!");
+			}
+		} catch (Exception e) {
+			log.error("获取分页对象失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取分页对象失败!");
+			info.setExceptionMsg(e.getMessage());
+			info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String queryList(String userInfo, String paramater) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+			if (StringUtils.isNotBlank(paramater)) {
+				Map map = JacksonUtils.fromJson(paramater, HashMap.class);
+				List list = contentRowTypeService.queryContentRowTypeList(map);
+				info.setResult(JacksonUtils.toJson(list));
+				info.setSucess(true);
+				info.setMsg("获取列表对象成功!");
+			} else {
+				List list = contentRowTypeService.queryContentRowTypeList(null);
+				info.setResult(JacksonUtils.toJson(list));
+				info.setSucess(true);
+				info.setMsg("获取列表对象成功!");
+			}
+		} catch (Exception e) {
+			log.error("获取列表对象失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取列表对象失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String queryListForMobile(String userInfo, String paramater) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+			if (StringUtils.isNotBlank(paramater)) {
+				Map map = JacksonUtils.fromJson(paramater, HashMap.class);
+				Page page = contentRowTypeService.queryListForMobile(map);
+				info.setResult(JacksonUtils.toJson(page));
+				info.setSucess(true);
+				info.setMsg("获取列表对象成功!");
+			}
+		} catch (Exception e) {
+			log.error("获取列表对象失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取列表对象失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getCount(String userInfo, String paramater) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public String deletePseudoObjectById(String userInfo, String deleteJson) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public String deletePseudoAllObjectByIds(String userInfo, String requestJsonList) {
+
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+			if (StringUtils.isNotBlank(requestJsonList)) {
+				Map<String, String> map = JacksonUtils.fromJson(requestJsonList, Map.class);
+				String deleteIdsList = map.get("ids");
+				String type = map.get("type");
+				List<String> list = Arrays.asList(deleteIdsList.split(","));
+				int result = contentRowTypeService.deletePseudoAllObjectByIds(list);
+				// new Thread (()-> {
+
+				threadPool.execute(new Runnable() {
+					@Override
+					public void run() {
+						SecurityUserBeanInfo securityUserInfo = JacksonUtils.fromJson(userInfo, SecurityUserBeanInfo.class);
+						changeDateSource(securityUserInfo.getTendCode());
+						try {
+//							String resultStr = searchIndexDtoServiceCustomer.deleteAllSearchIndex(userInfo, securityUserInfo.getTendId(), type, JacksonUtils.toJson(list));
+//							log.info(resultStr);
+						} catch (Exception e) {
+							log.error("删除对象索引失败!" + e.getMessage());
+						}
+						try {
+							favoriteDtoServiceCustomer.deleteAllObjectByIds(userInfo, "{\"id\":\"" + deleteIdsList + "\"}");
+						} catch (Exception e) {
+							log.error("删除收藏失败!" + e.getMessage());
+						}
+						try {
+							list.stream().forEach(e -> {
+								Map<String, Object> param = new HashMap();
+								param.put("contentRowTypeId", e);
+								try {
+									List<ContentRowTypeAssociated> associatedList = contentRowTypeAssociatedService.queryListByExample(param);
+									final List<String> ids = new ArrayList<String>();
+									associatedList.stream().forEach(k -> {
+										ids.add(k.getId());
+									});
+									contentRowTypeAssociatedService.deleteAllObjectByIds(ids);
+								} catch (Exception e1) {
+									log.error("删除关联文档失败!" + e1.getMessage());
+								}
+							});
+						} catch (Exception e) {
+							log.error("删除关联文档失败!" + e.getMessage());
+						}
+					}
+				});
+
+				// }).start ();
+				info.setResult(JacksonUtils.toJson(result));
+				info.setSucess(true);
+				info.setMsg("删除对象成功!");
+			}
+		} catch (Exception e) {
+			log.error("删除对象失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("删除更新对象失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	/**
+	 * 获取新闻、文档总记录数
+	 *
+	 * @param userInfo
+	 * @param ids
+	 * @return
+	 */
+	public String queryTypeCount(String userInfo, String ids) {
+		// 实例返回结果集对象
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		Map map = JacksonUtils.fromJson(ids, HashMap.class);
+		String id = (String) map.get("contentType");
+		try {
+			int queryTypeCount = contentRowTypeService.queryTypeCount(id);
+			// 返回结果集
+			info.setResult(JacksonUtils.toJson(queryTypeCount));
+			// 返回结果状态
+			info.setSucess(true);
+			// 返回查询状态
+			info.setMsg("获取文件数量成功!");
+		} catch (Exception e) {
+			log.error("获取文件数量失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取文件数量失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		// 返回结果集
+		return JacksonUtils.toJson(info);
+	}
+
+	/**
+	 * 根据知识存储Id获取知识存储信息
+	 *
+	 * @param getJson
+	 * @return
+	 */
+	public String getContentRowType(String userInfo, String getJson) {
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		// 把知识目录中的属性赋值到中间bean：contentTypeAnDAuthorDto，此bean中保存有知识大类基本信息和权限
+		ContentRowTypeDto contentRowTypeDto = new ContentRowTypeDto();
+		try {
+			ContentRowType contentRowType = JacksonUtils.fromJson(getJson, ContentRowType.class);
+			ContentRowType result = contentRowTypeService.getObjectById(contentRowType.getId());
+
+			// 然后通过知识大类类型id，获取这个知识大类下面的数据项的基本信息
+			Map<String, Object> map = new HashMap<String, Object>();
+			map.put("contentTypeId", result.getContentTypeId());
+			List<ContentRowAttribute> list = contentRowAttributeService.queryListByExample(map);
+			if (list.size() > 0) {
+
+			}
+			info.setResult(JacksonUtils.toJson(contentRowTypeDto));
+			info.setSucess(true);
+			info.setMsg("获取对象成功!");
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			log.error("获取对象失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取对象失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getAvailabContentRowType(String userInfo, String id) {
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		Map<String, Object> map = new HashMap<String, Object>();
+		try {
+			ContentRowType contentRowType = JacksonUtils.fromJson(id, ContentRowType.class);
+			ContentRowType result = contentRowTypeService.getObjectById(contentRowType.getId());
+
+			Field[] fields = ContentRowType.class.getDeclaredFields();
+			Field field = null;
+
+			/*
+			 * if (!"".equals(result.getAvailabField())) { String availabField = result.getAvailabField(); String[] arrayField = availabField.split(","); for (int i = 0; i <
+			 * fields.length; i++) { field = fields[i]; field.setAccessible(true);//修改访问权限 if (arrayField.length > 0) { for (String aivifield : arrayField) { if
+			 * (aivifield.split("#")[0].equals(field.getName())) { map.put(aivifield.split("#")[0], aivifield.split("#")[1] + "#" + field.get(result)); } } } } }
+			 */
+			info.setResult(JacksonUtils.toJson(map));
+			info.setSucess(true);
+			info.setMsg("获取对象成功!");
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			log.error("获取对象失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取对象失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getContentRowDataForPortal(String userInfo, String paramJson) {
+		// 实例返回结果集对象
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		Map map = JacksonUtils.fromJson(paramJson, HashMap.class);
+		// String contentTypeCode = (String) map.get("contentTypeCode");
+		try {
+			String contentRowHtml = contentRowTypeService.getContentRowDataForPortal(map);
+			// 返回结果集
+			info.setResult(contentRowHtml);
+			// 返回结果状态
+			info.setSucess(true);
+			// 返回查询状态
+			info.setMsg("获取文件数量成功!");
+		} catch (Exception e) {
+			log.error("获取文件数量失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取文件数量失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		// 返回结果集
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getContentRowData(String userInfo, String contentTypeCodeJson) {
+		// 实例返回结果集对象
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		Map map = JacksonUtils.fromJson(contentTypeCodeJson, HashMap.class);
+		// String contentTypeCode = (String) map.get("contentTypeCode");
+		try {
+			String contentRowHtml = contentRowTypeService.getContentRowData(map);
+			// 返回结果集
+			info.setResult(contentRowHtml);
+			// 返回结果状态
+			info.setSucess(true);
+			// 返回查询状态
+			info.setMsg("获取文件数量成功!");
+		} catch (Exception e) {
+			log.error("获取文件数量失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取文件数量失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		// 返回结果集
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String updateStatus(String userJson, String updateJson) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+
+			String resultInfo = contentRowTypeService.updateState(updateJson);
+			info = JacksonUtils.fromJson(resultInfo, DubboServiceResultInfo.class);
+			if (info.isSucess()) {
+				// 建立全文索引
+				threadPool.execute(new Runnable() {
+					@Override
+					public void run() {
+						try {
+							SecurityUserBeanInfo securityUserInfo = JacksonUtils.fromJson(userJson, SecurityUserBeanInfo.class);
+							changeDateSource(securityUserInfo.getTendCode());
+							Map<String, Object> paramMap = JacksonUtils.fromJson(updateJson, HashMap.class);
+							final String state = String.valueOf(paramMap.get("state"));
+							final String id = String.valueOf(paramMap.get("ids"));
+							ContentRowType contentRowType = contentRowTypeService.getObjectById(id);
+							ContentType contentType = contentTypeService.getObjectById(contentRowType.getContentTypeId());
+							String type = Objects.equals(contentType.getContentType(), "NEWS") ? "news" : "knowledge";
+							String resultStr = null;
+
+							if (Objects.equals("publish", state)) {
+								// 创建全文检索的索引开始
+								SearchIndexDto dto = new SearchIndexDto();
+								dto.setEsDocId(contentRowType.getId());
+								dto.setEsDocIndex(securityUserInfo.getTendId());
+								dto.setCreatePersonName(securityUserInfo.getSecurityUserDto().getRealName());
+								dto.setCreateDate(Timestamp.valueOf(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date())));
+								Map map = new HashMap();
+								String url = "";
+								if (Objects.equals(type, "news")) {
+									url = MessageFormat.format(indexNewsUrl, contentRowType.getId());
+								} else {
+									url = MessageFormat.format(indexKnowledgeUrl, contentRowType.getId());
+								}
+								map.put("type", type);
+								map.put("url", url);
+								map.put("createPersonName", contentRowType.getCreatePersonName());
+								map.put("createDate", System.currentTimeMillis());
+								map.put("title", contentRowType.getTitle());
+								map.put("content",
+										StringUtils.isNotBlank(contentRowType.getDocContent()) ? contentRowType.getDocContent()
+												: ((contentRowType.getDocDesc() == null ? "" : contentRowType.getDocDesc())
+														+ (contentRowType.getKeywords() == null ? "" : contentRowType.getKeywords())));
+								dto.setEsDocType(type);
+								dto.setContent(JacksonUtils.toJson(map));
+//								resultStr = searchIndexDtoServiceCustomer.save(userJson, JacksonUtils.toJson(dto));
+							} else if (Objects.equals("unPublish", state)) {
+								List<String> list = Arrays.asList(id.split(","));
+//								resultStr = searchIndexDtoServiceCustomer.deleteAllSearchIndex(userJson, securityUserInfo.getTendId(), type, JacksonUtils.toJson(list));
+							}
+							log.info(resultStr);
+						} catch (Exception e) {
+							log.error("新闻/知识更新全文索引失败", e);
+						}
+					}
+				});
+
+				// 推送新闻待阅消息
+				Map<String, Object> paramMap = JacksonUtils.fromJson(updateJson, HashMap.class);
+				// sendSysNoticeForNews(paramMap,userJson);
+				sendNewsNoticeByDataAuth(paramMap, userJson);
+			}
+			return resultInfo;
+		} catch (Exception e) {
+			info.setSucess(false);
+			info.setMsg("更新对象失败!");
+			info.setExceptionMsg(e.getMessage());
+			info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	/**
+	 * 为当前新闻相关权限的人员发送待阅
+	 * 
+	 * @param paramMap
+	 * @param userJson
+	 * @throws Exception
+	 */
+	private void sendNewsNoticeByDataAuth(Map<String, Object> paramMap, String userJson) throws Exception {
+		final String id = String.valueOf(paramMap.get("ids"));
+		final String state = String.valueOf(paramMap.get("state"));
+		ContentRowType contentRowType = contentRowTypeService.getObjectById(id);
+		ContentType contentType = contentTypeService.getObjectById(contentRowType.getContentTypeId());
+		// new Thread(()->{
+		threadPool.execute(new Runnable() {
+			@Override
+			public void run() {
+				try {
+					SecurityUserBeanInfo securityUserInfo = JacksonUtils.fromJson(userJson, SecurityUserBeanInfo.class);
+
+					String firstType = null;
+					String msgType = contentType.getMsgType();
+					if ("NEWS_MSG".equals(msgType)) {
+						firstType = "NEWS";
+					} else if ("DIRECTOR_MSG".equals(msgType)) {
+						firstType = "DIRECTORS";
+					}
+
+					final String tempFirstType = firstType;
+					String companyId = contentRowType.getBelongCompanyId();
+					String deptId = contentRowType.getBelongDeptId();
+					Map<String, Object> map = new HashMap<String, Object>();
+					map.put("companyId", companyId);// 权限限定公司
+					map.put("deptId", deptId);// 权限限定部门
+					map.put("itemCode", "newsSearch");// 数据权限编码
+					String dataUserJson = null; //dataPointDtoServiceCustomer.queryUserIdForDataPoint(userJson, JacksonUtils.toJson(map));
+					DubboServiceResultInfo serviceResultInfo = JacksonUtils.fromJson(dataUserJson, DubboServiceResultInfo.class);
+					if (serviceResultInfo.isSucess()) {
+						String result = serviceResultInfo.getResult();
+						Map<String, Map<String, Object>> dataUserMap = JacksonUtils.fromJson(result, Map.class);
+						if (firstType != null && Objects.equals("NEWS", contentType.getContentType()) && Objects.equals("publish", state)) {
+							dataUserMap.forEach((k, v) -> {
+								SysNoticeMsgDto sysNoticeMsgDto = new SysNoticeMsgDto();
+								sysNoticeMsgDto.setId(IDGenerator.getUUID());
+								sysNoticeMsgDto.setLoginName((String) v.get("loginName"));
+								sysNoticeMsgDto.setUserId((String) v.get("id"));
+								sysNoticeMsgDto.setUserName((String) v.get("name"));
+								sysNoticeMsgDto.setMsgType(Boolean.FALSE);
+								sysNoticeMsgDto.setOpType("DY"); // DY：待阅
+								sysNoticeMsgDto.setAppCode("flow");// oa
+								sysNoticeMsgDto.setBusinessId(contentRowType.getId());
+								sysNoticeMsgDto.setSource("OA");
+								sysNoticeMsgDto.setIpAddress("");
+								sysNoticeMsgDto.setFirstType(tempFirstType);
+								sysNoticeMsgDto.setSendDate(Timestamp.valueOf(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date())));
+								sysNoticeMsgDto.setExtendInfo(contentType.getContentType());// 消息扩展信息
+								if (Objects.equals(contentType.getContentType(), "NEWS")) {
+									sysNoticeMsgDto.setUrl("content/contentRowType/contentRowType_staticPage.html?from=portal&noticeFlag=DY&id=" + contentRowType.getId());
+									sysNoticeMsgDto.setMobibleUrl("mobile/contentType/mobileNews_view.html?from=portal&noticeFlag=DY&hideHeader=true&firstType=" + tempFirstType
+											+ "&id=" + contentRowType.getId());
+								} else {
+									sysNoticeMsgDto.setUrl("content/contentRowType/contentRowType_doc_view.html?from=portal&noticeFlag=DY&id=" + contentRowType.getId());
+									sysNoticeMsgDto.setMobibleUrl("content/contentRowType/contentRowType_doc_view.html?from=portal&noticeFlag=DY&hideHeader=true&firstType="
+											+ tempFirstType + "&id=" + contentRowType.getId());
+								}
+								sysNoticeMsgDto.setIsOpen(true);
+								sysNoticeMsgDto.setDelflag(false);
+								sysNoticeMsgDto.setTitle(contentRowType.getTitle());
+
+//								String resultJson = sysNoticeMsgDtoServiceCustomer.save(userJson, JacksonUtils.toJson(sysNoticeMsgDto));
+//								sysNoticeMsgService.save(sysNoticeMsgDto);
+//								log.info(resultJson);
+							});
+						} else if (firstType != null && Objects.equals("NEWS", contentType.getContentType()) && Objects.equals("unPublish", state)) {
+							StringBuffer userIds = new StringBuffer();
+							List<String> userNameList = new ArrayList<String>();
+							dataUserMap.forEach((k, v) -> {
+								userIds.append(v.get("id") + ",");
+								userNameList.add((String) v.get("name"));
+							});
+							Map<String, String> noticeMap = new HashMap<String, String>();
+							noticeMap.put("businessId", contentRowType.getId());
+							noticeMap.put("userId", userIds.toString());
+
+//							String resultJson = sysNoticeMsgDtoServiceCustomer.deleteOpTypeDataByParamMap(userJson, JacksonUtils.toJson(noticeMap));
+//							log.info("取消发布成功，已取消消息人员：" + userNameList.toString());
+						}
+
+					}
+
+				} catch (Exception e) {
+					log.error("推送新闻待阅消息失败！" + e.getMessage());
+				}
+			}
+		});
+
+		// }).start();
+
+	}
+
+	/**
+	 * 推送新闻待阅消息
+	 * 
+	 * @param paramMap
+	 * @param userJson
+	 * @throws Exception
+	 */
+	private void sendSysNoticeForNews(Map<String, Object> paramMap, String userJson) throws Exception {
+		// 推送新闻待阅消息
+		// Map<String, Object> paramMap = JacksonUtils.fromJson (updateJson, HashMap.class);
+		final String id = String.valueOf(paramMap.get("ids"));
+		final String state = String.valueOf(paramMap.get("state"));
+		ContentRowType contentRowType = contentRowTypeService.getObjectById(id);
+		ContentType contentType = contentTypeService.getObjectById(contentRowType.getContentTypeId());
+
+		// new Thread (()->{
+		threadPool.execute(new Runnable() {
+			@Override
+			public void run() {
+				try {
+					SecurityUserBeanInfo securityUserInfo = JacksonUtils.fromJson(userJson, SecurityUserBeanInfo.class);
+
+					String firstType = null;
+					String msgType = contentType.getMsgType();
+					if ("NEWS_MSG".equals(msgType)) {
+						firstType = "NEWS";
+					} else if ("DIRECTOR_MSG".equals(msgType)) {
+						firstType = "DIRECTORS";
+					}
+
+					final String tempFirstType = firstType;
+					if (firstType != null && Objects.equals("NEWS", contentType.getContentType()) && Objects.equals("publish", state)) {
+						List<Map<String, Object>> deptList = getAuthDeptList(securityUserInfo.getSecurityUserDto().getId(), userJson, contentType);
+//						deptList.stream().forEach(e -> {
+//							Map<String, String> deptMap = new HashMap();
+//							deptMap.put("userStatus", "1");
+//							deptMap.put("orgId", String.valueOf(e.get("id")));
+//							deptMap.put("includelow", "0");
+//							String userListJson = null;//userDtoServiceCustomer.queryUserListByOrgId(userJson, JacksonUtils.toJson(deptMap));
+//							DubboServiceResultInfo serviceResultInfo = JacksonUtils.fromJson(userListJson, DubboServiceResultInfo.class);
+//							List<UserDto> userDtoList = JacksonUtils.fromJson(serviceResultInfo.getResult(), List.class, UserDto.class);
+
+//							userDtoList.stream().forEach(user -> {
+//								SysNoticeMsgDto sysNoticeMsgDto = new SysNoticeMsgDto();
+//								sysNoticeMsgDto.setId(IDGenerator.getUUID());
+//								sysNoticeMsgDto.setLoginName(user.getLoginName());
+//								sysNoticeMsgDto.setUserId(user.getId());
+//								sysNoticeMsgDto.setUserName(user.getRealName());
+//								sysNoticeMsgDto.setMsgType(Boolean.FALSE);
+//								sysNoticeMsgDto.setOpType("DY"); // DY：待阅
+//								sysNoticeMsgDto.setAppCode("flow");// oa
+//								sysNoticeMsgDto.setBusinessId(contentRowType.getId());
+//								sysNoticeMsgDto.setSource("OA");
+//								sysNoticeMsgDto.setIpAddress("");
+//								sysNoticeMsgDto.setFirstType(tempFirstType);
+//								sysNoticeMsgDto.setSendDate(Timestamp.valueOf(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date())));
+//								sysNoticeMsgDto.setExtendInfo(contentType.getContentType());// 消息扩展信息
+//								if (Objects.equals(contentType.getContentType(), "NEWS")) {
+//									sysNoticeMsgDto.setUrl("content/contentRowType/contentRowType_staticPage.html?from=portal&noticeFlag=DY&id=" + contentRowType.getId());
+//									sysNoticeMsgDto.setMobibleUrl("mobile/contentType/mobileNews_view.html?from=portal&noticeFlag=DY&hideHeader=true&firstType=" + tempFirstType
+//											+ "&id=" + contentRowType.getId());
+//								} else {
+//									sysNoticeMsgDto.setUrl("content/contentRowType/contentRowType_doc_view.html?from=portal&noticeFlag=DY&id=" + contentRowType.getId());
+//									sysNoticeMsgDto.setMobibleUrl("content/contentRowType/contentRowType_doc_view.html?from=portal&noticeFlag=DY&hideHeader=true&firstType="
+//											+ tempFirstType + "&id=" + contentRowType.getId());
+//								}
+//								sysNoticeMsgDto.setIsOpen(true);
+//								sysNoticeMsgDto.setDelflag(false);
+//								sysNoticeMsgDto.setTitle(contentRowType.getTitle());
+//								String resultJson = sysNoticeMsgDtoServiceCustomer.save(userJson, JacksonUtils.toJson(sysNoticeMsgDto));
+//								log.info(resultJson);
+//							});
+//						});
+					} else if (firstType != null && Objects.equals("NEWS", contentType.getContentType()) && Objects.equals("unPublish", state)) {
+						List<Map<String, Object>> deptList = getAuthDeptList(securityUserInfo.getSecurityUserDto().getId(), userJson, contentType);
+						deptList.stream().forEach(e -> {
+							Map<String, String> deptMap = new HashMap();
+							deptMap.put("userStatus", "1");
+							deptMap.put("orgId", String.valueOf(e.get("id")));
+							deptMap.put("includelow", "0");
+//							String userListJson = userDtoServiceCustomer.queryUserListByOrgId(userJson, JacksonUtils.toJson(deptMap));
+//							DubboServiceResultInfo serviceResultInfo = JacksonUtils.fromJson(userListJson, DubboServiceResultInfo.class);
+//							List<UserDto> userDtoList = JacksonUtils.fromJson(serviceResultInfo.getResult(), List.class, UserDto.class);
+//							List<String> userIdList = userDtoList.stream().map(UserDto::getId).collect(Collectors.toList());
+//							List<String> userNameList = userDtoList.stream().map(UserDto::getRealName).collect(Collectors.toList());
+//							StringBuffer userBuffer = new StringBuffer();
+//							userIdList.stream().forEach(userId -> {
+//								userBuffer.append(userId).append(",");
+//							});
+							Map<String, String> noticeMap = new HashMap<String, String>();
+							noticeMap.put("businessId", contentRowType.getId());
+//							noticeMap.put("userId", userBuffer.toString());
+//							String resultJson = null;//sysNoticeMsgDtoServiceCustomer.deleteOpTypeDataByParamMap(userJson, JacksonUtils.toJson(noticeMap));
+//							log.info("取消发布成功，已取消消息人员：" + userNameList.toString());
+						});
+					}
+				} catch (Exception e1) {
+					log.error("推送新闻待阅消息失败！" + e1.getMessage());
+				}
+			}
+		});
+
+		// }).start ();
+	}
+
+	/**
+	 * 计算点击量
+	 * 
+	 * @param userJson
+	 * @param id
+	 * @return
+	 */
+	@Override
+	public String updateContentRowTypeHit(String userJson, String id) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		Integer result = null;
+		try {
+			result = contentRowTypeService.updateHits(id);
+			if (result == 1) {
+				info.setResult(JacksonUtils.toJson(result));
+				info.setSucess(true);
+				info.setMsg("更新对象成功！");
+			} else {
+				info.setResult(JacksonUtils.toJson(result));
+				info.setSucess(false);
+				info.setMsg("更新对象失败！");
+				info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+			}
+
+		} catch (Exception e) {
+			info.setResult(JacksonUtils.toJson(result));
+			info.setSucess(false);
+			info.setMsg("更新对象失败！");
+			info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+			return JacksonUtils.toJson(info);
+
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String querySameList(String userJson, String paramaterJson) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+			if (StringUtils.isNotBlank(paramaterJson)) {
+				Map map = JacksonUtils.fromJson(paramaterJson, HashMap.class);
+				List<ContentRowType> list = contentRowTypeService.querySameList(map);
+				info.setResult(JacksonUtils.toJson(list));
+				info.setSucess(true);
+				info.setMsg("获取列表对象成功!");
+			} else {
+				List list = contentRowTypeService.querySameList(null);
+				info.setResult(JacksonUtils.toJson(list));
+				info.setSucess(true);
+				info.setMsg("获取列表对象成功!");
+			}
+		} catch (Exception e) {
+			log.error("获取列表对象失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取列表对象失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	/**
+	 * 更新流程状态
+	 * 
+	 * @param userJson
+	 * @param updateJson
+	 *
+	 * @return
+	 */
+	@Override
+	public String updateProcessState(String userJson, String updateJson) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		Integer result = null;
+		try {
+			Map map = JacksonUtils.fromJson(updateJson, HashMap.class);
+			String id = String.valueOf(map.get("businessId"));
+			String status = statusMap.get(String.valueOf(map.get("status")));
+			String instanceId = String.valueOf(map.get("instanceId"));
+			String flCode = String.valueOf(map.get("flCode"));
+			ContentRowType oldContentRowType = contentRowTypeService.getObjectById(id);
+			// String jo = oldContentRowType.getAttributeValue ();
+			// oldContentRowType.setAttributeValue(jo.replaceAll("\\\\", "\\\\\\\\"));
+			String oldStatus = null;
+			if (oldContentRowType != null) {
+				oldStatus = oldContentRowType.getStatus();
+				oldContentRowType.setStatus(status);
+				oldContentRowType.setProcessInstanceId(instanceId);
+				oldContentRowType.setFlCode(flCode);
+				// 如果流程审批状态是，审批完成，则新闻状态变为自动发布
+				if (StringUtils.isNotBlank(status) && "APPROVED".equals(status)) {
+					oldContentRowType.setStatus("PUBLISHED");
+					oldContentRowType.setPublishDate(new Date());
+				}
+			}
+			String jo = JacksonUtils.toJson(oldContentRowType);
+			Map<String, Object> attrMap = JacksonUtils.fromJson(jo, Map.class);
+			attrMap.remove("attributeValue");
+			oldContentRowType.setAttributeValue(JacksonUtils.toJson(attrMap).replaceAll("\\\\", "\\\\\\\\"));
+			result = contentRowTypeService.update(oldContentRowType);
+			if (result == 1) {
+				ContentRowType contentRowType = contentRowTypeService.getObjectById(id);
+				ContentType contentType = contentTypeService.getObjectById(contentRowType.getContentTypeId());
+				// 新闻发布后创建全文索引
+				threadPool.execute(new Runnable() {
+					@Override
+					public void run() {
+						try {
+							String resultStr = null;
+							if (Objects.equals("PUBLISHED", contentRowType.getStatus())) {
+								// 创建全文检索的索引开始
+								SecurityUserBeanInfo securityUserInfo = JacksonUtils.fromJson(userJson, SecurityUserBeanInfo.class);
+								// changeDateSource (securityUserInfo.getTendCode ());
+								String type = Objects.equals(contentType.getContentType(), "NEWS") ? "news" : "knowledge";
+
+								SearchIndexDto dto = new SearchIndexDto();
+								dto.setEsDocId(contentRowType.getId());
+								dto.setEsDocIndex(securityUserInfo.getTendId());
+								dto.setCreatePersonName(securityUserInfo.getSecurityUserDto().getRealName());
+								dto.setCreateDate(Timestamp.valueOf(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date())));
+								Map map = new HashMap();
+								String url = "";
+								if (Objects.equals(type, "news")) {
+									url = MessageFormat.format(indexNewsUrl, contentRowType.getId());
+								} else {
+									url = MessageFormat.format(indexKnowledgeUrl, contentRowType.getId());
+								}
+								map.put("type", type);
+								map.put("url", url);
+								map.put("createPersonName", contentRowType.getCreatePersonName());
+								map.put("createDate", System.currentTimeMillis());
+								map.put("title", contentRowType.getTitle());
+								map.put("content",
+										StringUtils.isNotBlank(contentRowType.getDocContent()) ? contentRowType.getDocContent()
+												: ((contentRowType.getDocDesc() == null ? "" : contentRowType.getDocDesc())
+														+ (contentRowType.getKeywords() == null ? "" : contentRowType.getKeywords())));
+								dto.setEsDocType(type);
+								dto.setContent(JacksonUtils.toJson(map));
+								resultStr = null;// searchIndexDtoServiceCustomer.save(userJson, JacksonUtils.toJson(dto));
+							}
+							log.info(resultStr);
+						} catch (Exception e) {
+							log.error("新闻/知识更新全文索引失败", e);
+						}
+					}
+				});
+
+				// 新闻发布后推送待阅消息
+				String firstType = null;
+				String msgType = contentType.getMsgType();
+				if ("NEWS_MSG".equals(msgType)) {
+					firstType = "NEWS";
+				} else if ("DIRECTOR_MSG".equals(msgType)) {
+					firstType = "DIRECTORS";
+				}
+
+				final String tempFirstType = firstType;
+				if (firstType != null && !"PUBLISHED".equals(oldStatus) && Objects.equals("NEWS", contentType.getContentType())
+						&& Objects.equals("PUBLISHED", contentRowType.getStatus())) {
+					// new Thread (()->{
+
+					threadPool.execute(new Runnable() {
+						@Override
+						public void run() {
+							try {
+								SecurityUserBeanInfo securityUserInfo = JacksonUtils.fromJson(userJson, SecurityUserBeanInfo.class);
+								Map<String, Object> map1 = new HashMap<String, Object>();
+								map1.put("companyId", contentRowType.getBelongCompanyId());// 权限限定公司
+								map1.put("deptId", contentRowType.getBelongDeptId());// 权限限定部门
+								map1.put("itemCode", "newsSearch");// 数据权限编码
+								String dataUserJson = null;// dataPointDtoServiceCustomer.queryUserIdForDataPoint(userJson, JacksonUtils.toJson(map1));
+								DubboServiceResultInfo serviceResultInfo = JacksonUtils.fromJson(dataUserJson, DubboServiceResultInfo.class);
+								if (serviceResultInfo.isSucess()) {
+									String result1 = serviceResultInfo.getResult();
+									Map<String, Map<String, Object>> dataUserMap = JacksonUtils.fromJson(result1, Map.class);
+									dataUserMap.forEach((k, v) -> {
+										SysNoticeMsgDto sysNoticeMsgDto = new SysNoticeMsgDto();
+										sysNoticeMsgDto.setId(IDGenerator.getUUID());
+										sysNoticeMsgDto.setLoginName((String) v.get("loginName"));
+										sysNoticeMsgDto.setUserId((String) v.get("id"));
+										sysNoticeMsgDto.setUserName((String) v.get("name"));
+										sysNoticeMsgDto.setMsgType(Boolean.FALSE);
+										sysNoticeMsgDto.setOpType("DY"); // DY：待阅
+										sysNoticeMsgDto.setAppCode("flow");// oa
+										sysNoticeMsgDto.setBusinessId(contentRowType.getId());
+										sysNoticeMsgDto.setSource("OA");
+										sysNoticeMsgDto.setIpAddress("");
+										sysNoticeMsgDto.setFirstType(tempFirstType);
+										sysNoticeMsgDto.setSendDate(Timestamp.valueOf(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date())));
+										sysNoticeMsgDto.setExtendInfo(contentType.getContentType());// 消息扩展信息
+										if (Objects.equals(contentType.getContentType(), "NEWS")) {
+											sysNoticeMsgDto.setUrl("content/contentRowType/contentRowType_staticPage.html?from=portal&noticeFlag=DY&id=" + contentRowType.getId());
+											sysNoticeMsgDto.setMobibleUrl("mobile/contentType/mobileNews_view.html?from=portal&noticeFlag=DY&hideHeader=true&firstType="
+													+ tempFirstType + "&id=" + contentRowType.getId());
+										} else {
+											sysNoticeMsgDto.setUrl("content/contentRowType/contentRowType_doc_view.html?from=portal&noticeFlag=DY&id=" + contentRowType.getId());
+											sysNoticeMsgDto.setMobibleUrl("content/contentRowType/contentRowType_doc_view.html?from=portal&noticeFlag=DY&hideHeader=true&firstType="
+													+ tempFirstType + "&id=" + contentRowType.getId());
+										}
+										sysNoticeMsgDto.setIsOpen(true);
+										sysNoticeMsgDto.setDelflag(false);
+										sysNoticeMsgDto.setTitle(contentRowType.getTitle());
+										// String resultJson = sysNoticeMsgDtoServiceCustomer.save(userJson, JacksonUtils.toJson(sysNoticeMsgDto));
+										// log.info(resultJson);
+									});
+								}
+
+							} catch (Exception e1) {
+								log.error("推送新闻待阅消息失败！" + e1.getMessage());
+							}
+						}
+					});
+
+					// }).start ();
+				}
+
+				info.setResult(JacksonUtils.toJson(result));
+				info.setSucess(true);
+				info.setMsg("更新对象成功！");
+			} else {
+				info.setResult(JacksonUtils.toJson(result));
+				info.setSucess(false);
+				info.setMsg("更新对象失败！");
+				info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+			}
+		} catch (Exception e) {
+			info.setResult(JacksonUtils.toJson(result));
+			info.setSucess(false);
+			info.setMsg("更新对象失败！");
+			info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+			return JacksonUtils.toJson(info);
+
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	/**
+	 * 获取版本文件列表
+	 * 
+	 * @param userJson
+	 * @param paramaterJson
+	 * @return
+	 */
+	@Override
+	public String queryVersionList(String userJson, String paramaterJson) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+
+			if (StringUtils.isNotBlank(paramaterJson)) {
+				Map map = JacksonUtils.fromJson(paramaterJson, HashMap.class);
+				List<HashMap<String, Object>> list = contentRowTypeService.queryVersionList(map);
+				info.setResult(JacksonUtils.toJson(list));
+				info.setSucess(true);
+				info.setMsg("获取列表对象成功!");
+			}
+		} catch (Exception e) {
+			info.setSucess(false);
+			info.setMsg("获取列表对象失败！");
+			info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+			return JacksonUtils.toJson(info);
+
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String queryVariableForFlow(String userJson, String paramaterJson) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+
+			if (StringUtils.isNotBlank(paramaterJson)) {
+				Map map = JacksonUtils.fromJson(paramaterJson, HashMap.class);
+				Map<String, Object> resultMap = contentRowTypeService.queryVariableForFlow(map);
+				info.setResult(JacksonUtils.toJson(resultMap));
+				info.setSucess(true);
+				info.setMsg("获取列表对象成功!");
+			}
+		} catch (Exception e) {
+			info.setSucess(false);
+			info.setMsg("获取列表对象失败！");
+			info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+			return JacksonUtils.toJson(info);
+
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	/**
+	 * 暂存数据
+	 * 
+	 * @param userInfo
+	 * @param saveJson
+	 * @return
+	 */
+	@Override
+	public String saveTemporary(String userInfo, String saveJson) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+			ContentRowType contentRowType = JacksonUtils.fromJson(saveJson, ContentRowType.class);
+			Map<String, Object> contentRowTypeMap = JacksonUtils.fromJson(saveJson, Map.class);
+			contentRowTypeMap.remove("attributeValue");
+			contentRowType.setAttributeValue(JacksonUtils.toJson(contentRowTypeMap).replaceAll("\\s*", ""));
+			final Integer existNum = contentRowTypeService.checkUniqueCode(contentRowType);
+			if (existNum == 1) {
+				info.setSucess(false);
+				info.setMsg("编码重复!");
+				info.setCode(ErrorInfoCode.UNIQUE_ERROR.getValue());
+				return JacksonUtils.toJson(info);
+			}
+			ContentRowType oldContentRowType = contentRowTypeService.getObjectById(contentRowType.getId());
+			if (oldContentRowType != null) {
+				contentRowTypeService.deleteObjectById(oldContentRowType.getId());
+			}
+			contentRowTypeService.saveBean(contentRowType);
+			info.setResult(JacksonUtils.toJson(contentRowType));
+			info.setSucess(true);
+			info.setMsg("暂存对象成功!");
+		} catch (Exception e) {
+			log.error("暂存对象失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("暂存对象失败!");
+			info.setExceptionMsg(e.getMessage());
+			info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	/**
+	 * 保存附件数据
+	 * 
+	 * @param userJson
+	 * @param saveJson
+	 * @return
+	 */
+	@Override
+	public String saveAttachment(String userJson, String saveJson) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		Map<String, String> saveMap = JacksonUtils.fromJson(saveJson, Map.class);
+		String preId = saveMap.get("businessId");
+		String newId = saveMap.get("newBusinessId");
+		try {
+			String appId = saveMap.get("appId");
+			String categoryId = saveMap.get("categoryId");
+			Map<String, Object> postMap = new HashedMap();
+			postMap.put("businessId", Arrays.asList(saveMap.get("businessId").split(",")));
+			postMap.put("appId", appId);
+			postMap.put("categoryId", categoryId);
+			String resultJson = null;// attachmentDtoServiceCustomer.queryListByObject(userJson, JacksonUtils.toJson(postMap));
+			DubboServiceResultInfo dubboServiceResultInfo = JacksonUtils.fromJson(resultJson, DubboServiceResultInfo.class);
+			List<AttachmentDto> attachmentDtos = JacksonUtils.fromJson(dubboServiceResultInfo.getResult(), List.class, AttachmentDto.class);
+			attachmentDtos.parallelStream().forEach(e -> {
+				AttachmentDto temp = e;
+				if (Objects.equals(temp.getType(), "file")) { // 本地file类型附件
+					String fullPath = temp.getPath();
+					final String group = fullPath.substring(0, fullPath.indexOf("/"));
+					final String fileStorageName = fullPath.substring(fullPath.indexOf("/") + 1);
+					final String localFileName = attachmentUrl + File.separator + System.currentTimeMillis() + "." + temp.getExtendName();
+					try {
+						new FastDFSClient().download(group, fileStorageName, localFileName);
+						BufferedInputStream bis = new BufferedInputStream(new FileInputStream(new File(localFileName)));
+						ByteArrayOutputStream baos = new ByteArrayOutputStream();
+						int c = bis.read();// 读取bis流中的下一个字节
+						while (c != -1) {
+							baos.write(c);
+							c = bis.read();
+						}
+						bis.close();
+						byte retArr[] = baos.toByteArray();
+						NameValuePair[] metaList = new NameValuePair[3];
+						metaList[0] = new NameValuePair("fileName", temp.getFullName());
+						metaList[1] = new NameValuePair("fileExtName", temp.getExtendName());
+						metaList[2] = new NameValuePair("fileLength", String.valueOf(temp.getFileSize()));
+						String[] upResults = new FastDFSClient().upload(retArr, temp.getExtendName(), metaList);
+						temp.setPath(upResults[0] + "/" + upResults[1]);
+						temp.setUrl(upResults[2]);
+						temp.setId(IDGenerator.getUUID());
+						temp.setBusinessId(newId);
+						// attachmentTempDtoServiceCustomer.save(userJson, JacksonUtils.toJson(temp));
+					} catch (Exception e1) {
+
+					}
+				} else {
+					// url类型附件
+					temp.setId(IDGenerator.getUUID());
+					temp.setBusinessId(newId);
+					// attachmentTempDtoServiceCustomer.save(userJson, JacksonUtils.toJson(temp));
+				}
+			});
+
+			info.setSucess(true);
+			info.setMsg("附件保存成功！");
+		} catch (Exception e) {
+			info.setSucess(false);
+			info.setMsg("附件保存失败！");
+		}
+		// 复制关联文档
+		try {
+			Map<String, Object> param = new HashMap();
+			param.put("contentRowTypeId", preId);
+			List<ContentRowTypeAssociated> list = contentRowTypeAssociatedService.queryListByExample(param);
+			list.stream().forEach(e -> {
+				e.setContentRowTypeId(newId);
+				e.setId(IDGenerator.getUUID());
+			});
+			contentRowTypeAssociatedService.saveBatch(list);
+		} catch (Exception e) {
+			log.error("复制关联文档失败!" + e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	/**
+	 * 获取当前版本
+	 * 
+	 * @param userJson
+	 * @param s
+	 * @return
+	 */
+	@Override
+	public String getCurrentVersionById(String userJson, String s) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+			ContentRowType contentRowType = JacksonUtils.fromJson(s, ContentRowType.class);
+			ContentRowType currentContentRowType = contentRowTypeService.getObjectById(contentRowType.getId());
+			Map map = new HashMap();
+			map.put("relationId", currentContentRowType.getRelationId());
+			map.put("delflag", false);
+			Map sortMap = new TreeMap();
+			sortMap.put("bigVersion", "desc");
+			sortMap.put("minorVersion", "desc");
+			map.put("sortFields", JacksonUtils.toJson(sortMap));
+			List<ContentRowType> list = contentRowTypeService.queryContentRowTypeList(map);
+			Map<String, Object> resultMap = new HashMap();
+			if (list != null && !list.isEmpty()) {
+				ContentRowType newContentRowType = list.get(0);
+				map.put("obj", newContentRowType);
+				if (Objects.equals(currentContentRowType.getBigVersion(), newContentRowType.getBigVersion())
+						&& Objects.equals(currentContentRowType.getMinorVersion(), newContentRowType.getMinorVersion())) {
+					map.put("isNewVersion", true);
+				} else {
+					map.put("isNewVersion", false);
+				}
+				info.setResult(JacksonUtils.toJson(map));
+				info.setSucess(true);
+				info.setMsg("获取对象成功！");
+			} else {
+				info.setSucess(false);
+				info.setMsg("获取对象为空！");
+				info.setCode(ErrorInfoCode.NULL_ERROR.getValue());
+			}
+
+		} catch (Exception e) {
+			info.setSucess(false);
+			info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+			info.setMsg("获取对象失败！");
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String queryObjectInfoById(String userJson, String paramater) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+			ContentRowType contentRowType = JacksonUtils.fromJson(paramater, ContentRowType.class);
+			Map<String, Object> result = contentRowTypeService.queryObjectInfoById(contentRowType.getId());
+			if (result != null) {
+				info.setResult(JacksonUtils.toJson(result));
+				info.setSucess(true);
+				info.setMsg("获取对象成功!");
+			} else {
+				info.setSucess(false);
+				info.setCode(ErrorInfoCode.NULL_ERROR.getValue());
+				info.setMsg("获取对象失败!");
+			}
+
+		} catch (Exception e) {
+			log.error("获取对象失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("获取对象失败!");
+			info.setExceptionMsg(e.getMessage());
+			info.setCode(ErrorInfoCode.SYSTEM_ERROR.getValue());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	private void changeDateSource(String tendCode) {
+		DataSourceContextHolder.clearDataSourceType();
+		DataSourceContextHolder.setDataSourceType(tendCode);
+		DataSourceContextHolder.getDataSourceType();
+	}
+
+	private List<Map<String, Object>> getAuthDeptList(String userId, String userJson, ContentType contentType) {
+		List<Map<String, Object>> deptList = new ArrayList<>();
+		// 获取有阅读权限的人
+		Map<String, String> dataAuthMap = new HashMap<>();
+		dataAuthMap.put("appCode", "OA");
+		dataAuthMap.put("userIds", userId);
+		if (Objects.equals(contentType.getDataAuthSearch(), Objects.equals(contentType.getContentType(), "NEWS") ? "newsSearch" : "docSearch")) {
+			dataAuthMap.put("itemCode", Objects.equals(contentType.getContentType(), "NEWS") ? "newsSearch" : "docSearch");
+			String authResultJson = null;// orgnazationService.getUserDataAuthCoAndDeptListByItemCode (userJson, JacksonUtils.toJson (dataAuthMap));
+			DubboServiceResultInfo authResultInfo = JacksonUtils.fromJson(authResultJson, DubboServiceResultInfo.class);
+			if (authResultInfo.isSucess()) {
+				Map<String, Map<String, List<Map<String, Object>>>> authDataMap = JacksonUtils.fromJson(authResultInfo.getResult(), Map.class);
+				Map<String, List<Map<String, Object>>> orgListMap = authDataMap.get(userId);
+				deptList = orgListMap.get("deptList");
+			}
+		}
+		return deptList;
+	}
+
+	/**
+	 * 定时清理置顶新闻标识
+	 * 
+	 * @param userJson
+	 * @param paramater
+	 * @return
+	 */
+	@Override
+	public String updateContentRowTypeStickTimeOutTask(String userJson, String paramater) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		Integer resultNum = 0;
+		try {
+			log.info("定时任务执行-------------定时清理过期置顶新闻标识开始----");
+			resultNum = contentRowTypeService.updateContentRowTypeStickTimeOutTask();
+			info.setSucess(true);
+			info.setMsg("定时清理过期置顶新闻标识--清除了" + resultNum + "条数据");
+
+		} catch (Exception e) {
+			info.setSucess(false);
+			info.setMsg("定时清理过期置顶新闻标识异常" + e.getMessage());
+		}
+		log.info("定时任务执行-------------定时清理过期置顶新闻标识结束----");
+		return JacksonUtils.toJson(info);
+	}
+}

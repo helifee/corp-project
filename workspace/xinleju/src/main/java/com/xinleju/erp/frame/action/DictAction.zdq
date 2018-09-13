@@ -1,0 +1,379 @@
+package com.xinleju.erp.frame.action;
+import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.Order;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.xinleju.erp.base.app.action.BaseAction;
+import com.xinleju.erp.frame.models.Dict;
+import com.xinleju.erp.frame.service.DictService;
+
+
+public class DictAction extends BaseAction {
+
+    private Long parentId;
+
+    private Dict dict;
+
+    private Dict parentDict;
+
+    private Long[] dictIds;
+
+    private String dictIdsStr;
+
+    /**
+     * 根节点编码
+     */
+    private String rootCode;
+
+    /**
+     * 数据字典查询层级
+     */
+    private Integer dictLevel;
+
+    private String code;
+
+    private String dictName;
+
+
+    @Autowired
+    private DictService dictService;
+
+    public String index() {
+        return "index";
+    }
+
+    /***
+     * 列表
+     * 
+     * @return
+     */
+    public String list() {
+        DetachedCriteria dc = DetachedCriteria.forClass(Dict.class);
+        // 显示根目录下内容
+        if (parentId == null || parentId.intValue() == 0) {
+            parentId = 0L;
+            dc.add(Restrictions.isNull("parent_id"));
+        }
+        // 显示父亲节点下内容
+        else {
+            dc.add(Restrictions.eq("parent_id", parentId));
+        }
+        dc.addOrder(Order.asc("position"));
+        dc.addOrder(Order.desc("id"));
+        page = getCommonService().findPage(dc, start, limit);
+        return "list";
+    }
+
+    /***
+     * 编辑及新增
+     * 
+     * @return
+     */
+    public String edit() {
+        if (dict != null && dict.getId() != null) {
+            dict = getCommonService().getById(Dict.class, dict.getId());
+        } else {
+            dict = new Dict();
+            dict.setParent_id((parentId == null || parentId == 0) ? null : parentId);
+            // 设置排序
+            dict.setPosition(dictService.getMaxPosition(parentId));
+        }
+        // 获取父节点
+        if (parentId != null && parentId != 0) {
+            parentDict = getCommonService().getById(Dict.class, parentId);
+        }
+        return "edit";
+    }
+
+    /***
+     * 删除
+     * 
+     * @return
+     */
+    public void delete() {
+        String success = "true";
+        String msg = "操作成功！";
+        
+        String retIds = request.getParameter("retIds");
+        List<Long> lIds = new ArrayList<Long>();
+        
+        String[] strIds = retIds.split(";");
+        for (String strId : strIds) {
+        	lIds.add( Long.valueOf(strId) );
+        }
+        
+        if (null != ids || lIds.size() > 0){
+        	if ( ids == null ) {
+        		ids = lIds.toArray(new Long[0]);
+        	}
+        	
+            for (Long id : ids) {
+                String deleteFailedIdsStr = "";
+                Map<String, String> mapDeleteIdStr = dictService.getSonsAndDelete(id);
+                deleteFailedIdsStr = mapDeleteIdStr.get("failDeleteIdsStr");
+                // 数据未被全部删除
+                if (StringUtils.isBlank(deleteFailedIdsStr)) {
+                    success = "false";
+                }
+            }
+            if ("false".equals(success)){
+                msg = "部分数据由于存在关联无法删除！";
+            }
+        } else {
+            success = "false";
+            msg = "没有需要删除的数据！";
+        }
+        Map<String, Object> r = new HashMap<String, Object>();
+        r.put("success", success);
+        r.put("msg", msg);
+        super.renderJson(r);
+    }
+
+    /***
+     * 保存
+     * 
+     * @return
+     */
+    public void save() {
+        String success = "false";
+        String msg = "操作失败！";
+        try {
+            if (dict != null) {
+                if (dict.getId() == null) {
+                    dict.setCreateDate(new Date());
+                    dict.setName(dict.getName().trim());
+                    dict.setCode(dict.getCode().trim());
+                    getCommonService().save(dict);
+                } else {
+                    dict.setUpdateDate(new Date());
+                    dict.setName(dict.getName().trim());
+                    dict.setCode(dict.getCode().trim());
+                    getCommonService().update(dict);
+                }
+                // 历史层级
+                dict.setPrefix(dictService.getPrefix(dict.getParent_id(),
+                    "(" + String.valueOf(dict.getId() + ")")));
+                getCommonService().update(dict);
+                success = "true";
+                msg = "操作成功！";
+            }
+        } catch (Exception e) {
+
+        }
+        Map<String, Object> r = new HashMap<String, Object>();
+        r.put("success", success);
+        r.put("msg", msg);
+        super.renderJson(r);
+    }
+
+    /***
+     * 加载树
+     */
+    public void getTrees() {
+        try {
+            List<Dict> list = null;
+            DetachedCriteria dc = DetachedCriteria.forClass(Dict.class);
+            if (parentId == null || parentId.intValue() == 0) {
+                dc.add(Restrictions.isNull("parent_id"));
+                //根节点筛选
+                if(!StringUtils.isBlank(rootCode)){
+                    dc.add(Restrictions.eq("code",rootCode)); 
+                }
+            } else {
+                dc.add(Restrictions.eq("parent_id", parentId));
+            }
+            //搜索条件
+            if(!StringUtils.isBlank(dictName)){
+                try {
+                    dictName = URLDecoder.decode(dictName,"UTF-8");
+                    //末级包含检索条件
+                    dc.add(Restrictions.sqlRestriction("(EXISTS(SELECT 'X' FROM SYS_DICT D1 WHERE D1.NAME LIKE '%"+dictName.trim()+"%' AND D1.PREFIX LIKE '%('||{alias}.id||')%' AND NOT EXISTS(SELECT 'X' FROM SYS_DICT D2 WHERE D2.PARENT_ID = D1.ID)))"));
+                } catch (UnsupportedEncodingException e) {
+                    e.printStackTrace();
+                }
+            }
+            dc.addOrder(Order.asc("position"));
+            dc.addOrder(Order.desc("id"));
+            list = getCommonService().findByCriteria(dc);
+            List<Map<String, Object>> trees = new ArrayList<Map<String, Object>>();
+            for (Dict dict : list) {
+                Map<String, Object> tree = new HashMap<String, Object>();
+                tree.put("id", dict.getId());
+                tree.put("text", dict.getName());
+                tree.put("dictCode", dict.getCode());
+
+                //判断是否为最末级节点
+                boolean leaf = false;
+                if(dictLevel!=null){
+                    //如果存在层级限制条件 且 当前节点层级大于等于层级限制条件，则当前节点为子节点
+                    if(dict.getPrefix().replace(")(", ",").replace("(", "").replace(")", "").split(",").length >= dictLevel){
+                        leaf = true;
+                    }
+                    //如果存在层级限制条件 且 当前节点层级小于层级限制条件 且 不存在子层级，则当前节点为子节点
+                    else if(dict.getPrefix().replace(")(", ",").replace("(", "").replace(")", "").split(",").length < dictLevel && dict.getSubDictCount()<=0){
+                        leaf = true;
+                    }
+                }else{
+                    leaf = dict.getSubDictCount()>0?false:true;
+                }
+                tree.put("leaf", leaf);
+                trees.add(tree);
+            }
+            super.renderJson(trees);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void updateField() {
+        String isBuildIn = getParameter("isBuildIn");
+        getCommonService().execute("update Dict set isBuildIn=? where id=?", isBuildIn, id);
+        renderJson("{success:true,id:" + id + "}");
+    }
+
+    public void getByPid() {
+        Long pid = getParameterLong("pid");
+        List<Dict> children = new ArrayList<Dict>();
+        if (pid != null) {
+            children = dictService.getByListPid(pid);
+        }
+        super.renderJson(children);
+    }
+
+    /**
+     * 通过数据字典父亲编码获取儿子JSON
+     * @author YeZhongkai
+     */
+    public void getByPCode() {
+        String pCode = getParameter("pCode");
+        List<Dict> children = new ArrayList<Dict>();
+        if (!StringUtils.isBlank(pCode)) {
+            children = dictService.getChildrenByListCode(pCode);
+        }
+        super.renderJson(children);
+    }
+
+    /**
+     * Description: 校验数据字典编码是否重复<br>
+     * 
+     * @see
+     */
+    public void checkCode() {
+        boolean exists = dictService.checkExistsByCode(dict.getCode(), dict.getId());
+        Map<String,Object> r = new HashMap<String, Object>();
+        r.put("success", exists ? false : true);
+        super.renderJson(r);
+    }
+
+    /**
+     * 通过根节点获取此数据字典最大层级
+     * @author Administrator
+     */
+    public void getDictMaxLevel(){
+        Integer maxDictLevel = 1;
+        try{
+            if(!StringUtils.isBlank(code)){
+                Dict rootDict = getCommonService().getByProperty(Dict.class, "code", code);
+                if(rootDict!=null){
+                    //查找当前根节点下prefix最长的子节点
+                    String childDictPrefix = getCommonService().findFirstByHQL(String.class,"select d1.prefix from Dict d1 where d1.prefix like ? and bit_length(d1.prefix)=(select max(bit_length(d2.prefix)) from Dict d2 where d2.prefix like ?)",new Object[]{"%("+rootDict.getId()+")%","%("+rootDict.getId()+")%"});
+                    if(!StringUtils.isBlank(childDictPrefix)){
+                        maxDictLevel = childDictPrefix.replaceAll("\\)\\(", ",").replaceAll("\\(","").replaceAll("\\)", "").split(",").length;
+                    }
+                }
+                renderJson("{success:true,maxDictLevel:"+maxDictLevel.toString()+"}");
+            }else{
+                renderJson("{success:false}");
+            }
+        }catch(Exception e){
+            renderJson("{success:false}");
+        }
+    }
+
+
+    public Dict getDict() {
+        return dict;
+    }
+
+    public void setDict(Dict dict) {
+        this.dict = dict;
+    }
+
+    public Dict getParentDict() {
+        return parentDict;
+    }
+
+    public void setParentDict(Dict parentDict) {
+        this.parentDict = parentDict;
+    }
+
+    public String getDictIdsStr() {
+        return dictIdsStr;
+    }
+
+    public void setDictIdsStr(String dictIdsStr) {
+        this.dictIdsStr = dictIdsStr;
+    }
+
+    public DictService getDictService() {
+        return dictService;
+    }
+
+    public void setDictService(DictService dictService) {
+        this.dictService = dictService;
+    }
+
+    public String getCode() {
+        return code;
+    }
+
+    public void setCode(String code) {
+        this.code = code;
+    }
+
+    public String getDictName() {
+        return dictName;
+    }
+
+    public void setDictName(String dictName) {
+        this.dictName = dictName;
+    }
+
+    public String getRootCode() {
+        return rootCode;
+    }
+
+    public void setRootCode(String rootCode) {
+        this.rootCode = rootCode;
+    }
+
+    public Integer getDictLevel() {
+        return dictLevel;
+    }
+
+    public void setDictLevel(Integer dictLevel) {
+        this.dictLevel = dictLevel;
+    }
+
+    public void setParentId(Long parentId) {
+        this.parentId = parentId;
+    }
+
+    public void setDictIds(Long[] dictIds) {
+        this.dictIds = dictIds;
+    }
+
+    public Long getParentId() {
+        return parentId;
+    }
+}

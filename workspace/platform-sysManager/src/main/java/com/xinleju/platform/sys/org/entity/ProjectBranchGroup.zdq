@@ -1,0 +1,32 @@
+package com.xinleju.platform.sys.org.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Table(value="PT_SYS_ORG_PROJECT_BRANCH_GROUP",desc="项目分期团队扩展")
+public class ProjectBranchGroup extends BaseEntity{
+	
+		
+	@Column(value="ref_id",desc="分期Id")
+	private String refId;
+    
+  		
+		
+	public String getRefId() {
+		return refId;
+	}
+	public void setRefId(String refId) {
+		this.refId = refId;
+	}
+    
+  		
+	
+}

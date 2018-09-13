@@ -1,0 +1,266 @@
+package com.xinleju.platform.sys.base.service.impl;
+
+import java.util.*;
+
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.sys.base.dao.PayTypeDao;
+import com.xinleju.platform.sys.base.dto.PayTypeDto;
+import com.xinleju.platform.sys.base.entity.BaseProjectType;
+import com.xinleju.platform.sys.base.entity.PayType;
+import com.xinleju.platform.sys.base.service.PayTypeService;
+import com.xinleju.platform.sys.base.utils.StatusType;
+import org.springframework.transaction.annotation.Transactional;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class PayTypeServiceImpl extends  BaseServiceImpl<String,PayType> implements PayTypeService{
+	
+
+	@Autowired
+	private PayTypeDao payTypeDao;
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.sys.base.service.PayTypeService#payTypeListData()
+	 */
+	@Override
+	public List<PayType> payTypeParanetList() throws Exception {
+		Map<String,Object> map=new HashMap<String,Object>();
+	  return payTypeDao.payTypeParanetList(map);
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.sys.base.service.PayTypeService#savePayType(com.xinleju.platform.sys.base.entity.PayType)
+	 */
+	@Override
+	public int savePayType(PayType payType)throws Exception {
+		String code = payType.getCode();
+		Map<String,Object>hmap=new HashMap<String, Object>();
+		hmap.put("code", code);
+		Integer j= payTypeDao.getPayTypeCountByCode(hmap);
+			if(j>0){
+				return 5;
+			}else{
+				
+				String parentId = payType.getParentId();
+				Map<String,Object> map=new HashMap<String,Object>();
+				map.put("parentId", parentId);
+				List<PayType> payTypeParanetList = payTypeDao.payTypeParanetList(map);
+				if(StringUtils.isBlank(parentId)){
+					if(payTypeParanetList!=null &&payTypeParanetList.size()>0){
+						String sort = payTypeParanetList.get(payTypeParanetList.size()-1).getSort();
+						String[] s =sort.split("\\$");
+						int oldNumber =Integer.parseInt(s[1]);
+						int newNumber=(oldNumber+1);
+						String newSort= "$"+String.format("%04d", newNumber);
+						payType.setSort(newSort);
+					}else{
+						payType.setSort("$0001");
+					}
+					payType.setParentId(null);
+				}else{
+					if(payTypeParanetList!=null &&payTypeParanetList.size()>0){
+						String sort = payTypeParanetList.get(payTypeParanetList.size()-1).getSort();
+						String[] s =sort.split("\\-");
+						int oldNumber =Integer.parseInt(s[1]);
+						int newNumber=(oldNumber+1);
+						String newSort= s[0]+"-"+String.format("%04d", newNumber);
+						payType.setSort(newSort);
+					}else{
+						PayType parentPayType = payTypeDao.getObjectById(parentId);
+						String sort = parentPayType.getSort();
+						payType.setSort(sort+"-0001");
+					}
+				}
+				
+				int i = payTypeDao.save(payType);
+				return i;
+			}
+			
+		   
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.sys.base.service.PayTypeService#getTypetree()
+	 */
+	@Override
+	public List getTypetree() throws Exception {
+	   List<PayType> list=payTypeDao.queryListOrderBySort();
+	   List<PayTypeDto> PayTypeDtoList=new ArrayList<PayTypeDto>();
+	   if(list.size()>0){
+		   for (PayType payType : list) {
+			   PayTypeDto payTypeDto=new PayTypeDto();
+			   BeanUtils.copyProperties(payType, payTypeDto);
+			   String parentId = payTypeDto.getParentId();
+			   payTypeDto.setExpanded(true);
+			   payTypeDto.setLoaded(true);
+			   if(StringUtils.isBlank(parentId)){
+				   Map<String,Object>map=new HashMap<String, Object>();
+				   map.put("parentId",payTypeDto.getId());
+				   List<PayType> chirdList=payTypeDao.payTypeParanetList(map);
+				   if(chirdList!=null&&chirdList.size()>0){
+					   payTypeDto.setIsLeaf(false);
+				   }else{
+					   payTypeDto.setIsLeaf(true);
+				   }
+				//  payTypeDto.setIsLeaf(false);
+				   payTypeDto.setLevel(1l);
+			   }else{
+				   payTypeDto.setIsLeaf(true);
+				   payTypeDto.setLevel(2l);
+			   }
+			   PayTypeDtoList.add(payTypeDto);
+		   }
+	   }
+		return PayTypeDtoList;
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.sys.base.service.PayTypeService#deletePayType(java.lang.String)
+	 */
+	@Override
+	public int deletePayType(String id) throws Exception{
+		Map<String,Object> map=new HashMap<String,Object>();
+		map.put("parentId", id);
+		List<PayType> payTypeParanetList = payTypeDao.payTypeParanetList(map);
+		if(payTypeParanetList!=null&&payTypeParanetList.size()>0){
+			List<String> ids=new ArrayList<String>();
+			ids.add(id);
+			for (PayType payType : payTypeParanetList) {
+				ids.add(payType.getId());
+			}
+			return payTypeDao.deletePseudoAllObjectByIds(ids);
+		}else{
+			return payTypeDao.deletePseudoObjectById(id);
+		}
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.sys.base.service.PayTypeService#updateStatus(com.xinleju.platform.sys.base.entity.PayType)
+	 */
+	@Override
+	@Transactional
+	public int updateStatus(PayType object,Map<String,Object> paramMap) throws Exception {
+		 String status = object.getStatus();
+		 if(status.equals(StatusType.StatusOpen.getCode())){
+			//对子集全部启用禁用 
+			this.updateChirdStatus(object);
+			 object.setStatus(StatusType.StatusClosed.getCode());
+			 payTypeDao.update(object);
+		 }else if(status.equals(StatusType.StatusClosed.getCode())){
+			 //对父集全部启用启用
+			 this.updateParentStatus(object);
+			 if(Objects.equals (paramMap.get ("isChildren"),true)){
+			 	//同时启用所有子级节点
+				 this.openChildrenStatus(object);
+			 }
+			 object.setStatus(StatusType.StatusOpen.getCode());
+			 payTypeDao.update(object);
+		 }
+		return 1;
+	}
+
+	public void updateChirdStatus(PayType object){
+		Map<String,Object> map=new HashMap<String,Object>();
+		map.put("parentId", object.getId());
+		List<PayType> payTypeParanetList = payTypeDao.payTypeParanetList(map);
+		if(payTypeParanetList!=null&&payTypeParanetList.size()>0){
+			for (PayType payType : payTypeParanetList) {
+				payType.setStatus(StatusType.StatusClosed.getCode());
+				 payTypeDao.update(payType);
+			}
+		}
+	}
+	public void openChildrenStatus(PayType object){
+		Map<String,Object> map=new HashMap<String,Object>();
+		map.put("parentId", object.getId());
+		List<PayType> payTypeParanetList = payTypeDao.payTypeParanetList(map);
+		if(payTypeParanetList!=null&&payTypeParanetList.size()>0){
+			for (PayType payType : payTypeParanetList) {
+				payType.setStatus(StatusType.StatusOpen.getCode());
+				payTypeDao.update(payType);
+			}
+		}
+	}
+	public void updateParentStatus(PayType object){
+		String parentId = object.getParentId();
+		PayType payType = payTypeDao.getObjectById(parentId);
+		if(payType!=null){
+			payType.setStatus(StatusType.StatusOpen.getCode());
+			 payTypeDao.update(payType);
+		}
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.platform.sys.base.service.PayTypeService#updatePayType(com.xinleju.platform.sys.base.entity.PayType)
+	 */
+	@Override
+	public int updatePayType(PayType payType) throws Exception {
+		PayType oldPayType = this.getObjectById(payType.getId());
+		String oldCode = oldPayType.getCode();
+		int j=0;
+		String code = payType.getCode();
+		Map<String,Object>hmap=new HashMap<String, Object>();
+		hmap.put("code", code);
+		Integer i= payTypeDao.getPayTypeCountByCode(hmap);
+		
+		if((oldCode.equals(code)&&i>1)||(!oldCode.equals(code)&&i>0)){
+			j=5;
+		}else{
+				String status = payType.getStatus();
+				if(!status.equals(oldPayType.getStatus())){
+					 if(status.equals(StatusType.StatusOpen.getCode())){
+						 this.updateParentStatus(payType);
+						//对子集全部启用禁用 
+					 }else if(status.equals(StatusType.StatusClosed.getCode())){
+						 this.updateChirdStatus(payType);
+						 //对父集全部启用启用
+					 }
+				}
+				String parentId = payType.getParentId();
+				Map<String,Object> map=new HashMap<String,Object>();
+				map.put("parentId", parentId);
+				List<PayType> payTypeParanetList = payTypeDao.payTypeParanetList(map);
+				if(StringUtils.isBlank(parentId)&&payType.getSort().indexOf("-")>-1){
+					if(payTypeParanetList!=null &&payTypeParanetList.size()>0){
+						String sort = payTypeParanetList.get(payTypeParanetList.size()-1).getSort();
+						String[] s =sort.split("\\$");
+						int oldNumber =Integer.parseInt(s[1]);
+						int newNumber=(oldNumber+1);
+						String newSort= "$"+String.format("%04d", newNumber);
+						payType.setSort(newSort);
+					}else{
+						payType.setSort("$0001");
+					}
+				}else if(!StringUtils.isBlank(parentId)){
+					if(payTypeParanetList!=null &&payTypeParanetList.size()>0){
+						String sort = payTypeParanetList.get(payTypeParanetList.size()-1).getSort();
+						String[] s =sort.split("\\-");
+						int oldNumber =Integer.parseInt(s[1]);
+						int newNumber=(oldNumber+1);
+						String newSort= s[0]+"-"+String.format("%04d", newNumber);
+						payType.setSort(newSort);
+					}else{
+						PayType parentPayType = payTypeDao.getObjectById(parentId);
+						String sort = parentPayType.getSort();
+						payType.setSort(sort+"-0001");
+					}
+				}
+					j = payTypeDao.update(payType);
+		 }
+		return j;
+	}
+	@Override
+	public List<Map<String,Object>> getAllPayType(Map<String, Object> param)throws Exception{
+		return payTypeDao.getAllPayType(param);
+	}
+}

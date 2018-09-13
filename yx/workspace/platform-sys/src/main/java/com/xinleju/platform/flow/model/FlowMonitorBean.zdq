@@ -1,0 +1,54 @@
+package com.xinleju.platform.flow.model;
+
+import org.apache.commons.lang.builder.ReflectionToStringBuilder;
+import org.apache.commons.lang.builder.ToStringStyle;
+
+/**
+ * 流程监控配置Bean（流程运行时用）
+ * @author daoqi
+ *
+ */
+public class FlowMonitorBean {
+
+	private String monitorId;
+	private String monitorName;
+	private String monitorType;
+	private String handle;
+
+	public String getMonitorId() {
+		return monitorId;
+	}
+
+	public void setMonitorId(String monitorId) {
+		this.monitorId = monitorId;
+	}
+
+	public String getMonitorName() {
+		return monitorName;
+	}
+
+	public void setMonitorName(String monitorName) {
+		this.monitorName = monitorName;
+	}
+
+	public String getMonitorType() {
+		return monitorType;
+	}
+
+	public void setMonitorType(String monitorType) {
+		this.monitorType = monitorType;
+	}
+
+	public String getHandle() {
+		return handle;
+	}
+
+	public void setHandle(String handle) {
+		this.handle = handle;
+	}
+	
+	@Override
+	public String toString() {
+		return ReflectionToStringBuilder.toString(this, ToStringStyle.MULTI_LINE_STYLE);
+	}
+}

@@ -1,0 +1,20 @@
+package com.xinleju.platform.flow.service;
+
+import java.util.List;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.flow.dto.OperationTypeDto;
+import com.xinleju.platform.flow.entity.OperationType;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface OperationTypeService extends  BaseService <String,OperationType>{
+
+	List<OperationTypeDto> queryAllObjectDtoList();
+
+	
+}

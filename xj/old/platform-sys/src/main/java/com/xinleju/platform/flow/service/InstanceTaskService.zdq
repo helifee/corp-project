@@ -1,0 +1,71 @@
+package com.xinleju.platform.flow.service;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.flow.dto.ApprovalSubmitDto;
+import com.xinleju.platform.flow.dto.InstanceTaskDto;
+import com.xinleju.platform.flow.entity.InstanceTask;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+public interface InstanceTaskService extends  BaseService <String,InstanceTask>{
+	
+	public boolean completeTask(Map<String, Object> approvalInfos);
+
+	public int update(String statementName, Map<String, Object> params);
+
+	public List<InstanceTaskDto> queryCurrentPersonList(Map<String, String> paramMap);
+
+	/**
+	 * 查询指定流程中已审批过的任务的个数
+	 * 
+	 * @param instanceId
+	 * @return
+	 */
+	public int queryFinishedTaskCount(String instanceId);
+
+	/**
+	 * 更新任务对应的消息ID
+	 * 
+	 * @param taskId
+	 * @param msgId
+	 */
+	public void updateMsgId(String taskId, String msgId);
+
+	/**
+	 * 更新任务的审批意见
+	 * 
+	 * @param taskId
+	 * @param taskComments
+	 */
+	public void updateComment(String taskId, String taskComment);
+
+	/**
+	 * 检查流程中指定任务是否可撤回
+	 * 
+	 * @param instanceId
+	 * @param taskId
+	 * @param approveId 
+	 * @return
+	 */
+	public List<InstanceTaskDto> checkWithdrawTask(String instanceId, String taskId, String approveId);
+
+	public List<InstanceTaskDto> queryTaskIdByInstanceId(Map<String, String> paramMap);
+
+	public boolean isFinished(ApprovalSubmitDto approvalDto);
+
+	public List<InstanceTaskDto> checkWithdrawTask2(String id, String taskId);
+
+	/**
+	  * @Description:查询同一流程同一个审批人有多个任务处于审批中
+	  * @author:zhangfangzhi
+	  * @date 2018年1月16日 下午4:43:13
+	  * @version V1.0
+	 */
+	public Integer queryListCountByFiId(Map<String, Object> paramMap);
+}

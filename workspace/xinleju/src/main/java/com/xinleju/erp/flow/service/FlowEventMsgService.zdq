@@ -1,0 +1,214 @@
+package com.xinleju.erp.flow.service;
+
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.springframework.stereotype.Service;
+
+import com.alibaba.fastjson.JSONObject;
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.flow.flowutils.bean.FlowResult;
+import com.xinleju.erp.flow.flowutils.bean.WiBean;
+import com.xinleju.erp.flow.flowutils.utils.OpType;
+import com.xinleju.erp.flow.flowutils.utils.WsConstant;
+import com.xinleju.erp.flow.frameapi.domain.User;
+import com.xinleju.erp.flow.models.Fi;
+import com.xinleju.erp.flow.models.FlowEvent;
+import com.xinleju.erp.flow.service.api.ApiConstant;
+import com.xinleju.erp.flow.service.api.extend.BaseAPI;
+import com.xinleju.erp.flow.service.api.extend.dto.RoleDTO;
+import com.xinleju.erp.flow.service.api.extend.dto.UserDTO;
+import com.xinleju.erp.flow.utils.FlowConstant;
+import com.xinleju.erp.flow.utils.WiMsgConstent;
+import com.xinleju.erp.frame.models.Msg;
+import com.xinleju.erp.thirdpart.oa.xinyuan.impl.OaMsgServiceImpl;
+
+/**
+ * 
+ * 版权：(C) 版权所有 2000-2014 上海天好电子商务有限公司苏州分公司
+ * 流程任务消息发布
+ * @author   jun
+ * @version  $Id$
+ * @since
+ * @see
+ */
+@Service
+public class FlowEventMsgService extends BaseService {
+	private static final Log log = LogFactory.getLog(FlowEventMsgService.class);
+    /**
+     * 发送消息
+     * @author jun
+     * @param code
+     * @param srcId
+     * @param json
+     * @param fiName
+     * @param fiId
+     * @param appCode
+     * @param opCode
+     */
+    public void sendMsg(FlowEvent fe){
+        if (null != fe && StringUtils.isNotBlank(fe.getCode()) && fe.getCode().startsWith("W")){
+            String code = fe.getCode();
+            String json = fe.getJson();
+            Long fiId = fe.getFiId();
+            String appCode = FlowConstant.APP_CODE_PT;
+            WiBean wi = null; 
+            if(StringUtils.isNotBlank(json)){
+                try{
+                    wi =  JSONObject.parseObject(json, WiBean.class); 
+                }catch(Exception e){
+                    
+                }
+            }
+          
+            if (null != wi){
+                int msgTypeInt = this.fixToWiMsgType(wi);
+                String opType = this.fixOpType(msgTypeInt, code);
+                if (StringUtils.isNotBlank(opType)){
+                    BaseAPI baseAPIService = (BaseAPI)App.getBean(BaseAPI.class,ApiConstant.BEAN_CODE);
+                    String msgId = "Wi_" + wi.getWiId();
+                    Long fi_id=wi.getFiId();
+                    Map<String, Object> extParm=new HashMap<String, Object>();
+                    extParm.put("fi_id", fi_id);
+                    String title = "";
+                    Fi fi = null;
+                    if (null != fiId){
+                        fi = getDao().getById(Fi.class, fiId);
+                        FlowResult<RoleDTO> roleDto = baseAPIService.getMainRole(fi.getStartUserId());
+                        title = this.fixToWiMsgTitle(wi, fi, null != roleDto && null != roleDto.getResult() ? (StringUtils.isNotBlank(roleDto.getResult().getName()) ? roleDto.getResult().getName() : "") : "");
+                    }
+                    String defaultLink =  "Form!dealIndex.do?spWiId=" + wi.getWiId() + "&t=" + (new Date()).getTime();
+                   
+                    log.info("defaultLink===="+defaultLink);
+                    System.out.println("defaultLink===="+defaultLink);
+                    
+                    String bakUrl = defaultLink;
+                    String url = StringUtils.isBlank(bakUrl) ? defaultLink : bakUrl;
+                    String typedDate = wi.getStartTime();
+                    String msgType = msgTypeInt + "";
+                    String loginName = "";
+                    User user = wi.getParticipant();
+                    if (null != user && null != user.getUserId()){
+                        UserDTO userDto = baseAPIService.getUserById(user.getUserId()).getResult();
+                        if (null != userDto){
+                            loginName = userDto.getLoginName();
+                        }
+                    }
+                    boolean isSendSuccess = baseAPIService.sendMsg(appCode, msgId, title, url, typedDate, opType, msgType, loginName, extParm).getResult();
+                    if (isSendSuccess){
+                        getDao().executeSQL("update tf_flow_event set is_scan = 1 where id  = ?", fe.getId());
+                    }
+                }
+            }
+        }
+    }
+    /**
+     * 得到待办的通知类型
+     * @author jun
+     * @param wi wi
+     * @return 通知类型
+     */
+    public int fixToWiMsgType(WiBean wi){
+        int msgType = Msg.MSG_TYPE_DB;
+        if (StringUtils.isNotBlank(wi.getWiType()) && ((WsConstant.WiType.CS.getCode().equals(wi.getWiType())) || WsConstant.WiType.CY.getCode().equals(wi.getWiType()) || WsConstant.WiType.CB.getCode().equals(wi.getWiType()))){
+            msgType = Msg.MSG_TYPE_TZ;
+        }
+        return msgType;
+    }
+    
+    private String fixOpType(int msgTypeInt, String opCode){
+        String opType = "";
+        if (Msg.MSG_TYPE_DB.intValue() == msgTypeInt){
+            //任务创建
+            if (FlowEvent.EVENT_CODE_WS.equals(opCode)){
+                opType = Msg.OP_TYPE_DB;
+            //任务重发
+            } else if(FlowEvent.EVENT_CODE_WR.equals(opCode)){
+                opType = Msg.OP_TYPE_DB;
+            //任务结束
+            } else if(FlowEvent.EVENT_CODE_WE.equals(opCode)){
+                opType = Msg.OP_TYPE_YB;
+            //任务过期
+            } else if(FlowEvent.EVENT_CODE_WO.equals(opCode)){
+                opType = Msg.OP_TYPE_RM;
+            }
+        } else if (Msg.MSG_TYPE_TZ.intValue() == msgTypeInt){
+            //任务创建
+            if (FlowEvent.EVENT_CODE_WS.equals(opCode)){
+                opType = Msg.OP_TYPE_WD;
+            //任务重发
+            } else if(FlowEvent.EVENT_CODE_WR.equals(opCode)){
+                opType = Msg.OP_TYPE_WD;
+            //任务结束
+            } else if(FlowEvent.EVENT_CODE_WE.equals(opCode)){
+                opType = Msg.OP_TYPE_YD;
+            //任务过期
+            } else if(FlowEvent.EVENT_CODE_WO.equals(opCode)){
+                opType = Msg.OP_TYPE_RM;
+            }
+        }
+        return opType;
+    }
+    
+    /**
+     * 得到待办的通知名称
+     * @author jun
+     * @param wi 待办
+     * @param sp 审批
+     * @return 通知名称
+     */
+        //标题
+    public String fixToWiMsgTitle(WiBean wi, Fi fi, String tjUserOpRole){
+        String msgTitle = "";
+        //参与人名
+        String tjUserName = "";
+        //流程名称
+        String flowName = "";
+        //意见
+        String notes = "";
+        if (null != wi){
+            tjUserName = wi.getFiStartUserName();
+            if (null != fi){
+                flowName = fi.getFiName();
+            }
+            //打回的流程
+            if (null != fi && wi.getIsBacked() == 1 && wi.getIsStart() == 1){
+                msgTitle = WiMsgConstent.getDaHuiTitle(tjUserName, flowName);
+            } else if (StringUtils.isNotBlank(wi.getWiType())){
+                //催办
+                if (WsConstant.WiType.CB.getCode().equals(wi.getWiType())){
+                    msgTitle = WiMsgConstent.getCuiBanTitle(tjUserName, flowName, notes);
+                //传阅
+                } else if (WsConstant.WiType.CY.getCode().equals(wi.getWiType())){
+                    msgTitle = WiMsgConstent.getChuanYueTitle(tjUserName, flowName);
+                //抄送
+                } else if (WsConstant.WiType.CS.getCode().equals(wi.getWiType())){
+                    msgTitle = WiMsgConstent.getChaoSongTitle(tjUserName, flowName);
+                //审批
+                } else if (WsConstant.WiType.ZC.getCode().equals(wi.getWiType()) || WsConstant.WiType.LG.getCode().equals(wi.getWiType())){
+                    //协办或沟通
+                    if (StringUtils.isNotBlank(wi.getAssignType())){
+                        //沟通
+                        if (OpType.GTFQR.equals(wi.getAssignType())){
+                            msgTitle = WiMsgConstent.getGouTongTitle(null != wi.getAssignUserName() ? wi.getAssignUserName() : "", flowName);
+                        //协办
+                        } else if (OpType.XB.equals(wi.getAssignType())){
+                            msgTitle = WiMsgConstent.getXieBanTitle(null != wi.getAssignUserName() ? wi.getAssignUserName() : "", flowName);
+                        } else {
+                            msgTitle = WiMsgConstent.getDaiBanTitle(tjUserOpRole, tjUserName, flowName);
+                        }
+                    //正常审批
+                    } else {
+                        msgTitle = WiMsgConstent.getDaiBanTitle(tjUserOpRole, tjUserName, flowName);
+                    }
+                }
+            }
+        }
+        return msgTitle;
+    }
+}

@@ -1,0 +1,244 @@
+package com.xinleju.cloud.oa.office.service.impl;
+
+import java.math.BigDecimal;
+import java.text.DecimalFormat;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.cloud.oa.office.dao.OfficeInfoDao;
+import com.xinleju.cloud.oa.office.dao.OfficePriceDao;
+import com.xinleju.cloud.oa.office.dao.OfficeRecordDao;
+import com.xinleju.cloud.oa.office.dto.OfficeInfoDto;
+import com.xinleju.cloud.oa.office.entity.OfficeInfo;
+import com.xinleju.cloud.oa.office.entity.OfficePrice;
+import com.xinleju.cloud.oa.office.entity.OfficeRecord;
+import com.xinleju.cloud.oa.office.service.OfficeInfoService;
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.base.utils.Page;
+
+/**
+ * @author wangw
+ * 
+ * 
+ */
+
+@Service
+public class OfficeInfoServiceImpl extends  BaseServiceImpl<String,OfficeInfo> implements OfficeInfoService{
+	
+
+	@Autowired
+	private OfficeInfoDao officeInfoDao;
+	@Autowired
+	private OfficeRecordDao officeRecordDao;
+	@Autowired
+	private OfficePriceDao officePriceDao;
+
+	@Override
+	public List<OfficeInfoDto> getOfficeInfoListByHouseId(String id)throws Exception {
+		// TODO Auto-generated method stub
+		return officeInfoDao.getOfficeInfoListByHouseId(id);
+	}
+
+	@Override
+	public List<OfficeInfoDto> getOfficeInfoTreeById(String id)throws Exception {
+		// TODO Auto-generated method stub
+		return officeInfoDao.getOfficeInfoTreeById(id);
+	}
+
+	@Override
+	public int updateOfficeInfoByStockNum(Map<String, Integer> map) throws Exception{
+		// TODO Auto-generated method stub
+		int updateResult = 0;
+		if(map.size() > 0){
+			List<OfficeInfo> listOfficeInfo = new ArrayList<OfficeInfo>();
+			for (String key : map.keySet()) {
+				//key就是结存表中需要更新的用户编号，通过key找到结存表中唯一的一条记录
+				//然后通过结存表的用户Id，获取这个结存对象
+				Map<String, Object> updateMap = new HashMap<String, Object>();
+				updateMap.put("stockNum", key);
+				OfficeInfo officeInfo = officeInfoDao.queryList(updateMap).get(0);
+				officeInfo.setStockCount(String.valueOf(Integer.parseInt(officeInfo.getStockCount()) + map.get(key)));
+				listOfficeInfo.add(officeInfo);
+			}
+			
+			if(listOfficeInfo.size() > 0){
+				updateResult = officeInfoDao.updateBatch(listOfficeInfo);
+			}
+		}
+		return updateResult;
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.cloud.oa.office.service.OfficeInfoService#getOfficeInfopage(java.util.HashMap)
+	 */
+	@Override
+	public Page getOfficeInfopage(Map map) throws Exception {
+		  Page p=new Page();
+		  List<Map<String,Object>> list=officeInfoDao.getOfficeInfopage(map);
+		  Integer total=officeInfoDao.getOfficeInfopageCount(map);
+		  p.setLimit((Integer) map.get("limit"));
+		  p.setList(list);
+		  p.setStart((Integer) map.get("start"));
+		  p.setTotal(total);
+		  return p;
+	}
+
+	/**
+	 * 保存档案信息并记录日志
+	 * @param officeInfo
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public Integer saveInfoAndRecord(OfficeInfo officeInfo) throws Exception {
+		String stockNum = officeInfo.getStockNum();
+		Integer num=officeInfoDao.getObjectByStockNum(stockNum);
+		if(num>0){
+			throw new Exception("新增编码重复");
+		}
+		if (officeInfo.getStockCount()!=null&&officeInfo.getPrice()!=null) {
+			if(Integer.valueOf(officeInfo.getStockCount())<0){
+				throw new Exception("新增入库量不可小于零");
+			}
+			if(Double.valueOf(officeInfo.getPrice())<0){
+				throw new Exception("单价不可小于零");
+			}
+			//记录入库记录
+			OfficeRecord record=new OfficeRecord();
+			record.setId(IDGenerator.getUUID());
+			record.setStockInfoId(officeInfo.getId());
+			record.setInCount(officeInfo.getStockCount());
+			record.setBuyPrice(officeInfo.getPrice());
+			record.setStockBrand(officeInfo.getStockBrand());
+			record.setStockName(officeInfo.getStockName());
+			record.setStockNum(officeInfo.getStockNum());
+			record.setStockSpecifications(officeInfo.getStockSpecifications());
+			Double money=Integer.valueOf(officeInfo.getStockCount())*Double.valueOf(officeInfo.getPrice());
+			record.setCountMoney(money+"");
+			record.setHouseId(officeInfo.getStockHouseId());
+			record.setMeteringUnit(officeInfo.getMeteringUnit());
+			officeRecordDao.save(record);
+			
+			//TODO 记录价格变动
+			OfficePrice price=new OfficePrice();
+			price.setId(IDGenerator.getUUID());
+			price.setStockInfoId(officeInfo.getId());
+			price.setStockBrand(officeInfo.getStockBrand());
+			price.setStockName(officeInfo.getStockName());
+			price.setStockSpecifications(officeInfo.getStockSpecifications());
+			price.setInPrice(officeInfo.getPrice());
+			price.setMeteringUnit(officeInfo.getMeteringUnit());
+			officePriceDao.save(price);
+		}
+		return save(officeInfo);
+	}
+	/**
+	 * 调整入库并记录日志
+	 * @param map
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public Integer updateCount(Map map) throws Exception {
+		try {
+			//参数：入库量，入库价格，档案id
+			List<Map<String,Object>> params=(ArrayList<Map<String,Object>>)map.get("params");
+			//需要记录的入库记录
+			List<OfficeRecord> records=new ArrayList<OfficeRecord>();
+			//需要记录的价格调整记录
+			List<OfficePrice> prices=new ArrayList<OfficePrice>();
+			//需要修改的档案信息
+			List<OfficeInfo> infos=new ArrayList<OfficeInfo>();
+			Integer inCount=0;//入库量
+			BigDecimal buyPrice=new BigDecimal(0.00);//入库价格
+			Integer count=0;
+			Integer count1=0;//可领用数量
+			//查询所有需要调整的档案
+			List<OfficeInfo> dtos=officeInfoDao.getOfficeInfoByIds(map);
+			for (OfficeInfo officeInfo:dtos) {
+				for(Map<String,Object> pMap:params){
+					if(officeInfo.getId().equals(pMap.get("id"))){
+						inCount= Integer.valueOf(pMap.get("inCount").toString());
+						buyPrice=new BigDecimal((String)pMap.get("buyPrice"));
+						OfficeRecord record=new OfficeRecord();
+						record.setId(IDGenerator.getUUID());
+						record.setStockInfoId(officeInfo.getId());
+						record.setInCount(inCount+"");
+						record.setBuyPrice(buyPrice+"");
+						record.setStockBrand(officeInfo.getStockBrand());
+						record.setStockName(officeInfo.getStockName());
+						record.setStockNum(officeInfo.getStockNum());
+						record.setStockSpecifications(officeInfo.getStockSpecifications());
+						record.setMeteringUnit(officeInfo.getMeteringUnit());
+						BigDecimal money=new BigDecimal((String)pMap.get("buyPrice")).multiply(new BigDecimal(pMap.get("inCount").toString()));
+						DecimalFormat  df =new DecimalFormat("#.00");
+						String recordMoney = df.format(money);
+						record.setCountMoney(recordMoney);
+						record.setHouseId(officeInfo.getStockHouseId());
+						records.add(record);
+						
+						if (officeInfo.getPrice()==null|| !officeInfo.getPrice().equals(buyPrice+"")) {
+							OfficePrice price=new OfficePrice();
+							price.setId(IDGenerator.getUUID());
+							price.setStockInfoId(officeInfo.getId());
+							price.setStockBrand(officeInfo.getStockBrand());
+							price.setStockName(officeInfo.getStockName());
+							price.setStockSpecifications(officeInfo.getStockSpecifications());
+							price.setInPrice(buyPrice+"");
+							price.setMeteringUnit(officeInfo.getMeteringUnit());
+							prices.add(price);
+						}
+						if(officeInfo.getStockCount()!=null&&StringUtils.isNotBlank(officeInfo.getStockCount())){
+							count=Integer.valueOf(officeInfo.getStockCount());
+						}
+						if(officeInfo.getOutStockCount()!=null&&StringUtils.isNotBlank(officeInfo.getOutStockCount())){
+							count1=Integer.valueOf(officeInfo.getOutStockCount());
+						}
+						count=count+inCount;
+						count1=count1+inCount;
+						officeInfo.setPrice(buyPrice+"");
+						officeInfo.setStockCount(count+"");
+						officeInfo.setOutStockCount(count1+"");
+						infos.add(officeInfo);
+					}
+				}
+			}
+			if(records.size()>0){
+				officeRecordDao.saveBatch(records);
+			}
+			if(prices.size()>0){
+				officePriceDao.saveBatch(prices);
+			}
+			if(infos.size()>0){
+				officeInfoDao.updateBatch(infos);
+			}
+			return 1;
+		} catch (Exception e) {
+			//e.printStackTrace();
+			throw new Exception();
+		}
+	}
+
+	@Override
+	public List<Map<String, String>> getOfficeInfoCount(Map<String, Object> pMap)throws Exception {
+		return officeInfoDao.getOfficeInfoCount(pMap);
+	}
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.cloud.oa.office.service.OfficeInfoService#updateOfficeInfoCount(java.util.Map)
+	 */
+	@Override
+	public int updateOfficeInfoCount(Map<String, Object> map) throws Exception {
+		 return officeInfoDao.updateOfficeInfoCount(map);
+		
+	}
+	
+
+}

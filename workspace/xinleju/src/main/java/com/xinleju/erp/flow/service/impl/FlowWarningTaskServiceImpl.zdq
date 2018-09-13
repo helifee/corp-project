@@ -1,0 +1,695 @@
+package com.xinleju.erp.flow.service.impl;
+
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+
+
+
+
+
+
+
+
+import org.apache.commons.lang3.StringUtils;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataAccessException;
+import org.springframework.jdbc.core.ConnectionCallback;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.data.cache.api.MDBusinessCacheService;
+import com.xinleju.erp.flow.bean.IdName;
+import com.xinleju.erp.flow.dao.impl.ParticipantDAO;
+import com.xinleju.erp.flow.flowutils.bean.FlowResult;
+import com.xinleju.erp.flow.flowutils.bean.WiBean;
+import com.xinleju.erp.flow.flowutils.utils.WsConstant;
+import com.xinleju.erp.flow.frameapi.domain.User;
+import com.xinleju.erp.flow.models.Fi;
+import com.xinleju.erp.flow.models.FlowWarning;
+import com.xinleju.erp.flow.models.FlowWarningTask;
+import com.xinleju.erp.flow.models.Wi;
+import com.xinleju.erp.flow.service.FlowEventMsgService;
+import com.xinleju.erp.flow.service.FormFlowService;
+import com.xinleju.erp.flow.service.IFlowWarningService;
+import com.xinleju.erp.flow.service.IFlowWarningTaskService;
+import com.xinleju.erp.flow.service.api.ApiConstant;
+import com.xinleju.erp.flow.service.api.extend.BaseAPI;
+import com.xinleju.erp.flow.service.api.extend.BaseAPIService;
+import com.xinleju.erp.flow.service.api.extend.dto.RoleDTO;
+import com.xinleju.erp.flow.service.api.utils.ApiUtils;
+import com.xinleju.erp.flow.utils.FlowConstant;
+import com.xinleju.erp.frame.models.PartyEntity;
+import com.xinleju.erp.sm.extend.dto.MailDTO;
+import com.xinleju.erp.sm.extend.dto.SmDTO;
+
+/**
+ * 预警任务Service实现类
+ * 
+ * @author zhengxj
+ *
+ */
+@Service
+public class FlowWarningTaskServiceImpl extends BaseService implements
+        IFlowWarningTaskService {
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+    
+    @Autowired
+    private IFlowWarningService flowWarningService;
+    
+    @Autowired
+    private BaseAPIService baseAPIService;
+    
+    @Autowired
+    private FormFlowService formFlowService;
+    
+    @Autowired
+    private FlowEventMsgService flowEventMsgService;
+    
+    @Value("#{appProperties['cuibanPrefixUrl']}")
+    private String cuibanPrefixUrl;
+    
+    /**
+     * 参与人DAO
+     */
+    @Autowired
+    private ParticipantDAO participantDAO;
+    
+    @Override
+    public void saveFlowWarningTask(Long wiId, Integer noticeActor) {
+        FlowWarningTask flowWarningTask = getFlowWarningTaskByWi(wiId, noticeActor);
+        if (flowWarningTask == null) {
+            Wi wi = getDao().getById(Wi.class, wiId);
+            flowWarningTask = new FlowWarningTask();
+            flowWarningTask.setWiId(wiId);
+            flowWarningTask.setNoticeActor(noticeActor);
+            flowWarningTask.setExeStatus(FlowWarningTask.STATUS_UNDO);
+            flowWarningTask.setCreateTime(new Date());
+            flowWarningTask.setErrCount(FlowWarningTask.SEND_DEFAULT_COUNT);
+            flowWarningTask.setSendCount(FlowWarningTask.SEND_DEFAULT_COUNT);
+            flowWarningTask.setAcceptTime(wi.getAcceptTime());
+            getDao().save(flowWarningTask);
+        }
+    }
+
+    @Override
+    public void wi2FlowWarningTask() {
+    	SimpleDateFormat fmt = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+    	System.out.println("\r\n逾期任务创建begin...." + fmt.format(new Date()));
+        FlowWarning flowWarning = flowWarningService.getLastestFlowWarning();
+        if (flowWarning != null) {
+            // 标准审批时间
+            Double standardSpTimeRange = flowWarning.getStandardSpTimeRange();
+            // 在逾期规定小时后,通知领导
+            Double overdue4Leader = flowWarning.getOverdue4Leader();
+            // 在逾期规定小时后,标准角色/岗位/用户
+            Double overdue4Others = flowWarning.getOverdue4Others();
+            
+            if (standardSpTimeRange != null) {
+                List<Map<String, Object>> list = this.getWiList(standardSpTimeRange);
+                if (list != null) {
+                    // 工作id
+                    Long wiId = null;
+                    // 待办操作人
+                    Long participant = null;
+                    // 工作接收时间
+                    Date acceptTime = null;
+                    // 接收时间到当时时间相差分钟数
+                    long acceptTimeToNowMinutes = 0;
+                    
+                    for (Map<String, Object> map : list) {
+                        wiId = (Long)map.get("ID");
+                        participant = (Long)map.get("PARTICIPANT");
+                        
+                        /**
+                         * 如果该待办人员属于标准角色/岗位/人员不需要预警通知
+                         */
+                        if (flowWarning.getNoNoticeUsers() == null 
+                                || (flowWarning.getNoNoticeUsers() != null && !isException(wiId, participant, transPEIds(flowWarning.getNoNoticeUsers())))) {
+                            
+                            acceptTime = (Date)map.get("ACCEPT_TIME");
+                            
+                            /**
+                             * 生成本人预警通知
+                             */
+                            saveFlowWarningTask(wiId, FlowWarning.NOTICE_SELF);
+                            
+                            acceptTimeToNowMinutes = calcAcceptTimeToNowMinutes(acceptTime);
+                            
+                            /**
+                             * 生成上级预警通知GROUP_CONCAT
+                             */
+                            if (overdue4Leader != null && acceptTimeToNowMinutes >= overdue4Leader * FlowWarning.MINUTES) {
+                                saveFlowWarningTask(wiId, FlowWarning.NOTICE_LEADER);
+                            }
+                            
+                            /**
+                             * 生成标准角色/岗位/用户预警通知
+                             */
+                            if (overdue4Others != null && acceptTimeToNowMinutes >= overdue4Others * FlowWarning.MINUTES) {
+                                saveFlowWarningTask(wiId, FlowWarning.NOTICE_OTHERS);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        System.out.println("\r\n逾期任务创建end...." + fmt.format(new Date()));
+    }
+
+    @Override
+    public List<Map<String, Object>> getWiList(Double standardSpTimeRange) {
+        String sql = "SELECT WI.ID,WI.PARTICIPANT,WI.ACCEPT_TIME FROM TF_WI WI LEFT JOIN TF_AC AC ON WI.AC_ID = AC.ID WHERE WI.STATUS = ? AND AC.IS_START <> ? AND DATE_ADD(WI.ACCEPT_TIME, INTERVAL ? MINUTE) <= NOW()";
+        return jdbcTemplate.queryForList(sql, WsConstant.STATUS_RUNNING, FlowConstant.INT_TRUE, standardSpTimeRange * FlowWarning.MINUTES);
+    }
+
+    @Override
+    public FlowWarningTask getFlowWarningTaskByWi(Long wiId, Integer noticeActor) {
+        List<FlowWarningTask> list = getDao().findByHQL(FlowWarningTask.class, "from FlowWarningTask where wiId = ? and noticeActor = ?", wiId, noticeActor);
+        return (list != null && !list.isEmpty()) ? list.get(0) : null;
+    }
+
+    public void startFlowWarningTask() {
+    	SimpleDateFormat fmt = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+    	System.out.println("\r\n催办begin...." + fmt.format(new Date()));
+        FlowWarning flowWarning = flowWarningService.getLastestFlowWarning();
+        if (flowWarning != null) {
+            
+            // 是否包含非工作日
+            Integer isWorkDays = flowWarning.getIsWorkDays();
+            
+            // 通知本人时间间隔
+            Double noticeInterval4Self  = flowWarning.getNoticeInterval4Self();
+            
+            // 在逾期规定小时后
+            Double overdue4Leader = flowWarning.getOverdue4Leader();
+            // 通知领导时间间隔
+            Double noticeInterval4Leader = flowWarning.getNoticeInterval4Leader();
+            
+            // 在逾期规定小时后
+            Double overdue4Others = flowWarning.getOverdue4Others();
+            // 通知标准角色/岗位/用户时间间隔
+            Double noticeInterval4Others = flowWarning.getNoticeInterval4Others();
+            
+            // 逾期总任务列表
+            List<Map<String, Object>> resultList = new ArrayList<Map<String, Object>>(0);
+            // 逾期第一次通知本人任务列表
+            resultList.addAll(getFirstNoticeSelfTaskList());
+            // 在逾期多少时间后,通知上级任务列表
+            if (overdue4Leader != null) {
+                resultList.addAll(getFirstNoticeLeaderOrOthersTaskList(overdue4Leader * FlowWarning.MINUTES, FlowWarning.NOTICE_LEADER));
+            }
+            // 在逾期多少时间后,通知标准角色/岗位/用户任务列表
+            if (overdue4Others != null) {
+                resultList.addAll(getFirstNoticeLeaderOrOthersTaskList(overdue4Others * FlowWarning.MINUTES, FlowWarning.NOTICE_OTHERS));
+            }
+            // 每隔多少时间后,通知本人任务列表
+            if (noticeInterval4Self != null) {
+                resultList.addAll(getNextSentTimeTaskList(noticeInterval4Self * FlowWarning.MINUTES, FlowWarning.NOTICE_SELF));
+            }
+            // 每隔多少时间后,通知上级任务列表
+            if (noticeInterval4Leader != null) {
+                resultList.addAll(getNextSentTimeTaskList(noticeInterval4Leader * FlowWarning.MINUTES, FlowWarning.NOTICE_LEADER));
+            }
+            // 每隔多少时间后,通知标准角色/岗位/用户任务列表
+            if (noticeInterval4Others != null) {
+                resultList.addAll(getNextSentTimeTaskList(noticeInterval4Others * FlowWarning.MINUTES, FlowWarning.NOTICE_OTHERS));
+            }
+
+            // 当天是否非工作日
+            boolean todayIsHoliday = App.getBean(MDBusinessCacheService.class).isBusinessHoliday(new Date()).getResult();
+            
+            // 预警任务id
+            Long fwtId = null;
+            // 通知参与者(本人/上级等)
+            Integer noticeActor = null;
+            Long wiId = null;
+            // 第一次发送时间
+            Date firstSendTime = null;
+            // 当前发送时间
+            Date now = new Date();
+            
+            Date completeTime = null;
+            
+            for (Map<String, Object> map : resultList) {
+                if (map != null) {
+                    noticeActor = (Integer)map.get("NOTICE_ACTOR");
+                    wiId = (Long)map.get("WI_ID");
+                    fwtId = (Long)map.get("ID");
+                    firstSendTime = (Date)map.get("FIRST_SEND_TIME");
+                    
+                    completeTime = getWiMap(wiId) != null ? (Date)getWiMap(wiId) : null;
+                    
+                    if (completeTime != null) { // 如果该时间不为空,代表该工作已被处理,无需再发送预警通知
+                        getDao().execute("update FlowWarningTask set exeStatus = ?,finishTime = ? where id = ?", FlowWarningTask.STATUS_DONE, new Date(), fwtId);
+                        continue;
+                    }
+                    
+                    // 包涵节假日发送逾期通知或不包涵节假日且工作日发送逾期通知
+                    if (isWorkDays != null 
+                            && (isWorkDays.intValue() == FlowWarning.WORK_DAY
+                            || (isWorkDays.intValue() == FlowWarning.NON_WORK_DAY && !todayIsHoliday))) {
+                        String msg = sendNotice(noticeActor, wiId, fwtId, flowWarning);
+                        String tempHql = "";
+                        if (StringUtils.isNotBlank(msg)) {
+                            tempHql  = ", errCount = errCount + 1";
+                        }
+                        getDao().execute("update FlowWarningTask set exeStatus = ?, sendCount = sendCount + 1, sendTime = ? " + tempHql + " where id = ?",
+                                FlowWarningTask.STATUS_SENT,now,fwtId);
+                        if (firstSendTime == null) {
+                            getDao().execute("update FlowWarningTask set firstSendTime = ? where id = ?", now, fwtId);
+                        }
+                    }
+                }
+            }
+        }
+        System.out.println("\r\n催办end...." + fmt.format(new Date()));
+    }
+    
+    public Object getWiMap(final Long wiId) {
+      Object object = jdbcTemplate.execute(new ConnectionCallback<Object>() {
+					@Override
+					public Object doInConnection(Connection con)
+							throws SQLException,
+							DataAccessException {
+						PreparedStatement stmt = con.prepareStatement("select * from tf_Wi where id = ?");
+						stmt.setLong(1, wiId);
+						ResultSet rs = stmt.executeQuery();
+						Object completeTime = null;
+						while(rs.next()) {
+							completeTime = rs.getDate("COMPLETE_TIME");
+						}
+						con.commit();
+						return completeTime;
+					}
+		});
+      return object;
+    }
+    
+    @Override
+    @Deprecated
+    public void startFlowWarningTask1() {
+        FlowWarning flowWarning = flowWarningService.getLastestFlowWarning();
+        if (flowWarning != null) {
+            List<Map<String, Object>> fwtList = this.getFlowWarningTaskList();
+            if (fwtList != null && !fwtList.isEmpty()) {
+                boolean todayIsHoliday = App.getBean(MDBusinessCacheService.class).isBusinessHoliday(new Date()).getResult();
+                // 预警任务id
+                Integer fwtId = null;
+                // 工作接收时间
+                Date acceptTime = null;
+                for (Map<String, Object> map : fwtList) {
+                    fwtId = ((Long)map.get("ID")).intValue();
+                    if (map.get("COMPLETE_TIME") != null) { // 如果该时间不为空,代表该工作已被处理,无需再发送预警通知
+                        getDao().execute("update FlowWarningTask set exeStatus = " + FlowWarningTask.STATUS_DONE + ",finishTime = " + new Date() + " where id = " + fwtId);
+                        continue;
+                    }
+                    if (map.get("ACCEPT_TIME") != null) {
+                        acceptTime = (Date)map.get("ACCEPT_TIME");
+                        notice(flowWarning, calcAcceptTimeToNowMinutes(acceptTime), map, todayIsHoliday);
+                    }
+                }
+            }
+        }
+    }
+    
+    public void notice(FlowWarning flowWarning, Long overdueMinutes, Map<String, Object> map, boolean todayIsHoliday) {
+        // 预警任务id
+        Long fwtId = (Long)map.get("ID");
+       
+        try {
+            // 是否包含非工作日
+            Integer isWorkDays = flowWarning.getIsWorkDays();
+            // 通知对象
+            Integer noticeActor = (Integer)map.get("NOTICE_ACTOR");
+            
+            if (noticeActor != null) {
+                
+                // 处理状态
+                Integer exeStatus = (Integer)map.get("EXE_STATUS");
+                
+                // 通知本人时间间隔
+                Double noticeInterval4Self  = flowWarning.getNoticeInterval4Self();
+                
+                // 在逾期规定小时后
+                Double overdue4Leader = flowWarning.getOverdue4Leader();
+                // 通知领导时间间隔
+                Double noticeInterval4Leader = flowWarning.getNoticeInterval4Leader();
+                
+                // 在逾期规定小时后
+                Double overdue4Others = flowWarning.getOverdue4Others();
+                // 通知标准角色/岗位/用户时间间隔
+                Double noticeInterval4Others = flowWarning.getNoticeInterval4Others();
+                
+                // 当前时间
+                Date now = new Date();
+
+                Double noticeInterval = null;
+                
+                Long wiId = (Long)map.get("WI_ID");
+                
+                Long flowWarningTaskId = (Long)map.get("ID");
+                
+                if (exeStatus.intValue() == FlowWarningTask.STATUS_UNDO) {
+                    // 是否需要通知
+                    boolean needNotice = false;
+                    if (noticeActor.intValue() == FlowWarning.NOTICE_SELF) {
+                        noticeInterval = noticeInterval4Self;
+                        needNotice = true;
+                    } else {
+                        // 在逾期多少小时后通知(领导)
+                        if (overdueMinutes >= overdue4Leader * FlowWarning.MINUTES && noticeActor.intValue() == FlowWarning.NOTICE_LEADER) {
+                            noticeInterval = noticeInterval4Leader;
+                            needNotice = true;
+                        }
+                        // 在逾期多少小时后通知(标准角色/岗位/用户)
+                        if (overdueMinutes >= overdue4Others * FlowWarning.MINUTES && noticeActor.intValue() == FlowWarning.NOTICE_OTHERS) {
+                            noticeInterval = noticeInterval4Others;
+                            needNotice = true;
+                        }
+                    }
+                    if (needNotice) {
+                        if (isWorkDays != null 
+                                && (isWorkDays.intValue() == FlowWarning.WORK_DAY
+                                    || (isWorkDays.intValue() == FlowWarning.NON_WORK_DAY && !todayIsHoliday))) {
+                            sendNotice(noticeActor, wiId, flowWarningTaskId, flowWarning);
+                        }
+                        if (noticeInterval != null) {
+                            getDao().execute("update FlowWarningTask set exeStatus = ?,sendCount = 1, firstSendTime = ? ,sendTime = ?, nextSendTime = ? where id = ?",
+                                    FlowWarningTask.STATUS_SENT,now,now,calcNextNoticeDate(now, noticeInterval, isWorkDays, todayIsHoliday),fwtId);
+                        }
+                    }
+                } else {
+                    
+                    // 下次发送时间
+                    Date nextSendTime = (Date)map.get("NEXT_SEND_TIME");
+                    
+                    if (isGE(now, nextSendTime)) { // 当前时间与下次执行时间比较,如果大于等于,则发送相应通知并生成下次执行时间
+                        if (isWorkDays != null 
+                                && (isWorkDays.intValue() == FlowWarning.WORK_DAY
+                                    || (isWorkDays.intValue() == FlowWarning.NON_WORK_DAY && !todayIsHoliday))) {
+                            sendNotice(noticeActor, wiId, flowWarningTaskId, flowWarning);
+                        }
+                        if (noticeActor.intValue() == FlowWarning.NOTICE_SELF) {
+                            noticeInterval = noticeInterval4Self;
+                        } else if (noticeActor.intValue() == FlowWarning.NOTICE_LEADER) {
+                            noticeInterval = noticeInterval4Leader;
+                        } else if (noticeActor.intValue() == FlowWarning.NOTICE_OTHERS) {
+                            noticeInterval = noticeInterval4Others;
+                        }
+                        if (noticeInterval != null) {
+                            getDao().execute("update FlowWarningTask set exeStatus = ?,sendCount = sendCount + 1,sendTime = ?, nextSendTime = ? where id = ?"
+                                    ,FlowWarningTask.STATUS_SENT,now,calcNextNoticeDate(now, noticeInterval, isWorkDays, todayIsHoliday),fwtId);
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) { // 记录异常信息
+            String errMsg = e.getMessage().length() > 2000 ? e.getMessage().substring(0, 2000) : e.getMessage();
+            getDao().execute("update FlowWarningTask set errCount = errCount + 1, errMsg = ? where id = ?",errMsg,fwtId);
+        }
+    }
+
+    @Override
+    public List<Map<String, Object>> getFlowWarningTaskList() {
+        String sql = "SELECT TT.*,WI.PARTICIPANT,WI.ACCEPT_TIME,WI.COMPLETE_TIME FROM TF_FLOW_WARNING_TASK TT LEFT JOIN TF_WI WI ON TT.WI_ID = WI.ID WHERE EXE_STATUS <> ?";
+        return jdbcTemplate.queryForList(sql, FlowWarningTask.STATUS_DONE);
+    }
+    
+    /**
+     * 逾期第一次通知本人
+     * @return
+     */
+    public List<Map<String, Object>> getFirstNoticeSelfTaskList() {
+        StringBuffer sqlBuff = new StringBuffer(0);
+        sqlBuff.append("SELECT T.* FROM TF_FLOW_WARNING_TASK T");
+        sqlBuff.append(" WHERE T.SEND_TIME IS NULL AND T.NOTICE_ACTOR = 1 AND T.ERR_COUNT = 0 AND T.EXE_STATUS <> ?");
+        return jdbcTemplate.queryForList(sqlBuff.toString(), FlowWarningTask.STATUS_DONE);
+    }
+    
+    /**
+     * 在逾期多少时间后通知上级或标准角色/人员等
+     * @return
+     */
+    public List<Map<String, Object>> getFirstNoticeLeaderOrOthersTaskList(double overdueMinutes, int noticeActor) {
+        StringBuffer sqlBuff = new StringBuffer(0);
+        sqlBuff.append("SELECT T.* FROM TF_FLOW_WARNING_TASK T");
+        sqlBuff.append(" WHERE T.SEND_TIME IS NULL AND T.NOTICE_ACTOR = ? AND T.ERR_COUNT = 0");
+        sqlBuff.append(" AND (UNIX_TIMESTAMP(NOW()) - UNIX_TIMESTAMP(T.ACCEPT_TIME)) / 60 > ? AND T.EXE_STATUS <> ?");
+        return jdbcTemplate.queryForList(sqlBuff.toString(), noticeActor, overdueMinutes, FlowWarningTask.STATUS_DONE);
+    }
+    
+    /**
+     * 在逾期多少时间后通知上级或标准角色/人员等
+     * @return
+     */
+    public List<Map<String, Object>> getNextSentTimeTaskList(double overdueMinutes, int noticeActor) {
+        StringBuffer sqlBuff = new StringBuffer(0);
+        sqlBuff.append("SELECT T.* FROM TF_FLOW_WARNING_TASK T");
+        sqlBuff.append(" WHERE T.SEND_TIME IS NOT NULL AND T.NOTICE_ACTOR = ? AND T.ERR_COUNT = 0");
+        sqlBuff.append(" AND UNIX_TIMESTAMP(NOW()) >= (UNIX_TIMESTAMP(T.SEND_TIME) + ? * 60) AND T.EXE_STATUS <> ?");
+        return jdbcTemplate.queryForList(sqlBuff.toString(), noticeActor, overdueMinutes, FlowWarningTask.STATUS_DONE);
+    }
+    
+    /**
+     * 是否例外(标准角色/岗位/人员)不需要发送预警通知
+     * @param wiId 工作id
+     * @param participant 用户id
+     * @return
+     */
+    public boolean isException(Long wiId, Long participant, String noNoticeUsers) {
+        boolean b = false;
+        List<User> userList = participantDAO.getPaticipantUsers(noNoticeUsers);
+        if (userList != null && !userList.isEmpty()) {
+            for (User u : userList) {
+                if (u.getUserId().longValue() == participant.longValue()) {
+                    b = true;
+                    break;
+                }
+            }
+        }
+        return b;
+    }
+    
+    /**
+     * 发送通知
+     * @param noticeActor 预警通知的参与人
+     * @param wiId 工作id
+     */
+    public String sendNotice(Integer noticeActor, Long wiId, Long flowWarningTaskId, FlowWarning flowWarning) {
+        String msg = null;
+        try {
+            LinkedList<User> userList = null;
+            Wi wi = getDao().getById(Wi.class, wiId);
+            Long participant = wi.getParticipant();
+            // 通知类型
+            Integer noticeType = null;
+            if (noticeActor.intValue() == FlowWarning.NOTICE_SELF) { // 通知本人
+                noticeType = flowWarning.getNoticeType4Self();
+                User userDTO = copyUser2UserDTO(participant);
+                if (userDTO != null) {
+                    userList = new LinkedList<User>();
+                    userList.add(userDTO);
+                }
+            } else if (noticeActor.intValue() == FlowWarning.NOTICE_LEADER) { // 通知上级
+                noticeType = flowWarning.getNoticeType4Leader();
+                userList = participantDAO.getLeaderUsers(wi.getFiId(), participant);
+            } else if (noticeActor.intValue() == FlowWarning.NOTICE_OTHERS) { // 通知标准角色/岗位/用户
+                noticeType = flowWarning.getNoticeType4Others();
+                userList = participantDAO.getPaticipantUsers(wi.getFiId(), transPEIds(flowWarning.getNoticeUsers()), null, null);
+            }
+            
+            if (noticeType != null && userList !=null && !userList.isEmpty()) {
+                for (User user : userList) {
+                    switch (noticeType) {
+                        case FlowWarning.NOTICE_TYPE_SMG: // 发送消息催办
+                            msg = formFlowService.cuiBanUsers(wiId, user.getUserId().toString());
+                            break;
+                        case FlowWarning.NOTICE_TYPE_SMS: // 发送短信催办  
+                            sendEmailOrSMS(wi,user, FlowWarning.NOTICE_TYPE_SMS);
+                            break;
+                        case FlowWarning.NOTICE_TYPE_EMAIL:   // 发送邮件催办  
+                            sendEmailOrSMS(wi,user, FlowWarning.NOTICE_TYPE_EMAIL);
+                            break;
+                        default: // 不通知
+                            break;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return msg;
+    }
+
+    /**
+     * 拷贝userModel数据至UserDTO
+     * @param participant 用户id
+     * @param userDTO
+     * @return
+     */
+    private User copyUser2UserDTO(Long participant) {
+        User userDTO = null;
+        com.xinleju.erp.frame.models.User user = getDao().getById(com.xinleju.erp.frame.models.User.class, participant);
+        if (user != null) {
+            userDTO = new User();
+            userDTO.setUserId(user.getId());
+            userDTO.setLoginName(user.getLoginname());
+            userDTO.setContactPhone(user.getContactPhone());
+            userDTO.setEmail(user.getEmail());
+            userDTO.setMobile(user.getMobile());
+        }
+        return userDTO;
+    }
+    
+    /**
+     * 根据接收时间获取与当前时间相差分钟数
+     * @param acceptTime
+     * @return
+     */
+    public long calcAcceptTimeToNowMinutes(Date acceptTime) {
+        Date now = new Date();
+        return (now.getTime() - acceptTime.getTime()) / (FlowWarning.MINUTES * 1000);
+    }
+    
+    /**
+     * 计算下次执行时间
+     * @param sendDate
+     * @param noticeInterval
+     * @return
+     */
+    public Date calcNextNoticeDate(Date sendDate, Double noticeInterval, Integer isWorkDays, boolean todayIsHoliday) {
+        Calendar c = Calendar.getInstance();
+        c.setTimeInMillis(sendDate.getTime());
+        c.add(Calendar.MINUTE, Double.valueOf(noticeInterval * FlowWarning.MINUTES).intValue());
+        if (isWorkDays != null && isWorkDays.intValue() == FlowWarning.NON_WORK_DAY && todayIsHoliday) {
+            c.add(Calendar.MINUTE, 24 * FlowWarning.MINUTES);
+        }
+        return c.getTime();
+    }
+    
+    /**
+     * 日期比较
+     * @param sourceDate
+     * @param targetDate
+     * @return
+     */
+    public boolean isGE(Date sourceDate, Date targetDate) {
+        Calendar c1 = Calendar.getInstance();
+        c1.setTimeInMillis(sourceDate.getTime());
+        
+        Calendar c2 = Calendar.getInstance();
+        c2.setTimeInMillis(targetDate.getTime());
+        return c1.after(c2) || c1.equals(c2);
+    }
+    
+    /**
+     * 日期比较
+     * @param sourceDate
+     * @param targetDate
+     * @return
+     */
+    public boolean isLT(Date sourceDate, Date targetDate) {
+        Calendar c1 = Calendar.getInstance();
+        c1.setTimeInMillis(sourceDate.getTime());
+        
+        Calendar c2 = Calendar.getInstance();
+        c2.setTimeInMillis(targetDate.getTime());
+        return c1.before(c2);
+    }
+
+    @Override
+    public String transPEIds(String value) {
+        StringBuffer buff = new StringBuffer(0);
+        if (StringUtils.isNotBlank(value)) {
+            for (String item : value.split(";")) {
+                if (item.contains(IdName.ROLE_PREFIX) || item.contains(IdName.BRANCH_PREFIX) || item.contains(IdName.PROJECT_PREFIX)) {
+                    buff.append(item + ";");
+                    continue;
+                }
+                
+                DetachedCriteria dc = DetachedCriteria.forClass(PartyEntity.class);
+                dc.createAlias("partyType", "partyType");
+                dc.add(Restrictions.eq("id", Long.parseLong(item.split(":")[0].split("_")[1])));
+                List<PartyEntity> peList = getDao().findByCriteria(dc);
+                if (peList != null && !peList.isEmpty()) {
+                    
+                    PartyEntity pe = peList.get(0);
+                    String type = pe.getPartyType().getType();
+                    
+                    String prefix = null;
+                    
+                    if ("role".equals(type) || "user".equals(type)) {
+                        prefix = type.substring(0, 1).toUpperCase() + type.substring(1, type.length()) + "_";
+                    }
+                    if ("department".equals(type)) {
+                        prefix = IdName.ORGN_PREFIX;
+                    }
+                    if (StringUtils.isNotBlank(prefix)) {
+                        buff.append(prefix + pe.getRefId().intValue() + ":" + item.split(":")[1] + ";");
+                    }
+                }
+            }
+        }
+        return (buff.toString().length() > 0) ? buff.toString().substring(0, buff.toString().length() -1) : null;
+    }
+    
+    /**
+     * 发邮件或短信
+     * @param wi
+     * @param user
+     * @param type
+     */
+    public void sendEmailOrSMS(Wi wi, User user, int type){
+        if (null != wi){
+            WiBean wiBean = ApiUtils.buildWiBean(wi, true);
+            Long fiId = wiBean.getFiId();
+            BaseAPI baseAPIService = (BaseAPI)App.getBean(BaseAPI.class,ApiConstant.BEAN_CODE);
+            String title = "";
+            Fi fi = null;
+            if (null != fiId){
+                fi = getDao().getById(Fi.class, fiId);
+                FlowResult<RoleDTO> roleDto = baseAPIService.getMainRole(fi.getStartUserId());
+                title = flowEventMsgService.fixToWiMsgTitle(wiBean, fi, null != roleDto && null != roleDto.getResult() ? (StringUtils.isNotBlank(roleDto.getResult().getName()) ? roleDto.getResult().getName() : "") : "");
+            }
+            String defaultLink =  "Form!dealIndex.do?spWiId=" + wi.getId() + "&t=" + (new Date()).getTime();
+            String bakUrl = defaultLink;
+            String url = StringUtils.isBlank(bakUrl) ? defaultLink : bakUrl;
+            
+            if (type == FlowWarning.NOTICE_TYPE_EMAIL && StringUtils.isNotBlank(user.getEmail())) {
+                MailDTO mailDto = new MailDTO();
+                mailDto.setMailto(user.getEmail());
+                mailDto.setTitle(title);
+                mailDto.setContent(cuibanPrefixUrl + "/" + url);
+                baseAPIService.saveMail(mailDto);
+            }
+            
+            if (type == FlowWarning.NOTICE_TYPE_SMS && StringUtils.isNotBlank(user.getMobile())) {
+                SmDTO smDto = new SmDTO();
+                smDto.setPhoneNo(user.getMobile());
+                smDto.setContent(title);
+                baseAPIService.saveSm(smDto);
+            }
+        }
+    }
+    
+    public static void main(String[] args) {
+        System.out.println("role".substring(0, 4));
+    }
+    
+}

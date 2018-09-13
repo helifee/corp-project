@@ -1,0 +1,262 @@
+package com.xinleju.erp.flow.service.api;
+
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.base.app.utils.LogUtils;
+import com.xinleju.erp.flow.bean.CateBean;
+import com.xinleju.erp.flow.bean.CateValBean;
+import com.xinleju.erp.flow.utils.FlowConstant;
+
+/**
+ * 
+ * 
+ * <p>
+ * </p>
+ * <p>
+ * </p>
+ * 
+ * @author 孙朝辉
+ * @version $Id: CondCateService.java 618 2014-06-18 03:42:59Z sunchaohui $
+ * @since
+ * 
+ */
+@Service
+public class CondCateService extends BaseService {
+
+    /**
+     * 数据库访问
+     */
+    @Autowired
+    private JdbcTemplate jt;
+
+    /**
+     * 
+     * <p>
+     * 获取条件目录树
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param parentId
+     *            上级目录ID
+     * @return 目录集合
+     */
+    public List<Map<String, Object>> getCateTree(Long parentId, String prefix) {
+
+        List<CateBean> cates = getCateBeans(parentId, prefix);
+
+        List<Map<String, Object>> trees = new LinkedList<Map<String, Object>>();
+
+        for (CateBean cb : cates) {
+            Map<String, Object> tree = new HashMap<String, Object>();
+            tree.put("id", cb.getPrefix() + cb.getId().toString());
+            tree.put("text", cb.getName());
+            tree.put("prefix", cb.getPrefix());
+            tree.put("code", cb.getCode());
+            tree.put("leaf", cb.isLeaf());
+            trees.add(tree);
+        }
+
+        return trees;
+    }
+
+    /**
+     * 
+     * <p>
+     * 获取可用条件值树
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param cateId
+     *            目录ID
+     * @return 可用条件值集合
+     */
+    public List<Map<String, Object>> getCateValTree(Long cateId) {
+
+        List<Map<String, Object>> trees = new LinkedList<Map<String, Object>>();
+        if (cateId == null || cateId.intValue() == 0) {
+            return trees;
+        }
+
+        CateBean cate = jt.queryForObject("select t.id,t.name,t.code from sm_cate t where t.id = ?", new Object[] { cateId }, new CateMapper());
+
+        String cateCode = cate.getCode();
+        LogUtils.info("CateCode:" + cateCode);
+
+        // 回去所有分类下的可取值
+        List<CateValBean> cvbs = getAllCateValBeansByCate(cateId);
+
+        for (CateValBean cvb : cvbs) {
+            Map<String, Object> tree = new HashMap<String, Object>();
+            tree.put("id", cvb.getId());
+            tree.put("text", cvb.getName());
+            tree.put("leaf", true);
+            trees.add(tree);
+        }
+        return trees;
+    }
+
+    /**
+     * 返回 所有CateBeans
+     * 
+     * @param parentId
+     *            父亲ID
+     * @return CateBean集合
+     */
+    public List<CateBean> getCateBeans(Long parentId, String prefix) {
+        List<CateBean> cates = null;
+        if (StringUtils.isNotBlank(prefix)){
+            if ("Root_".equals(prefix)){
+                cates = new ArrayList<CateBean>();
+                CateBean cateBean = new CateBean();
+                cateBean.setId(0L);
+                cateBean.setCode("Cate");
+                cateBean.setName("条件目录");
+                cateBean.setPrefix("Cate_");
+                cateBean.setLeaf(false);
+                cates.add(cateBean);
+                
+                cateBean = new CateBean();
+                cateBean.setId(0L);
+                cateBean.setCode("App");
+                cateBean.setName("业务对象");
+                cateBean.setPrefix("App_");
+                cateBean.setLeaf(false);
+                cates.add(cateBean);
+            } else if ("Cate_".equals(prefix)){
+                if (parentId == null || parentId == 0) {
+                    // 返回根分类
+                    cates = jt.query("select t.id,t.name,t.code,'Cate_' as prefix,'false' as leaf from sm_cate t where t.parent_id is null order by t.position asc", new Object[] {}, new CateMapper());
+                } else {
+                    // 返回子分类
+                    cates = jt
+                            .query("select t.id,t.name,t.code,'Cate_' as prefix,(case (select COUNT(d.id) from sm_cate d where (d.parent_id = t.id)) when 0 then 'true' else 'false' end) as leaf from sm_cate t where t.parent_id = ? order by t.position asc", new Object[] { parentId }, new CateMapper());
+                }
+            } else if ("SoCate_".equals(prefix)){
+                if (parentId != null && parentId > 0 ) {
+                    // 返回根分类
+                    cates = jt.query("select t.id,t.name,t.field_type as code,'SoCateField_' as prefix,'true' as leaf from sm_service_object_field t where t.service_object_define_id = ? order by t.name asc", new Object[] {parentId}, new CateMapper());
+                }
+            } else if ("App_".equals(prefix)){
+                if (parentId == null || parentId == 0) {
+                    // 返回根分类
+                    cates = jt.query("select t.id,t.name,t.code,'App_' as prefix,'false' as leaf from sm_app t order by t.px asc", new Object[] {}, new CateMapper());
+                } else {
+                    // 返回子分类
+                    cates = jt.query("select t.id,t.name,t.code,'SoCate_' as prefix,'false' as leaf from sm_service_object_define t inner join sm_app a on t.module_code = a.code where a.id = ? order by t.id asc", new Object[] { parentId }, new CateMapper());
+                }
+            }
+        }
+        if (null == cates){
+            cates = new ArrayList<CateBean>();
+        }
+        return cates;
+    }
+    /**
+     * 
+     * <p>
+     * 获得所有条件目录
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @return 条件目录集合
+     */
+    public List<CateValBean> getAllCateValBeans() {
+        List<CateValBean> cvbs = jt.query(
+                "select t.id,t.name,t.val,c.date_type from sm_cate_val t left join sm_cate c on c.id = t.cate_id order by LENGTH(t.name) desc",
+                new Object[] {}, new CateValMapper());
+
+        return cvbs;
+    }
+
+    /**
+     * 
+     * <p>
+     * 获得所有条件值
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param cateId
+     *            目录IDCateValBean
+     * @return CateValBean集合
+     */
+    public List<CateValBean> getAllCateValBeansByCate(Long cateId) {
+        List<CateValBean> cvbs = jt.query("select t.id,t.name,t.val,c.date_type from sm_cate_val t "
+                + "left join sm_cate c on c.id = t.cate_id where t.cate_id = ? order by LENGTH(t.name) desc", new Object[] { cateId }, new CateValMapper());
+
+        return cvbs;
+    }
+
+    /**
+     * 
+     * 
+     * <p>
+     * 条件目录RowMapper
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author Administrator
+     * @version $Id: CondCateService.java 618 2014-06-18 03:42:59Z sunchaohui $
+     * @since
+     * 
+     */
+    public class CateMapper implements RowMapper<CateBean> {
+        @Override
+        public CateBean mapRow(ResultSet arg0, int arg1) throws SQLException {
+            CateBean cb = new CateBean();
+            cb.setId(arg0.getLong("id"));
+            cb.setName(arg0.getString("name"));
+            cb.setCode(arg0.getString("code"));
+            cb.setPrefix(arg0.getString("prefix"));
+            cb.setLeaf(FlowConstant.STR_TRUE.equals(arg0.getString("leaf")));
+            return cb;
+        }
+    }
+
+    /**
+     * 
+     * 
+     * <p>
+     * 条件值RowMapper
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author Administrator
+     * @version $Id: CondCateService.java 618 2014-06-18 03:42:59Z sunchaohui $
+     * @since
+     * 
+     */
+    public class CateValMapper implements RowMapper<CateValBean> {
+        @Override
+        public CateValBean mapRow(ResultSet arg0, int arg1) throws SQLException {
+            CateValBean cvb = new CateValBean();
+            cvb.setId(arg0.getLong("id"));
+            cvb.setName(arg0.getString("name"));
+            cvb.setDateType(arg0.getString("date_type"));
+            cvb.setVal(arg0.getString("val"));
+            return cvb;
+        }
+    }
+}

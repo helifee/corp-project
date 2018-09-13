@@ -1,0 +1,1142 @@
+package com.cnaps.hvps.dao;
+
+import java.io.BufferedReader;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.math.BigDecimal;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
+
+import org.hibernate.Session;
+import org.springframework.orm.hibernate3.support.HibernateDaoSupport;
+
+import com.bancstone.common.dao.impl.GenericHibernateDaoSupportImpl;
+import com.cnaps.hvps.persistence.duizhang.BEPSDuizhangEntity;
+import com.cnaps.hvps.persistence.duizhang.Bepscollectedchckinf;
+import com.cnaps.hvps.persistence.duizhang.Bepsdetailchckrspdtl;
+import com.cnaps.hvps.persistence.duizhang.CoreDuizhangEntity;
+import com.cnaps.hvps.persistence.duizhang.DuizhangEntity;
+import com.cnaps.hvps.persistence.duizhang.ExceptionEntity;
+import com.cnaps.hvps.persistence.duizhang.Hvpscollectedchckinf;
+import com.cnaps.hvps.persistence.duizhang.Hvpsdetailchckrspdtl;
+import com.cnaps.hvps.persistence.duizhang.TotalAcctEntity;
+
+public class DuizhangDao extends GenericHibernateDaoSupportImpl {
+
+	/**
+	 * 汇总对账
+	 * 按照来往标识、业务状态、业务类型编码、清算日期查询发送或接收报文总数及交易总金额
+	 * @param direction
+	 * @param prcSts
+	 * @param pmtTp
+	 * @param chckDt
+	 * @return
+	 */
+	public DuizhangEntity checkTotalAcct(String msgTpCd,String direction,String prcSts, String pmtTp,String chckDt,String systemCd,String netgRnd){
+		DuizhangEntity entity = new DuizhangEntity();
+		Connection conn = null;
+		PreparedStatement pst = null;
+		ResultSet rs =null;
+		Session session = this.getHibernateTemplate().getSessionFactory().openSession();
+		String sql = "";
+		
+		if("HVPS".equals(systemCd)){
+			sql ="select count(1) as num,NVL(sum(Amount),0) as totalAmt from HVPSMSGRGSTR o where o.prcSts='"+prcSts
+	 			+"' and o.pmtTp='"+pmtTp+"' and o.sttlmDt='"+chckDt+"' and o.direction='"+direction+"'"+" and o.MsgTpCd='"+msgTpCd+"'" ;
+		}else{
+			if("PR04".equals(prcSts)){//已清算
+				 sql ="select NVL(sum(OrnglNbOfTxs),0) as num, NVL(sum(OrnglCtrlSum),0) as totalAmt from BEPSMSGRGSTR o where o.prcSts='"+prcSts
+			 		+"' and o.MsgTpCd='"+pmtTp+"' and o.NetgDt='"+chckDt+"' and o.direction='"+direction+"' and o.netgRnd='"+netgRnd+"' ";
+			}else{
+				 sql ="select NVL(sum(OrnglNbOfTxs),0) as num, NVL(sum(OrnglCtrlSum),0) as totalAmt from BEPSMSGRGSTR o where o.prcSts='"+prcSts
+			 		+"' and o.MsgTpCd='"+pmtTp+"' and o.NetgDt='"+chckDt+"' and o.direction='"+direction+"'";
+			}
+			
+		}
+		
+		try {
+			conn = session.connection();
+			conn.setAutoCommit(false);
+			pst = conn.prepareStatement(sql) ;
+			rs = pst.executeQuery();
+			while(rs.next()){
+				entity.setNum(rs.getString("num"));
+				entity.setTotalAmt(rs.getString("totalAmt"));
+			}
+			conn.commit();
+		} catch (SQLException e) {
+			try {
+				conn.rollback();
+			} catch (SQLException e1) {
+				e1.printStackTrace();
+			}
+			
+			e.printStackTrace();
+		}finally{
+			try {
+				if(rs!=null){
+					rs.close();
+				}
+				pst.close();
+				conn.close();
+			} catch (SQLException e) {
+				e.printStackTrace();
+			}
+			this.releaseSession(session);
+		}
+		return entity;
+	}
+	
+	
+	
+	/**
+	 * 大额汇总对账明细查询
+	 * 按照业务类型查询明细，分为业务状态，发送总笔数，发送总金额，接收总笔数，接收总金额
+	 * @param pmtTp
+	 * @param procStateList
+	 * @param chckDt
+	 * @return
+	 */
+	public TotalAcctEntity checkTotalAcctByPmtTp(String msgTpCd,String pmtTp,List procStateList,String chckDt){
+		TotalAcctEntity totalAcct =  new TotalAcctEntity();
+		totalAcct.setChckdt(chckDt);
+		totalAcct.setPmtTp(pmtTp); //业务类型
+		totalAcct.setMsgTpCd(msgTpCd); //报文类型
+		
+		boolean result = true;
+		List list = new ArrayList();
+		for(int i=0;i<procStateList.size();i++){
+			if("K100".equals(pmtTp)||"K101".equals(pmtTp)){//信息类对账
+				if("PR09".equals(procStateList.get(i).toString())
+						||"PR05".equals(procStateList.get(i).toString())){
+					DuizhangEntity entity = checkDuizhangHVPS(msgTpCd,chckDt, procStateList.get(i).toString(), pmtTp);
+					entity.setChckDt(chckDt);//对账日期
+					entity.setPrcSts(procStateList.get(i).toString());//业务处理状态
+					entity.setPmtTp(pmtTp);//业务类型编码
+					
+					entity  = checkDuizhangHVPS(msgTpCd,chckDt, procStateList.get(i).toString(), pmtTp);
+					//判断比对结果
+					if ("1".equals(entity.getSendNumFlag())||"1".equals(entity.getSendAmtFlag())
+							||"1".equals(entity.getRecvNumFlag())||"1".equals(entity.getRecvAmtFlag())) {
+						result = false;
+					}
+					list.add(entity);
+				}
+				
+			}else{//业务类对账
+				if(!("PR05".equals(procStateList.get(i).toString()))){
+					DuizhangEntity entity = checkDuizhangHVPS(msgTpCd,chckDt, procStateList.get(i).toString(), pmtTp);
+					entity.setChckDt(chckDt);//对账日期
+					entity.setPrcSts(procStateList.get(i).toString());//业务处理状态
+					entity.setPmtTp(pmtTp);//业务类型编码
+					
+					entity  = checkDuizhangHVPS(msgTpCd,chckDt, procStateList.get(i).toString(), pmtTp);
+					//判断比对结果
+					if ("1".equals(entity.getSendNumFlag())||"1".equals(entity.getSendAmtFlag())
+							||"1".equals(entity.getRecvNumFlag())||"1".equals(entity.getRecvAmtFlag())) {
+						result = false;
+					}
+					list.add(entity);
+				}
+			}
+			
+			
+		}
+		if(result){
+			totalAcct.setChckResult("0");//总结果比对一致
+		}else{
+			totalAcct.setChckResult("1");//总结果比对不一致
+		}
+		totalAcct.setDuizhangList(list);
+		return totalAcct;
+	}
+	
+	/**
+	 * 小额汇总对账
+	 * 按照业务类型查询明细，分为业务状态，发送总笔数，发送总金额，接收总笔数，接收总金额
+	 * @param pmtTp
+	 * @param procStateList
+	 * @param chckDt
+	 * @return
+	 */
+	public TotalAcctEntity checkTotalAcctByMsgTp(String msgTp,List procStateList,String chckDt){
+		TotalAcctEntity totalAcct =  new TotalAcctEntity();
+		totalAcct.setChckdt(chckDt);
+		totalAcct.setMsgTp(msgTp);//报文类型编码
+		
+		boolean result = true;
+		List list = new ArrayList();
+		for(int i=0;i<procStateList.size();i++){
+			DuizhangEntity entity = new DuizhangEntity();
+			entity.setMsgTpCd(msgTp);//报文类型编码
+			entity.setChckDt(chckDt);//对账日期
+			entity.setPrcSts(procStateList.get(i).toString());//业务处理状态
+			//信息类对账规则：状态不为已清算和已撤销的；报文类型为普通借记，定期借记，查询书，查复书
+			if("beps.127.001.01".equals(msgTp)||"beps.133.001.01".equals(msgTp)//普通阶级
+					||"ccms.314.001.01".equals(msgTp)||"ccms.315.001.01".equals(msgTp)){//信息类对账
+			
+				if("PR04".equals( procStateList.get(i).toString())||"PR08".equals( procStateList.get(i).toString())){
+					//PR04-已清算  PR08-已撤销
+				}else{
+					entity  = checkDuizhangBEPS(chckDt, procStateList.get(i).toString(), msgTp,"");
+					if ("1".equals(entity.getSendNumFlag())||"1".equals(entity.getSendAmtFlag())
+							||"1".equals(entity.getRecvNumFlag())||"1".equals(entity.getRecvAmtFlag())) {
+						result = false;
+					}
+					list.add(entity);
+				}
+				
+			
+			}else{//业务类对账
+				//业务类对账规则：状态不为已成功的；报文类型不为普通借记，定期借记，查询书，查复书
+				if("PR04".equals(procStateList.get(i).toString())){//已清算，区分轧差场次
+					int netgRnd = getNetgRnd(chckDt)+1;//轧差场次
+					List bepsList = new ArrayList();
+					
+					for(int j=1;j<netgRnd;j++){
+						DuizhangEntity dzentity  = checkDuizhangBEPS(chckDt, procStateList.get(i).toString(), msgTp,String.valueOf(j));
+						BEPSDuizhangEntity bepsEntity = new BEPSDuizhangEntity();
+						//对账发送信息
+						bepsEntity.setNetgRnd(String.valueOf(j));//轧差场次
+						bepsEntity.setSndTtlCnt(dzentity.getSndTtlCnt());//发送总笔数
+						bepsEntity.setSndTtlAmt(dzentity.getSndTtlAmt());//发送总金额
+						bepsEntity.setRhsndTtlCnt(dzentity.getRhsndTtlCnt());//人行发送总笔数
+						bepsEntity.setRhsndTtlAmt(dzentity.getRhsndTtlAmt());//人行发送总金额
+						bepsEntity.setRcvTtlCnt(dzentity.getRcvTtlCnt());//接收总笔数
+						bepsEntity.setRcvTtlAmt(dzentity.getRcvTtlAmt());//接收总金额
+						bepsEntity.setRhrcvTtlCnt(dzentity.getRhrcvTtlCnt());//人行接收总笔数
+						bepsEntity.setRhrcvTtlAmt(dzentity.getRhrcvTtlAmt());//人行接收总金额
+						bepsEntity.setSendNumFlag(dzentity.getSendNumFlag());
+						bepsEntity.setSendAmtFlag(dzentity.getSendAmtFlag());
+						bepsEntity.setRecvNumFlag(dzentity.getRecvNumFlag());
+						bepsEntity.setRecvAmtFlag(dzentity.getRecvNumFlag());
+						bepsList.add(bepsEntity);
+						
+					}
+					entity.setBepsList(bepsList);
+					for(int k=0;k<bepsList.size();k++){
+						BEPSDuizhangEntity bepsdzentity = (BEPSDuizhangEntity)bepsList.get(k);
+						if("1".equals(bepsdzentity.getSendNumFlag())||"1".equals(bepsdzentity.getSendAmtFlag())
+								||"1".equals(bepsdzentity.getRecvNumFlag())||"1".equals(bepsdzentity.getRecvAmtFlag())){
+							result = false;
+							break;
+						}
+					}
+					list.add(entity);
+				}else{//非已清算的不区分轧差场次
+					if("PR09".equals( procStateList.get(i).toString())||"PR08".equals( procStateList.get(i).toString())){
+						entity  = checkDuizhangBEPS(chckDt, procStateList.get(i).toString(), msgTp,"");
+						if ("1".equals(entity.getSendNumFlag())||"1".equals(entity.getSendAmtFlag())
+								||"1".equals(entity.getRecvNumFlag())||"1".equals(entity.getRecvAmtFlag())) {
+							result = false;
+						}
+						list.add(entity);
+					}
+					
+				}
+				
+			}
+		}
+		
+		if(result){
+			totalAcct.setChckResult("0");//总结果比对一致
+		}else{
+			totalAcct.setChckResult("1");//总结果比对不一致
+		}
+		totalAcct.setDuizhangList(list);
+		return totalAcct;
+	}
+	
+	/**
+	 * 大额核对查询
+	 * @param chckDt
+	 * @param procst
+	 * @param pmtTp
+	 * @return
+	 */
+	public DuizhangEntity checkDuizhangHVPS(String msgTpCd,String chckDt,String procst,String pmtTp){
+		DuizhangEntity entity = checkTotalAcct(msgTpCd,"O", procst, pmtTp, chckDt,"HVPS","");
+		Hvpscollectedchckinf chckEntity = queryChkDetailsHVPS(pmtTp, procst, chckDt);
+		entity.setChckDt(chckDt);//对账日期
+		entity.setPrcSts(procst);//业务处理状态
+		entity.setMsgTpCd(pmtTp);//报文类型编码
+		
+		//对账发送信息
+		entity.setSndTtlCnt(entity.getNum());//发送总笔数
+		entity.setSndTtlAmt(entity.getTotalAmt());//发送总金额
+		entity.setRhsndTtlCnt(chckEntity.getSndttlcnt());//人行发送总笔数
+		entity.setRhsndTtlAmt(chckEntity.getSndttlamt());//人行发送总金额
+		
+		
+		BigDecimal decimalAW = new BigDecimal(chckEntity.getSndttlcnt().longValue());
+		BigDecimal decimalBW = new BigDecimal(Long.parseLong(entity.getNum()));
+		
+
+		if(decimalAW.compareTo(decimalBW)==0){
+			entity.setSendNumFlag("0");//比对一致
+		}else{
+			entity.setSendNumFlag("1");//比对不一致
+		}
+		BigDecimal decimal1 = new BigDecimal(entity.getTotalAmt());
+		BigDecimal decimal2 = new BigDecimal(chckEntity.getSndttlamt());
+		
+		if(decimal1.compareTo(decimal2)==0){
+			entity.setSendAmtFlag("0");//比对一致
+		}else{
+			entity.setSendAmtFlag("1");//比对不一致
+		}
+		
+		
+		
+		//对账接收信息
+		DuizhangEntity entity1 = checkTotalAcct(msgTpCd,"I", procst, pmtTp, chckDt,"HVPS","");
+		entity.setRcvTtlCnt(entity1.getNum());//接收总笔数
+		entity.setRcvTtlAmt(entity1.getTotalAmt());//接收总金额
+		entity.setRhrcvTtlCnt(chckEntity.getRcvttlcnt());//人行接收总笔数
+		entity.setRhrcvTtlAmt(chckEntity.getRcvttlamt());//人行接收总金额
+		BigDecimal decimalAL = new BigDecimal(chckEntity.getRcvttlcnt().longValue());
+		BigDecimal decimalBL = new BigDecimal(Long.parseLong(entity.getNum()));
+		if(decimalAL.compareTo(decimalBL)==0){
+			entity.setRecvNumFlag("0");//比对一致
+		}else{
+			entity.setRecvNumFlag("1");//比对不一致
+		}
+		BigDecimal decimal3 = new BigDecimal(entity1.getTotalAmt());
+		BigDecimal decimal4 = new BigDecimal(chckEntity.getRcvttlamt());
+		if(decimal3.compareTo(decimal4)==0){
+			entity.setRecvAmtFlag("0");//比对一致
+		}else{
+			entity.setRecvAmtFlag("1");//比对不一致
+		}
+		return entity;
+	}
+	
+	/**
+	 * 小额对账查询
+	 * @param chckDt
+	 * @param procst
+	 * @param msgTp
+	 * @return
+	 */
+	public DuizhangEntity checkDuizhangBEPS(String chckDt,String procst,String msgTp,String netgRnd){
+		DuizhangEntity entity = checkTotalAcct("","O", procst, msgTp, chckDt,"BEPS",netgRnd);
+		Bepscollectedchckinf chckEntity = queryChkDetailsBEPS(msgTp, procst, chckDt);
+		entity.setChckDt(chckDt);//对账日期
+		entity.setPrcSts(procst);//业务处理状态
+		entity.setMsgTpCd(msgTp);//报文类型编码
+		
+		//对账发送信息
+		entity.setSndTtlCnt(entity.getNum());//发送总笔数
+		entity.setSndTtlAmt(entity.getTotalAmt());//发送总金额
+		entity.setRhsndTtlCnt(chckEntity.getSndttlcnt());//人行发送总笔数
+		entity.setRhsndTtlAmt(chckEntity.getSndttlamt());//人行发送总金额
+		BigDecimal decimalAW = new BigDecimal(chckEntity.getSndttlcnt().longValue());
+		BigDecimal decimalBW = new BigDecimal(Long.parseLong(entity.getNum()));
+		if(decimalAW.compareTo(decimalBW)==0){
+			entity.setSendNumFlag("0");//比对一致
+		}else{
+			entity.setSendNumFlag("1");//比对不一致
+		}
+		BigDecimal decimal1 = new BigDecimal(entity.getTotalAmt());
+		BigDecimal decimal2 = new BigDecimal(chckEntity.getSndttlamt());
+		if(decimal1.compareTo(decimal2)==0){
+			entity.setSendAmtFlag("0");//比对一致
+		}else{
+			entity.setSendAmtFlag("1");//比对不一致
+		}
+		
+		//对账接收信息
+		DuizhangEntity entity1 = checkTotalAcct("","I", procst, msgTp, chckDt,"BEPS",netgRnd);
+		entity.setRcvTtlCnt(entity1.getNum());//接收总笔数
+		entity.setRcvTtlAmt(entity1.getTotalAmt());//接收总金额
+		entity.setRhrcvTtlCnt(chckEntity.getRcvttlcnt());//人行接收总笔数
+		entity.setRhrcvTtlAmt(chckEntity.getRcvttlamt());//人行接收总金额
+		BigDecimal decimalAL = new BigDecimal(chckEntity.getRcvttlcnt().longValue());
+		BigDecimal decimalBL = new BigDecimal(Long.parseLong(entity1.getNum()));
+		if(decimalAL.compareTo(decimalBL)==0){
+			entity.setRecvNumFlag("0");//比对一致
+		}else{
+			entity.setRecvNumFlag("1");//比对不一致
+		}
+		BigDecimal decimal3 = new BigDecimal(entity1.getTotalAmt());
+		BigDecimal decimal4 = new BigDecimal(chckEntity.getRcvttlamt());
+		if(decimal3.compareTo(decimal4)==0){
+			entity.setRecvAmtFlag("0");//比对一致
+		}else{
+			entity.setRecvAmtFlag("1");//比对不一致
+		}
+		return entity;
+	}
+	
+	
+	
+	/**
+	 * 大额汇总通知明细查询
+	 * @param pmtTp
+	 * @param procState
+	 * @param chckDt
+	 * @return
+	 */
+	public Hvpscollectedchckinf queryChkDetailsHVPS(String pmtTp,String procState,String chckDt){
+		Hvpscollectedchckinf entity = new Hvpscollectedchckinf();
+		String sql = "From Hvpscollectedchckinf o where o.chckdt='"+chckDt
+				+"' and o.pmttp='"+pmtTp+"' and o.prcsts='"+procState+"'";
+		List list = this.getHibernateTemplate().find(sql);
+		if(list.size()>0){
+			entity = (Hvpscollectedchckinf)list.get(0);
+		}
+		return entity;
+	}
+	
+	/**
+	 * 小额汇总通知明细查询
+	 * @param pmtTp
+	 * @param procState
+	 * @param chckDt
+	 * @return
+	 */
+	public Bepscollectedchckinf queryChkDetailsBEPS(String msgTp,String procState,String chckDt){
+		Bepscollectedchckinf entity = new Bepscollectedchckinf();
+		String sql = "From Bepscollectedchckinf o where o.chckdt='"+chckDt
+				+"' and o.msgtpcd='"+msgTp+"' and o.prcsts='"+procState+"'";
+		List list = this.getHibernateTemplate().find(sql);
+		if(list.size()>0){
+			entity = (Bepscollectedchckinf)list.get(0);
+		}
+		return entity;
+	}
+	
+	/**
+	 * 获得轧差场次
+	 * @param proDate
+	 * @return
+	 */
+	public int getNetgRnd(String chckdt){
+		String sql = "select max(CAST(o.netgrnd,integer)) from Bepscollectedchckinf o where o.chckdt = '"+chckdt+"'";
+		List list = this.getHibernateTemplate().find(sql);
+		int maxNetgRnd  = 0;
+		if(list.size()>0){
+			maxNetgRnd = Integer.parseInt(list.get(0).toString());
+		}
+		return maxNetgRnd;
+	}
+	
+	/**
+	 * 大额业务明细核对申请查询
+	 * @param hql
+	 * @return
+	 */
+	public List listHvpsDetais(String id) {
+		String sql ="select o.*,t.MsgId,t.SttlmDt,t.prcSts as OrgPrcSts from Hvpsdetailchckrspdtl o " +
+				" left join HVPSMSGRGSTR t on o.OrgnlMsgId=t.MsgId where o.id='"+id+"'";
+		List list = new ArrayList();
+		Connection conn = null;
+		PreparedStatement pst = null;
+		ResultSet rs =null;
+		Session session = this.getHibernateTemplate().getSessionFactory().openSession();
+		try {
+			conn = session.connection();
+			conn.setAutoCommit(false);
+			pst = conn.prepareStatement(sql);
+			
+			rs = pst.executeQuery();
+			while(rs.next()){
+				Hvpsdetailchckrspdtl checkdetail = new Hvpsdetailchckrspdtl();
+				checkdetail.setId(rs.getLong("id"));//主键
+				checkdetail.setPrntid(rs.getLong("prntid"));//关联序号
+				checkdetail.setOrgnlmsgid(rs.getString("orgnlmsgid"));//原报文标识号
+				checkdetail.setOrgnlinstgpty(rs.getString("orgnlinstgpty"));//原发起参与机构
+				checkdetail.setOrgnlmsgtpcd(rs.getString("orgnlmsgtpcd"));//原业务类型编码
+				checkdetail.setAmount(rs.getDouble("amount"));//汇款金额
+				checkdetail.setPrcsts(rs.getString("prcsts"));//处理状态
+				
+				checkdetail.setMsgId(rs.getString("msgid"));//登记薄报文标识号
+				checkdetail.setSttlmDt(rs.getString("SttlmDt"));//登记薄终态日期
+				checkdetail.setOrgPrcSts(rs.getString("OrgPrcSts"));//登记薄处理状态
+				
+				list.add(checkdetail);
+			}
+			conn.commit();
+		} catch (SQLException e) {
+			try {
+				conn.rollback();
+			} catch (SQLException e1) {
+				e1.printStackTrace();
+			}
+			
+			e.printStackTrace();
+		}finally{
+			
+			try {
+				if(rs!=null){
+					rs.close();
+				}
+				pst.close();
+				conn.close();
+			} catch (SQLException e) {
+				e.printStackTrace();
+			}
+			this.releaseSession(session);
+		}
+		return list;
+	}
+	/**
+	 * 小额业务明细核对申请查询
+	 * @param hql
+	 * @return
+	 */
+	public List listBepsDetais(String id) {
+		String sql ="select o.*,t.MsgId,t.SttlmDt,t.NetgDt,t.prcSts as OrgPrcSts from Bepsdetailchckrspdtl o " +
+				" left join BEPSMSGRGSTR t on o.OrgnlMsgId=t.MsgId where o.id='"+id+"'";
+		List list = new ArrayList();
+		Connection conn = null;
+		PreparedStatement pst = null;
+		ResultSet rs =null;
+		Session session = this.getHibernateTemplate().getSessionFactory().openSession();
+		try {
+			conn = session.connection();
+			conn.setAutoCommit(false);
+			pst = conn.prepareStatement(sql);
+			
+			rs = pst.executeQuery();
+			while(rs.next()){
+				Bepsdetailchckrspdtl checkdetail = new Bepsdetailchckrspdtl();
+				checkdetail.setId(rs.getLong("id"));//主键
+				checkdetail.setPrntid(rs.getLong("prntid"));//关联序号
+				checkdetail.setOrgnlmsgid(rs.getString("orgnlmsgid"));//原报文标识号
+				checkdetail.setOrgnlinstgpty(rs.getString("orgnlinstgpty"));//原发起参与机构
+				checkdetail.setOrgnlmsgtpcd(rs.getString("orgnlmsgtpcd"));//原报文类型编码
+				checkdetail.setNboftxs(rs.getLong("nboftxs"));//明细业务总笔数
+				checkdetail.setCtrlsum(rs.getDouble("ctrlsum"));//明细业务总金额
+				checkdetail.setPrcsts(rs.getString("prcsts"));//处理状态
+				
+				checkdetail.setMsgId(rs.getString("msgid"));//登记薄报文标识号
+				checkdetail.setSttlmDt(rs.getString("SttlmDt"));//登记薄清算日期
+				checkdetail.setNetgDt(rs.getString("NetgDt"));//登记薄终态日期
+				checkdetail.setOrgPrcSts(rs.getString("OrgPrcSts"));//登记薄处理状态
+				
+				list.add(checkdetail);
+			}
+			conn.commit();
+		} catch (SQLException e) {
+			try {
+				conn.rollback();
+			} catch (SQLException e1) {
+				e1.printStackTrace();
+			}
+			
+			e.printStackTrace();
+		}finally{
+			
+			try {
+				if(rs!=null){
+					rs.close();
+				}
+				pst.close();
+				conn.close();
+			} catch (SQLException e) {
+				e.printStackTrace();
+			}
+			this.releaseSession(session);
+		}
+		return list;
+	}
+	
+	
+	/**
+	 * 异常查询
+	 * 按照来往标识、业务状态、业务类型编码、清算日期查询发送或接收报文总数及交易总金额
+	 * 
+	 * 异常状态：PR98-待确认 PR90-新建 PR91-待复核 PR92-待审核 PR93-待审批 PR95-待组包
+			   PR96-待发送 PR97-已发送 PR11-已轧差排队 PR12-已清算排队 PR99-故障
+			   PR03-已轧差 PR89-待回执 PR88-已回执
+	 * @param direction
+	 * @param prcSts
+	 * @param pmtTp
+	 * @param chckDt
+	 * @return
+	 */
+	public DuizhangEntity checkTotalAcctException(String direction,String pmtTp,String chckDt,String systemCd){
+		DuizhangEntity entity = new DuizhangEntity();
+		Connection conn = null;
+		PreparedStatement pst = null;
+		ResultSet rs =null;
+		Session session = this.getHibernateTemplate().getSessionFactory().openSession();
+		String sql = "";
+		if("HVPS".equals(systemCd)){
+			sql ="select count(1) as num from HVPSMSGRGSTR o where o.prcSts in " +
+					"('PR98','PR90','PR91','PR92','PR93','PR95'," +
+			 		"'PR96','PR97','PR11','PR12','PR99','PR03','PR89','PR88')"
+	 			+" and o.pmtTp='"+pmtTp+"' and o.sttlmDt='"+chckDt+"' and o.direction='"+direction+"'";
+		}else{
+			 sql ="select NVL(sum(NbOfTxs),0) as num from BEPSMSGRGSTR o where o.prcSts in " +
+			 		"('PR98','PR90','PR91','PR92','PR93','PR95'," +
+			 		"'PR96','PR97','PR11','PR12','PR99','PR03','PR89','PR88')"
+		 		+" and o.MsgTpCd='"+pmtTp+"' and o.NetgDt='"+chckDt+"' and o.direction='"+direction+"'";
+		}
+		
+		try {
+			conn = session.connection();
+			conn.setAutoCommit(false);
+			pst = conn.prepareStatement(sql);
+			rs = pst.executeQuery();
+			while(rs.next()){
+				entity.setNum(rs.getString("num"));
+			}
+			conn.commit();
+		} catch (SQLException e) {
+			try {
+				conn.rollback();
+			} catch (SQLException e1) {
+				e1.printStackTrace();
+			}
+			
+			e.printStackTrace();
+		}finally{
+			try {
+				if(rs!=null){
+					rs.close();
+				}
+				pst.close();
+				conn.close();
+			} catch (SQLException e) {
+				e.printStackTrace();
+			}
+			this.releaseSession(session);
+		}
+		return entity;
+	}
+	
+
+	/**
+	 * 异常查询
+	 * 按照来往标识、业务状态、业务类型编码、清算日期查询发送或接收报文总数及交易总金额
+	 * 
+	 * 异常状态：PR98-待确认 PR90-新建 PR91-待复核 PR92-待审核 PR93-待审批 PR95-待组包
+			   PR96-待发送 PR97-已发送 PR11-已轧差排队 PR12-已清算排队 PR99-故障
+			   PR03-已轧差 PR89-待回执 PR88-已回执
+	 * @param direction
+	 * @param prcSts
+	 * @param pmtTp
+	 * @param chckDt
+	 * @return
+	 */
+	public List checkTotalAcctExceptionDetl(String pmtTp,String chckDt,String systemCd){
+		List list = new ArrayList();
+		
+		Connection conn = null;
+		PreparedStatement pst = null;
+		ResultSet rs =null;
+		Session session = this.getHibernateTemplate().getSessionFactory().openSession();
+		String  sql ="select o.PmtGrpId,o.TxId,o.PmtTp,o.MsgId,o.MsgTpId,o.Amount,o.TotalAmt,o.SttlmDt," +
+				"o.Status,o.Direction,o.NetgDt,o.NetgRnd,o.ProposerAcct,o.InstgPty from CNAPSPMTCOLLECT o where o.Status in " +
+			"('PR98','PR90','PR91','PR92','PR93','PR95'," +
+	 		"'PR96','PR97','PR11','PR12','PR99','PR03','PR89','PR88')"
+			+" and o.pmtTp='"+pmtTp+"' and o.sttlmDt='"+chckDt+"' and SystemCd='"+systemCd+"' ";
+		try {
+			conn = session.connection();
+			conn.setAutoCommit(false);
+			pst = conn.prepareStatement(sql);
+			rs = pst.executeQuery();
+			while(rs.next()){
+				ExceptionEntity entity = new ExceptionEntity();
+				entity.setPmtGrpId(rs.getString("PmtGrpId"));//支付业务组号
+				entity.setTxId(rs.getString("txId"));//支付业务序号
+				entity.setPmtTp(rs.getString("pmtTp"));//业务类型编码
+				entity.setMsgId(rs.getString("MsgId"));//报文标识号
+				entity.setMsgTpCd(rs.getString("MsgTpId"));//报文类型编码
+				entity.setAmount(rs.getString("Amount"));//汇款金额
+				entity.setTotalAmt(rs.getString("TotalAmt"));//总金额
+				entity.setSttlmDt(rs.getString("sttlmDt"));//清算日期
+				entity.setPrcSts(rs.getString("Status"));//业务状态
+				entity.setDirection(rs.getString("direction"));//来往标识
+				entity.setNetgDt(rs.getString("NetgDt"));//轧差日期
+				entity.setNetgRnd(rs.getString("NetgRnd"));//轧差场次
+				entity.setProposerAcct(rs.getString("ProposerAcct"));//申请人账号
+				entity.setInstgPty(rs.getString("instgPty"));//参与机构
+				list.add(entity);
+			}
+			conn.commit();
+		} catch (SQLException e) {
+			try {
+				conn.rollback();
+			} catch (SQLException e1) {
+				e1.printStackTrace();
+			}
+			
+			e.printStackTrace();
+		}finally{
+			try {
+				if(rs!=null){
+					rs.close();
+				}
+				pst.close();
+				conn.close();
+			} catch (SQLException e) {
+				e.printStackTrace();
+			}
+			this.releaseSession(session);
+		}
+		return list;
+	}
+	
+	
+	
+	/**
+	 * 异常核对查询
+	 * @param chckDt
+	 * @param procst
+	 * @param pmtTp
+	 * @return
+	 */
+	public DuizhangEntity checkException(String chckDt,String pmtTp,String systemcd){
+		DuizhangEntity entity = checkTotalAcctException("O", pmtTp, chckDt,systemcd);
+		entity.setChckDt(chckDt);//对账日期
+		entity.setPmtTp(pmtTp);//小额-报文类型编码 大额-业务类型编码
+		//对账发送信息
+		entity.setSendExceptionNum(entity.getNum());//发送异常总数
+		//对账接收信息
+		DuizhangEntity entity1 = checkTotalAcctException("I", pmtTp, chckDt,systemcd);
+		entity.setRecvExceptionNum(entity1.getNum());//接收异常笔数
+		return entity;
+	}
+	
+	/**
+	 * 异常核对明细列表查询
+	 * @param chckDt
+	 * @param procst
+	 * @param pmtTp
+	 * @return
+	 */
+	public DuizhangEntity checkExceptionDetl(String chckDt,String pmtTp,String systemcd){
+		DuizhangEntity entity = checkTotalAcctException("O", pmtTp, chckDt,systemcd);
+		entity.setChckDt(chckDt);//对账日期
+		entity.setPmtTp(pmtTp);//小额-报文类型编码 大额-业务类型编码
+		//对账发送信息
+		entity.setSendExceptionNum(entity.getNum());//发送异常总数
+		//对账接收信息
+		DuizhangEntity entity1 = checkTotalAcctException("I", pmtTp, chckDt,systemcd);
+		entity.setRecvExceptionNum(entity1.getNum());//接收异常笔数
+		return entity;
+	}
+	
+	/**
+	 * 异常查询查询
+	 * @param pmtTp
+	 * @param procStateList
+	 * @param chckDt
+	 * @return
+	 */
+	public TotalAcctEntity checkExceptionAcct(List pmtTpList,String chckDt,String systemcd){
+		TotalAcctEntity totalAcct =  new TotalAcctEntity();
+		totalAcct.setChckdt(chckDt);
+		List list = new ArrayList();
+		for(int i=0;i<pmtTpList.size();i++){
+			DuizhangEntity entity  = checkException(chckDt, pmtTpList.get(i).toString(), systemcd);
+			list.add(entity);
+		}
+		totalAcct.setDuizhangList(list);
+		return totalAcct;
+	}
+	
+	public List checkCoreTotalAcct(String chckdt){
+		List list = new ArrayList();
+		StringBuffer sb = new StringBuffer();
+		sb.append("Select a.* From (Select f.HOSTFINANCIALSRLNMB,f.HOSTFINANCIALPRCDT,f.MBFEFINANCIALSRLNMB,");
+		sb.append(" f.FINANCIALPRCTP,f.CHARGEACCT,f.TOTALAMT,h.Txid as frontno,h.HOSTFINANCIALSRLNMB As backno," );
+		sb.append(" h.HOSTFINANCIALPRCDT As backdt,h.AMT As backamt, f.PMTGRPID,f.TXID,f.CnsgnDt ");
+		sb.append(" From HOSTFINANCIALINFOREGS f Left Join hexinduizhang h ");
+		sb.append(" On f.hosTFINANCIALSRLNMB = h.HOSTFINANCIALSRLNMB ");
+		sb.append(" Where f.FINANCIALPRCSTS='0' And f.CnsgnDt='"+chckdt+"' ");
+		sb.append(" Union ");
+		sb.append(" Select f.HOSTFINANCIALSRLNMB,f.HOSTFINANCIALPRCDT,f.MBFEFINANCIALSRLNMB,");
+		sb.append(" h.PROCESSTYPE,h.PROPOSERACCT,f.TOTALAMT,h.Txid as frontno,h.HOSTFINANCIALSRLNMB As backno," );
+		sb.append(" h.HOSTFINANCIALPRCDT As backdt,h.AMT As backamt,f.PMTGRPID,f.TXID,h.CONSIGNDATE ");
+		sb.append(" From hexinduizhang h Left Join HOSTFINANCIALINFOREGS f ");
+		sb.append(" On f.hosTFINANCIALSRLNMB = h.HOSTFINANCIALSRLNMB ");
+		sb.append(" Where f.hosTFINANCIALSRLNMB Is Null  ");
+		sb.append(" And h.CONSIGNDATE='"+chckdt+"') a ");
+		System.out.println(sb.toString());
+		list = queryCoreTotalAcct(sb.toString());
+		List list1 = checkRecvProcessed(chckdt);//来账待处理中状态为待处理的
+		for(int i=0;i<list1.size();i++){
+			CoreDuizhangEntity entity = (CoreDuizhangEntity)list1.get(i);
+			list.add(entity);
+		}
+		List list2 = checkRecvChecked(chckdt);//来账待处理中状态为待复核的
+		for(int i=0;i<list2.size();i++){
+			CoreDuizhangEntity entity = (CoreDuizhangEntity)list2.get(i);
+			list.add(entity);
+		}
+		return list;
+	}
+	
+	/**
+	 * 核心明细对账
+	 * @param sql
+	 * @return
+	 */
+	public List queryCoreTotalAcct(String sql){
+		List list = new ArrayList();
+		Connection conn = null;
+		PreparedStatement pst = null;
+		ResultSet rs =null;
+		Session session = this.getHibernateTemplate().getSessionFactory().openSession();
+		
+		try {
+			conn = session.connection();
+			conn.setAutoCommit(false);
+			pst = conn.prepareStatement(sql);
+			rs = pst.executeQuery();
+			while(rs.next()){
+				CoreDuizhangEntity entity = new CoreDuizhangEntity();
+				entity.setHostFinancialSrlNmb(rs.getString("HOSTFINANCIALSRLNMB"));//前置记录后台流水
+				entity.setHostFinancialPrcDt(rs.getString("HOSTFINANCIALPRCDT"));//前置记录后台记账日期
+				entity.setMbfeFinancialSrlNmb(rs.getString("MBFEFINANCIALSRLNMB"));//前置记录前置流水号
+				entity.setFinancialPrcTp(rs.getString("FINANCIALPRCTP"));//前置记录账务处理类型
+				entity.setChargeAcct(rs.getString("CHARGEACCT"));//前置记录记账账号
+				entity.setTotalAmt(rs.getDouble("TOTALAMT"));//前置记录记账金额
+				entity.setFrontno(rs.getString("frontno"));//核心记录前台流水
+				entity.setBackno(rs.getString("backno"));//核心记录后台流水
+				entity.setBackdt(rs.getString("backdt"));//核心记录后台日期
+				entity.setBackamt(rs.getDouble("backamt"));//核心记录后台金额
+				entity.setPmtGrpId(rs.getString("PMTGRPID"));//支付交易组号
+				entity.setTxId(rs.getString("TXID"));//支付交易序号
+				entity.setCnsgnDt(rs.getString("CnsgnDt"));//委托日期
+				//如果前置多，则核心无前置流水号；如果核心多，则前置无核心后台流水号
+				BigDecimal bdFront = new BigDecimal(entity.getTotalAmt());
+				BigDecimal bdBack = new BigDecimal(entity.getBackamt());
+				if("".equals(entity.getFrontno())||"".equals(entity.getHostFinancialSrlNmb())){
+					list.add(entity);
+				}else if(bdFront.compareTo(bdBack)!=0){//金额不一致
+					list.add(entity);
+				}
+			}
+			conn.commit();
+		} catch (SQLException e) {
+			try {
+				conn.rollback();
+			} catch (SQLException e1) {
+				e1.printStackTrace();
+			}
+			
+			e.printStackTrace();
+		}finally{
+			try {
+				if(rs!=null){
+					rs.close();
+				}
+				pst.close();
+				conn.close();
+			} catch (SQLException e) {
+				e.printStackTrace();
+			}
+			this.releaseSession(session);
+		}
+		return list;
+	}
+	
+	/**
+	 * 来账待处理处理状态为待处理的业务
+	 * @param chckDt
+	 * @return
+	 */
+	public List checkRecvProcessed(String chckDt){
+		List list = new ArrayList();
+		
+		Connection conn = null;
+		PreparedStatement pst = null;
+		ResultSet rs =null;
+		Session session = this.getHibernateTemplate().getSessionFactory().openSession();
+		String  sql ="select f.Txid,c.Amount,f.InwardDt "+
+			" from CNAPSPMTCOLLECT c Left Join FNCLPENDING f "+
+			" On c.TxId=f.TxId Where f.InwardDt='"+chckDt+"' And f.msgsts='00'";
+		try {
+			conn = session.connection();
+			conn.setAutoCommit(false);
+			pst = conn.prepareStatement(sql);
+			rs = pst.executeQuery();
+			while(rs.next()){
+				CoreDuizhangEntity entity = new CoreDuizhangEntity();
+				entity.setTxId(rs.getString("txId"));//支付业务序号
+				entity.setTotalAmt(rs.getDouble("Amount"));//汇款金额
+				entity.setHostFinancialPrcDt(rs.getString("InwardDt"));//来账日期
+				list.add(entity);
+			}
+			conn.commit();
+		} catch (SQLException e) {
+			try {
+				conn.rollback();
+			} catch (SQLException e1) {
+				e1.printStackTrace();
+			}
+			
+			e.printStackTrace();
+		}finally{
+			try {
+				if(rs!=null){
+					rs.close();
+				}
+				pst.close();
+				conn.close();
+			} catch (SQLException e) {
+				e.printStackTrace();
+			}
+			this.releaseSession(session);
+		}
+		return list;
+	}
+	
+	/**
+	 * 来账待处理处理状态为待复核的业务
+	 * @param chckDt
+	 * @return
+	 */
+	public List checkRecvChecked(String chckDt){
+		List list = new ArrayList();
+		
+		Connection conn = null;
+		PreparedStatement pst = null;
+		ResultSet rs =null;
+		Session session = this.getHibernateTemplate().getSessionFactory().openSession();
+		String  sql ="select f.PmtGrpId,c.Amount,f.InwardDt "+
+			" from CNAPSPMTCOLLECT c Left Join FNCLPENDING f "+
+			" On c.PmtGrpId=f.PmtGrpId Where f.InwardDt='"+chckDt+"' And f.msgsts='01'";
+		try {
+			conn = session.connection();
+			conn.setAutoCommit(false);
+			pst = conn.prepareStatement(sql);
+			rs = pst.executeQuery();
+			while(rs.next()){
+				CoreDuizhangEntity entity = new CoreDuizhangEntity();
+				entity.setPmtGrpId(rs.getString("PmtGrpId"));//支付业务组号
+				entity.setTotalAmt(rs.getDouble("Amount"));//汇款金额
+				entity.setHostFinancialPrcDt(rs.getString("InwardDt"));//来账日期
+				list.add(entity);
+			}
+			conn.commit();
+		} catch (SQLException e) {
+			try {
+				conn.rollback();
+			} catch (SQLException e1) {
+				e1.printStackTrace();
+			}
+			
+			e.printStackTrace();
+		}finally{
+			try {
+				if(rs!=null){
+					rs.close();
+				}
+				pst.close();
+				conn.close();
+			} catch (SQLException e) {
+				e.printStackTrace();
+			}
+			this.releaseSession(session);
+		}
+		return list;
+	}
+	
+	/**
+	 * 读取txt文件
+	 * @param file
+	 * @return
+	 */
+	 public List readToBuffer(String file){
+	    List list = new ArrayList();
+	    InputStream is = null;
+	    BufferedReader reader = null;
+	    try {
+	      is = new FileInputStream(file);
+	      reader = new BufferedReader(new InputStreamReader(is));
+	      String line = reader.readLine();
+	      while (line != null) {
+	        list.add(line);
+	        line = reader.readLine();
+	      }
+	    } catch (FileNotFoundException e) {
+	      e.printStackTrace();
+	      try
+	      {
+	        reader.close();
+	        is.close();
+	      } catch (IOException e1) {
+	        e1.printStackTrace();
+	      }
+	    }
+	    catch (IOException e)
+	    {
+	      e.printStackTrace();
+	      try
+	      {
+	        reader.close();
+	        is.close();
+	      } catch (IOException e1) {
+	        e1.printStackTrace();
+	      }
+	    }
+	    finally
+	    {
+	      try
+	      {
+	        reader.close();
+	        is.close();
+	      } catch (IOException e) {
+	        e.printStackTrace();
+	      }
+	    }
+	    return list;
+	  }
+
+
+	 /**
+	  * 插入数据
+	  * @param list
+	  * @return
+	  */
+	  public boolean insertData(List list){
+	    String[] str1 = list.get(0).toString().split("[|]");
+	    if (str1.length < 9) {
+	      return false;
+	    }
+	    boolean result = false;
+	    Connection conn = null;
+	    PreparedStatement pst = null;
+
+	    String sql = "INSERT INTO hexinduizhang(TXID,PROCESSTYPE,OLDTXID,PROPOSERACCT,PROPOSERNM" +
+	    		",CONSIGNDATE,CURRENCY,AMT,CHARGE,POSTAGE,OUTSTATIONCHARGE,TOTALAMT,SYSTEMCODE" +
+	    		",HOSTFINANCIALSRLNMB,HOSTFINANCIALPRCDT) VALUES" +
+	    		"(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ";
+
+	    Session session = getHibernateTemplate().getSessionFactory().openSession();
+	    try
+	    {
+	      conn = session.connection();
+	      pst = conn.prepareStatement(sql);
+	      conn.setAutoCommit(false);
+	      for (int i = 0; i < list.size(); i++) {
+	        String[] str = list.get(i).toString().split("[|]");
+
+	        pst.setString(1, str[0]);
+	        pst.setString(2, str[1]);
+	        pst.setString(3, str[2]);
+	        pst.setString(4, str[3]);
+	        pst.setString(5, str[4]);
+	        pst.setString(6, str[5]);
+	        pst.setString(7, str[6]);
+	        pst.setString(8, str[7]);
+	        pst.setString(9, str[8]);
+	        pst.setString(10, str[9]);
+	        pst.setString(11, str[10]);
+	        pst.setString(12, str[11]);
+	        pst.setString(13, str[12]);
+	        pst.setString(14, str[13]);
+	        pst.setString(15, str[14]);
+	        pst.executeUpdate();
+	      }
+
+	      conn.commit();
+	      result = true;
+	    } catch (SQLException e) {
+	      result = false;
+	      try {
+	        if (conn != null)
+	          conn.rollback();
+	      }
+	      catch (SQLException e1)
+	      {
+	        e1.printStackTrace();
+	      }
+
+	      e.printStackTrace();
+	    } finally {
+	      try {
+	        if (pst != null) {
+	          pst.close();
+	        }
+	        if (conn != null)
+	          conn.close();
+	      }
+	      catch (SQLException e)
+	      {
+	        e.printStackTrace();
+	      }
+	      releaseSession(session);
+	    }
+	    return result;
+	  }
+	  
+		/**
+		 * 
+		 * 根据业务汇总表查询如下信息
+		 * 汇总对账 
+		 * 按照来往标识、业务状态、业务类型编码、清算日期查询发送或接收报文总数及交易总金额
+		 * @param direction
+		 * @param prcSts
+		 * @param pmtTp
+		 * @param chckDt
+		 * @return
+		 */
+		public DuizhangEntity ncheckTotalAcct(String direction,String prcSts, String pmtTp,String chckDt,String systemCd,String netgRnd){
+			DuizhangEntity entity = new DuizhangEntity();
+			Connection conn = null;
+			PreparedStatement pst = null;
+			ResultSet rs =null;
+			Session session = this.getHibernateTemplate().getSessionFactory().openSession();
+			String sql = "";
+			
+			if("HVPS".equals(systemCd)){
+				sql ="select count(1) as num,NVL(sum(TotalAmt),0) as totalAmt from CNAPSPMTCOLLECT o where o.Status='"+prcSts
+		 			+"' and o.PmtTp='"+pmtTp+"' and o.sttlmDt='"+chckDt+"' and o.direction='"+direction+"'";
+			}else{
+				if("PR04".equals(prcSts)){//已清算
+					 sql ="select NVL(sum(OrnglNbOfTxs),0) as num, NVL(sum(OrnglCtrlSum),0) as totalAmt from BEPSMSGRGSTR o where o.prcSts='"+prcSts
+				 		+"' and o.MsgTpCd='"+pmtTp+"' and o.NetgDt='"+chckDt+"' and o.direction='"+direction+"' and o.netgRnd='"+netgRnd+"' ";
+				}else{
+					 sql ="select NVL(sum(OrnglNbOfTxs),0) as num, NVL(sum(OrnglCtrlSum),0) as totalAmt from BEPSMSGRGSTR o where o.prcSts='"+prcSts
+				 		+"' and o.MsgTpCd='"+pmtTp+"' and o.NetgDt='"+chckDt+"' and o.direction='"+direction+"'";
+				}
+				
+			}
+			
+			try {
+				conn = session.connection();
+				conn.setAutoCommit(false);
+				pst = conn.prepareStatement(sql) ;
+				rs = pst.executeQuery();
+				while(rs.next()){
+					entity.setNum(rs.getString("num"));
+					entity.setTotalAmt(rs.getString("totalAmt"));
+				}
+				conn.commit();
+			} catch (SQLException e) {
+				try {
+					conn.rollback();
+				} catch (SQLException e1) {
+					e1.printStackTrace();
+				}
+				
+				e.printStackTrace();
+			}finally{
+				try {
+					if(rs!=null){
+						rs.close();
+					}
+					pst.close();
+					conn.close();
+				} catch (SQLException e) {
+					e.printStackTrace();
+				}
+				this.releaseSession(session);
+			}
+			return entity;
+		}
+}

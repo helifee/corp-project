@@ -1,0 +1,51 @@
+package com.xinleju.platform.sys.base.service;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.sys.base.entity.PayType;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface PayTypeService extends  BaseService <String,PayType>{
+
+	/**
+	 * @return
+	 */
+	public List payTypeParanetList() throws Exception;
+
+	/**
+	 * @param payType
+	 */
+	public int savePayType(PayType payType)throws Exception;
+
+	/**
+	 * @return
+	 */
+	public List getTypetree()throws Exception;
+
+	/**
+	 * @param id
+	 * @return
+	 */
+	public int deletePayType(String id)throws Exception;
+
+	/**
+	 * @param object
+	 * @return
+	 */
+	public int updateStatus(PayType object,Map<String,Object> paramMap)throws Exception;
+
+	/**
+	 * @param payType
+	 * @return
+	 */
+	public int updatePayType(PayType payType)throws Exception;
+
+	public List<Map<String,Object>> getAllPayType(Map<String, Object> param)throws Exception;
+}

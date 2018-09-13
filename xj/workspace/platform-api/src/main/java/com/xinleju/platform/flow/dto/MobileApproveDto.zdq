@@ -1,0 +1,108 @@
+package com.xinleju.platform.flow.dto;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import com.xinleju.platform.base.utils.AttachmentDto;
+
+public class MobileApproveDto {
+	private String opType;//操作类型  //消息操作类型 DB(1待办) YB(2已办) YD(3已读) WD(4未读) RM(5删除)
+	private String instanceId, flowId, stepId, taskId;//当前任务的基本信息
+	private String currentTaskStatus;//当前任务的状态
+	
+	private String msgId;//消息Id
+	private Boolean msgDelFlag;//消息Id
+	private String businessObjectName;//业务表单name
+	
+	//表单的业务数据
+	private List<MobileFormDto> dataList = new ArrayList<MobileFormDto>();
+	//移动审批的附件列表
+	private List<AttachmentDto> fileList = new ArrayList<AttachmentDto>();
+	//流程操作的下一步操作按钮列表
+	private List<ApproveOperationDto> nextList = new ArrayList<ApproveOperationDto>();
+	//流程环节的列表--元素对象待定
+	private List<ApprovalList> flowList = new ArrayList<ApprovalList>();
+	
+	
+	
+	public List<MobileFormDto> getDataList() {
+		return dataList;
+	}
+	public void setDataList(List<MobileFormDto> dataList) {
+		this.dataList = dataList;
+	}
+	public List<AttachmentDto> getFileList() {
+		return fileList;
+	}
+	public void setFileList(List<AttachmentDto> fileList) {
+		this.fileList = fileList;
+	}
+	public List<ApproveOperationDto> getNextList() {
+		return nextList;
+	}
+	public void setNextList(List<ApproveOperationDto> nextList) {
+		this.nextList = nextList;
+	}
+	
+	public List<ApprovalList> getFlowList() {
+		return flowList;
+	}
+	public void setFlowList(List<ApprovalList> flowList) {
+		this.flowList = flowList;
+	}
+	public String getInstanceId() {
+		return instanceId;
+	}
+	public void setInstanceId(String instanceId) {
+		this.instanceId = instanceId;
+	}
+	public String getFlowId() {
+		return flowId;
+	}
+	public void setFlowId(String flowId) {
+		this.flowId = flowId;
+	}
+	public String getStepId() {
+		return stepId;
+	}
+	public void setStepId(String stepId) {
+		this.stepId = stepId;
+	}
+	public String getTaskId() {
+		return taskId;
+	}
+	public void setTaskId(String taskId) {
+		this.taskId = taskId;
+	}
+	public String getOpType() {
+		return opType;
+	}
+	public void setOpType(String opType) {
+		this.opType = opType;
+	}
+	public String getCurrentTaskStatus() {
+		return currentTaskStatus;
+	}
+	public void setCurrentTaskStatus(String currentTaskStatus) {
+		this.currentTaskStatus = currentTaskStatus;
+	}
+	public String getMsgId() {
+		return msgId;
+	}
+	public void setMsgId(String msgId) {
+		this.msgId = msgId;
+	}
+	public Boolean getMsgDelFlag() {
+		return msgDelFlag;
+	}
+	public void setMsgDelFlag(Boolean msgDelFlag) {
+		this.msgDelFlag = msgDelFlag;
+	}
+	public String getBusinessObjectName() {
+		return businessObjectName;
+	}
+	public void setBusinessObjectName(String businessObjectName) {
+		this.businessObjectName = businessObjectName;
+	}
+	
+}

@@ -1,0 +1,336 @@
+package com.xinleju.platform.flow.dto;
+
+import com.xinleju.platform.base.dto.BaseDto;
+
+
+import java.sql.Timestamp;
+
+
+
+/**
+ * @author admin
+ * 
+ *
+ */
+public class InstanceStatDto extends BaseDto{
+
+		
+	//流程实例id
+	private String instanceId;
+    
+  		
+	//操作类型
+	private String operateType;
+    
+  		
+	//操作时间
+	private Timestamp operateTime;
+    
+	//系统名称  模板名称  模板编码  业务对象名称, 使用次数
+	private String appName, flowName, flowCode, busiObjectName, userTimes;
+	
+	private String statWay, cancelSum, transferSum,  cooperateSum; 
+	private String backInstSum, backTaskSum, modifySum, sendBackSum;
+	private String avgSum, maxSum, minSum, taskSum, statWayId, statWayName;
+	
+	private String startDate, endDate, hourSum, totalSum;
+	
+	//查看任务详情
+	private String instanceName, operatorId, operatorName,operatorCompanyName,operatorDeptName;
+	private String acName, acType, approveType, dayType, operationType, operateContent, finishFlag;
+	
+	private String id, code, name, startUserName, flowBusinessDeptName, flowBusinessCompanyName;
+	
+	//来源
+	private String source,appCode;
+	public String getInstanceId() {
+		return instanceId;
+	}
+	public void setInstanceId(String instanceId) {
+		this.instanceId = instanceId;
+	}
+    	
+	public String getOperateType() {
+		return operateType;
+	}
+	public void setOperateType(String operateType) {
+		this.operateType = operateType;
+	}
+    
+  		
+	public Timestamp getOperateTime() {
+		return operateTime;
+	}
+	public void setOperateTime(Timestamp operateTime) {
+		this.operateTime = operateTime;
+	}
+	public String getAppName() {
+		return appName;
+	}
+	public void setAppName(String appName) {
+		this.appName = appName;
+	}
+	public String getFlowName() {
+		return flowName;
+	}
+	public void setFlowName(String flowName) {
+		this.flowName = flowName;
+	}
+	public String getFlowCode() {
+		return flowCode;
+	}
+	public void setFlowCode(String flowCode) {
+		this.flowCode = flowCode;
+	}
+	
+	public String getUserTimes() {
+		return userTimes;
+	}
+	public void setUserTimes(String userTimes) {
+		this.userTimes = userTimes;
+	}
+	public String getBusiObjectName() {
+		return busiObjectName;
+	}
+	public void setBusiObjectName(String busiObjectName) {
+		this.busiObjectName = busiObjectName;
+	}
+	public String getStatWay() {
+		return statWay;
+	}
+	public void setStatWay(String statWay) {
+		this.statWay = statWay;
+	}
+	public String getCancelSum() {
+		return cancelSum;
+	}
+	public void setCancelSum(String cancelSum) {
+		this.cancelSum = cancelSum;
+	}
+	public String getTransferSum() {
+		return transferSum;
+	}
+	public void setTransferSum(String transferSum) {
+		this.transferSum = transferSum;
+	}
+	public String getCooperateSum() {
+		return cooperateSum;
+	}
+	public void setCooperateSum(String cooperateSum) {
+		this.cooperateSum = cooperateSum;
+	}
+	
+	public String getBackTaskSum() {
+		return backTaskSum;
+	}
+	public void setBackTaskSum(String backTaskSum) {
+		this.backTaskSum = backTaskSum;
+	}
+	public String getModifySum() {
+		return modifySum;
+	}
+	public void setModifySum(String modifySum) {
+		this.modifySum = modifySum;
+	}
+	public String getBackInstSum() {
+		return backInstSum;
+	}
+	public void setBackInstSum(String backInstSum) {
+		this.backInstSum = backInstSum;
+	}
+	public String getSendBackSum() {
+		return sendBackSum;
+	}
+	public void setSendBackSum(String sendBackSum) {
+		this.sendBackSum = sendBackSum;
+	}
+	public String getAvgSum() {
+		return avgSum;
+	}
+	public void setAvgSum(String avgSum) {
+		this.avgSum = avgSum;
+	}
+	public String getMaxSum() {
+		return maxSum;
+	}
+	public void setMaxSum(String maxSum) {
+		this.maxSum = maxSum;
+	}
+	public String getMinSum() {
+		return minSum;
+	}
+	public void setMinSum(String minSum) {
+		this.minSum = minSum;
+	}
+	public String getTaskSum() {
+		return taskSum;
+	}
+	public void setTaskSum(String taskSum) {
+		this.taskSum = taskSum;
+	}
+	public String getStatWayId() {
+		return statWayId;
+	}
+	public void setStatWayId(String statWayId) {
+		this.statWayId = statWayId;
+	}
+	public String getStatWayName() {
+		return statWayName;
+	}
+	public void setStatWayName(String statWayName) {
+		this.statWayName = statWayName;
+	}
+	public String getStartDate() {
+		return startDate;
+	}
+	public void setStartDate(String startDate) {
+		this.startDate = startDate;
+	}
+	public String getEndDate() {
+		return endDate;
+	}
+	public void setEndDate(String endDate) {
+		this.endDate = endDate;
+	}
+	public String getHourSum() {
+		return hourSum;
+	}
+	public void setHourSum(String hourSum) {
+		this.hourSum = hourSum;
+	}
+	public String getTotalSum() {
+		return totalSum;
+	}
+	public void setTotalSum(String totalSum) {
+		this.totalSum = totalSum;
+	}
+	public String getInstanceName() {
+		return instanceName;
+	}
+	public void setInstanceName(String instanceName) {
+		this.instanceName = instanceName;
+	}
+	public String getOperatorId() {
+		return operatorId;
+	}
+	public void setOperatorId(String operatorId) {
+		this.operatorId = operatorId;
+	}
+	public String getOperatorName() {
+		return operatorName;
+	}
+	public void setOperatorName(String operatorName) {
+		this.operatorName = operatorName;
+	}
+	public String getAcName() {
+		return acName;
+	}
+	public void setAcName(String acName) {
+		this.acName = acName;
+	}
+	public String getAcType() {
+		return acType;
+	}
+	public void setAcType(String acType) {
+		this.acType = acType;
+	}
+	public String getApproveType() {
+		return approveType;
+	}
+	public void setApproveType(String approveType) {
+		this.approveType = approveType;
+	}
+	public String getDayType() {
+		return dayType;
+	}
+	public void setDayType(String dayType) {
+		this.dayType = dayType;
+	}
+	
+	public String getOperateContent() {
+		return operateContent;
+	}
+	public void setOperateContent(String operateContent) {
+		this.operateContent = operateContent;
+	}
+	public String getOperationType() {
+		return operationType;
+	}
+	public void setOperationType(String operationType) {
+		this.operationType = operationType;
+	}
+	public String getFinishFlag() {
+		return finishFlag;
+	}
+	public void setFinishFlag(String finishFlag) {
+		this.finishFlag = finishFlag;
+	}
+	public String getId() {
+		return id;
+	}
+	public void setId(String id) {
+		this.id = id;
+	}
+	public String getCode() {
+		return code;
+	}
+	public void setCode(String code) {
+		this.code = code;
+	}
+	public String getName() {
+		return name;
+	}
+	public void setName(String name) {
+		this.name = name;
+	}
+	public String getStartUserName() {
+		return startUserName;
+	}
+	public void setStartUserName(String startUserName) {
+		this.startUserName = startUserName;
+	}
+	public String getFlowBusinessDeptName() {
+		return flowBusinessDeptName;
+	}
+	public void setFlowBusinessDeptName(String flowBusinessDeptName) {
+		this.flowBusinessDeptName = flowBusinessDeptName;
+	}
+	public String getFlowBusinessCompanyName() {
+		return flowBusinessCompanyName;
+	}
+	public void setFlowBusinessCompanyName(String flowBusinessCompanyName) {
+		this.flowBusinessCompanyName = flowBusinessCompanyName;
+	}
+
+	public String getSource() {
+		return source;
+	}
+
+	public void setSource(String source) {
+		this.source = source;
+	}
+
+	public String getAppCode() {
+		return appCode;
+	}
+
+	public void setAppCode(String appCode) {
+		this.appCode = appCode;
+	}
+
+	public String getOperatorCompanyName() {
+		return operatorCompanyName;
+	}
+
+	public void setOperatorCompanyName(String operatorCompanyName) {
+		this.operatorCompanyName = operatorCompanyName;
+	}
+
+	public String getOperatorDeptName() {
+		return operatorDeptName;
+	}
+
+	public void setOperatorDeptName(String operatorDeptName) {
+		this.operatorDeptName = operatorDeptName;
+	}
+}

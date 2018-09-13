@@ -1,0 +1,134 @@
+package com.xinleju.erp.frame.service;
+
+import java.util.Date;
+import java.util.List;
+
+import javax.mail.internet.InternetAddress;
+import javax.mail.internet.MimeMessage;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.mail.javamail.JavaMailSenderImpl;
+import org.springframework.mail.javamail.MimeMessageHelper;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.erp.frame.dao.MailContentDao;
+import com.xinleju.erp.frame.dao.SendQueueDao;
+import com.xinleju.erp.frame.models.MailContent;
+import com.xinleju.erp.frame.models.SendQueue;
+
+@Service
+@Transactional
+public class SendMailService {
+	
+	@Autowired
+    private MailContentDao mailContentDao;
+	
+	@Value("#{appProperties['sendMail.host']}")
+	private String server;
+	
+	@Value("#{appProperties['sendMail.username']}")
+	private String username;
+	
+	@Value("#{appProperties['sendMail.password']}")
+	private String password;
+	
+	@Autowired
+    private SendQueueDao sendQueueDao;
+	
+	public Boolean sendMail() {
+		MailContent mailContent = null;
+		Boolean flag = false;
+		try {
+			List<SendQueue> sendQueueList = sendQueueDao.findBySendByAndPriority(1);
+			for (SendQueue sendQueue : sendQueueList) {
+				// 发送邮件
+				mailContent = mailContentDao.findOne(sendQueue.getContentId());
+				// 没有附件，发送纯文本邮件
+				flag = send(mailContent);
+
+				if (flag == false) {
+					return flag;
+				}
+
+				if (mailContent.getFirstSendAt() == null) {
+					mailContent.setFirstSendAt(new Date());
+				}
+				mailContent.setLastSendAt(new Date());
+				mailContent.setSendState(1);
+				mailContent.setSuccessSendTimes((mailContent.getSuccessSendTimes() == null ? 0 : mailContent.getSuccessSendTimes()) + 1);
+				mailContent.setFailureContinueTimes(0);
+				mailContentDao.save(mailContent);
+
+				// 删除已发送队列
+				sendQueueDao.delete(sendQueue);
+				
+			}
+
+		} catch (Exception e) {
+			if (mailContent != null) {
+				mailContent.setSendState(2);
+				mailContent.setFaliureSendTimes((mailContent.getFaliureSendTimes() == null ? 0 : mailContent.getFaliureSendTimes()) + 1);
+				mailContent.setFailureContinueTimes((mailContent.getFailureContinueTimes() == null ? 0 : mailContent.getFailureContinueTimes()) + 1);
+				mailContentDao.save(mailContent);
+
+			}
+
+		}
+		return flag;
+	}
+	
+	/**
+	 * 发邮件
+	 * @param mc
+	 * @return
+	 */
+	public Boolean send(MailContent mc) {
+		Boolean flag = false;
+		
+		try {
+			JavaMailSenderImpl mailSender = new JavaMailSenderImpl();
+
+			// 设定mail server
+			mailSender.setHost(server);
+			mailSender.setUsername(username);
+			mailSender.setPassword(password);
+
+			MimeMessage mailMessage = mailSender.createMimeMessage();
+			// 注意这里的boolean,等于真的时候才能嵌套图片，在构建MimeMessageHelper时候，所给定的值是true表示启用，
+			// multipart模式 为true时发送附件 可以设置html格式
+			MimeMessageHelper messageHelper = new MimeMessageHelper(mailMessage, true, "utf-8");
+
+			// 设置收件人，寄件人
+			messageHelper.setFrom(new InternetAddress(mailSender.getUsername(), javax.mail.internet.MimeUtility.encodeText(mc.getSendName())));
+
+			messageHelper.setSubject(mc.getTitle());
+			// true 表示启动HTML格式的邮件
+			messageHelper.setText(mc.getContent(), true);
+
+			if (mc.getMailtos() != null && mc.getMailtos().length() > 0) {
+				String[] s = mc.getMailtos().replace("null", "").trim().split(",");
+				messageHelper.setTo(s);
+			} else if (mc.getMailto() != null && mc.getMailto().length() > 0) {
+				messageHelper.setTo(mc.getMailto());
+			}
+
+			if (mc.getMailccs() != null && mc.getMailccs().length() > 0) {
+				String[] s = mc.getMailccs().replace("null", "").trim().split(",");
+				messageHelper.setCc(s);
+			} else if (mc.getMailcc() != null && mc.getMailcc().length() > 0) {
+				messageHelper.setCc(mc.getMailcc());
+			}
+
+			// 发送邮件
+			mailSender.send(mailMessage);
+
+			flag = true;
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		return flag;
+	}
+
+}

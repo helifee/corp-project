@@ -1,0 +1,184 @@
+package com.creditease.b2bsettle.basedata.service.impl;
+
+import java.util.Date;
+import java.util.List;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.repository.query.Param;
+import org.springframework.stereotype.Service;
+
+import com.creditease.b2bsettle.basedata.constant.AuditStatus;
+import com.creditease.b2bsettle.basedata.constant.CommonConstants;
+import com.creditease.b2bsettle.basedata.constant.OperateType;
+import com.creditease.b2bsettle.basedata.model.EsEnterpriseInfo;
+import com.creditease.b2bsettle.basedata.model.PayType;
+import com.creditease.b2bsettle.basedata.model.PayTypeAudit;
+import com.creditease.b2bsettle.basedata.repository.PayTypeAuditRepository;
+import com.creditease.b2bsettle.basedata.repository.PayTypeRepository;
+import com.creditease.b2bsettle.basedata.service.PayTypeService;
+
+/**
+ * 支付类型管理
+ * 
+ * @author shihl
+ *
+ */
+@Service
+public class PayTypeServiceImpl implements PayTypeService {
+	@Autowired
+	private PayTypeAuditRepository payTypeAuditRepository;
+	@Autowired
+	private PayTypeRepository payTypeRepository;
+	
+	/**
+	 * 
+	 * 前台查询
+	 * 
+	 * */
+	
+	@Override
+	public Page<PayType> findAll(Pageable pageable) {
+		Page<PayType> page = payTypeRepository.findAll(pageable);
+		return page;
+	}
+	
+
+	/**
+	 * 新增支付类型（存审核表）
+	 * */ 
+	@Override
+	public long newPayTypeAuditService(PayTypeAudit payTypeAudit) {
+		PayTypeAudit save = payTypeAuditRepository.save(payTypeAudit);
+		return save.getCid();
+	}
+
+	/**
+	 * 修改
+	 * 适用范围：
+	 * 已启用、未启用页面的新增、修改操作
+	 * 当如参cid 为null时方法认为是已用页面传来的请求
+	 * */
+	@Override
+	public void updatePayType(long cid, long id, String payType, String modifier) {
+		//标识已启用页面不能修改
+		PayType payTypemd = payTypeRepository.findOne(id);
+		payTypemd.setCanOperate(false);
+		payTypeRepository.save(payTypemd);
+		
+		//在审核表新建或更新信息
+		PayTypeAudit payTypeAudit = null;
+		String OperateSummary = "";
+		if(cid == 0){//cid为0时认为时已用页面发来的请求，需要在审核表里新增
+			payTypeAudit = new PayTypeAudit();
+			payTypeAudit.setId(id);
+			OperateSummary = CommonConstants.updateUsed;
+		}else{
+			payTypeAudit = payTypeAuditRepository.findOne(cid);
+			OperateSummary = CommonConstants.updateNotUsed;
+			payTypeAudit.setAuditText("");//清空上次的审核信息
+		}
+		payTypeAudit.setPayType(payType);
+		payTypeAudit.setAuditStatus(AuditStatus.Audit);
+		payTypeAudit.setOperateSummary(OperateSummary);
+		payTypeAudit.setOperateType(OperateType.UPDATE);
+		payTypeAudit.setCreator(payTypemd.getCreator());
+		payTypeAudit.setCreatedTime(payTypemd.getCreatedTime());
+		payTypeAudit.setModifier(modifier);
+		payTypeAudit.setModifyTime(new Date());
+		payTypeAuditRepository.save(payTypeAudit);
+	}
+
+	
+	/**
+	 * 删除
+	 * 适用范围：
+	 * 已启用、未启用页面的删除操作
+	 * 当如参cid 为null时方法认为是已用页面传来的请求
+	 * */
+	public void deletePayType(long cid, long id, boolean isDelte, String modifier) {
+		//标识已启用页面不能修改
+		PayType payTypemd = payTypeRepository.findOne(id);
+		payTypemd.setCanOperate(false);
+		payTypeRepository.save(payTypemd);
+		
+		//在审核表新建或更新信息
+		PayTypeAudit payTypeAudit = null;
+		String OperateSummary = "";
+		if(cid == 0){//cid为0时认为时已用页面发来的请求，需要在审核表里新增
+			payTypeAudit = new PayTypeAudit();
+			payTypeAudit.setId(id);
+			OperateSummary = CommonConstants.deleteUsed;
+		}else{
+			payTypeAudit = payTypeAuditRepository.findOne(cid);
+			OperateSummary = CommonConstants.deleteNotUsed;
+			payTypeAudit.setAuditText("");//清空上次的审核信息
+		}
+		payTypeAudit.setPayType(payTypemd.getPayType());
+		payTypeAudit.setDeleted(isDelte);
+		payTypeAudit.setAuditStatus(AuditStatus.Audit);
+		payTypeAudit.setOperateSummary(OperateSummary);
+		payTypeAudit.setOperateType(OperateType.DELETE);
+		payTypeAudit.setCreator(payTypemd.getCreator());
+		payTypeAudit.setCreatedTime(payTypemd.getCreatedTime());
+		payTypeAudit.setModifier(modifier);
+		payTypeAudit.setModifyTime(new Date());
+		payTypeAuditRepository.save(payTypeAudit);
+	}
+	
+	
+	
+	/**
+	 * 
+	 * 审核操作 
+	 * 适用范围：
+	 * 适用来自 已启用、未启用页面的新增、修改和删除操作的审核
+	 * */
+	@Override
+	public String auditPayType(long cid, String auditText,AuditStatus auditStatus, String auditor ) {
+		PayTypeAudit payTypeAudit =  payTypeAuditRepository.findOne(cid);
+		PayType payType = payTypeRepository.findOne(payTypeAudit.getId());
+		//审核通过
+		if(auditStatus.equals(AuditStatus.Through)){
+			//更改审核表状态
+			payTypeAudit.setAuditStatus(AuditStatus.Through);
+			payTypeAudit.setAuditText(auditText);//审核操作不是修改，所以不更新modifer字段
+			
+			//复制审核表信息更新主表
+			if(payType == null){//审核新增、因为查不出数据、此时需要新建主表
+				payType = new PayType();
+				payType.setPayType(payTypeAudit.getPayType());
+				payType.setCreator(payTypeAudit.getCreator());
+				payType.setCreatedTime(payTypeAudit.getCreatedTime());
+				payType.setModifier(payTypeAudit.getModifier());
+				payType.setModifyTime(payTypeAudit.getModifyTime());
+				payType.setAuditor(auditor);
+				payType.setAuditTime(new Date());
+				payType.setDeleted(false);
+				payType.setCanOperate(true);
+			}else{//审核修改或删除、此时需要更新主表
+				payType.setPayType(payTypeAudit.getPayType());
+				payType.setAuditor(auditor);
+				payType.setAuditTime(new Date());
+				payType.setModifier(payTypeAudit.getModifier());
+				payType.setModifyTime(payTypeAudit.getModifyTime());
+				payType.setDeleted(payTypeAudit.getOperateType().equals(OperateType.DELETE.name()));//如果当前审核通过的市删除操作，那么删除标识为true
+				payType.setCanOperate(true);
+			}
+		}else{//审核未通过
+			payTypeAudit.setAuditStatus(AuditStatus.Refuse);
+			payTypeAudit.setAuditText(auditText);
+			payType.setCanOperate(true);
+		}
+		payType = payTypeRepository.save(payType);//审核新增时insert，审核修改和删除时update
+		payTypeAudit.setId(payType.getId());//新增情况需要关联ID   无论任何时候主表和审核表都是有关系的所以此方法没问题
+		payTypeAuditRepository.save(payTypeAudit);//更新操作
+		return "1";
+	}
+
+
+
+
+
+}

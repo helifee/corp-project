@@ -1,0 +1,47 @@
+package com.xinleju.platform.sys.sync.dao.impl;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.ibatis.session.SqlSession;
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.platform.base.dao.impl.BaseDaoImpl;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.sys.sync.dao.SyncDataDao;
+import com.xinleju.platform.sys.sync.entity.SyncData;
+import com.xinleju.platform.utils.SqlStatementUtil;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Repository
+public class SyncDataDaoImpl extends BaseDaoImpl<String,SyncData> implements SyncDataDao{
+
+	public SyncDataDaoImpl() {
+		super();
+	}
+
+	@Override
+	public Page getBeanPage(Map<String, Object> map) {
+		map.put("delflag", false);
+		Page page = new Page();
+		page.setLimit((Integer) map.get("limit"));
+		page.setStart((Integer) map.get("start"));
+		Map countMap = new HashMap(map.size());
+		countMap.putAll(map);
+		SqlSession sqlSession = this.getSqlSession();
+		String pageSqlStatment = SqlStatementUtil.getPageSqlStatment(map, SyncData.class);
+		List<SyncData> list = sqlSession.selectList("com.xinleju.platform.sys.sync.entity.SyncData.queryObjectsByPage", pageSqlStatment);
+		page.setList(list);
+		String pageCountSqlStatment = SqlStatementUtil.getPageCountSqlStatment(countMap, SyncData.class);
+		Integer count = sqlSession.selectOne("com.xinleju.platform.sys.sync.entity.SyncData.queryCount", pageCountSqlStatment);
+		page.setTotal(count);
+		return page;
+	}
+	
+}

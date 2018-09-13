@@ -1,0 +1,20 @@
+package com.xinleju.platform.flow.service;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.flow.entity.MsgSendRecord;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface MsgSendRecordService extends  BaseService <String,MsgSendRecord>{
+
+	List<String> queryMsgIdList(Map<String, Object> queryMap);
+
+	
+}

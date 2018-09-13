@@ -1,0 +1,101 @@
+package com.xinleju.platform.sys.org.vo;
+
+public class OrgnazationPostUserVo {
+	
+	//组织机构id
+	private String orgId;
+	//组织机构类型
+	private String orgType;
+	//岗位id
+	private String postId;
+	//岗位名称
+	private String postName;
+	//岗位名称全名
+	private String postPrefixName;
+	//用户id
+	private String userId;
+	//账号 
+	private String loginName;
+	//用户名称 
+	private String userName;
+	//经办部门全路径
+	private String myOrgPrefixId;
+	//优先级
+	private Integer myOrglength;
+	
+	/**
+	 * 默认用户岗位
+	 */
+	private String isDefault;
+	
+	public String getOrgId() {
+		return orgId;
+	}
+	public void setOrgId(String orgId) {
+		this.orgId = orgId;
+	}
+	public String getOrgType() {
+		return orgType;
+	}
+	public void setOrgType(String orgType) {
+		this.orgType = orgType;
+	}
+	public String getPostId() {
+		return postId;
+	}
+	public void setPostId(String postId) {
+		this.postId = postId;
+	}
+	public String getPostName() {
+		return postName;
+	}
+	public void setPostName(String postName) {
+		this.postName = postName;
+	}
+	public String getPostPrefixName() {
+		return postPrefixName;
+	}
+	public void setPostPrefixName(String postPrefixName) {
+		this.postPrefixName = postPrefixName;
+	}
+	public String getUserId() {
+		return userId;
+	}
+	public void setUserId(String userId) {
+		this.userId = userId;
+	}
+	public String getLoginName() {
+		return loginName;
+	}
+	public void setLoginName(String loginName) {
+		this.loginName = loginName;
+	}
+	public String getUserName() {
+		return userName;
+	}
+	public void setUserName(String userName) {
+		this.userName = userName;
+	}
+	public String getIsDefault() {
+		return isDefault;
+	}
+	public void setIsDefault(String isDefault) {
+		this.isDefault = isDefault;
+	}
+	public String getMyOrgPrefixId() {
+		return myOrgPrefixId;
+	}
+	public void setMyOrgPrefixId(String myOrgPrefixId) {
+		this.myOrgPrefixId = myOrgPrefixId;
+	}
+	public Integer getMyOrglength() {
+		return myOrglength;
+	}
+	public void setMyOrglength(Integer myOrglength) {
+		this.myOrglength = myOrglength;
+	}
+	
+	
+	
+
+}

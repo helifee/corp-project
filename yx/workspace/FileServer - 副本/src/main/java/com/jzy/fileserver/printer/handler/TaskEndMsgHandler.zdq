@@ -1,0 +1,70 @@
+package com.jzy.fileserver.printer.handler;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
+import com.jzy.fileserver.dao.PrintTaskDao;
+import com.jzy.fileserver.domain.PrintTaskVo;
+import com.jzy.fileserver.enums.TaskStatus;
+import com.jzy.fileserver.printer.PrintEventMonitor;
+import com.jzy.fileserver.printer.msg.PrinterMsg;
+import com.jzy.fileserver.printer.msg.TaskEndMsg;
+import com.jzy.fileserver.printer.msg.external.TaskEndMsgExternal;
+import com.jzy.fileserver.service.PrintService;
+import com.jzy.fileserver.socket.ServerBorad;
+import com.jzy.fileserver.utils.JacksonUtils;
+
+/**
+ * 打印任务结束处理器
+ *
+ * Created by daoqi on 2018年8月14日
+ */
+@Component
+public class TaskEndMsgHandler extends BaseMsgHandler implements MsgHandler {
+	private static final Logger logger = LoggerFactory.getLogger(TaskEndMsgHandler.class);
+	
+	@Autowired
+	private PrintTaskDao printTaskDao;
+	
+	@Autowired
+	private PrintService printService;
+	
+	@Override
+	public String handle(PrinterMsg msg, PrintEventMonitor printEventMonitor) {
+		super.handle(msg, printEventMonitor);
+		TaskEndMsg taskEndMsg = (TaskEndMsg)msg;
+		
+		int taskId = taskEndMsg.getTask_id();
+		if(taskEndMsg.getTask_result() == 0) {
+			PrintTaskVo printTaskVo = printTaskDao.findById(taskId);
+			printTaskDao.updateTaskStatus(taskId, TaskStatus.task_end.name());
+			
+//			rabbitSender.sendMsgOfTaskEnd(taskEndMsg);
+			taskEndMsg.setFile_id(printTaskVo.getFileId());
+			TaskEndMsgExternal taskEndMsgExternal = convertToExternalVo(taskEndMsg);
+			
+			ServerBorad.broadcast(JacksonUtils.toJson(taskEndMsgExternal));
+			
+			logger.info("任务【{}】结束！", taskId);
+			
+		} else {
+			//失败重试
+			printService.resendFailTask(taskId);
+		}
+		return null;
+	}
+	
+	private TaskEndMsgExternal convertToExternalVo(TaskEndMsg taskEndMsg) {
+		TaskEndMsgExternal externalVo = new TaskEndMsgExternal();
+		externalVo.setMsgType(taskEndMsg.getMsg_type());
+		externalVo.setFileId(taskEndMsg.getFile_id());
+		externalVo.setConfId(taskEndMsg.getConf_id());
+		externalVo.setGroupId(taskEndMsg.getGroup_id());
+		externalVo.setDocName(taskEndMsg.getDoc_name());
+		externalVo.setTaskResult(taskEndMsg.getTask_result());
+		externalVo.setTaskStatus(taskEndMsg.getTask_status());
+		return externalVo;
+	}
+}

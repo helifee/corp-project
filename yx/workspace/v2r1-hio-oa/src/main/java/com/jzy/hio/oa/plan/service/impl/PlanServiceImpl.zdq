@@ -1,0 +1,287 @@
+
+package com.jzy.hio.oa.plan.service.impl;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.service.impl.BaseOaServiceImpl;
+import com.jzy.hio.entity.Plan;
+import com.jzy.hio.entity.PlanAllowedScope;
+import com.jzy.hio.exception.HioMybatisInsertException;
+import com.jzy.hio.exception.HioMybatisUpdateException;
+import com.jzy.hio.oa.OaConstant;
+import com.jzy.hio.oa.contract.dto.ResultMsg;
+import com.jzy.hio.oa.journal.dto.ShareDto;
+import com.jzy.hio.oa.plan.dto.PlanDto;
+import com.jzy.hio.oa.plan.mapper.PlanMapper;
+import com.jzy.hio.oa.plan.service.PlanAllowedScopeService;
+import com.jzy.hio.oa.plan.service.PlanService;
+import com.jzy.hio.utils.DateUtil;
+import com.jzy.hio.utils.LoginUser;
+import com.jzy.hio.utils.OaUserUtil;
+import com.jzy.hio.utils.Page;
+
+@Service("planService")
+public class PlanServiceImpl extends BaseOaServiceImpl<Plan> implements PlanService {
+
+	@Autowired
+	private PlanAllowedScopeService planAllowedScopeService;
+	
+	@Autowired
+	private PlanMapper planMapper;
+	
+	@Autowired
+	private OaUserUtil oaUserUtil;
+	
+	@Override
+	public PlanDto findPlanById(String planId) {
+		PlanDto planDto = new PlanDto();
+		Plan plan = super.getObjectById(planId);
+		BeanUtils.copyProperties(plan, planDto);
+		return addAttachmentInfo(planDto);
+	}
+
+	@Override
+	public PlanDto findPlanDetail(String tendId, Plan plan) {
+		PlanDto pd = new PlanDto();
+		Plan planDetail = planMapper.findPlanDetail(plan);
+		if(planDetail == null) {
+			if(0 == plan.getPlanType()) {
+				Date firstDayOfWeek = DateUtil.getFirstDayOfWeek(Integer.valueOf(plan.getPlanYear()), plan.getPlanNumber());
+				pd.setWeekPlanStartDate(DateUtil.getSingleNumDate(firstDayOfWeek));
+				
+				Date lastDayOfWeek = DateUtil.getLastDayOfWeek(Integer.valueOf(plan.getPlanYear()), plan.getPlanNumber());
+				pd.setWeekPlanEndDate(DateUtil.getSingleNumDate(lastDayOfWeek));
+				pd.setPlanType(plan.getPlanType());
+				pd.setPlanYear(plan.getPlanYear());
+				pd.setPlanNumber(plan.getPlanNumber());
+			}
+			return addAttachmentInfo(pd);
+		}
+		
+		BeanUtils.copyProperties(planDetail, pd);
+		PlanAllowedScope planAllowedScope = new PlanAllowedScope();
+		planAllowedScope.setPlanId(planDetail.getId());
+		List<PlanAllowedScope> planAllowedScopeList = planAllowedScopeService.queryList(planAllowedScope);
+		List<ShareDto> userShareDtoList = new ArrayList<ShareDto>();// 用户共享
+		List<ShareDto> roleShareDtoList = new ArrayList<ShareDto>();// 角色用户共享
+		List<ShareDto> orgShareDtoList = new ArrayList<ShareDto>();// 组织用户共享
+		if (planAllowedScopeList != null && planAllowedScopeList.size() > 0) {
+			for (PlanAllowedScope plancope : planAllowedScopeList) {
+				String allowedId = plancope.getAllowedId();
+				String allowedType = plancope.getAllowedType();// 共享范围ID:0部门ID，1人员ID，2角色ID
+				if (OaConstant.ALLOWED_TYPE_ORG.equals(allowedType)) {
+					ShareDto orgShareDto = new ShareDto();
+					orgShareDto.setId(allowedId);
+					// 调用sys方法------------------------------------------------------
+					String name = oaUserUtil.queryOrgNameById(allowedId,tendId);
+					if (!StringUtils.isEmpty(name)) {
+						orgShareDto.setName(name);
+					}
+					orgShareDtoList.add(orgShareDto);
+				} else if (OaConstant.ALLOWED_TYPE_USER.equals(allowedType)) {
+					ShareDto userShareDto = new ShareDto();
+					userShareDto.setId(allowedId);
+					//包含离职、删除人员
+					String name = oaUserUtil.selectUserNameByTendIdAndStatus(allowedId,tendId,OaConstant.OA_USER_QUERY_STATUS_3);
+					if (!StringUtils.isEmpty(name)) {
+						userShareDto.setName(name);
+					}
+					userShareDtoList.add(userShareDto);
+				} else {
+					ShareDto roleShareDto = new ShareDto();
+					roleShareDto.setId(allowedId);
+					// 调用sys方法------------------------------------------------------
+					String name = oaUserUtil.queryRoleNameById(allowedId,tendId);
+					if (!StringUtils.isEmpty(name)) {
+						roleShareDto.setName(name);
+					}
+					roleShareDtoList.add(roleShareDto);
+				}
+			}
+		}
+		pd.setOrgShareDtoList(orgShareDtoList);
+		pd.setUserShareDtoList(userShareDtoList);
+		pd.setRoleShareDtoList(roleShareDtoList);
+		return addAttachmentInfo(pd);
+	}
+
+	@Override
+	public void savePlanDto(PlanDto planDto) throws HioMybatisInsertException{
+		
+		LoginUser loginUser = getLoginUser();
+		// 用户id
+		List<String> userIdList = planDto.getUserIdList();
+		//校验保存信息是否包含离职/删除人员
+		ResultMsg resultMsg = oaUserUtil.checkUserEffective(userIdList, loginUser.getTendId());
+		if(Base.isNotEmpty(resultMsg) && !resultMsg.isSuccess()){
+			throw new HioMybatisUpdateException(resultMsg.getMsg());
+		}
+		Plan plan = new Plan();
+		BeanUtils.copyProperties(planDto, plan);
+		plan.setPublishDate(new Date());
+		plan.setId(planDto.getBusinessId());
+		// 周计划设置某周的开始和结束日期
+		if(0 == plan.getPlanType()) {
+			Date firstDayOfWeek = DateUtil.getFirstDayOfWeek(Integer.valueOf(plan.getPlanYear()), plan.getPlanNumber());
+			plan.setWeekPlanStartDate(DateUtil.getSingleNumDate(firstDayOfWeek));
+			
+			Date lastDayOfWeek = DateUtil.getLastDayOfWeek(Integer.valueOf(plan.getPlanYear()), plan.getPlanNumber());
+			plan.setWeekPlanEndDate(DateUtil.getSingleNumDate(lastDayOfWeek));
+		}
+		// 保存计划
+		super.save(plan);
+		
+		//角色id
+		List<String> roleIdList = planDto.getRoleIdList();
+		//所有部门id
+		List<String> orgIdList = planDto.getOrgIdList();
+		
+		String planId = plan.getId();
+		// 通过userIdList,roleIdList,orgIdList保存计划共享范围
+		savePlanAllowedScopeByUserIdRoleIdOrgId(userIdList, roleIdList, orgIdList, planId);
+	}
+	
+	@Override
+	public void updatePlanDto(PlanDto planDto) throws HioMybatisUpdateException{
+		
+		LoginUser loginUser = getLoginUser();
+		// 用户id
+		List<String> userIdList = planDto.getUserIdList();
+		//校验保存信息是否包含离职/删除人员
+		ResultMsg resultMsg = oaUserUtil.checkUserEffective(userIdList, loginUser.getTendId());
+		if(Base.isNotEmpty(resultMsg) && !resultMsg.isSuccess()){
+			throw new HioMybatisUpdateException(resultMsg.getMsg());
+		}
+		
+		Plan plan = new Plan();
+		BeanUtils.copyProperties(planDto, plan);
+		plan.setPublishDate(new Date());
+		super.update(plan);
+		
+		planAllowedScopeService.deletePlanScope(plan.getId());
+		
+		List<String> roleIdList = planDto.getRoleIdList();//角色id
+		List<String> orgIdList = planDto.getOrgIdList();//所有部门id
+		// 通过userIdList,roleIdList,orgIdList保存计划共享范围
+		savePlanAllowedScopeByUserIdRoleIdOrgId(userIdList, roleIdList, orgIdList, plan.getId());
+	}
+	
+	/**
+	 * 通过userIdList,roleIdList,orgIdList保存计划共享范围
+	 * 
+	 * @author shangb
+	 * @date 2018年4月8日 下午6:46:01
+	 * @param userIdList
+	 * @param roleIdList
+	 * @param orgIdList
+	 */
+	private void savePlanAllowedScopeByUserIdRoleIdOrgId(List<String> userIdList,
+			List<String> roleIdList,List<String> orgIdList,String planId) {
+		if (userIdList != null && userIdList.size() > 0) {
+			for (String userId : userIdList) {
+				PlanAllowedScope planAllowedScope = new PlanAllowedScope();
+				planAllowedScope.setPlanId(planId);
+				planAllowedScope.setAllowedType(OaConstant.ALLOWED_TYPE_USER);
+				planAllowedScope.setAllowedId(userId);
+				planAllowedScopeService.save(planAllowedScope);
+			}
+		}
+		if (roleIdList != null && roleIdList.size() > 0) {
+			for (String roleId : roleIdList) {
+				PlanAllowedScope journalAllowedScope = new PlanAllowedScope();
+				journalAllowedScope.setPlanId(planId);
+				journalAllowedScope.setAllowedType(OaConstant.ALLOWED_TYPE_ROLE);
+				journalAllowedScope.setAllowedId(roleId);
+				planAllowedScopeService.save(journalAllowedScope);
+			}
+		}
+		if (orgIdList != null && orgIdList.size() > 0) {
+			for (String orgId : orgIdList) {
+				PlanAllowedScope journalAllowedScope = new PlanAllowedScope();
+				journalAllowedScope.setPlanId(planId);
+				journalAllowedScope.setAllowedType(OaConstant.ALLOWED_TYPE_ORG);
+				journalAllowedScope.setAllowedId(orgId);
+				planAllowedScopeService.save(journalAllowedScope);
+			}
+		}
+	}
+	
+	@SuppressWarnings("unchecked")
+	@Override
+	public Page<Plan> findSharePlanList(Integer pageNum, Integer pageCount, Integer planType,
+			List<String> userIdList, List<String> loginOrgIdList, List<String> loginRoleIdList, String loginUserId) {
+		Map<String, Object> map = new HashMap<String, Object>();
+		map.put("pageNum", pageNum);
+		map.put("pageCount", pageCount);
+		pageStart(map);
+		List<Plan> planList = planMapper.findSharePlanList(planType, userIdList, loginOrgIdList, loginRoleIdList, loginUserId);
+		return super.pageReturn(planList);
+	}
+
+	@SuppressWarnings("unchecked")
+	@Override
+	public Page<Plan> findCommentPlanList(Integer pageNum, Integer pageCount, Integer planType, List<String> userIdList,
+			List<String> loginOrgIdList, List<String> loginRoleIdList, String loginUserId) {
+		Map<String, Object> map = new HashMap<String, Object>();
+		List<String> sharePlanIdList = planMapper.findSharePlanIdList(planType, userIdList, loginOrgIdList, loginRoleIdList, loginUserId);
+		/*if(sharePlanIdList == null || sharePlanIdList.size() < 1) {
+			return super.pageReturn(new ArrayList<Plan>());
+		}*/
+		map.put("pageNum", pageNum);
+		map.put("pageCount", pageCount);
+		pageStart(map);
+		List<Plan> planList = planMapper.findCommentPlanList(planType, userIdList, loginUserId, sharePlanIdList);
+		return super.pageReturn(planList);
+	}
+
+	@Override
+	public List<String> findSharePlanUserIdList(List<String> loginOrgIdList, List<String> loginRoleIdList,
+			String loginUserId) {
+		return planMapper.findSharePlanUserIdList(loginOrgIdList, loginRoleIdList, loginUserId);
+	}
+
+	@Override
+	public List<String> findCommentPlanUserIdList(String loginUserId, List<String> sharePlanIdList) {
+		return planMapper.findCommentPlanUserIdList(loginUserId, sharePlanIdList);
+	}
+	
+	@Override
+	public List<String> findSharePlanIdList(Integer planType, List<String> userIdList, List<String> loginOrgIdList,
+			List<String> loginRoleIdList, String loginUserId) {
+		return planMapper.findSharePlanIdList(planType, userIdList, loginOrgIdList, loginRoleIdList, loginUserId);
+	}
+
+	private PlanDto addAttachmentInfo(PlanDto planDto) {
+		String appId = BaseConstants.App.OA.getId();
+		String categoryId = BaseConstants.AttachmentCategory.OA_PLAN.getId();
+		if(planDto != null && StringUtils.isNotBlank(planDto.getId())) {
+			planDto.setAppId(appId);
+			planDto.setCategoryId(categoryId);
+			planDto.setBusinessId(planDto.getId());
+		}else {
+			if(planDto != null) {
+				planDto.setAppId(appId);
+				planDto.setCategoryId(categoryId);
+				planDto.setBusinessId(generatePk());
+			}else {
+				planDto = new PlanDto();
+				planDto.setAppId(appId);
+				planDto.setCategoryId(categoryId);
+				planDto.setBusinessId(generatePk());
+			}
+		}
+		return planDto;
+	}
+
+}

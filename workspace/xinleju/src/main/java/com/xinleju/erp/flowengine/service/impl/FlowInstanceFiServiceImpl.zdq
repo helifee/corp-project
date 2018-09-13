@@ -1,0 +1,270 @@
+package com.xinleju.erp.flowengine.service.impl;
+
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+
+import org.apache.commons.beanutils.PropertyUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.flow.service.api.extend.dto.UserDTO;
+import com.xinleju.erp.flowengine.dto.FlowInstanceStepWorkTaskDto;
+import com.xinleju.erp.flowengine.models.FlowInstance;
+import com.xinleju.erp.flowengine.models.FlowInstanceStep;
+import com.xinleju.erp.flowengine.models.FlowInstanceStepRelation;
+import com.xinleju.erp.flowengine.models.FlowInstanceStepWork;
+import com.xinleju.erp.flowengine.models.FlowInstanceStepWorkTask;
+import com.xinleju.erp.flowengine.service.FlowInstanceCalculateWorkService;
+import com.xinleju.erp.flowengine.service.FlowInstanceFiService;
+import com.xinleju.erp.flowengine.service.FlowInstanceManagerService;
+import com.xinleju.erp.flowengine.service.FlowInstanceStepService;
+import com.xinleju.erp.flowengine.utils.FlowInstanceConstant;
+import com.xinleju.erp.flowengine.utils.FlowInstanceStatus;
+import com.xinleju.erp.flowengine.utils.IDGenerator;
+import com.xinleju.erp.flowengine.utils.TaskTypeStatus;
+import com.xinleju.erp.form.utils.DbType;
+import com.xinleju.erp.frame.models.User;
+
+@Service
+public class FlowInstanceFiServiceImpl extends BaseService implements FlowInstanceFiService {
+
+	@Autowired
+	private FlowInstanceStepService flowInstanceStepService;
+	@Autowired
+	private FlowInstanceManagerService flowInstanceManagerService;
+	@Autowired
+	private FlowInstanceCalculateWorkService flowInstanceCalculateWorkService;
+	
+	 @Autowired
+    private JdbcTemplate jt;
+
+	@Override
+	public void save(FlowInstance flowInstance,FlowInstanceStepWorkTaskDto flowInstanceStepWorkTask,UserDTO currUser)throws Exception {
+		mergeFlowInstance(flowInstance);
+		
+		// 保存流程实例
+		flowInstance.setStatus(FlowInstanceStatus.STATUS_RUNNING);
+	    flowInstanceManagerService.saveFlowInstance(flowInstance);
+		// 保存流程实例环节
+		List<FlowInstanceStep> lstFlowInstanceStep = flowInstance.getLstFlowInstanceStep();
+		getDao().saveOrUpdateAll(lstFlowInstanceStep);
+		// 整合流程实例环节关联对象以及流程实例环节岗位对象
+		List<FlowInstanceStepWork> lstFlowInstanceWork = new ArrayList<FlowInstanceStepWork>();
+		List<FlowInstanceStepRelation> lstFlowInstanceStepRel = new ArrayList<FlowInstanceStepRelation>();
+		for (FlowInstanceStep flowInstanceStep : lstFlowInstanceStep) {
+			if (flowInstanceStep.getLstFlowInstanceStepWork() != null) {
+				lstFlowInstanceWork.addAll(flowInstanceStep
+						.getLstFlowInstanceStepWork());
+			}
+			if (flowInstanceStep.getLstFlowInstanceStepRelation() != null) {
+				lstFlowInstanceStepRel.addAll(flowInstanceStep
+						.getLstFlowInstanceStepRelation());
+			}
+			
+		
+		}
+		// 保存流程实例环节关系
+		getDao().saveOrUpdateAll(lstFlowInstanceStepRel);
+
+		// 保存流程实例环节岗位
+		getDao().saveOrUpdateAll(lstFlowInstanceWork);
+	
+		FlowInstanceStep flowInstanceStartStep = getFirstFlowInstanceStep(flowInstance);
+		FlowInstanceStepWork flowInstanceStartStepWork = flowInstanceStartStep.getLstFlowInstanceStepWork().get(0);
+		FlowInstanceStepWorkTask flowInstanceStartStepWorkTask = flowInstanceStartStepWork.getLstFlowInstanceStepWorkTask().get(0);
+		//发起节点
+		
+		// 保存流程实例环节岗位任务
+		flowInstanceStartStepWorkTask.setOpCode(flowInstanceStepWorkTask.getOpCode());
+		flowInstanceStartStepWorkTask.setUserNote(flowInstanceStepWorkTask.getUserNote());
+		flowInstanceStartStepWorkTask.setCompleteUserId(flowInstance.getStartUserId());
+		flowInstanceStartStepWorkTask.setCompleteUserLoginName(flowInstance.getStartUserLoginName());
+		flowInstanceStartStepWorkTask.setCompleteUserName(flowInstance.getStartUserName());
+		try{
+		flowInstanceManagerService.saveFlowInstanceStepWorkTask(flowInstanceStartStepWorkTask);
+		}catch(Exception e){
+			e.printStackTrace();
+		}
+		
+		flowInstanceStepService.tryComplementFlowInstanceStep(flowInstanceStartStep, 
+															  flowInstanceStartStepWork, 
+															  flowInstanceStartStepWorkTask,currUser) ;
+	}
+	
+	private FlowInstanceStep getFirstFlowInstanceStep(FlowInstance fi){
+		FlowInstanceStep startFlowInstanceStep = null;
+		for (FlowInstanceStep flowInstanceStep : fi.getLstFlowInstanceStep()) {
+			if(flowInstanceStep.getIsStart() == FlowInstanceConstant.FLOW_INSTANCE_START_STEP){
+				startFlowInstanceStep = flowInstanceStep;
+				break;
+			}
+		}
+		return startFlowInstanceStep;
+	}
+	
+	
+	
+	
+
+
+	@Override
+	public FlowInstance getflowInstanceByFlowCodeAndBizId(String bizId,
+			String flowCode, Integer status) throws Exception {
+		  String sql="select fi.guid ,fi.status from flow_instance fi ,tf_fl l where fi.fl_id=l.id and fi.biz_id = ? and l.flow_code =? and fi.status= ? ";
+    	  List<FlowInstance> flowInstances=jt.query(sql, new Object[]{bizId,flowCode,status},new FlowInstanceMapper());
+    	  if(flowInstances!=null && flowInstances.size()>0){
+			  return flowInstances.get(0);
+		  }else{
+			  return null;
+		  }
+	}
+	
+	
+	
+   @Override
+	public FlowInstance getPreDealWithFlowInstance(FlowInstance flowInstance)
+			throws Exception {
+	 	List<FlowInstanceStep> lstFlowInstanceStep=flowInstance.getLstFlowInstanceStep();
+	 	List<FlowInstanceStep> lstFlowInstanceStep_new=new ArrayList<FlowInstanceStep>();
+		for (FlowInstanceStep flowInstanceStep : lstFlowInstanceStep) {
+			List<FlowInstanceStepWork>	lstFlowInstanceWork=flowInstanceStep.getLstFlowInstanceStepWork();
+			//选择添加的work
+			String selectParicipts=flowInstanceStep.getSelectParticipants();
+			if(StringUtils.isNotBlank(selectParicipts)){
+				List<FlowInstanceStepWork> works=flowInstanceCalculateWorkService.createFlowInstanceStepWork(flowInstanceStep, selectParicipts);
+				lstFlowInstanceWork.addAll(works);
+			
+			}
+			flowInstanceStep.setLstFlowInstanceStepWork(lstFlowInstanceWork);
+			lstFlowInstanceStep_new.add(flowInstanceStep);
+		}
+		flowInstance.setLstFlowInstanceStep(lstFlowInstanceStep_new);
+		return flowInstance;
+	}
+
+
+
+ private static class FlowInstanceMapper implements  RowMapper<FlowInstance> {
+        @Override
+        public FlowInstance mapRow(ResultSet arg0, int arg1) throws SQLException {
+        	FlowInstance f = new FlowInstance();
+            //role.setUserId(arg0.getLong("id"));
+            f.setGuid(arg0.getString("guid"));
+            f.setStatus(arg0.getInt("status"));
+            return f;
+        }
+
+    }
+
+	private void mergeFlowInstance(FlowInstance flowInstance){
+
+		/*
+		 * flowInstance.setCurrentApproveUserIds(currentApproveUserIds);
+		 * flowInstance.setCurrentApproveUserName(currentApproveUserName)
+		 * flowInstance.setDeptId(deptId); flowInstance.setDeptName(deptName);
+		 * flowInstance.setEmptyPostStrategy(emptyPostStrategy);
+		 * flowInstance.setFiCode(fiCode); flowInstance.setFiName(fiName);
+		 * flowInstance.setProjectId(projectId);
+		 * flowInstance.setProjectName(projectName);
+		 * flowInstance.setRepeatParticipantStragety(repeatParticipantStragety);
+		 * flowInstance.setStartRoleFullName(startRoleFullName);
+		 */
+	}
+
+	@Override
+	public void replaceFormParticipantToParticipant(String[] guIds,
+			Long sourceParticipantId, Long targetParticipantId) throws Exception {
+		// TODO Auto-generated method stub
+		User user=null;
+		User soureUser=null;
+		if(sourceParticipantId != null){
+			soureUser= getDao().getById(User.class, sourceParticipantId, null);
+		}else{
+			return;
+		}
+		if(targetParticipantId != null){
+		   user= getDao().getById(User.class, targetParticipantId, null);
+		}else{
+			return ;
+		}
+		if(user!=null){
+			if(guIds!=null && guIds.length>0){
+				for(String guid:guIds){
+					//执行中的任务替换
+					List<FlowInstanceStepWorkTask> tasks=getDao().findByHQL(FlowInstanceStepWorkTask.class, " from FlowInstanceStepWorkTask k where k.fiId =?  and k.participant =?  and k.status =? ", new Object[]{
+						guid,sourceParticipantId.toString(),TaskTypeStatus.STATUS_RUNNING
+					});
+					for(FlowInstanceStepWorkTask task :tasks){
+						FlowInstanceStepWorkTask target=new FlowInstanceStepWorkTask();
+						PropertyUtils.copyProperties(target, task);
+						target.setGuid(IDGenerator.getUUID());
+						target.setParticipant(user.getId()+"");
+						target.setParticipantLoginName(user.getLoginname());
+						target.setParticipantUserName(user.getRealName());
+						flowInstanceManagerService.saveFlowInstanceStepWorkTask(target);
+						
+						task.setCompleteTime(new Date());
+	        			task.setStatus(TaskTypeStatus.STATUS_OVERDUE);
+	            		task.setIsEffectFlow(TaskTypeStatus.TaskType.ZF.getIsEffectFlow());
+	            		task.setType(TaskTypeStatus.TaskType.ZF.getCode());
+	        		    task.setCompleteTime(new Date());
+	        		    flowInstanceManagerService.updateFlowInstanceStepWorkTask(task);
+					}
+					//将要执行的工作组替换
+					List<FlowInstanceStepWork> works=getDao().findByHQL(FlowInstanceStepWork.class, " from FlowInstanceStepWork k where k.fiId =?  and  "+DbType.getType()+"locate('"+sourceParticipantId+"',k.participants)>0  and k.status =? and k.participants is not null and  k.participants !=''", new Object[]{
+						guid,TaskTypeStatus.STATUS_CREATED
+					});
+					
+					for(FlowInstanceStepWork work :works){
+						work.setParticipants(work.getParticipants().replace(String.valueOf(sourceParticipantId), String.valueOf(targetParticipantId)));
+						work.setParticipantsName(work.getParticipantsName().replace(String.valueOf(soureUser.getRealName()), String.valueOf(user.getRealName())));
+						work.setParticipantsDefine(work.getParticipants());
+						work.setParticipantsDefineName(work.getParticipantsName());
+						getDao().update(work);
+					}
+				}
+			}
+		}
+		
+	}
+
+	@Override
+	public void proxyFlowInstanceStepWorkTask(List<String> taskIds,
+			Long proxUserId) throws Exception {
+		// TODO Auto-generated method stub
+		User user= getDao().getById(User.class, proxUserId, null);
+		StringBuilder sb=new StringBuilder();
+		for(String taskId:taskIds){
+			sb.append("'"+taskId+"',");
+		}
+		if(sb.toString().endsWith(",")){
+			sb.deleteCharAt(sb.toString().length()-1);
+		}
+		List<FlowInstanceStepWorkTask> tasks=getDao().findByHQL(FlowInstanceStepWorkTask.class," from  FlowInstanceStepWorkTask k where k.guid in( "+sb.toString()+" ) and k.status=1  ",new Object[]{});
+		for(FlowInstanceStepWorkTask task:tasks){
+			FlowInstanceStepWorkTask target=new FlowInstanceStepWorkTask();
+			PropertyUtils.copyProperties(target, task);
+			target.setGuid(IDGenerator.getUUID());
+			target.setParticipant(user.getId()+"");
+			target.setFlowBusinessId(task.getGuid());
+			target.setFlowBusinessType(TaskTypeStatus.BUSINESS_TYPE_PROXY);
+			target.setParticipantLoginName(user.getLoginname());
+			target.setParticipantUserName(user.getRealName());
+			target.setOriginParticipant(user.getId()+"");
+			target.setOriginParticipantName(user.getRealName());
+			flowInstanceManagerService.saveFlowInstanceStepWorkTask(target);
+		}
+		
+		
+	}
+	
+	
+	
+}

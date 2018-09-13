@@ -1,0 +1,80 @@
+package com.xinleju.platform.base.utils;
+
+public class DubboServiceResultInfo {
+	
+	/**
+	 * 返回结果
+	 * 
+	 */
+	private String result;
+	
+	/**
+	 * 
+	 * 是否成功
+	 */
+	private boolean  isSucess ;
+	
+	
+	/**
+	 * 信息识别码
+	 */
+	private String code;
+	
+	/**
+	 * 提示信息
+	 * 
+	 */
+	private String msg;
+	
+	/**
+	 * 异常信息
+	 * 
+	 */
+	private String exceptionMsg;
+
+	
+
+
+	public String getResult() {
+		return result;
+	}
+
+	public void setResult(String result) {
+		this.result = result;
+	}
+
+	public boolean isSucess() {
+		return isSucess;
+	}
+
+	public void setSucess(boolean isSucess) {
+		this.isSucess = isSucess;
+	}
+
+	public String getMsg() {
+		return msg;
+	}
+
+	public void setMsg(String msg) {
+		this.msg = msg;
+	}
+
+	public String getExceptionMsg() {
+		return exceptionMsg;
+	}
+
+	public void setExceptionMsg(String exceptionMsg) {
+		this.exceptionMsg = exceptionMsg;
+	}
+
+	public String getCode() {
+		return code;
+	}
+
+	public void setCode(String code) {
+		this.code = code;
+	}
+
+	
+
+}

@@ -1,0 +1,273 @@
+package com.xinleju.erp.frame.service.impl;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.base.utils.JsonUtils;
+import com.xinleju.erp.co.voucher.service.SyncFinaCoData;
+import com.xinleju.erp.com.service.pt.IPtBaseTaskJobService;
+import com.xinleju.erp.finance.models.FiCoContract;
+import com.xinleju.erp.finance.models.FiSysinfo;
+import com.xinleju.erp.finance.service.FiCoContractService;
+import com.xinleju.erp.finance.service.FiSysInfoService;
+import com.xinleju.erp.finance.utils.NCSendData;
+import com.xinleju.erp.finance.utils.NCXMlParse;
+import com.xinleju.erp.flow.service.IFlowWarningTaskService;
+import com.xinleju.erp.flow.service.api.ApiConstant;
+import com.xinleju.erp.flow.service.api.extend.BaseAPI;
+import com.xinleju.erp.flow.service.api.extend.BaseAPIService;
+import com.xinleju.erp.flow.service.api.extend.dto.CompanyDTO;
+import com.xinleju.erp.flow.service.impl.FlowWarningTaskServiceImpl;
+import com.xinleju.erp.flowengine.service.FlowInstanceWarningTaskService;
+import com.xinleju.erp.frame.service.SendMailService;
+import com.xinleju.erp.frame.service.SendSmService;
+import com.xinleju.erp.frame.utils.TaskStaticInterface;
+import com.xinleju.erp.sm.extend.dto.FinaData;
+import com.xinleju.erp.thirdpart.oa.api.IOaMsgService;
+import com.xinleju.erp.thirdpart.oa.fance.IOaUserService;
+import com.xinleju.erp.thirdpart.oa.fance.impl.OaMsgService4FanCeImpl;
+import com.xinleju.erp.thirdpart.oa.fance.impl.OaUserService4FanCeImpl;
+import com.xinleju.erp.thirdpart.oa.fanwei.impl.OaMsgService4FanWeiImpl;
+import com.xinleju.erp.thirdpart.oa.lvdu.OaMsg12ServiceImpl;
+import com.xinleju.erp.thirdpart.oa.xinyuan.impl.OaMsgServiceImpl;
+
+/**
+ * 
+ * 版权：(C) 版权所有 2000-2014 上海天好电子商务有限公司苏州分公司 任务执行接口-平台
+ * 
+ * @author jun
+ * @version $Id$
+ * @since
+ * @see
+ */
+@Service
+@Transactional
+public class PtBaseTaskJobService extends BaseService implements IPtBaseTaskJobService {
+	@Override
+	public String executeTask(String taskCode) {
+		taskCode = taskCode.trim();
+		String status = "9";
+		String msg = null;
+		if (StringUtils.isNotBlank(taskCode)) {
+			IOaMsgService iOaMsgService = null;
+			IOaUserService iOaUserService = null;
+			if (TaskStaticInterface.SKEY_PT_TASK_OA_MSG_SEND.equals(taskCode)) {
+				iOaMsgService = App.getBean(OaMsgServiceImpl.class);
+
+				msg = oaMsgTaskJobServiceRun(iOaMsgService);
+			}else if (TaskStaticInterface.SKEY_PT_LVDU_TASK_OA_MSG_SEND.equals(taskCode)) {
+				iOaMsgService = App.getBean(OaMsg12ServiceImpl.class);
+
+				msg = oaMsgTaskJobServiceRun(iOaMsgService);
+			} else if (TaskStaticInterface.SKEY_PT_TASK_OA_FAN_WEI_MSG_SEND.equals(taskCode)) {
+				iOaMsgService = App.getBean(OaMsgService4FanWeiImpl.class);
+				msg = oaMsgTaskJobServiceRun(iOaMsgService);
+
+			} else if (TaskStaticInterface.SKEY_PT_TASK_OA_FAN_CE_MSG_SEND.equals(taskCode)) {
+				iOaMsgService = App.getBean(OaMsgService4FanCeImpl.class);
+				msg = oaMsgTaskJobServiceRun(iOaMsgService);
+
+			} else if (TaskStaticInterface.SKEY_PT_TASK_OA_FAN_WEI_USER_TRANS.equals(taskCode.trim())) {
+				iOaUserService = App.getBean(OaUserService4FanCeImpl.class);
+			                     	
+				msg = oaUserTaskJobServiceRun(iOaUserService);
+
+			} else if (TaskStaticInterface.SKEY_FlowInstance_FLOWWARNING_TASK.equals(taskCode.trim())) {
+				//流程提醒信息
+			    msg = excuteFlowWarningTask(App.getBean(FlowInstanceWarningTaskService.class));
+			} else if (TaskStaticInterface.SKEY_WI_2_FLOWWARNING_TASK.equals(taskCode.trim())) {
+				// 生成预警任务
+			    msg = wi2FlowWarningTask(App.getBean(FlowWarningTaskServiceImpl.class));
+			}else if (TaskStaticInterface.SKEY_FLOWWARNING_TASK.equals(taskCode.trim())) {
+				// 预警通知
+			    msg = exeFlowWarningTask(App.getBean(FlowWarningTaskServiceImpl.class));
+			} else if (TaskStaticInterface.SKEY_PT_TASK_OA_SEND_MAIL.equals(taskCode.trim())) {
+				Boolean flag = App.getBean(SendMailService.class).sendMail();
+
+			} else if (TaskStaticInterface.SKEY_PT_TASK_OA_SEND_SM.equals(taskCode.trim())) {
+				Boolean flag =App.getBean(SendSmService.class) .sendSm();
+			} else if(TaskStaticInterface.SKEY_CO_TASK_SEND_NC.equals(taskCode.trim())){
+				BaseAPI baseApiService = App.getBean(BaseAPI.class, ApiConstant.BEAN_CODE);
+				FiCoContractService fiCoContractService = App.getBean(FiCoContractService.class);
+				msg = getContractAndSendNC(baseApiService,fiCoContractService);
+			}else {
+				msg = "未知类型任务:" + taskCode.trim() + "，异常结束!";
+			}
+
+			if (msg == null) {
+				status = "2";
+				msg = "任务正常结束！";
+			}
+		} else {
+			msg = "任务类型编码为空，异常结束!";
+		}
+
+		Map<String, Object> map = new HashMap<String, Object>();
+		map.put("status", status);
+		map.put("msg", msg);
+		map.put("data", new HashMap<String, Object>());
+		return JsonUtils.toJSONString(map);
+	}
+
+	private String oaUserTaskJobServiceRun(IOaUserService service) {
+		String msg = null;
+		if (null != service) {
+			try {
+				service.synOaUser();
+			} catch (Exception e) {
+				msg = "业务系统执行OaMsgServiceImpl任务失败，异常结束!";
+			}
+		} else {
+			msg = "业务系统找不到对应的任务执行service:ServiceImpl，异常结束!";
+		}
+
+		return msg;
+	}
+
+	private String oaMsgTaskJobServiceRun(IOaMsgService service) {
+		String msg = null;
+		if (null != service) {
+			try {
+				service.batchSendOaMsg();
+			} catch (Exception e) {
+				msg = "业务系统执行OaMsgServiceImpl任务失败，异常结束!";
+			}
+		} else {
+			msg = "业务系统找不到对应的任务执行service:ServiceImpl，异常结束!";
+		}
+
+		return msg;
+	}
+	
+	
+
+	private String excuteFlowWarningTask(FlowInstanceWarningTaskService service) {
+		String msg = null;
+		if (null != service) {
+			try {
+				service.excuteBatchTaskWarningSendMsg();
+			} catch (Exception e) {
+				msg = "业务系统执行FlowInstanceWarningTaskService.excuteBatchTaskWarningSendMsg()任务失败，异常结束!";
+			}
+		} else {
+			msg = "业务系统找不到对应的任务执行service:ServiceImpl，异常结束!";
+		}
+
+		return msg;
+	}
+
+	private String wi2FlowWarningTask(IFlowWarningTaskService service) {
+		String msg = null;
+		if (null != service) {
+			try {
+				service.wi2FlowWarningTask();
+			} catch (Exception e) {
+				msg = "业务系统执行IFlowWarningTaskService.wi2FlowWarningTask()任务失败，异常结束!";
+			}
+		} else {
+			msg = "业务系统找不到对应的任务执行service:ServiceImpl，异常结束!";
+		}
+
+		return msg;
+	}
+	
+	   private String exeFlowWarningTask(IFlowWarningTaskService service) {
+	        String msg = null;
+	        if (null != service) {
+	            try {
+	                service.startFlowWarningTask();
+	            } catch (Exception e) {
+	                msg = "业务系统执行IFlowWarningTaskService.exeFlowWarningTask()任务失败，异常结束!";
+	            }
+	        } else {
+	            msg = "业务系统找不到对应的任务执行service:ServiceImpl，异常结束!";
+	        }
+
+	        return msg;
+	    }
+	   
+	   private String getContractAndSendNC(BaseAPI baseApiService,FiCoContractService fiCoContractService){
+		   String msg = null;
+		   List<CompanyDTO> companyList = baseApiService.getAllCompany(false).getResult();
+		   for(CompanyDTO dto : companyList){
+			   SyncFinaCoData syncFinaCoData =  (SyncFinaCoData) App.getBean("syncFinaCoData");
+				Map<Long,List<Map<String,Object>>> returnmap = syncFinaCoData.findContract(dto.getId());
+				List<Map<String,Object>> list = returnmap.get(dto.getId());
+				List<Long> finaSuccessList = new ArrayList<Long>();
+				List<Long> finaErrorList = new ArrayList<Long>();
+				FinaData finaData = new FinaData();
+				for(int i=0;i<list.size();i++){
+					FiCoContract fico = new FiCoContract();
+					Map<String,Object> map = list.get(i);
+					fico.setCode(String.valueOf(map.get("code")));
+					fico.setName(String.valueOf(map.get("name")));
+					fico.setNcCode(String.valueOf(map.get("code")));
+					fico.setCoid(Long.valueOf(map.get("id")+""));
+					fico.setCompanyId(dto.getId());
+					fico.setSendStatus(1L);
+					try{
+						fiCoContractService.saveOrUpdate(fico);
+						finaSuccessList.add(Long.valueOf(map.get("id")+""));
+					}catch (Exception e){
+						finaErrorList.add(Long.valueOf(map.get("id")+""));
+						e.printStackTrace();
+					}
+					finaData.put("success", finaSuccessList);
+					finaData.put("error", finaErrorList);
+				}
+				syncFinaCoData.updateContractFiType(finaData);
+		   }
+		   
+		   FiSysInfoService fiSysInfoService = App.getBean(FiSysInfoService.class);
+		   List<FiCoContract> list = fiCoContractService.getFiCoContract(null,null,null,0L);
+		   FiSysinfo sysinfo = fiSysInfoService.getAllFiSysinfo().get(0);
+		   String xmlFile = "";
+			// NC系统返回的xml字符串
+			String res = null;
+			try {
+				String webUrl = sysinfo.getWebUrl();
+				String url = webUrl + "?account=02&receiver=0001" ;
+				for(FiCoContract dto : list){
+					xmlFile = fiCoContractService.createSyncXml2NC(dto);
+					if (xmlFile != null && !xmlFile.trim().equals("") && !url.trim().equals("") && url != null) {
+						res = NCSendData.getPostResponse(url, xmlFile);
+					}
+	//					System.out.println("NC返回的信息===="+res);
+					if (null != res) {
+						if (NCXMlParse.XmlErrorCode(res) >= 0) {
+							dto.setNcCode(dto.getCode());
+							dto.setSendStatus(1L);// 输出成功
+							dto.setSendDate(new Date());
+						} else {
+							String errorinfo = NCXMlParse.XmlErrorInfo(res);
+							Integer errCode = NCXMlParse.XmlErrorCode(res);
+							dto.setSendStatus(2L);//  输出失败
+							dto.setSendDate(new Date());
+							String error = "错误代码：" + errCode.toString() + " 错误内容："+ errorinfo;
+							dto.setErrmsg(error);
+						}
+						//saveFile1(res);
+					} else {
+						dto.setSendStatus(0L);// 未输出
+						dto.setSendDate(new Date());
+						dto.setErrmsg("生成xml文件失败，未输出！");
+					}
+					fiCoContractService.saveOrUpdate(dto);
+				}
+				msg = "推送成功";
+			}catch (Exception e) {
+				e.printStackTrace();
+				msg = "推送失败";
+			}
+		   return msg;
+	   }
+}

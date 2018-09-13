@@ -1,0 +1,1482 @@
+package com.xinleju.erp.flowengine.service.impl;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import javax.annotation.Resource;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.base.utils.DateUtils;
+import com.xinleju.erp.flow.service.api.SmObjectService;
+import com.xinleju.erp.flow.service.api.extend.dto.UserDTO;
+import com.xinleju.erp.flowengine.action.FlowInstanceApproveAction;
+import com.xinleju.erp.flowengine.dao.FlowInstanceDao;
+import com.xinleju.erp.flowengine.dao.FlowInstanceStepDao;
+import com.xinleju.erp.flowengine.dao.FlowInstanceStepRelationDao;
+import com.xinleju.erp.flowengine.dto.FlowInstanceStepTaskBackDto;
+import com.xinleju.erp.flowengine.models.FlowInstance;
+import com.xinleju.erp.flowengine.models.FlowInstanceStep;
+import com.xinleju.erp.flowengine.models.FlowInstanceStepRelation;
+import com.xinleju.erp.flowengine.models.FlowInstanceStepWork;
+import com.xinleju.erp.flowengine.models.FlowInstanceStepWorkTask;
+import com.xinleju.erp.flowengine.models.FlowInstanceStepWorkTaskExtend;
+import com.xinleju.erp.flowengine.models.FlowInstanceStepWorkTaskWarnLog;
+import com.xinleju.erp.flowengine.service.FlowInstanceCalculateStepService;
+import com.xinleju.erp.flowengine.service.FlowInstanceCalculateWorkService;
+import com.xinleju.erp.flowengine.service.FlowInstanceManagerService;
+import com.xinleju.erp.flowengine.service.FlowInstanceStepService;
+import com.xinleju.erp.flowengine.service.FlowInstanceStepWorkService;
+import com.xinleju.erp.flowengine.service.FlowInstanceStepWorkTaskExtendService;
+import com.xinleju.erp.flowengine.utils.FlowInstanceConstant;
+import com.xinleju.erp.flowengine.utils.FlowInstanceStatus;
+import com.xinleju.erp.flowengine.utils.IDGenerator;
+import com.xinleju.erp.flowengine.utils.ParticipantType;
+import com.xinleju.erp.flowengine.utils.StepTypeStatus;
+import com.xinleju.erp.flowengine.utils.TaskMsgContext;
+import com.xinleju.erp.flowengine.utils.TaskTypeStatus;
+import com.xinleju.erp.flowengine.utils.WorkTypeStatus;
+import com.xinleju.erp.frame.models.Msg;
+import com.xinleju.erp.frame.models.Setting;
+import com.xinleju.erp.frame.service.SettingService;
+import com.xinleju.erp.frame.utils.StaticInterface;
+import com.xinleju.erp.thirdpart.oa.xinyuan.impl.OaMsgServiceImpl;
+
+@Service
+public class FlowInstanceStepServiceImpl  extends BaseService implements FlowInstanceStepService{
+	
+	
+	private static final Logger logger = Logger
+			.getLogger(FlowInstanceStepServiceImpl.class);
+    @Autowired
+    private OaMsgServiceImpl oaMsgServiceImpl;
+	@Autowired
+	private FlowInstanceStepWorkService flowInstanceStepWorkService;
+	@Resource
+	private FlowInstanceManagerService flowInstanceManagerService;
+	
+	@Resource
+	private FlowInstanceStepDao flowInstanceStepDao;
+	
+	@Resource
+	private FlowInstanceStepRelationDao flowInstanceStepRelationDao;
+	
+	@Resource
+	private FlowInstanceStepWorkTaskExtendService flowInstanceStepWorkTaskExtendService;
+	
+	@Resource
+	private FlowInstanceCalculateWorkService flowInstanceCalculateWorkService;
+	@Resource
+	private FlowInstanceCalculateStepService flowInstanceCalculateStepService;
+
+
+	@Autowired
+	private FlowInstanceDao flowInstanceDao;
+
+	@Autowired
+	private SmObjectService smObjectService;
+	
+	/* 
+	 * 1.当前任务完成以后，尝试完成本组工作
+	 * （1）.本组工作完成后，判断是否有下一组工作，如果有，判断是否要完成如果完成，则继续判断下一组工作，直到最后一组工作完成，尝试完成本环节，如果
+	 * 
+	 * (non-Javadoc)
+	 * @see com.xinleju.erp.flowengine.servcie.FlowInstanceStepService#tryComplementFlowInstanceStep(com.xinleju.erp.flowengine.models.FlowInstanceStep, com.xinleju.erp.flowengine.models.FlowInstanceStepWork, com.xinleju.erp.flowengine.models.FlowInstanceStepWorkTask)
+	 */
+	@Transactional
+	public boolean tryComplementFlowInstanceStep (
+			FlowInstanceStep flowInstanceStep,FlowInstanceStepWork flowInstanceStepWork,FlowInstanceStepWorkTask flowInstanceStepWorkTask,UserDTO currUser) throws Exception{
+		 boolean result= flowInstanceStepWorkService.tryComplementFlowInstanceStepWork(flowInstanceStep, flowInstanceStepWork, flowInstanceStepWorkTask);
+		 if(result){
+			 flowInstanceStep.setStatus(StepTypeStatus.STATUS_COMPLETE);
+			 flowInstanceStep.setPassTime(new Date());
+			 flowInstanceManagerService.updateFlowInstanceStep(flowInstanceStep);
+			 
+			 //抄送
+			 saveCsFlowInstanceStepUsers(flowInstanceStep);
+			 //分支策略，如果单一分支，可以运行任意个，结束其它节点
+			 String forkStrategy=flowInstanceStep.getForkStrategy();
+			 
+			 if(StepTypeStatus.FORKSTRATEGY_XO.equals(forkStrategy)){
+				 //开启单一分支，其他分支作废
+				 boolean first=false;
+				 for(FlowInstanceStepRelation flowInstanceStepRel : flowInstanceStep.getLstFlowInstanceStepRelation()){
+					 
+				
+					 //开启下一个
+					 FlowInstanceStep nextFlowInstanceStep = getNextFlowInstanceStep(flowInstanceStepRel.getNextStepId());
+					 //作废其他分支
+					 if(first){
+						 tryOverNextFlowInstanceStep(nextFlowInstanceStep, currUser);
+					 }
+					 
+					 if(!first){
+						 
+						//判断是否开启下一个，如果全部聚合则需要所有上一个节点都完成进行下一个节点
+						 String joinStrategy=nextFlowInstanceStep.getJoinStrategy();
+						 boolean excute=true;
+						 //全部聚合
+						 if(StepTypeStatus.JOINSTRATEGY_AND.equals(joinStrategy)){
+							 //获取当前结点的上几个节点
+							 List<Integer> list=flowInstanceStepDao.getSuperFlowInstanceStepsStatus(nextFlowInstanceStep.getGuid());
+							 if(list.contains(StepTypeStatus.STATUS_RUNNING) || list.contains(StepTypeStatus.STATUS_CREATED)){
+								 excute=false;
+								 break;
+							 }
+							 
+						 }
+						 //判断聚合方式，如果单一聚合，
+						 if(excute){
+							 if(StepTypeStatus.STATUS_CREATED==nextFlowInstanceStep.getStatus()){
+							   tryStartNextFlowInstanceStep(nextFlowInstanceStep, currUser);
+							 }
+						 }
+						 //第一个
+						 first=true;
+					 }
+					 
+				 }
+			 }else{
+				 //开启所有分支
+				 for(FlowInstanceStepRelation flowInstanceStepRel : flowInstanceStep.getLstFlowInstanceStepRelation()){
+					 //开启下一个
+					 FlowInstanceStep nextFlowInstanceStep = getNextFlowInstanceStep(flowInstanceStepRel.getNextStepId());
+					//判断是否开启下一个，如果全部聚合则需要所有上一个节点都完成进行下一个节点
+					 String joinStrategy=nextFlowInstanceStep.getJoinStrategy();
+					 boolean excute=true;
+					 //全部聚合
+					 if(StepTypeStatus.JOINSTRATEGY_AND.equals(joinStrategy)){
+						 //获取当前结点的上几个节点
+						 List<Integer> list=flowInstanceStepDao.getSuperFlowInstanceStepsStatus(nextFlowInstanceStep.getGuid());
+						 if(list.contains(StepTypeStatus.STATUS_RUNNING) || list.contains(StepTypeStatus.STATUS_CREATED)){
+							 excute=false;
+							 break;
+						 }
+					 }
+					 //判断聚合方式，如果单一聚合，如果下一个节点已经被开启，无需再次开启
+					 if(excute){
+						 if(StepTypeStatus.STATUS_CREATED==nextFlowInstanceStep.getStatus()){
+							 tryStartNextFlowInstanceStep(nextFlowInstanceStep, currUser);
+						 }
+						
+					 }
+				 }
+			 }
+			 
+			//如果是最后的节点结束，则流程结束
+			 if(StepTypeStatus.IS_END==flowInstanceStep.getIsEnd()){
+				 FlowInstance flowInstance=getDao().getById(FlowInstance.class, flowInstanceStepWorkTask.getFiId(), null);
+				 if(StepTypeStatus.STATUS_COMPLETE==flowInstanceStep.getStatus()){
+					 flowInstance.setCompleteUserId(currUser.getId());
+				     flowInstance.setCompleteUserLoginName(currUser.getLoginName());
+				     flowInstance.setCompleteUserName(currUser.getRealName());
+					 flowInstance.setStatus(FlowInstanceStatus.STATUS_COMPLETE);
+				 }
+				 flowInstance.setCompleteTime(new Date());
+				 flowInstanceManagerService.updateFlowInstance(flowInstance);
+			 }
+		 }
+		 
+
+		 return true;
+	}
+	
+	
+	
+	/**
+	 * 
+	 * 
+	 * @param currentFlowInstanceStep
+	 * @return
+	 */
+	public List<FlowInstanceStep> getNextFlowInstanceStepByCurrentStep(FlowInstanceStep currentFlowInstanceStep){
+		List<FlowInstanceStep> flowInstanceSteps=new ArrayList<FlowInstanceStep>();
+		 String forkStrategy=currentFlowInstanceStep.getForkStrategy();
+		 if(StepTypeStatus.FORKSTRATEGY_XO.equals(forkStrategy)){
+			 //开启单一分支，其他分支作废
+			 boolean first=false;
+			 for(FlowInstanceStepRelation flowInstanceStepRel : currentFlowInstanceStep.getLstFlowInstanceStepRelation()){
+				 //开启下一个
+				 FlowInstanceStep nextFlowInstanceStep = getNextFlowInstanceStep(flowInstanceStepRel.getNextStepId());
+				 if(!first){
+					//判断是否开启下一个，如果全部聚合则需要所有上一个节点都完成进行下一个节点
+					 String joinStrategy=nextFlowInstanceStep.getJoinStrategy();
+					 boolean excute=true;
+					 //全部聚合
+					 if(StepTypeStatus.JOINSTRATEGY_AND.equals(joinStrategy)){
+						 //获取当前结点的上几个节点
+						
+						 List<FlowInstanceStep> list=flowInstanceStepDao.getSuperFlowInstanceStepsByStepId(nextFlowInstanceStep.getGuid());
+						 for(FlowInstanceStep step:list){
+							 if(StepTypeStatus.STATUS_CREATED==step.getStatus()){
+								 flowInstanceSteps.add(step);
+								 excute=false;
+							 }
+						 }
+					
+						 
+					 }
+					 //判断聚合方式，如果单一聚合，
+					 if(excute){
+						 if(StepTypeStatus.STATUS_CREATED==nextFlowInstanceStep.getStatus()){
+							 flowInstanceSteps.add(nextFlowInstanceStep);
+						 }
+					 }
+				 }
+			 }
+		 }else{
+			 //开启所有分支
+			 for(FlowInstanceStepRelation flowInstanceStepRel : currentFlowInstanceStep.getLstFlowInstanceStepRelation()){
+				 //开启下一个
+				 FlowInstanceStep nextFlowInstanceStep = getNextFlowInstanceStep(flowInstanceStepRel.getNextStepId());
+				//判断是否开启下一个，如果全部聚合则需要所有上一个节点都完成进行下一个节点
+				 String joinStrategy=nextFlowInstanceStep.getJoinStrategy();
+				 boolean excute=true;
+				 //全部聚合
+				 if(StepTypeStatus.JOINSTRATEGY_AND.equals(joinStrategy)){
+					 //获取当前结点的上几个节点
+
+					 List<FlowInstanceStep> list=flowInstanceStepDao.getSuperFlowInstanceStepsByStepId(nextFlowInstanceStep.getGuid());
+					 for(FlowInstanceStep step:list){
+						 if(StepTypeStatus.STATUS_CREATED==step.getStatus()){
+							 flowInstanceSteps.add(step);
+							 excute=false;
+						 }
+					 }
+				
+				 }
+				 //判断聚合方式，如果单一聚合，如果下一个节点已经被开启，无需再次开启
+				 if(excute){
+					 if(StepTypeStatus.STATUS_CREATED==nextFlowInstanceStep.getStatus()){
+						 flowInstanceSteps.add(nextFlowInstanceStep);
+					 }
+					
+				 }
+			 }
+		 }
+		 return flowInstanceSteps;
+	}
+
+	/**
+	 * 获取step
+	 * @param nextStepId
+	 * @return
+	 */
+	private FlowInstanceStep getNextFlowInstanceStep(String nextStepId){
+		return getDao().findFirst(FlowInstanceStep.class, "guid='"+nextStepId+"'");
+	}
+	
+	
+	/**
+	 * 
+	 * 判断是否需要抄送，如果需要抄送，需要发送给抄送人
+	 * @param flowInstanceStep
+	 */
+	private void saveCsFlowInstanceStepUsers(FlowInstanceStep flowInstanceStep) throws Exception{
+		 String csUserIds=flowInstanceStep.getCsListUserIds();
+		 if(StringUtils.isNotBlank(csUserIds)){
+			 List<String> userList=new ArrayList<String>();
+			 String[] cs=csUserIds.split(",");
+			 for(String c:cs){
+				 if(StringUtils.isNotBlank(c)){
+				     userList.add(c);
+				 }
+			 }
+			flowInstanceStepWorkTaskExtendService.sendDYFlowInstanceStepWorkTaskExtend(flowInstanceStep.getGuid(), flowInstanceStep.getFiId(), 
+					 null, TaskTypeStatus.TaskType.CS.getCode(), userList);
+			
+		 }
+	}
+
+	
+	/**
+	 * 尝试开启下一个step
+	 * @param nextFlowInstanceStep
+	 * @return
+	 */
+	private  boolean tryStartNextFlowInstanceStep(FlowInstanceStep nextFlowInstanceStep,UserDTO currUser) throws Exception{
+		 logger.info("执行=====tryStartNextFlowInstanceStep==================="+nextFlowInstanceStep.getGuid());
+		 boolean result = flowInstanceStepWorkService.tryStartFlowInstanceStepWork(nextFlowInstanceStep);
+		 if(result){
+		
+			 nextFlowInstanceStep.setStatus(StepTypeStatus.STATUS_COMPLETE);
+			 nextFlowInstanceStep.setPassTime(new Date());
+			 flowInstanceManagerService.updateFlowInstanceStep(nextFlowInstanceStep);
+			 //看看是否存在抄送环节，如果拥有抄送就可以处理
+			 saveCsFlowInstanceStepUsers(nextFlowInstanceStep);
+			 
+				//如果是最后的节点结束，则流程结束
+			 if(StepTypeStatus.IS_END==nextFlowInstanceStep.getIsEnd()){
+				 FlowInstance flowInstance=getDao().getById(FlowInstance.class, nextFlowInstanceStep.getFiId(), null);
+				 if(StepTypeStatus.STATUS_COMPLETE==nextFlowInstanceStep.getStatus()){
+					 flowInstance.setCompleteUserId(currUser.getId());
+				     flowInstance.setCompleteUserLoginName(currUser.getLoginName());
+				     flowInstance.setCompleteUserName(currUser.getRealName());
+					 flowInstance.setStatus(FlowInstanceStatus.STATUS_COMPLETE);
+				 }
+				 flowInstance.setCompleteTime(new Date());
+				 flowInstanceManagerService.updateFlowInstance(flowInstance);
+			 }
+			 
+			 
+			 //分支策略，如果单一分支，可以运行任意个，结束其它节点
+			 String forkStrategy=nextFlowInstanceStep.getForkStrategy();
+			 if(StepTypeStatus.FORKSTRATEGY_XO.equals(forkStrategy)){
+				 boolean first=false;
+				 for(FlowInstanceStepRelation flowInstanceStepRel : nextFlowInstanceStep.getLstFlowInstanceStepRelation()){
+					 //开启下一个
+					 FlowInstanceStep next_FlowInstanceStep = getNextFlowInstanceStep(flowInstanceStepRel.getNextStepId());
+					 if(!first){
+						//判断是否开启下一个，如果全部聚合则需要所有上一个节点都完成进行下一个节点
+						 String joinStrategy=next_FlowInstanceStep.getJoinStrategy();
+						 boolean excute=true;
+						 //全部聚合
+						 if(StepTypeStatus.JOINSTRATEGY_AND.equals(joinStrategy)){
+							 //获取当前结点的上几个节点
+							 List<Integer> list=flowInstanceStepDao.getSuperFlowInstanceStepsStatus(nextFlowInstanceStep.getGuid());
+							 if(list.contains(StepTypeStatus.STATUS_RUNNING) || list.contains(StepTypeStatus.STATUS_CREATED)){
+								 excute=false;
+								 break;
+							 }
+						 }
+						 //判断聚合方式，如果单一聚合，
+						 if(excute){
+							 logger.info("判断聚合方式，如果单一聚合==================="+next_FlowInstanceStep.getGuid());
+							 tryStartNextFlowInstanceStep(next_FlowInstanceStep, currUser);
+						 }
+						 //第一个
+						 first=true;
+					 }
+					 if(first){
+						 tryOverNextFlowInstanceStep(next_FlowInstanceStep, currUser);
+					 }
+				 }
+			 }else{
+				 for(FlowInstanceStepRelation flowInstanceStepRel : nextFlowInstanceStep.getLstFlowInstanceStepRelation()){
+					 //开启下一个
+					 FlowInstanceStep next_FlowInstanceStep = getNextFlowInstanceStep(flowInstanceStepRel.getNextStepId());
+					//判断是否开启下一个，如果全部聚合则需要所有上一个节点都完成进行下一个节点
+					 String joinStrategy=next_FlowInstanceStep.getJoinStrategy();
+					 boolean excute=true;
+					 //全部聚合
+					 if(StepTypeStatus.JOINSTRATEGY_AND.equals(joinStrategy)){
+						 //获取当前结点的上几个节点
+						 List<Integer> list=flowInstanceStepDao.getSuperFlowInstanceStepsStatus(nextFlowInstanceStep.getGuid());
+						 if(list.contains(StepTypeStatus.STATUS_RUNNING) || list.contains(StepTypeStatus.STATUS_CREATED)){
+							 excute=false;
+							 break;
+						 }
+					 }
+					 //判断聚合方式，如果单一聚合，
+					 if(excute){
+						 tryStartNextFlowInstanceStep(next_FlowInstanceStep, currUser);
+					 }
+				 }
+			 } 
+		 }else{
+			 nextFlowInstanceStep.setStatus(StepTypeStatus.STATUS_RUNNING);
+			 nextFlowInstanceStep.setActivitiDate(new Date());
+			 flowInstanceManagerService.updateFlowInstanceStep(nextFlowInstanceStep);
+		 }
+		 
+		 return false;
+	}
+	
+	/**
+	 * 尝试作废一个step
+	 * @param nextFlowInstanceStep
+	 * @return
+	 */
+	private  boolean tryOverNextFlowInstanceStep(FlowInstanceStep nextFlowInstanceStep,UserDTO currUser) throws Exception{	
+		
+		 List<FlowInstanceStepWork> works= nextFlowInstanceStep.getLstFlowInstanceStepWork();
+		 for(FlowInstanceStepWork work:works){
+			 flowInstanceStepWorkService.tryOverFlowInstanceStepWork(work); 
+		 }
+		 nextFlowInstanceStep.setStatus(StepTypeStatus.STATUS_OVERDUE);
+		//如果是最后的节点结束，则流程结束
+		 flowInstanceManagerService.updateFlowInstanceStep(nextFlowInstanceStep);
+		 for(FlowInstanceStepRelation flowInstanceStepRel : nextFlowInstanceStep.getLstFlowInstanceStepRelation()){
+		     FlowInstanceStep next_FlowInstanceStep = getNextFlowInstanceStep(flowInstanceStepRel.getNextStepId());
+		     tryOverNextFlowInstanceStep(next_FlowInstanceStep, currUser);
+		 }
+		 return false;
+	}
+	
+
+	/**
+	 * 流程当前环节
+	 * 流程打回
+	 * 流程打回标识
+	 * @param nextFlowInstanceStep 流程当前环节
+	 * @param backWorkId           流程打回
+	 * @param backFlag             流程打回标识
+	 * @param flowInstanceStepWorkTask  当前任务
+	 * @return
+	 */
+	public  boolean tryBacktoFlowInstanceStep(FlowInstance flowInstance,FlowInstanceStep flowInstanceStep,FlowInstanceStepWork flowInstanceStepWork,FlowInstanceStepWorkTask flowInstanceStepWorkTask,String backStepId,boolean backStepFlag,UserDTO currUser) throws Exception{
+		FlowInstanceStep flowInstanceStepBack =  getNextFlowInstanceStep(backStepId);
+		Integer  isStart=flowInstanceStepBack.getIsStart();
+		if(isStart==1 && backStepFlag ){
+			//打回到发起环节
+			 boolean result= flowInstanceStepWorkService.tryBackFlowInstanceStepWork(flowInstanceStep, flowInstanceStepWork, flowInstanceStepWorkTask);
+			 if(result){
+				    flowInstanceStep.setStatus(StepTypeStatus.STATUS_COMPLETE);
+				    flowInstanceManagerService.updateFlowInstanceStep(flowInstanceStep);
+
+					List<FlowInstanceStep> nextFlowInstanceSteps=new ArrayList<FlowInstanceStep>();
+					List<FlowInstanceStep> steps=flowInstance.getLstFlowInstanceStep();
+			        for(FlowInstanceStep step :steps){
+			        	if(StepTypeStatus.STATUS_CREATED==step.getStatus() && !flowInstanceStep.getGuid().equals(step.getGuid()) ){
+			        		nextFlowInstanceSteps.add(step);
+			        	}
+			        }	
+				 
+					 //作废运行的step
+					 for(FlowInstanceStep s:nextFlowInstanceSteps){
+						 tryOverNextFlowInstanceStep(s, currUser);
+					 }
+					 
+			        flowInstance.setStatus(FlowInstanceStatus.STATUS_BACK);
+			        flowInstance.setCompleteUserId(currUser.getId());
+				     flowInstance.setCompleteUserLoginName(currUser.getLoginName());
+				     flowInstance.setCompleteUserName(currUser.getRealName());
+			        flowInstance.setCompleteTime(new Date());
+					flowInstanceManagerService.updateFlowInstance(flowInstance);
+					
+					getDao().flush();
+					//特殊情况，主要应对分支打回
+					// 获取流程实例环节
+					List<FlowInstanceStep> fiStepsus = getDao().findAll(FlowInstanceStep.class,"fiId = ? and status =? ",new Object[]{flowInstanceStep.getFiId(),StepTypeStatus.STATUS_RUNNING}, " sort,num desc ", null);
+	
+					if(fiStepsus!=null && fiStepsus.size()>0){
+						for(FlowInstanceStep step:fiStepsus){
+							  flowInstanceStepWorkService.tryOverTaskComplementFlowInstanceStep(step);
+							  step.setStatus(StepTypeStatus.STATUS_OVERDUE);
+						      flowInstanceManagerService.updateFlowInstanceStep(step);
+						}
+					}
+			 }	
+		}else{
+			 boolean result= flowInstanceStepWorkService.tryBackFlowInstanceStepWork(flowInstanceStep, flowInstanceStepWork, flowInstanceStepWorkTask);
+			 if(result){
+				 
+				    //打回的节点需要修改为中间节点
+					 flowInstanceStep.setStatus(StepTypeStatus.STATUS_COMPLETE);
+					 flowInstanceStep.setIsEnd(StepTypeStatus.IS_MIDDLE);
+					 flowInstanceManagerService.updateFlowInstanceStep(flowInstanceStep);
+					//完成打回中间环节
+					//flowInstanceStepBack.setIsEnd(0);
+					//flowInstanceStepBack.setIsStart(0);
+					return 	saveBackMiddleNoRepeat( flowInstanceStep, flowInstanceStepBack, currUser) ;
+			 }
+		}
+		 return false;
+	}
+	
+
+	/**
+	 * 
+	 * 流程转办
+	 * @param flowInstanceStepWork
+	 * @param flowInstanceStepWorkTask
+	 * @param userId
+	 * @return
+	 * @throws Exception
+	 */
+	private  boolean tryZBtoflowInstanceStepWorkTask(FlowInstanceStep fiStep,FlowInstanceStepWork flowInstanceStepWork,FlowInstanceStepWorkTask flowInstanceStepWorkTask,String userId) throws Exception{
+		 boolean result = flowInstanceStepWorkService.tryZBtoflowInstanceStepWorkTask( fiStep,flowInstanceStepWork, flowInstanceStepWorkTask, userId);
+		 return result;
+	}
+	
+	/**
+	 * 
+	 * 流程转办
+	 * @param flowInstanceStepWork
+	 * @param flowInstanceStepWorkTask
+	 * @param userId
+	 * @return
+	 * @throws Exception
+	 */
+	private  boolean tryXBtoflowInstanceStepWorkTask(FlowInstanceStep fiStep,FlowInstanceStepWork flowInstanceStepWork,FlowInstanceStepWorkTask flowInstanceStepWorkTask,List<String> lstUserId) throws Exception{
+		 boolean result = flowInstanceStepWorkService.tryXBtoflowInstanceStepWorkTask(fiStep,flowInstanceStepWork, flowInstanceStepWorkTask, lstUserId);
+		 return result;
+	}
+	
+	/* (non-Javadoc)
+	 * @see com.xinleju.erp.flowengine.service.FlowInstanceStepService#save(com.xinleju.erp.flowengine.models.FlowInstanceStepWorkTask)
+	 */
+	public boolean save(FlowInstanceStepWorkTask fiTask,UserDTO currUser) throws Exception{
+		logger.info("提交流程任务===================="+fiTask.getGuid());
+		// 获取流程实例工作组
+		FlowInstanceStepWork fiWork = getDao().findFirst(FlowInstanceStepWork.class,"guid = ?",new Object[]{fiTask.getWorkId()});
+		// 获取流程实例环节
+		FlowInstanceStep fiStep = getDao().findFirst(FlowInstanceStep.class,"guid = ?",new Object[]{fiWork.getStepId()});
+					
+		return tryComplementFlowInstanceStep(fiStep,fiWork,fiTask,currUser);
+	}
+	
+	/* (non-Javadoc)
+	 * @see com.xinleju.erp.flowengine.service.FlowInstanceStepService#saveToBack(com.xinleju.erp.flowengine.models.FlowInstanceStepWorkTask, java.lang.String, boolean)
+	 */
+	public boolean saveToBack(FlowInstance flowInstance ,FlowInstanceStepWorkTask fiTask,String stepId,boolean isReApprove,UserDTO currUser) throws Exception{
+		
+		// 获取流程实例工作组
+		FlowInstanceStepWork fiWork = getDao().findFirst(FlowInstanceStepWork.class,"guid = ?",new Object[]{fiTask.getWorkId()});
+		// 获取流程实例环节
+		FlowInstanceStep fiStep = getDao().findFirst(FlowInstanceStep.class,"guid = ?",new Object[]{fiWork.getStepId()});
+					
+		return tryBacktoFlowInstanceStep(flowInstance,fiStep,fiWork,fiTask,stepId,isReApprove,currUser);
+	}
+	
+	/* (non-Javadoc)
+	 * @see com.xinleju.erp.flowengine.service.FlowInstanceStepService#saveToXB(com.xinleju.erp.flowengine.models.FlowInstanceStepWorkTask, java.util.List)
+	 */
+	public boolean saveToXB(FlowInstanceStepWorkTask fiTask,List<String> lstUserId,UserDTO userDto) throws Exception{
+		
+		// 获取流程实例工作组
+		FlowInstanceStepWork fiWork = getDao().findFirst(FlowInstanceStepWork.class,"guid = ?",new Object[]{fiTask.getWorkId()});
+		// 获取流程实例环节
+		FlowInstanceStep fiStep = getDao().findFirst(FlowInstanceStep.class,"guid = ?",new Object[]{fiWork.getStepId()});
+					
+		return tryXBtoflowInstanceStepWorkTask( fiStep,fiWork, fiTask,lstUserId);
+	}
+	
+	/* (non-Javadoc)
+	 * @see com.xinleju.erp.flowengine.service.FlowInstanceStepService#saveToZB(com.xinleju.erp.flowengine.models.FlowInstanceStepWorkTask, java.lang.String)
+	 */
+	public boolean saveToZB(FlowInstanceStepWorkTask fiTask,String userId,UserDTO userDto) throws Exception{
+		
+		// 获取流程实例工作组
+		FlowInstanceStepWork fiWork = getDao().findFirst(FlowInstanceStepWork.class,"guid = ?",new Object[]{fiTask.getWorkId()});
+		// 获取流程实例环节
+		FlowInstanceStep fiStep = getDao().findFirst(FlowInstanceStep.class,"guid = ?",new Object[]{fiWork.getStepId()});
+					
+		return tryZBtoflowInstanceStepWorkTask(fiStep,fiWork, fiTask, userId);
+	}
+
+	public boolean saveToZF(FlowInstance flowInstance,UserDTO currUser) throws Exception{
+		
+		// 获取流程实例工作组
+		List<FlowInstanceStep> currentFlowInstanceSteps=new ArrayList<FlowInstanceStep>();
+		List<FlowInstanceStep> nextFlowInstanceSteps=new ArrayList<FlowInstanceStep>();
+	//	FlowInstanceStepWork fiWork = getDao().findFirst(FlowInstanceStepWork.class,"guid = ?",new Object[]{fiTask.getWorkId()});
+		// 获取流程实例环节
+		//FlowInstanceStep fiStep = getDao().findFirst(FlowInstanceStep.class,"guid = ?",new Object[]{fiWork.getStepId()});
+		List<FlowInstanceStep> steps=flowInstance.getLstFlowInstanceStep();
+        for(FlowInstanceStep step :steps){
+        	if(StepTypeStatus.STATUS_RUNNING==step.getStatus()){
+        		currentFlowInstanceSteps.add(step);
+        	}
+        	if(StepTypeStatus.STATUS_CREATED==step.getStatus()){
+        		nextFlowInstanceSteps.add(step);
+        	}
+        }	
+
+		return tryZFtoFlowInstanceStep(flowInstance,currentFlowInstanceSteps,nextFlowInstanceSteps, currUser);
+	}
+	
+	
+
+	
+	@Override
+	public boolean saveToKeyFinalized(FlowInstance flowInstance,UserDTO currUser)
+			throws Exception {
+		// TODO Auto-generated method stub
+		// 获取流程实例工作组
+			List<FlowInstanceStep> currentFlowInstanceSteps=new ArrayList<FlowInstanceStep>();
+			List<FlowInstanceStep> nextFlowInstanceSteps=new ArrayList<FlowInstanceStep>();
+		//	FlowInstanceStepWork fiWork = getDao().findFirst(FlowInstanceStepWork.class,"guid = ?",new Object[]{fiTask.getWorkId()});
+			// 获取流程实例环节
+			//FlowInstanceStep fiStep = getDao().findFirst(FlowInstanceStep.class,"guid = ?",new Object[]{fiWork.getStepId()});
+			List<FlowInstanceStep> steps=flowInstance.getLstFlowInstanceStep();
+	        for(FlowInstanceStep step :steps){
+	        	if(StepTypeStatus.STATUS_RUNNING==step.getStatus()){
+	        		currentFlowInstanceSteps.add(step);
+	        	}
+	        	if(StepTypeStatus.STATUS_CREATED==step.getStatus()){
+	        		nextFlowInstanceSteps.add(step);
+	        	}
+	        }	
+		return tryToKeyFinalizedFlowInstanceStep(flowInstance, currentFlowInstanceSteps, nextFlowInstanceSteps,currUser);
+	}
+
+
+
+	/**
+	 * 作废流程
+	 * @param flowInstance
+	 * @param currentFlowInstanceSteps
+	 * @param nextFlowInstanceSteps
+	 * @return
+	 * @throws Exception
+	 */
+	private  boolean tryZFtoFlowInstanceStep(FlowInstance flowInstance,List<FlowInstanceStep> currentFlowInstanceSteps,List<FlowInstanceStep> nextFlowInstanceSteps,UserDTO currUser) throws Exception{
+		//正在运行的step
+		 for(FlowInstanceStep flowInstanceStep:currentFlowInstanceSteps){
+			boolean flag=true;
+			List<FlowInstanceStepWork>   works= flowInstanceStep.getLstFlowInstanceStepWork();
+			for(FlowInstanceStepWork flowInstanceStepWork:works){
+				if(!(WorkTypeStatus.STATUS_COMPLETE==flowInstanceStepWork.getStatus())){
+					flowInstanceStepWorkService.tryOverFlowInstanceStepWork(flowInstanceStepWork);
+				}
+				if(WorkTypeStatus.STATUS_COMPLETE==flowInstanceStepWork.getStatus()){
+					flag=false;
+				}
+			}
+			
+			if(flag){
+				//作废本环节
+				tryOverNextFlowInstanceStep(flowInstanceStep, currUser);
+			}else{
+				//完成本环节
+				flowInstanceStep.setStatus(StepTypeStatus.STATUS_COMPLETE);
+				flowInstanceManagerService.updateFlowInstanceStep(flowInstanceStep);
+				
+			}
+			
+		
+		 }
+		 
+			//作废运行的step
+		 for(FlowInstanceStep flowInstanceStep:nextFlowInstanceSteps){
+			 tryOverNextFlowInstanceStep(flowInstanceStep, currUser);
+		 }
+		 
+        flowInstance.setStatus(FlowInstanceStatus.STATUS_OVERDUE);
+        flowInstance.setCompleteUserId(currUser.getId());
+        flowInstance.setCompleteUserLoginName(currUser.getLoginName());
+        flowInstance.setCompleteUserName(currUser.getRealName());
+        flowInstance.setCompleteTime(new Date());
+		flowInstanceManagerService.updateFlowInstance(flowInstance);
+		
+		 return true;
+	}
+	
+	
+	/**
+	 * 一键审结
+	 * @param flowInstance
+	 * @param currentFlowInstanceSteps
+	 * @param nextFlowInstanceSteps
+	 * @return
+	 * @throws Exception
+	 */
+	private  boolean tryToKeyFinalizedFlowInstanceStep(FlowInstance flowInstance,List<FlowInstanceStep> currentFlowInstanceSteps,List<FlowInstanceStep> nextFlowInstanceSteps,UserDTO currUser) throws Exception{
+		//正在运行的step
+		 for(FlowInstanceStep flowInstanceStep:currentFlowInstanceSteps){
+				    flowInstanceStepWorkService.tryStopTaskComplementFlowInstanceStep(flowInstanceStep);
+				    //完成本环节
+					flowInstanceStep.setStatus(StepTypeStatus.STATUS_COMPLETE);
+					flowInstanceManagerService.updateFlowInstanceStep(flowInstanceStep);
+				
+		 }
+		 
+		//完成未运行的step
+		 for(FlowInstanceStep flowInstanceStep:nextFlowInstanceSteps){
+			 flowInstanceStepWorkService.tryStopTaskComplementFlowInstanceStep(flowInstanceStep);
+			 //完成本环节
+			 flowInstanceStep.setStatus(StepTypeStatus.STATUS_COMPLETE);
+			 flowInstanceManagerService.updateFlowInstanceStep(flowInstanceStep);
+		 }
+		 
+        flowInstance.setStatus(FlowInstanceStatus.STATUS_COMPLETE);
+        flowInstance.setCompleteUserId(currUser.getId());
+	     flowInstance.setCompleteUserLoginName(currUser.getLoginName());
+	     flowInstance.setCompleteUserName(currUser.getRealName());
+        flowInstance.setCompleteTime(new Date());
+		flowInstanceManagerService.updateFlowInstance(flowInstance);
+		
+		 return true;
+	}
+	
+	@Override
+	public boolean saveToGT(FlowInstanceStepWorkTask fiTask,UserDTO currUser) throws Exception {
+		// TODO Auto-generated method stub
+		FlowInstance flowInstance=getDao().getById(FlowInstance.class, fiTask.getFiId(), null);
+		FlowInstanceStepWork fiWork = getDao().findFirst(FlowInstanceStepWork.class,"guid = ?",new Object[]{fiTask.getWorkId()});
+		String startUserId=String.valueOf(flowInstance.getStartUserId());
+		// 获取流程实例环节
+	    FlowInstanceStep fiStep = getDao().findFirst(FlowInstanceStep.class,"guid = ?",new Object[]{fiWork.getStepId()});
+		flowInstanceStepWorkService.saveToGT(fiStep,fiWork,fiTask, startUserId);
+		return false;
+	}
+
+	@Override
+	public boolean saveToHF(FlowInstanceStepWorkTask fiTask,UserDTO currUser) throws Exception {
+		// TODO Auto-generated method stub
+		flowInstanceStepWorkService.tryHFtoflowInstanceStepWorkTask(fiTask);
+		return false;
+	}
+	
+	
+	public void csFlowInstanceStepWorkTask() throws Exception{
+		
+	}
+
+	@Override
+	public boolean saveRecycleCoHost(FlowInstanceStepWorkTask fiTask)
+			throws Exception {
+		// TODO Auto-generated method stub
+		flowInstanceStepWorkService.saveRecycleCoHost(fiTask);
+		return false;
+	}
+
+	@Override
+	public boolean saveToCb(FlowInstance flowInstance, String taskIds)
+			throws Exception {
+		// TODO Auto-generated method stub
+		if(StringUtils.isNotBlank(taskIds)){
+			String[] ids=taskIds.split(",");
+			StringBuffer sb=new StringBuffer();
+			for(String id:ids){
+				sb.append("'"+id+"' ,");
+			}
+			String result=null;
+			if(sb.toString().endsWith(",")){
+				result=sb.toString().substring(0, sb.toString().length()-1);
+			}else{
+				result=sb.toString();
+			}
+		    List<FlowInstanceStepWorkTask> flowInstanceStepWorkTasks = getDao().findAll(FlowInstanceStepWorkTask.class," guid in ("+ result+") ");
+		    if(flowInstanceStepWorkTasks!=null && flowInstanceStepWorkTasks.size()>0){
+		    	 for(FlowInstanceStepWorkTask task:flowInstanceStepWorkTasks){
+		    		 List<String> userIds=new ArrayList<String>();
+		    		 userIds.add(task.getParticipant());
+		    		 flowInstanceStepWorkTaskExtendService.sendDYFlowInstanceStepWorkTaskExtend(task.getStepId(), flowInstance.getGuid(), 
+		    				 task.getGuid(), TaskTypeStatus.TaskType.CB.getCode(), userIds);
+		    	 }
+		    }
+	    	
+		}
+		 return false;
+	}
+
+	@Override
+	public void replaceTaskIdToUserId(FlowInstanceStepWorkTask flowInstanceStepWorkTask , String userId,
+			String repalceUserId) throws Exception {
+		// TODO Auto-generated method stub
+
+		flowInstanceStepWorkService.tryReplaceFlowInstanceStepWorkTask(flowInstanceStepWorkTask, userId, repalceUserId);
+	}
+
+
+
+	@Override
+	public List<String> tryTestComplementFlowInstanceStepWork(
+			FlowInstanceStepWorkTask flowInstanceStepWorkTask) throws Exception {
+		// TODO Auto-generated method stub
+		// 获取流程实例工作组
+		FlowInstanceStepWork fiWork = getDao().findFirst(FlowInstanceStepWork.class,"guid = ?",new Object[]{flowInstanceStepWorkTask.getWorkId()});
+		// 获取流程实例环节
+		FlowInstanceStep fiStep = getDao().findFirst(FlowInstanceStep.class,"guid = ?",new Object[]{fiWork.getStepId()});
+		return flowInstanceStepWorkService.tryTestComplementFlowInstanceStepWork(fiStep, fiWork, flowInstanceStepWorkTask);
+	}
+
+
+
+	@Override
+	public boolean jumpFlowInstanceStepWorkTask(String fiId,UserDTO currUser) throws Exception {
+		// TODO Auto-generated method stub
+		List<FlowInstanceStepWorkTask> flowInstanceStepWorkTasks = getDao().findAll(FlowInstanceStepWorkTask.class,"fiId = ? and status = ? ",new Object[]{fiId,TaskTypeStatus.STATUS_RUNNING});
+		for(FlowInstanceStepWorkTask task :flowInstanceStepWorkTasks){
+			task.setOpCode(TaskMsgContext.SYSTEMCODE);
+			task.setUserNote(TaskMsgContext.JumpPassMsg);
+			task.setCompleteUserId(Long.valueOf(task.getParticipant()));
+			task.setCompleteUserLoginName(currUser.getLoginName());
+			task.setCompleteUserName(task.getParticipantUserName());
+			save(task,currUser);
+			break;
+		}
+		return true;
+	}
+
+	private String convertListToStr(List<String> lstStepId){
+		StringBuilder sbStepId = new StringBuilder();
+		sbStepId.append("'" + lstStepId.get(0) + "'");
+		for(int index=1;index<lstStepId.size();index++){
+			sbStepId.append(",'" + lstStepId.get(index) + "'");
+		}
+		return sbStepId.toString();
+	}
+	
+	
+
+	/* (non-Javadoc)
+	 * @see com.xinleju.erp.flowengine.service.FlowInstanceStepService#saveToBack(com.xinleju.erp.flowengine.models.FlowInstance, com.xinleju.erp.flowengine.models.FlowInstanceStepWorkTask, java.lang.String, java.lang.String, boolean)
+	 */
+	@Override
+	public boolean saveToBack(FlowInstance flowInstance,
+			FlowInstanceStepWorkTask fiTask, String backStepId, String backTaskId,
+			boolean isReApprove,UserDTO currUser) throws Exception {
+		// TODO Auto-generated method stub
+		// 获取流程实例工作组
+		FlowInstanceStepWork fiWork = getDao().findFirst(FlowInstanceStepWork.class,"guid = ?",new Object[]{fiTask.getWorkId()});
+		// 获取流程实例环节当前环节的节点
+		FlowInstanceStep fiStep = getDao().findFirst(FlowInstanceStep.class,"guid = ?",new Object[]{fiWork.getStepId()});
+		
+		//完成打回中间环节的节点
+    	FlowInstanceStep flowInstanceStepBack =   getDao().findFirst(FlowInstanceStep.class,"guid = ?",new Object[]{backStepId});
+		Integer  isStart=flowInstanceStepBack.getIsStart();
+		if(isStart==1){
+	    	return tryBacktoFlowInstanceStep(flowInstance,fiStep,fiWork,fiTask,backStepId,isReApprove,currUser);
+	    }else{
+	    	//完成当前任务
+			 boolean result= flowInstanceStepWorkService.tryBackFlowInstanceStepWork(fiStep, fiWork, fiTask);
+			 if(result){
+				 
+				    //打回的节点需要修改为中间节点
+				    fiStep.setStatus(StepTypeStatus.STATUS_COMPLETE);
+				    fiStep.setIsEnd(StepTypeStatus.IS_MIDDLE);
+				    flowInstanceManagerService.updateFlowInstanceStep(fiStep);
+				    //是否重新审批
+				    if(isReApprove){
+				    	//重新审批
+				    	return saveBackMiddleRepeat( fiStep, flowInstanceStepBack, currUser);
+				    }else{
+				    	return saveBackMiddleNoRepeat( fiStep, flowInstanceStepBack, currUser);
+				    }
+				    /**
+				    //寻找本环节的关联环节
+				    List<FlowInstanceStepRelation> relationSteps=fiStep.getLstFlowInstanceStepRelation();
+				    //删除关联环节，增加新环节
+
+					List<FlowInstanceStep> nextFlowInstanceSteps=new ArrayList<FlowInstanceStep>();
+					List<FlowInstanceStep> steps=flowInstance.getLstFlowInstanceStep();
+			        for(FlowInstanceStep step :steps){
+			        	if(StepTypeStatus.STATUS_CREATED==step.getStatus() && !fiStep.getGuid().equals(step.getGuid()) ){
+			        		nextFlowInstanceSteps.add(step);
+			        	}
+			        }	
+				 
+					 //作废运行的step
+					 for(FlowInstanceStep s:nextFlowInstanceSteps){
+						 tryOverNextFlowInstanceStep(s);
+					 }
+					 
+			        flowInstance.setStatus(FlowInstanceStatus.STATUS_BACK);
+			        flowInstance.setCompleteTime(new Date());
+					flowInstanceManagerService.updateFlowInstance(flowInstance);
+					
+					getDao().flush();
+					//特殊情况，主要应对分支打回
+					// 获取流程实例环节
+					List<FlowInstanceStep> fiStepsus = getDao().findAll(FlowInstanceStep.class,"fiId = ? and status =? ",new Object[]{fiStep.getFiId(),StepTypeStatus.STATUS_RUNNING});
+					if(fiStepsus!=null && fiStepsus.size()>0){
+						for(FlowInstanceStep step:fiStepsus){
+							  flowInstanceStepWorkService.tryOverTaskComplementFlowInstanceStep(step);
+							  step.setStatus(StepTypeStatus.STATUS_OVERDUE);
+						      flowInstanceManagerService.updateFlowInstanceStep(step);
+						}
+					}
+		    */
+			 }	
+	    	return false;
+	    }
+	}
+	
+	
+	public boolean saveBackMiddleNoRepeat(FlowInstanceStep fiStep,FlowInstanceStep flowInstanceStepBack,UserDTO currUser) throws Exception{
+    	//不需要重新审批[新](1)--打回
+    	FlowInstanceStep newFlowInstanceSteptemp1=getAssembleFlowInstanceStepForWorkTask(flowInstanceStepBack);
+    	flowInstanceManagerService.saveFlowInstanceStep(newFlowInstanceSteptemp1);
+    	
+    	List<FlowInstanceStepWork> newFlowInstanceStepWork1s=getAssembleFlowInstanceStepWork(flowInstanceStepBack,newFlowInstanceSteptemp1.getGuid(),true);
+    	for(FlowInstanceStepWork newFlowInstanceStepWork1:newFlowInstanceStepWork1s){
+    		flowInstanceManagerService.saveFlowInstanceStepWork(newFlowInstanceStepWork1);
+    	}
+    	
+    	newFlowInstanceSteptemp1.setLstFlowInstanceStepWork(newFlowInstanceStepWork1s);
+    	
+       	//不需要重新审批[新](2)--打回被打回
+    	FlowInstanceStep newFlowInstanceSteptemp2=getAssembleFlowInstanceStepForWorkTask(fiStep);
+    	flowInstanceManagerService.saveFlowInstanceStep(newFlowInstanceSteptemp2);
+    	List<FlowInstanceStepWork> newFlowInstanceStepWork2s=getAssembleFlowInstanceStepWork(fiStep,newFlowInstanceSteptemp2.getGuid(),true);
+    	for(FlowInstanceStepWork newFlowInstanceStepWork2:newFlowInstanceStepWork2s){
+    		flowInstanceManagerService.saveFlowInstanceStepWork(newFlowInstanceStepWork2);
+    	}
+    
+    	//构造
+    	List<FlowInstanceStepRelation> relations=fiStep.getLstFlowInstanceStepRelation();
+    	List<String> nextStepIds=new ArrayList<String>();
+    	for( FlowInstanceStepRelation relation:relations){
+    		nextStepIds.add(relation.getNextStepId());
+    	}
+    	//删除关联
+    	for( FlowInstanceStepRelation relation:relations){
+    		flowInstanceStepRelationDao.deleteFlowInstanceStepRelation(relation);
+    	}
+    	//第一个关联
+    	FlowInstanceStepRelation flowInstanceStepRelation1=new FlowInstanceStepRelation();
+    	flowInstanceStepRelation1.setFiId(flowInstanceStepBack.getFiId());
+    	flowInstanceStepRelation1.setGuid(IDGenerator.getUUID());
+    	flowInstanceStepRelation1.setStepId(fiStep.getGuid());
+    	flowInstanceStepRelation1.setNextStepId(newFlowInstanceSteptemp1.getGuid());
+    	flowInstanceStepRelationDao.saveFlowInstanceStepRelation(flowInstanceStepRelation1);
+    	
+    	//第二个关联
+    	FlowInstanceStepRelation flowInstanceStepRelation2=new FlowInstanceStepRelation();
+    	flowInstanceStepRelation2.setFiId(flowInstanceStepBack.getFiId());
+    	flowInstanceStepRelation2.setGuid(IDGenerator.getUUID());
+    	flowInstanceStepRelation2.setStepId(newFlowInstanceSteptemp1.getGuid());
+    	flowInstanceStepRelation2.setNextStepId(newFlowInstanceSteptemp2.getGuid());
+    	flowInstanceStepRelationDao.saveFlowInstanceStepRelation(flowInstanceStepRelation2);
+    	
+    	List<FlowInstanceStepRelation> relationtemps=new ArrayList<FlowInstanceStepRelation>();
+    	relationtemps.add(flowInstanceStepRelation2);
+    	newFlowInstanceSteptemp1.setLstFlowInstanceStepRelation(relationtemps);
+    	//最后一个关联
+    	for(String nextStepId:nextStepIds){
+    		FlowInstanceStepRelation flowInstanceStepRelation3=new FlowInstanceStepRelation();
+    		flowInstanceStepRelation3.setFiId(flowInstanceStepBack.getFiId());
+    		flowInstanceStepRelation3.setGuid(IDGenerator.getUUID());
+    		flowInstanceStepRelation3.setStepId(newFlowInstanceSteptemp2.getGuid());
+    		flowInstanceStepRelation3.setNextStepId(nextStepId);
+	    	flowInstanceStepRelationDao.saveFlowInstanceStepRelation(flowInstanceStepRelation3);
+    	}
+    	getDao().flush();
+        //更改剩余节点的序号
+    	List<FlowInstanceStep> fiStepsus = getDao().findAll(FlowInstanceStep.class,"fiId = ? and status =? ",new Object[]{fiStep.getFiId(),StepTypeStatus.STATUS_CREATED}," sort,num asc " ,null);
+    	for(FlowInstanceStep step:fiStepsus){
+    		if(!(step.getGuid().equals(newFlowInstanceSteptemp1.getGuid()))&&!(step.getGuid().equals(newFlowInstanceSteptemp2.getGuid()))){
+    			step.setSort(IDGenerator.getTimeLongStr());
+    			step.setNum(IDGenerator.getNumberLongStr());
+    			step.setCreateTime(new Date());
+    			flowInstanceManagerService.updateFlowInstanceStep(step);
+    		}
+    	}
+    	getDao().flush();
+    	  //开启此节点
+    	return tryStartNextFlowInstanceStep(newFlowInstanceSteptemp1, currUser);
+	}
+	
+	
+	
+	/**
+	 * @param fiStep
+	 * @param flowInstanceStepBack
+	 * @return
+	 * @throws Exception
+	 */
+	public boolean saveBackMiddleRepeat(FlowInstanceStep fiStep,FlowInstanceStep flowInstanceStepBack,UserDTO currUser) throws Exception{
+		//禁止打回到分之节点
+		List<FlowInstanceStep> addSteps=new ArrayList<FlowInstanceStep>();
+		List<FlowInstanceStep> removeSteps=new ArrayList<FlowInstanceStep>();
+		List<FlowInstanceStep> runingSteps=new ArrayList<FlowInstanceStep>();
+		List<FlowInstanceStep> stepAll=  getDao().findAll(FlowInstanceStep.class,"fiId = ?  ",new Object[]{fiStep.getFiId()}," sort ,num ");
+		boolean addflag=false;
+		boolean removeflag=false;
+		for(FlowInstanceStep tempStep:stepAll){
+			if(tempStep.getGuid().equals(flowInstanceStepBack.getGuid())){
+				addflag=true;
+			}
+			if(addflag){
+				addSteps.add(tempStep);
+			}
+			if(removeflag && tempStep.getStatus()!=StepTypeStatus.STATUS_RUNNING){
+				removeSteps.add(tempStep);
+			}
+		
+			if(tempStep.getGuid().equals(fiStep.getGuid())){
+				removeflag=true;
+			}
+			if(tempStep.getStatus()==StepTypeStatus.STATUS_RUNNING){
+				runingSteps.add(tempStep);
+			}
+		}
+        /**
+    	//不需要重新审批[新](1)--打回
+    	FlowInstanceStep newFlowInstanceSteptemp1=getAssembleFlowInstanceStepForWorkTask(flowInstanceStepBack);
+    	flowInstanceManagerService.saveFlowInstanceStep(newFlowInstanceSteptemp1);
+    	List<FlowInstanceStepWork> newFlowInstanceStepWork1s=getAssembleFlowInstanceStepWork(flowInstanceStepBack,newFlowInstanceSteptemp1.getGuid(),true);
+    	for(FlowInstanceStepWork newFlowInstanceStepWork1:newFlowInstanceStepWork1s){
+    		flowInstanceManagerService.saveFlowInstanceStepWork(newFlowInstanceStepWork1);
+    	}
+    	newFlowInstanceSteptemp1.setLstFlowInstanceStepWork(newFlowInstanceStepWork1s);
+    	**/
+    	
+    	//中间节点的关联
+    	Map<String,FlowInstanceStep> newRelationMap=new HashMap<String,FlowInstanceStep>();
+    	Map<String,String> oldTonewRelationMap=new HashMap<String,String>();
+    	for(FlowInstanceStep  addStep:addSteps){
+    		FlowInstanceStep newFlowInstanceSteptempMiddle=getAssembleFlowInstanceStepForWorkTask(addStep);
+        	if(addStep.getStatus() == StepTypeStatus.STATUS_COMPLETE){
+        		//对应已经审批的人员
+        		List<FlowInstanceStepWork> newFlowInstanceStepWorkMiddles=getAssembleFlowInstanceStepWork(addStep,newFlowInstanceSteptempMiddle.getGuid(),true);
+        		newFlowInstanceSteptempMiddle.setLstFlowInstanceStepWork(newFlowInstanceStepWorkMiddles);
+        	}else if(addStep.getStatus() == StepTypeStatus.STATUS_CREATED){
+        		//对应已经审批的人员
+        		List<FlowInstanceStepWork> newWorks=getAssembleFlowInstanceStepWork(addStep,newFlowInstanceSteptempMiddle.getGuid(),false);
+        		newFlowInstanceSteptempMiddle.setLstFlowInstanceStepWork(newWorks);
+        	}else if(addStep.getStatus() == StepTypeStatus.STATUS_RUNNING){
+        		//对应已经审批的人员
+        		List<FlowInstanceStepWork> newWorks=getAssembleFlowInstanceStepWork(addStep,newFlowInstanceSteptempMiddle.getGuid(),false);
+        		newFlowInstanceSteptempMiddle.setLstFlowInstanceStepWork(newWorks);
+        	}
+        	newRelationMap.put(newFlowInstanceSteptempMiddle.getGuid(), newFlowInstanceSteptempMiddle);
+        	oldTonewRelationMap.put(addStep.getGuid(), newFlowInstanceSteptempMiddle.getGuid());	
+    	}
+    	//重新构建关系
+    	List<FlowInstanceStep> newFlowInstanceStepList=new ArrayList<FlowInstanceStep>();
+    	for(FlowInstanceStep  addStep:addSteps){
+    		//获取新的Id
+    		String   newId=oldTonewRelationMap.get(addStep.getGuid());
+    		FlowInstanceStep newFlowInstanceStep=newRelationMap.get(newId);
+    		List<FlowInstanceStepRelation> newrelations=new ArrayList<FlowInstanceStepRelation>();
+    		List<FlowInstanceStepRelation> oldrelations=addStep.getLstFlowInstanceStepRelation();
+    		for(FlowInstanceStepRelation relation :oldrelations){
+    			FlowInstanceStepRelation r=new FlowInstanceStepRelation();
+    			String nextId=relation.getNextStepId();
+    			String   newNextId=oldTonewRelationMap.get(nextId);
+    			r.setFiId(newFlowInstanceStep.getFiId());
+    			r.setStepId(newId);
+    			r.setNextStepId(newNextId);
+    			r.setGuid(IDGenerator.getUUID());
+    			newrelations.add(r);
+    		}
+    		newFlowInstanceStep.setLstFlowInstanceStepRelation(newrelations);    		
+    		newFlowInstanceStepList.add(newFlowInstanceStep);
+    	}
+    	//分布构建实体对象
+    	FlowInstanceStep newFlowInstanceSteptemp1=null;
+    	boolean firstElement=true;
+    	for(FlowInstanceStep  newStep: newFlowInstanceStepList){
+    		if(firstElement){
+    			newFlowInstanceSteptemp1=newStep;
+    			firstElement=false;
+    		}
+    		flowInstanceManagerService.saveFlowInstanceStep(newStep);
+    		List<FlowInstanceStepRelation> relations=newStep.getLstFlowInstanceStepRelation();
+    		List<FlowInstanceStepWork> works=newStep.getLstFlowInstanceStepWork();
+    		for(FlowInstanceStepWork w:works){
+    			flowInstanceManagerService.saveFlowInstanceStepWork(w);
+    		}
+           for(FlowInstanceStepRelation r:relations){
+        	   flowInstanceStepRelationDao.saveFlowInstanceStepRelation(r);
+    		}
+    		
+    	}
+    	//
+    	for(FlowInstanceStep  removeStep: removeSteps){
+    		List<FlowInstanceStepRelation> relations=removeStep.getLstFlowInstanceStepRelation();
+    		List<FlowInstanceStepWork> works=removeStep.getLstFlowInstanceStepWork();
+    		 for(FlowInstanceStepRelation r:relations){
+          	   flowInstanceStepRelationDao.deleteFlowInstanceStepRelation(r);
+      		}
+    		for(FlowInstanceStepWork w:works){
+    			getDao().delete(w);
+    		}
+    		getDao().delete(removeStep);
+    	}
+    	
+    	/**
+       	//不需要重新审批[新](2)--打回被打回
+    	FlowInstanceStep newFlowInstanceSteptemp2=getAssembleFlowInstanceStepForWorkTask(fiStep);
+    	flowInstanceManagerService.saveFlowInstanceStep(newFlowInstanceSteptemp2);
+    	List<FlowInstanceStepWork> newFlowInstanceStepWork2s=getAssembleFlowInstanceStepWork(fiStep,newFlowInstanceSteptemp2.getGuid(),true);
+    	for(FlowInstanceStepWork newFlowInstanceStepWork2:newFlowInstanceStepWork2s){
+    		flowInstanceManagerService.saveFlowInstanceStepWork(newFlowInstanceStepWork2);
+    	}
+    	**/
+    
+    	//构造
+    	List<FlowInstanceStepRelation> relations=fiStep.getLstFlowInstanceStepRelation();
+    	//删除关联
+    	for( FlowInstanceStepRelation relation:relations){
+    		flowInstanceStepRelationDao.deleteFlowInstanceStepRelation(relation);
+    	}
+    	//第一个关联
+    	FlowInstanceStepRelation flowInstanceStepRelation1=new FlowInstanceStepRelation();
+    	flowInstanceStepRelation1.setFiId(flowInstanceStepBack.getFiId());
+    	flowInstanceStepRelation1.setGuid(IDGenerator.getUUID());
+    	flowInstanceStepRelation1.setStepId(fiStep.getGuid());
+    	flowInstanceStepRelation1.setNextStepId(newFlowInstanceSteptemp1.getGuid());
+    	flowInstanceStepRelationDao.saveFlowInstanceStepRelation(flowInstanceStepRelation1);
+    	
+    	//挂链接
+    	for(FlowInstanceStep  runingStep:runingSteps){
+			
+			    runingStep.setStatus(StepTypeStatus.STATUS_OVERDUE);
+		        flowInstanceManagerService.updateFlowInstanceStep(runingStep);
+		        flowInstanceStepWorkService.tryOverTaskComplementFlowInstanceStep(runingStep);
+		        //构造
+		        List<FlowInstanceStepRelation> runingRelations=fiStep.getLstFlowInstanceStepRelation();
+		    	//删除关联
+		    	for( FlowInstanceStepRelation relation:runingRelations){
+		    		flowInstanceStepRelationDao.deleteFlowInstanceStepRelation(relation);
+		    	} 
+		    	FlowInstanceStepRelation runingflowInstanceStepRelation=new FlowInstanceStepRelation();
+		    	runingflowInstanceStepRelation.setFiId(runingStep.getFiId());
+		    	runingflowInstanceStepRelation.setGuid(IDGenerator.getUUID());
+		    	runingflowInstanceStepRelation.setStepId(runingStep.getGuid());
+		    	runingflowInstanceStepRelation.setNextStepId(newFlowInstanceSteptemp1.getGuid());
+		    	flowInstanceStepRelationDao.saveFlowInstanceStepRelation(runingflowInstanceStepRelation);
+    	}
+    	getDao().flush();
+    	  //开启此节点
+    	return tryStartNextFlowInstanceStep(newFlowInstanceSteptemp1, currUser);
+	}
+	
+
+	
+	/**
+	 * 
+	 * 已经审批的step构造work，根据具体的任务
+	 * @param flowInstanceStepBack
+	 * @param newFlowInstanceStep
+	 * @return
+	 */
+	public List<FlowInstanceStepWork> getAssembleFlowInstanceStepWork(FlowInstanceStep flowInstanceStepBack,String stepId,boolean flag) {
+		List<FlowInstanceStepWork> flowInstanceStepWorkList=new ArrayList<FlowInstanceStepWork>();
+		List<FlowInstanceStepWork>  flowInstanceStepWorkBacks =flowInstanceStepBack.getLstFlowInstanceStepWork();
+		for(FlowInstanceStepWork flowInstanceStepWorkBack:flowInstanceStepWorkBacks){
+			if( flowInstanceStepWorkBack.getStatus()==WorkTypeStatus.STATUS_COMPLETE && flag){
+				FlowInstanceStepWork flowInstanceStepWork = new FlowInstanceStepWork();
+				flowInstanceStepWork.setGuid(IDGenerator.getUUID());
+				flowInstanceStepWork.setStepId(stepId);
+				flowInstanceStepWork.setFiId(flowInstanceStepWorkBack.getFiId());
+				flowInstanceStepWork.setParticipantPostId(flowInstanceStepWorkBack.getParticipantPostId());
+				flowInstanceStepWork.setParticipantPostName(flowInstanceStepWorkBack.getParticipantPostName());
+				flowInstanceStepWork.setOriginParticipant(flowInstanceStepWorkBack.getOriginParticipant());
+			
+				flowInstanceStepWork.setStatus(WorkTypeStatus.STATUS_CREATED);
+				flowInstanceStepWork.setSort(IDGenerator.getTimeLongStr());
+				flowInstanceStepWork.setNum(IDGenerator.getNumberLongStr());
+				String participantNames=null;
+				String participants=null;
+				//获取参与人员名称和id
+				List<FlowInstanceStepWorkTask> tasks=flowInstanceStepWorkBack.getLstFlowInstanceStepWorkTask();
+				//work 参与 
+				StringBuilder participanttemps=new StringBuilder();
+				StringBuilder participantNametemps=new StringBuilder();
+				//work定义 【自动 +参与】
+				StringBuilder participanttedefinetemps=new StringBuilder();
+				StringBuilder participanttedefineNametemps=new StringBuilder();
+			    List<Map<String, String>>  list=new ArrayList<Map<String, String>>();
+				for(FlowInstanceStepWorkTask task:tasks){
+					if(task.getStatus()==TaskTypeStatus.STATUS_COMPLETE){
+						//需要判断是否原来流程的定义中的审批人，不过不是，需要建立节点
+						if(StringUtils.isEmpty(task.getTaskInstanceType())){
+							if(task.getParticipant()!=null){
+								participanttemps.append(task.getParticipant()+",");
+								participantNametemps.append(task.getParticipantUserName()+",");
+							}
+							if(StringUtils.isNotEmpty(task.getParticipant())){
+								participanttedefinetemps.append(task.getParticipant()+",");
+								participanttedefineNametemps.append(task.getParticipantUserName()+",");
+							}else{
+								participanttedefinetemps.append(task.getOriginParticipant()+",");
+								participanttedefineNametemps.append(task.getOriginParticipantName()+",");
+							}
+						}
+					}
+				}
+				if(participanttedefinetemps.toString().endsWith(",")){
+					participanttedefinetemps.deleteCharAt(participanttedefinetemps.length()-1);
+					participanttedefineNametemps.deleteCharAt(participanttedefineNametemps.length()-1);
+				}
+				
+				if(participanttemps.toString().endsWith(",")){
+					participanttemps.deleteCharAt(participanttemps.length()-1);
+					participantNametemps.deleteCharAt(participantNametemps.length()-1);
+				}
+	
+				if(StringUtils.isNotEmpty(participanttemps.toString())){
+					flowInstanceStepWork.setParticipants(participanttemps.toString());
+					flowInstanceStepWork.setParticipantsName(participantNametemps.toString());
+				}
+				
+				if(StringUtils.isNotEmpty(participanttedefinetemps.toString())){
+					flowInstanceStepWork.setParticipantsDefine(participanttedefinetemps.toString());
+					flowInstanceStepWork.setParticipantsDefineName(participanttedefineNametemps.toString());
+				}
+				flowInstanceStepWork.setCreateTime(new Date());
+				// 排序 以后加签减签
+				flowInstanceStepWork.setSort(IDGenerator.getTimeLongStr());
+				flowInstanceStepWorkList.add(flowInstanceStepWork);
+		}else if(!flag){
+			FlowInstanceStepWork flowInstanceStepWork = new FlowInstanceStepWork();
+			flowInstanceStepWork.setGuid(IDGenerator.getUUID());
+			flowInstanceStepWork.setStepId(stepId);
+			flowInstanceStepWork.setFiId(flowInstanceStepWorkBack.getFiId());
+			flowInstanceStepWork.setParticipantPostId(flowInstanceStepWorkBack.getParticipantPostId());
+			flowInstanceStepWork.setParticipantPostName(flowInstanceStepWorkBack.getParticipantPostName());
+			flowInstanceStepWork.setOriginParticipant(flowInstanceStepWorkBack.getOriginParticipant());
+			flowInstanceStepWork.setStatus(WorkTypeStatus.STATUS_CREATED);
+			flowInstanceStepWork.setSort(IDGenerator.getTimeLongStr());
+			String	participants=flowInstanceStepWorkBack.getParticipants();
+			String	participantNames=flowInstanceStepWorkBack.getParticipantsName();				
+			flowInstanceStepWork.setParticipantsName(participantNames);
+			flowInstanceStepWork.setParticipants(participants);
+			flowInstanceStepWork.setParticipantsDefineName(flowInstanceStepWorkBack.getParticipantsDefineName());
+			flowInstanceStepWork.setCreateTime(new Date());
+			// 排序 以后加签减签
+			flowInstanceStepWork.setSort(IDGenerator.getTimeLongStr());
+			flowInstanceStepWorkList.add(flowInstanceStepWork);
+		 }
+		}
+		return flowInstanceStepWorkList;
+	}	
+	
+   public FlowInstanceStep getAssembleFlowInstanceStepForWorkTask(FlowInstanceStep flowInstanceStepBack) {
+		FlowInstanceStep flowInstanceStep = new FlowInstanceStep();
+		flowInstanceStep.setGuid(IDGenerator.getUUID());
+		flowInstanceStep.setAcId(flowInstanceStepBack.getAcId());
+		flowInstanceStep.setFiId(flowInstanceStepBack.getFiId());
+		flowInstanceStep.setDoWhenNoUsersAtwork(flowInstanceStepBack.getDoWhenNoUsersAtwork());
+		flowInstanceStep.setDoWhenRepeatInSteps(flowInstanceStepBack.getDoWhenRepeatInSteps());
+		flowInstanceStep.setFlId(flowInstanceStepBack.getFlId());
+		flowInstanceStep.setDisplayName(flowInstanceStepBack.getDisplayName());
+		flowInstanceStep.setIsAuto(flowInstanceStepBack.getIsAuto());
+		flowInstanceStep.setOriginParticipantsList(flowInstanceStepBack.getOriginParticipantsList());
+		flowInstanceStep.setForkStrategy(flowInstanceStepBack.getForkStrategy());
+		flowInstanceStep.setJoinStrategy(flowInstanceStepBack.getJoinStrategy());
+		flowInstanceStep.setParticipantsSelectStrategy(flowInstanceStepBack.getParticipantsSelectStrategy());
+		flowInstanceStep.setApprovalType(flowInstanceStepBack.getApprovalType());
+		flowInstanceStep.setOriginCsList(flowInstanceStepBack.getOriginCsList());
+		flowInstanceStep.setStatus(StepTypeStatus.STATUS_CREATED);
+		flowInstanceStep.setApprovalCode(flowInstanceStepBack.getApprovalCode());
+		flowInstanceStep.setCreateTime(flowInstanceStepBack.getCreateTime());
+		flowInstanceStep.setIsStart(flowInstanceStepBack.getIsStart());
+		flowInstanceStep.setWorkPattern(flowInstanceStepBack.getWorkPattern());
+		flowInstanceStep.setIsEnd(flowInstanceStepBack.getIsEnd());
+		flowInstanceStep.setWorkPattern(flowInstanceStepBack.getWorkPattern());
+		flowInstanceStep.setBranchEndFlg(flowInstanceStepBack.getBranchEndFlg());
+		// 排序 以后加签减签
+		flowInstanceStep.setSort(IDGenerator.getTimeLongStr());
+		flowInstanceStep.setNum(IDGenerator.getNumberLongStr());
+		return flowInstanceStep;
+	}
+	
+	
+   
+   
+    /* (non-Javadoc)
+     * @see com.xinleju.erp.flowengine.service.FlowInstanceStepService#addFlowApprovalPersonSave(java.lang.String, java.lang.String, java.lang.String, com.xinleju.erp.flowengine.models.FlowInstance)
+     */
+    /* (non-Javadoc)
+     * 
+     * 基于数据库操作
+     * @see com.xinleju.erp.flowengine.service.FlowInstanceStepService#addFlowApprovalPersonSave(java.lang.String, java.lang.String, java.lang.String, com.xinleju.erp.flowengine.models.FlowInstance)
+     */
+    @Override
+	public boolean addFlowApprovalPersonSave(String workId, String addApplayUserId,
+			String nodeType,FlowInstance flowInstance) throws Exception{
+		// TODO Auto-generated method stub
+	       String[] userIds=addApplayUserId.split(",");
+	       if(StepTypeStatus.TempNode.equals(nodeType)){
+	         StringBuilder sbr=new StringBuilder();
+	         for(String userId:userIds){
+	        	   sbr.append(ParticipantType.USER_PREFIX+userId+":临时人员;");
+	         }
+	          //构建临时节点
+	        FlowInstanceStep flowInstanceStepTemp= flowInstanceCalculateStepService.getTempAssembleFlowInstanceStep(flowInstance);
+	
+	        //重新组装关联
+	   		FlowInstanceStepWork fiWork = getDao().findFirst(FlowInstanceStepWork.class,"guid = ?",new Object[]{workId});
+	   		
+	   		// 获取流程实例环节当前环节的节点
+	   		List<FlowInstanceStep> fiStepsus = flowInstance.getLstFlowInstanceStep();
+	   		
+	   		Collections.sort(fiStepsus);
+	   		
+	   		List<FlowInstanceStep> afterStepList=new ArrayList<FlowInstanceStep>();
+	   		FlowInstanceStep currentStep=null;
+	   		boolean isUpdateStep=false;
+	    	for(FlowInstanceStep step:fiStepsus){
+	    	   if(step.getGuid().equals(fiWork.getStepId()) && step.getStatus() == StepTypeStatus.STATUS_CREATED){
+	    		   currentStep=step;
+	    		   isUpdateStep=true;
+	    	   }
+	    	   if(isUpdateStep){
+	    		   afterStepList.add(step);
+	    	   }
+	    	}
+	    	//保存临时节点
+	        getDao().save(flowInstanceStepTemp);
+	        flowInstanceStepTemp.setOriginParticipantsList(sbr.toString());
+	        List<FlowInstanceStepWork> works=flowInstanceCalculateWorkService.createFlowInstanceStepWork(flowInstanceStepTemp, sbr.toString());
+	        for(FlowInstanceStepWork work:works){
+	     	   getDao().save(work);
+	        }
+	        
+	    	
+	    	//修改原有的关联
+	    	List<FlowInstanceStepRelation> upperFlowInstanceStepRelations=getDao().findAll(FlowInstanceStepRelation.class,"nextStepId = ?",new Object[]{fiWork.getStepId()});
+	    	for(FlowInstanceStepRelation relation:upperFlowInstanceStepRelations){
+	    		relation.setNextStepId(flowInstanceStepTemp.getGuid());
+	    		getDao().update(relation);
+	    	}
+	    	//搭建新关联
+	    	FlowInstanceStepRelation currentFlowInstanceStepRelation=new FlowInstanceStepRelation();
+	    	currentFlowInstanceStepRelation.setGuid(IDGenerator.getUUID());
+	    	currentFlowInstanceStepRelation.setFiId(flowInstance.getGuid());
+	    	currentFlowInstanceStepRelation.setStepId(flowInstanceStepTemp.getGuid());
+	    	currentFlowInstanceStepRelation.setNextStepId(currentStep.getGuid());
+	    	getDao().save(currentFlowInstanceStepRelation);
+	
+	    	
+	    	//所有时间后移动
+	    	for(FlowInstanceStep step:afterStepList){
+	    			step.setSort(IDGenerator.getTimeLongStr());
+	    			step.setNum(IDGenerator.getNumberLongStr());
+	    			step.setCreateTime(new Date());
+	    			getDao().update(step);
+	    	}
+	    	getDao().flush();
+       }else if(StepTypeStatus.EntityNode.equals(nodeType)){
+	
+	        //重新组装关联【选中work】
+	   		 FlowInstanceStepWork fiWork = getDao().findFirst(FlowInstanceStepWork.class,"guid = ?",new Object[]{workId});
+	   		 FlowInstanceStep step = getDao().findFirst(FlowInstanceStep.class,"guid = ?",new Object[]{fiWork.getStepId()});
+		   	 StringBuilder sbr=new StringBuilder();
+	         for(String userId:userIds){
+	        	   sbr.append(ParticipantType.USER_PREFIX+userId+":临时人员;");
+	         }
+	   		 List<FlowInstanceStepWork> tempworks=flowInstanceCalculateWorkService.createFlowInstanceStepWork(step, sbr.toString());
+	   		 // 获取流程实例环节当前环节的节点
+		   	 List<FlowInstanceStepWork> works=step.getLstFlowInstanceStepWork();
+		   	 Collections.sort(works);
+		   	List<FlowInstanceStepWork> afterStepWorkList=new ArrayList<FlowInstanceStepWork>();
+	   		boolean isUpdateStep=false;
+	    	for(FlowInstanceStepWork work:works){
+	    	   if(work.getGuid().equals(fiWork.getGuid()) && work.getStatus() == StepTypeStatus.STATUS_CREATED){
+	    		   isUpdateStep=true;
+	    	   }
+	    	   if(isUpdateStep){
+	    		   afterStepWorkList.add(work);
+	    	   }
+	    	}
+		   	for(FlowInstanceStepWork work :tempworks){
+		   		getDao().save(work);
+		   	}
+		   	for(FlowInstanceStepWork work:afterStepWorkList){
+		   		work.setSort(IDGenerator.getTimeLongStr());
+    			work.setNum(IDGenerator.getNumberLongStr());
+    			work.setCreateTime(new Date());
+    			getDao().update(work);
+    	  }
+	    	getDao().flush();
+       }
+		return false;
+	}
+	
+    
+    
+
+
+	/* (non-Javadoc)
+	 * 
+	 * 撤回流程
+	 * @see com.xinleju.erp.flowengine.service.FlowInstanceStepService#saveToCh(com.xinleju.erp.flowengine.models.FlowInstance)
+	 */
+	@Override
+	public boolean saveToCh(FlowInstance flowInstance) throws Exception {
+		// TODO Auto-generated method stub
+		//删除实例对象
+		List<FlowInstanceStep> steps=flowInstance.getLstFlowInstanceStep();
+		for(FlowInstanceStep step :steps){
+			List<FlowInstanceStepWork> stepWorks=step.getLstFlowInstanceStepWork();
+			for(FlowInstanceStepWork stepWork:stepWorks){
+				List<FlowInstanceStepWorkTask> stepWorkTasks= stepWork.getLstFlowInstanceStepWorkTask();
+				for(FlowInstanceStepWorkTask stepWorkTask:stepWorkTasks){
+					getDao().delete(stepWorkTask);
+				}
+				getDao().delete(stepWork);
+			}
+			List<FlowInstanceStepRelation>  stepRelations=step.getLstFlowInstanceStepRelation();
+			for(FlowInstanceStepRelation stepRelation:stepRelations){
+				getDao().delete(stepRelation);
+			}
+			getDao().delete(step);
+			
+ 		}
+		//删除关联对象
+		List<FlowInstanceStepWorkTaskExtend> flowInstanceStepWorkTaskExtends=getDao().findAll(FlowInstanceStepWorkTaskExtend.class,"relationFiId = ?  ",new Object[]{flowInstance.getGuid()});
+		for(FlowInstanceStepWorkTaskExtend flowInstanceStepWorkTaskExtend:flowInstanceStepWorkTaskExtends){
+			getDao().delete(flowInstanceStepWorkTaskExtend);
+		}
+		
+		//删除关联对象预警日志
+		List<FlowInstanceStepWorkTaskWarnLog> flowInstanceStepWorkTaskWarnLogs=getDao().findAll(FlowInstanceStepWorkTaskWarnLog.class,"fiId = ?  ",new Object[]{flowInstance.getGuid()});
+		for(FlowInstanceStepWorkTaskWarnLog flowInstanceStepWorkTaskWarnLog:flowInstanceStepWorkTaskWarnLogs){
+			getDao().delete(flowInstanceStepWorkTaskWarnLog);
+		}
+		//所有推送的此流程相关的消息
+		List<Msg> msgs=getDao().findAll(Msg.class,"exData = ? and moduleCode = ? and appCode = ? ",new Object[]{flowInstance.getGuid(),flowInstance.getAppCode(),"PT"});
+		for(Msg msg :msgs){
+			msg.setOpType(Msg.OP_TYPE_RM);
+			getDao().update(msg);
+			
+		    //不需要推送OA
+            SettingService settingService = (SettingService)App.getBean(SettingService.class);
+            Setting setting = settingService.getSetting(StaticInterface.SKEY_PT_OA_INTERFACE_URL);
+            if(setting!=null && !"".equals(setting.getValue())){
+            	//推送OA异常了，不需要回滚
+            	try {
+            		oaMsgServiceImpl.sendOaMsgTask(msg);
+				} catch (Exception e) {
+					// TODO: handle exception
+					e.printStackTrace();
+				}
+           	 
+            }
+		}
+		
+		
+		getDao().delete(flowInstance);
+		
+		//调用业务系统，此需求特殊，所以需要特别添加
+		String appCode = flowInstance.getAppCode();
+		String bizId = flowInstance.getBizId();
+
+		String currDate = DateUtils.formatDate(new Date(),"yyyy-MM-dd HH:mm:ss");
+		Map<String, Object> mapExtendParam = new HashMap<String, Object>();
+		mapExtendParam.put("FINAL_SP_USER_NAME",flowInstance.getCompleteUserName());
+		mapExtendParam.put("FINAL_SP_USER_ID",flowInstance.getCompleteUserId());
+		String sodCode = flowInstanceDao.getSodCode(flowInstance.getBizType());
+		smObjectService.sendFiStatus(appCode,bizId, sodCode,FlowInstanceStatus.STATUS_COMPLETE,FlowInstanceConstant.BUSINESS_SYSTEM_STATUS_CH,currDate, mapExtendParam);
+		
+		return true;
+	}
+
+
+
+	/**
+	 * 
+	 * 塑造打回节点，链接
+	 * @param currentflowInstanceStep
+	 * @param flowInstanceStepBack
+	 * @return
+	 */
+	public void createBackStepInstanceRelation(FlowInstanceStep currentflowInstanceStep,FlowInstanceStep flowInstanceStepBack ){
+		
+		
+	
+	}
+
+
+
+	@Override
+	public boolean isProofreadStepUploadFile(String fiId) {
+
+		Integer proofreadUploadFileCont = flowInstanceStepDao.getProofreadStepUploadFileContByStepId(fiId,FlowInstanceStatus.STATUS_COMPLETE,FlowInstanceConstant.PROOFREAD_CODE);
+		
+		if(proofreadUploadFileCont == null || proofreadUploadFileCont == 0){
+			return false;
+		}
+
+		return true;
+	}
+}

@@ -1,0 +1,643 @@
+package com.xinleju.erp.frame.service;
+
+import java.util.Date;
+import java.util.List;
+
+import org.apache.commons.lang3.StringUtils;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.Order;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.erp.base.app.bean.Page;
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.flow.service.api.extend.dto.GroupDTO;
+import com.xinleju.erp.form.utils.DbType;
+import com.xinleju.erp.frame.dao.PartyEntityDao;
+import com.xinleju.erp.frame.dao.PartyStructDao;
+import com.xinleju.erp.frame.models.Company;
+import com.xinleju.erp.frame.models.Dept;
+import com.xinleju.erp.frame.models.Group;
+import com.xinleju.erp.frame.models.PartyEntity;
+import com.xinleju.erp.frame.models.PartyStruct;
+import com.xinleju.erp.frame.models.PartyType;
+import com.xinleju.erp.frame.models.Role;
+import com.xinleju.erp.frame.models.User;
+
+@Service
+@Transactional
+public class PartyStructService extends BaseService {
+
+	@Autowired
+	private PartyStructDao partyStructDao;
+
+	@Autowired
+	private PartyEntityDao partyEntityDao;
+
+	@Autowired
+	private PartyEntityService partyEntityService;
+	
+	@Autowired
+	private FuncAuthService funcAuthService;
+	
+	@Autowired
+	private BizAuthService bizAuthService;
+	
+	/**
+	 * 查找组织架构某节点下没有绑定过的user
+	 * @author jdq
+	 * @param parentId
+	 * @param pageable
+	 * @return
+	 */
+	public Page findUnBindUser(String name,Long parentId, int start, int limit) {
+		// 节点下已有的user
+		List<Long> userList = this.findChildIdsByParentEntityId(parentId,PartyType.TYPE_USER);
+		DetachedCriteria c = DetachedCriteria.forClass(User.class);
+		if(StringUtils.isNotBlank(name)){
+			c.add(Restrictions.like("realName", "%"+name+"%"));
+		}
+		c.add(Restrictions.or(Restrictions.isNull("status"),Restrictions.eq("status", User.STATUS_ENABLE)));
+		c.add(Restrictions.not(Restrictions.in("id", userList)));
+		c.addOrder(Order.asc("id"));
+		return getDao().findPage(c, start, limit);
+
+	}
+
+
+	/**
+	 * 修改角色简称  
+	 * @author jdq
+	 * @param role
+	 */
+	public void updateRoleShortName(Role role){
+		//  修改角色的别名后   同时修改组织架构上的名称
+		getDao().saveOrUpdate(role);
+		PartyEntity partyEntity = partyEntityService.findEntityByRefId(role.getId(), PartyType.TYPE_ROLE);
+		partyEntityService.updateEntityName(partyEntity,role.getShortName());
+	}
+
+
+
+
+	/**
+	 * 通过组织架构的上级节点 查找下级相关数据id
+	 * @author jdq
+	 * @param parentEntityId
+	 * @param type
+	 * @return
+	 */
+	public List<Long> findChildIdsByParentEntityId( Long parentEntityId,String type){
+		return partyStructDao.findChildRefIdsByParentEntityId(parentEntityId,type);
+	}
+	
+	public List<Long> findChildIdsByParentEntityId( Long parentEntityId){
+		return partyStructDao.findChildRefIdsByParentEntityId(parentEntityId);
+	}
+	
+	public void deleteEntityPartyStruct( Long parentEntityId){
+		partyStructDao.deleteEntityPartyStruct(parentEntityId);
+	}
+	
+	public List<Long> findChildIdsByParentEntityId( Long parentEntityId,String type,Boolean includeAllSubOrgns){
+		return partyStructDao.findChildRefIdsByParentEntityId(parentEntityId,type,includeAllSubOrgns);
+	}
+
+	public List<Long> findChildEntityIdsByParentEntityId( Long parentEntityId,String type){
+		return partyStructDao.findChildEntityIdsByParentEntityId(parentEntityId,type);
+	}
+
+
+	/**
+	 * 查找组织架构某节点下没有绑定过的role
+	 * @author jdq
+	 * @param parentId
+	 * @param pageable
+	 * @return
+	 */
+	public Page findUnBindRole(Long parentId, int start, int limit) {
+		// 查找已经被绑定到组织架构里面的role
+		List<Long> roleList = findChildIdsByParentEntityId(parentId,PartyType.TYPE_ROLE);
+		DetachedCriteria c = DetachedCriteria.forClass(Role.class);
+		c.add(Restrictions.not(Restrictions.in("id", roleList)));
+		return getDao().findPage(c, start, limit);
+
+	}
+
+
+
+	/**
+	 * 找到所有标准岗位
+	 * @author jdq
+	 * @param pageable
+	 * @return
+	 */
+	public Page findStandardRoles(String name,String parentId, int start, int limit){
+		if (StringUtils.isNotBlank(parentId)){
+			List<Long> stdRoleIdList = partyStructDao.findStructStdRoleIds(Long.valueOf(parentId));
+			DetachedCriteria c = DetachedCriteria.forClass(Role.class);
+			if (null != stdRoleIdList && stdRoleIdList.size() > 0){
+				c.add(Restrictions.not(Restrictions.in("id", stdRoleIdList)));
+			} else {
+				c.add(Restrictions.eq("id", -1L));
+			}
+			if(StringUtils.isNotBlank(name)){
+				c.add(Restrictions.like("name", "%"+name+"%"));
+			}
+			c.add(Restrictions.eq("type", Role.TYPE_STANDARD));
+			c.addOrder(Order.asc("id"));
+			return getDao().findPage(c, start, limit);
+		}
+		return new Page();
+	}
+
+
+	/**
+	 * 新增实际岗位后   处理实体和组织架构方面的关系
+	 * @author jdq
+	 * @param parentId
+	 * @param pageable
+	 */
+	public String processRolePartyStruct(Role role, Long parentEntityId,Long structTypeId) {
+		getDao().saveOrUpdate(role);
+		PartyEntity pe = null;
+		Role child = null;
+		//  标准角色直接引入情况下    判断  此组织架构节点下 是否已经添加过 此标准角色
+		if(Role.TYPE_STANDARD.equals(role.getType())){
+			pe = partyEntityDao.getEntityByRefParentId(role.getId(), parentEntityId);
+			child = joinInitCommonRole(role);
+		}else{//  新增岗位保存时   
+			pe = partyEntityService.findEntityByRefId(role.getId(), PartyType.TYPE_ROLE);
+			child = role;
+		} 
+
+		if(pe==null){
+
+			pe = new PartyEntity();
+			pe.setName(child.getName());
+			pe.setShortName(child.getShortName());
+			if(StringUtils.isNotBlank(child.getShortName())){
+				pe.setName(child.getShortName());
+			}
+			pe.setPartyTypeId(App.getBean(PartyTypeService.class).getIdByPartyType(PartyType.TYPE_ROLE));
+			pe.setRefId(child.getId());
+			pe.setRefParentId(child.getParentId());
+			getDao().saveOrUpdate(pe);
+
+			// 维护prefix
+			partyEntityService.maintPreFix(pe, parentEntityId);
+
+			processPartyStruct(parentEntityId,pe.getId(),structTypeId); 
+			return "success";
+		}else{
+			pe.setName(child.getName());
+			pe.setShortName(child.getShortName());
+			getDao().saveOrUpdate(pe);
+			// 维护prefix
+			partyEntityService.maintPreFix(pe, parentEntityId);
+			return "exist";
+		}
+	}
+
+	/**
+	 * 在组织架构下添加标准角色时   copy一个子role出来
+	 * @author jdq
+	 * @param role
+	 */
+	public Role joinInitCommonRole(Role role){
+		Role child = new Role();
+		child.setName(role.getName());
+		child.setPosition(role.getPosition());
+		child.setParentId(role.getId());
+		child.setShortName(role.getName());
+		child.setRoleType(role.getRoleType());
+		child.setZbcj(role.getZbcj());
+		child.setParentId(role.getId());
+		child.setType(Role.TYPE_COMMON);
+		getDao().saveOrUpdate(child);
+		return child;
+
+	}
+
+
+	/**
+	 * 新增实际部门后   处理实体和组织架构方面的关系
+	 * @author jdq
+	 * @param parentId
+	 * @param pageable
+	 */
+	public void processDeptPartyStruct(Dept dept,Long parentEntityId,Long structTypeId) {
+		getDao().saveOrUpdate(dept);
+		PartyEntity pe = partyEntityService.findEntityByRefId(dept.getId(),PartyType.TYPE_DEPARTMENT);
+		if(pe==null){
+			pe = new PartyEntity();
+			pe.setName(dept.getName());
+			pe.setShortName(dept.getShortName());
+			pe.setPartyTypeId(App.getBean(PartyTypeService.class).getIdByPartyType(PartyType.TYPE_DEPARTMENT));
+			pe.setRefId(dept.getId());
+			pe.setStatus(dept.getStatus());
+			getDao().saveOrUpdate(pe);
+			// 处理组织架构关系
+			processPartyStruct(parentEntityId,pe.getId(),structTypeId);
+		}else{
+			// 修改状态
+			partyEntityService.changeStatus(pe.getId(), dept.getStatus());
+		}
+
+		partyEntityService.changeEntityName(dept.getId(), PartyType.TYPE_DEPARTMENT, dept.getName(), dept.getShortName());
+		// 维护prefix
+		partyEntityService.maintPreFix(pe, parentEntityId);
+
+	}
+
+
+	/**
+	 * 新增实际项目后   处理实体和组织架构方面的关系
+	 * @author jdq
+	 * @param parentId
+	 * @param pageable
+	 */
+	public void processGroupPartyStruct(Group group,Long parentEntityId,Long structTypeId) {
+		getDao().saveOrUpdate(group);
+		PartyEntity pe = partyEntityService.findEntityByRefId(group.getId(),PartyType.TYPE_GROUP);
+		if(pe==null){
+			pe = new PartyEntity();
+			pe.setName(group.getName());
+			pe.setShortName(group.getShortName());
+			pe.setPartyTypeId(App.getBean(PartyTypeService.class).getIdByPartyType(PartyType.TYPE_GROUP));
+			pe.setRefId(group.getId());
+			pe.setStatus(group.getStatus());
+			getDao().saveOrUpdate(pe);
+			// 处理组织架构关系
+			processPartyStruct(parentEntityId,pe.getId(),structTypeId);
+		}else{
+			// 修改状态
+			partyEntityService.changeStatus(pe.getId(), group.getStatus());
+		}
+		partyEntityService.changeEntityName(group.getId(), PartyType.TYPE_GROUP, group.getName(),group.getShortName());
+		// 维护prefix
+		partyEntityService.maintPreFix(pe, parentEntityId);
+
+	}
+	
+	public boolean deleteGroupPartyStruct(GroupDTO groupDTO){
+		boolean success = true;
+		
+		if (null == groupDTO || null == groupDTO.getRefObjectId() || (null == groupDTO.getParentObjectId() && null == groupDTO.getCompanyId())){
+	        success = false;
+	    } else {
+            Long parentEntityId = null;
+            String hql = null;
+            int refObjectType = 1;           
+              
+            PartyEntity ppe = partyEntityService.findEntityByRefId(groupDTO.getCompanyId(), PartyType.TYPE_COMPANY);
+            parentEntityId = null != ppe ? ppe.getId() : null;
+            
+	        Long structTypeId = App.getBean(PartyStructTypeService.class).getZcStructId();
+	        if (null != parentEntityId && null != structTypeId){
+	            hql = "from Group where refObjectId = ? and (refObjectType is not null and refObjectType = ?)";
+	            Group group = getDao().findFirstByHQL(Group.class, hql, groupDTO.getRefObjectId(), refObjectType);
+	           
+	            PartyEntity pe = partyEntityService.findEntityByRefId(group.getId(),PartyType.TYPE_GROUP);
+	            Long count = partyEntityDao.findChildEntityCount(pe.getId());
+	            if(count>0){
+	            	return false;
+	            }else{
+	            	partyStructDao.deleteEntityPartyStruct(pe.getId());
+	            	this.getDao().delete(pe);	            	
+	            }
+	           
+	        } else {
+	            success = false;
+	        }
+	    }
+		
+		return success;
+	}
+	/**
+	 * 同步项目信息
+	 * @author jun
+	 * @param groupCode 项目编码
+	 * @param groupName 项目名称
+	 * @param groupShortName 项目名称缩写
+	 * @param note 项目备注
+	 * @param refObjectId 关联对象id（如：项目的id）
+	 * @param parentObjectId 项目的父级对象id（如：项目分期的项目id或项目所在的公司id）
+	 * @param map 扩展
+	 * @return 是否同步成功
+	 */
+	public boolean initGroupPartyStruct(GroupDTO groupDTO){
+	    boolean success = true;
+	    if (null == groupDTO || null == groupDTO.getRefObjectId() || (null == groupDTO.getParentObjectId() && null == groupDTO.getCompanyId())){
+	        success = false;
+	    } else {
+            Long parentEntityId = null;
+            String hql = null;
+            int refObjectType = 1;
+            if (null != groupDTO.getParentObjectId() && groupDTO.getParentObjectId() > 0){
+                hql = "select id from Group where refObjectId = ? and (refObjectType is not null and refObjectType = ?)";
+                Long parentGroupId = getDao().findFirstByHQL(Long.class, hql, groupDTO.getParentObjectId(), refObjectType);
+                if (null != parentGroupId && parentGroupId.intValue() > 0){
+                    PartyEntity pe = partyEntityService.findEntityByRefId(parentGroupId, PartyType.TYPE_GROUP);
+                    parentEntityId = null != pe ? pe.getId() : null;
+                }
+                refObjectType = 2;
+            } else {
+                refObjectType = 1;
+                PartyEntity pe = partyEntityService.findEntityByRefId(groupDTO.getCompanyId(), PartyType.TYPE_COMPANY);
+                parentEntityId = null != pe ? pe.getId() : null;
+            }
+	        Long structTypeId = App.getBean(PartyStructTypeService.class).getZcStructId();
+	        if (null != parentEntityId && null != structTypeId){
+	            hql = "from Group where refObjectId = ? and (refObjectType is not null and refObjectType = ?)";
+	            Group group = getDao().findFirstByHQL(Group.class, hql, groupDTO.getRefObjectId(), refObjectType);
+	            if (null == group){
+	                group = new Group();
+	                group.setCreateDate(new Date());
+	                group.setRefObjectId(groupDTO.getRefObjectId());
+	            }
+                group.setRefObjectType(refObjectType);
+	            group.setCode(groupDTO.getCode());
+	            group.setName(groupDTO.getName());
+	            group.setEditDate(new Date());
+	            group.setNote(groupDTO.getNote());
+	            this.processGroupPartyStruct(group, parentEntityId, structTypeId);
+	        } else {
+	            success = false;
+	        }
+	    }
+	    return success;
+	}
+	
+	/**
+	 * 新增实际公司后   处理实体和组织架构方面的关系
+	 * @author jdq
+	 * @param parentId
+	 * @param pageable
+	 */
+	public void processCompanyPartyStruct(Company company,Long parentEntityId,Long structTypeId) {
+		getDao().saveOrUpdate(company);
+		PartyEntity pe = partyEntityService.findEntityByRefId(company.getId(),PartyType.TYPE_COMPANY);
+		if(pe==null){
+			pe = new PartyEntity();
+			pe.setName(company.getName());
+			pe.setShortName(company.getShortName());
+			pe.setPartyTypeId(App.getBean(PartyTypeService.class).getIdByPartyType(PartyType.TYPE_COMPANY));
+			pe.setRefId(company.getId());
+			pe.setStatus(company.getStatus());
+			getDao().saveOrUpdate(pe);
+			processPartyStruct(parentEntityId,pe.getId(),structTypeId);
+		}else{
+			// 修改状态
+			partyEntityService.changeStatus(pe.getId(), company.getStatus());
+		}
+		partyEntityService.changeEntityName(company.getId(), PartyType.TYPE_COMPANY, company.getName(),company.getShortName());
+		// 维护prefix
+		partyEntityService.maintPreFix(pe, parentEntityId);
+	}
+
+	/**
+	 * 新增实际用户后   处理实体和组织架构方面的关系
+	 * @author jdq
+	 * @param parentId
+	 * @param pageable
+	 */
+	public String processUserPartyStruct(User user,Long parentEntityId,Long structTypeId) {
+		//  查用户的partyentity 必须带上parentEntityId  因为一人多岗
+		PartyEntity pe = partyEntityService.findUserEntityByRefId(user.getId(),parentEntityId, PartyType.TYPE_USER);
+		if(pe==null){ 
+			//  用户加入到多个组织架构下时   必须新生成PartyEntity  
+			pe = new PartyEntity();
+			pe.setName(user.getRealName());
+			pe.setPartyTypeId(App.getBean(PartyTypeService.class).getIdByPartyType(PartyType.TYPE_USER));
+			pe.setRefId(user.getId());
+			getDao().saveOrUpdate(pe);
+			// 维护prefix
+			partyEntityService.maintPreFix(pe, parentEntityId);
+
+			processPartyStruct(parentEntityId,pe.getId(),structTypeId);
+
+			return "success";
+		}else{
+			// modify by liuhm 修改用户后没有同步修改组合名称（name-prefix）
+			pe.setName( user.getRealName() );
+			getDao().update(pe);
+			
+			// 维护prefix
+			partyEntityService.maintPreFix(pe, parentEntityId);
+
+			return "exist";
+		}
+
+	}
+
+	/**
+	 * 修改实际用户后   同步更新实体和组织架构方面的关系
+	 * 
+	 * @param user
+	 * @param parentEntityId
+	 * @param structTypeId
+	 * @return
+	 */
+	public String updateUserPartyStruct(User user, Long parentEntityId, Long structTypeId) {
+		//  查用户的partyentity 必须带上parentEntityId  因为一人多岗
+		PartyEntity pe = partyEntityService.findUserEntityByRefId(user.getId(),parentEntityId, PartyType.TYPE_USER);
+		if (pe != null) {
+			pe.setName( user.getRealName() );
+			getDao().update(pe);
+			
+			// 维护prefix
+			partyEntityService.maintPreFix(pe, parentEntityId);
+
+			return "success";
+		} else {
+			return "not find party entity";
+		}
+		
+		
+	}
+
+	/**
+	 * 用户设置主岗后  维护主岗和用户在组织架构上的关系
+	 * @author jdq
+	 * @param user
+	 * @param partyStructTypeId
+	 */
+	public void processUserAndMainRole(User user,Long partyStructTypeId){
+		if(user.getMainRoleId()!=null&&user.getMainRoleId()!=0){
+			PartyEntity mainRolePe = partyEntityService.findEntityByRefId(user.getMainRoleId(), PartyType.TYPE_ROLE);
+			if(mainRolePe!=null)
+				processUserPartyStruct(user,mainRolePe.getId(),partyStructTypeId);
+		}
+
+	}
+
+
+	public String processOldMainRoleStruct(User user){
+		String result = "";
+		Long oldMainRoleId = 0L;
+		if(user.getId()!=null && user.getId()!=0){
+			oldMainRoleId = getDao().findLong("select mainRoleId from User where id = ?", user.getId());
+		}
+		//  如果用户主岗有调整
+		if( user.getMainRoleId()!=null && user.getMainRoleId()!=0 && (oldMainRoleId==null || oldMainRoleId==0 || !oldMainRoleId.equals(user.getMainRoleId()) )){
+			if(oldMainRoleId!=null && oldMainRoleId!=0){
+				// 删除老的组织架构关系
+				PartyEntity oldMainRolePe = partyEntityService.findEntityByRefId(oldMainRoleId, PartyType.TYPE_ROLE);
+				if(oldMainRolePe!=null){
+					PartyStruct oldPartyStruct = partyStructDao.getStructByChildRefId(oldMainRolePe.getId() ,user.getId());
+					if(oldPartyStruct!=null){
+						//partyStructManager.delete(oldPartyStruct);
+						result = deletePartyStruct(oldPartyStruct,user);
+					}
+				}
+			}
+		} 
+		return result;
+
+	}
+
+
+	/**
+	 * 删除组织架构关系  并 返回
+	 * @author jdq
+	 * @param partyStruct
+	 * @return 
+	 */
+	public String deletePartyStruct(PartyStruct partyStruct,User user){
+		String result = "";
+		PartyEntity child = getDao().getById(PartyEntity.class, partyStruct.getChildEntityId());
+		PartyEntity parent = getDao().getById(PartyEntity.class, partyStruct.getParentEntityId());
+		PartyType pt = App.getBean(PartyTypeService.class).getById(child.getPartyTypeId());
+		// 删除组织架构关系
+		getDao().delete(partyStruct);
+
+		if( PartyType.TYPE_USER.equals(pt.getType()) ){
+			//User user = getDao().getById(User.class, child.getRefId());
+			String relationfix = parent.getPrefix()+child.getId()+"-";
+			String pf = user.getPrefix();
+			result = pf.replaceAll(";"+relationfix, "").replaceAll(relationfix+";", "").replaceAll(relationfix, "").replaceAll(";;", ";") ;
+
+			// 删除子节点
+			getDao().delete(child);
+		}
+
+
+		return result;
+	}
+	
+	/**
+	 * 删除组织架构关系  并 返回
+	 * @author jdq
+	 * @param partyStruct
+	 * @return 
+	 */
+	public String deletePartyStruct(PartyStruct partyStruct){
+		String result = "";
+		try {
+			PartyEntity child = getDao().getById(PartyEntity.class, partyStruct.getChildEntityId());
+			PartyEntity parent = getDao().getById(PartyEntity.class, partyStruct.getParentEntityId());
+			PartyType pt = App.getBean(PartyTypeService.class).getById(child.getPartyTypeId());
+			// 删除组织架构关系
+			getDao().delete(partyStruct);
+
+			if( PartyType.TYPE_USER.equals(pt.getType()) ){
+				User user = getDao().getById(User.class, child.getRefId());
+				String relationfix = parent.getPrefix()+child.getId()+"-";
+				String pf = user.getPrefix();
+				result = pf.replaceAll(";"+relationfix, "").replaceAll(relationfix+";", "").replaceAll(relationfix, "").replaceAll(";;", ";") ;
+
+				// 删除子节点
+				getDao().delete(child);
+			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+
+
+		return result;
+	}
+
+
+	public void processPartyStruct(Long parentId,Long childId,Long partyStructTypeId){
+
+		PartyStruct partyStruct = partyStructDao.getStruct(parentId, childId);
+		if(partyStruct==null){
+			partyStruct = new PartyStruct();
+			partyStruct.setChildEntityId(childId);
+			if(parentId!=null){
+				partyStruct.setParentEntityId(parentId==0?null:parentId);
+			}
+			partyStruct.setPartyStructTypeId(partyStructTypeId);
+			getDao().saveOrUpdate(partyStruct);
+		}
+
+	}
+
+	public Page findPageUserByParent(String parentFix, String nameOrLogName,boolean isEnable, int start, int limit) {
+		DetachedCriteria c = DetachedCriteria.forClass(User.class);
+		
+		//c.setFetchMode("mainRole", FetchMode.SELECT);
+		if(StringUtils.isNotBlank(nameOrLogName)){
+			c.add(Restrictions.or(Restrictions.like("realName", "%" + nameOrLogName + "%"),Restrictions.ilike("loginname", "%" + nameOrLogName + "%")));
+			//start = 0;
+		}else{
+			c.add( Restrictions.or(Restrictions.like("prefix", parentFix+"%"),Restrictions.like("prefix", "%"+parentFix+"%"),Restrictions.sqlRestriction("exists(select 1 from sm_party_entity y left join sm_party_type t on y.party_type_id=t.id where {alias}.id=y.ref_id and t.type='"+PartyType.TYPE_USER+"' and "+DbType.getType()+"locate('"+parentFix+"',y.prefix)>0 )")));
+			//xiugai 
+		}
+		if(isEnable==true){
+			c.add(Restrictions.or(Restrictions.eq("status", User.STATUS_ENABLE),Restrictions.isNull("status")));
+		}
+		c.addOrder(Order.desc("id"));
+		return getDao().findPage(c, start, limit);
+	}
+
+	@Transactional
+	public void deleteRole(Long roleId){
+		// 删除功能授权
+		funcAuthService.delRB(roleId);
+		funcAuthService.delRM(roleId);
+		// 删除数据授权
+		bizAuthService.deleteRoleData(roleId);
+		PartyEntity partyEntity = partyEntityService.findEntityByRefId(roleId, PartyType.TYPE_ROLE);
+		// 删除组织架构关系
+		deleteRolePartyStruct(partyEntity,roleId);
+		getDao().execute("update User set mainRoleId = null where mainRoleId = ?", roleId);
+		getDao().execute("update Dept set deptRoleId = null where deptRoleId = ?", roleId);
+		getDao().execute("update Dept set upDeptRoleId = null where upDeptRoleId = ?", roleId);
+		//  删除组织架构节点
+		getDao().delete(partyEntity);
+		//  置空 用户主岗  部门领导刚  上级部门领导岗
+		getDao().delete(Role.class, roleId);
+	}
+
+	public void deleteRolePartyStruct(PartyEntity partyEntity,Long roleId){
+		// 删除 组织架构关系
+		List<PartyStruct> partyStructList = partyStructDao.findEntityPartyStruct(partyEntity.getId());
+		for(PartyStruct ps : partyStructList){
+			String newprefix = deletePartyStruct(ps);
+			if(StringUtils.isNotBlank(newprefix)){
+				User user = getDao().getById(User.class, ps.getChildEntity().getRefId());
+				user.setPrefix(newprefix);
+				getDao().saveOrUpdate(user);
+			}
+
+		}
+	}
+
+	public void removeUser(Long userId, Long parentEntityId) {
+		try {
+			System.out.println("start removeUser");
+			PartyStruct partyStruct = partyStructDao.getStructByChildRefId(parentEntityId ,userId);
+			String newprefix = deletePartyStruct(partyStruct);
+			getDao().execute("update User set prefix = ? where id= ?", newprefix, userId);
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+	}
+}

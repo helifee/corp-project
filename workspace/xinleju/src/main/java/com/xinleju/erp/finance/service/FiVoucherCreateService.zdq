@@ -1,0 +1,2264 @@
+package com.xinleju.erp.finance.service;
+
+import java.lang.reflect.InvocationTargetException;
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import javax.xml.bind.JAXBException;
+
+import org.apache.commons.beanutils.BeanUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.tools.ant.util.DateUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.stereotype.Service;
+
+import com.ibm.icu.text.SimpleDateFormat;
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.data.cache.api.MDSupplierCacheService;
+import com.xinleju.erp.data.cache.dto.SupplierInfoDTO;
+import com.xinleju.erp.finance.dao.FiVoucherDataDao;
+import com.xinleju.erp.finance.models.FiAccountCaption;
+import com.xinleju.erp.finance.models.FiAccountSet;
+import com.xinleju.erp.finance.models.FiAssDetailMapping;
+import com.xinleju.erp.finance.models.FiAssMapping;
+import com.xinleju.erp.finance.models.FiBankCap;
+import com.xinleju.erp.finance.models.FiBudgetCap;
+import com.xinleju.erp.finance.models.FiBusinessobject;
+import com.xinleju.erp.finance.models.FiCoCap;
+import com.xinleju.erp.finance.models.FiCoCapInput;
+import com.xinleju.erp.finance.models.FiCoContract;
+import com.xinleju.erp.finance.models.FiCollectionTypeCap;
+import com.xinleju.erp.finance.models.FiEntryData;
+import com.xinleju.erp.finance.models.FiPaymentType;
+import com.xinleju.erp.finance.models.FiSysinfo;
+import com.xinleju.erp.finance.models.FiVoucherData;
+import com.xinleju.erp.finance.models.FiVoucherEntry;
+import com.xinleju.erp.finance.models.FiVoucherExBill;
+import com.xinleju.erp.finance.models.FiVoucherTempType;
+import com.xinleju.erp.finance.models.FiVoucherTemplate;
+import com.xinleju.erp.finance.utils.QMap;
+import com.xinleju.erp.finance.xml.AuxiliaryItem;
+import com.xinleju.erp.finance.xml.Cashflowcase;
+import com.xinleju.erp.finance.xml.Entry;
+import com.xinleju.erp.finance.xml.Jaxb2Util;
+import com.xinleju.erp.finance.xml.Ufinterface;
+import com.xinleju.erp.finance.xml.Voucher;
+import com.xinleju.erp.finance.xml.VoucherBody;
+import com.xinleju.erp.finance.xml.VoucherHead;
+import com.xinleju.erp.flow.bean.LoginInfo;
+import com.xinleju.erp.flow.flowutils.bean.FlowResult;
+import com.xinleju.erp.flow.service.api.extend.BaseAPIService;
+import com.xinleju.erp.sm.extend.dto.FinaData;
+import com.xinleju.erp.sm.extend.dto.FinaQueryParams;
+
+/**
+ * 凭证的业务对象
+ * 
+ * @author walden ztl
+ * 
+ */
+@Service
+public class FiVoucherCreateService extends BaseService {
+
+	private static final Logger logger = LoggerFactory.getLogger(FiVoucherCreateService.class);
+
+	@Autowired
+	private FiVoucherDataDao fiVoucherDataDao;
+	@Autowired
+	private FiAssMappingService fiAssMappingService;
+	@Autowired
+	private FiBudgetCapService fiBudgetCapService;
+	@Autowired
+	private FiCoCapService fiCoCapService;
+	@Autowired
+	private FiCoCapInputService fiCoCapInputService;
+	@Autowired
+	private FiPaymentTypeService fiPaymentTypeService;
+	@Autowired
+	private FiAccountCaptionService fiAccountCaptionService;
+	@Autowired
+	private FiVoucherService fiVoucherService;
+	@Autowired
+	private FiBizObjectService fiBizObjectService;
+	@Autowired
+	private FiVoucherTemplateService fiVoucherTemplateService;
+	
+	@Autowired
+    @Qualifier("BaseAPIService")
+    BaseAPIService BaseAPIService;
+	
+	@Autowired
+	private FiVoucherTempTypeService fiVoucherTempTypeService;
+	
+	@Autowired
+	private FiBankCapService fiBankCapService;
+	
+	@Autowired
+	private FiCollectionTypeCapService fiCollectionTypeCapService;
+	/** 凭证分录概要模板 变量表达式 */
+	private static final String VOUCHER_ENTRY_SUMMARY_VAR_EXPR = "\\{!(.+?):(.+?);\\}";
+	/** 借贷金额表达式符号 */
+	private static final String D_M_SYMBOL = "[*]";
+	
+	/**生成凭证成功的单据状态*/
+	private static final Integer SUCCESS_CREATEED = 1;
+	/**生成凭证失败的单据状态*/
+	private static final Integer NO_CREATEED = 2;
+	/**预算科目标识符*/
+	private static final String YS_FLAG = "00";
+	/**预算科目对应的现金流量标示*/
+	private static final String YS_CASHFLOW_FLAG = "00";
+	private static final String EX_SE = "taxmny2";
+	private static final String EX_NOSE = "notaxmny2";
+	private static final String EX_SEN = "taxmny";
+	private static final String SA_MX = "sa-mx";
+	private static final String HK_SE = "nrushmny"; //chc add 2016.6.28
+	private static final String FP_SE = "fptaxnmny"; //chc add 2016.6.28
+	/**发票信息标识符*/
+	private static final String FP_FLAG = "00";
+	
+	private static final String STATUS_USED = "1";
+	
+	/**销售系统*/
+	private static final String SA_MAIN = "nskmny";
+	private static final String SA_DETAIL = "nskmnyb";
+	
+
+	//完整凭证
+	private static final Integer FULL_VOUCHER = 1;
+	//不完整凭证
+	private static final Integer NOTFULL_VOUCHER = 2;
+	
+	//辅助核算类型
+	public static final String ASS_DEPT = "部门档案";
+	public static final String ASS_PERSON = "人员档案";
+	public static final String ASS_PUBLLER = "供应商辅助核算";
+	public static final String ASS_PUBLLER_LJTH = "客商辅助核算";
+	public static final String ASS_EXCENTER = "费用中心";
+	public static final String ASS_BANKACCONT = "银行账户";
+	public static final String ASS_CASHFLOWCASE = "现金流量项目";
+	public static final String ASS_HOUSE_WORD = "房地产项目档案";
+	public static final String ASS_HOUSE_INFO = "房产资料";
+	public static final String ASS_CO_OBJECT = "成本核算对象";//河北添加 2016.9.22 chc
+	public static final String ASS_COLLECTION_TYPE = "款项类型";//河北添加 2016.10.21 chc
+	public static final String ASS_TYPE_INFO = "产品类型";
+	public static final String ASS_PROJECT_INFO = "工程项目";
+	public static final String ASS_PROJECT_BRANCE = "项目分期";
+	public static final String ASS_PROJECT_HZ = "合作项目";
+	public static final String ASS_CONTRACT = "合同信息";
+	public static final String ASS_SUPPLIER = "供方档案";
+	//--------------------------
+	private Long sysId = 3l;
+	
+	@Autowired
+	private FiCoContractService fiCoContractService;
+
+	/**
+	 * 生成凭证
+	 * <p>
+	 * <ol>
+	 * <li>根据账套id,业务表单类型,查询出所有凭证业务类型模板
+	 * <li>遍历业务表单数据，找出没有匹配到模板的凭证，记录错误信息
+	 * <li>边生成凭证分录数据，边检查数据，如果有错误记录到errDesc中
+	 * <li>判断如果errDesc中的size不为空则打印错误信息；如果errDesc的size为空 则生成凭证
+	 * <li>返回信息如果生成成功 isSuccess=true
+	 * 否则，返回false；报错信息从flowResult.debuginfo.errDesc中取出
+	 * </p>
+	 * 
+	 * @param selectedList
+	 */
+	public FlowResult<String> createVoucher(List<FinaData> selectedList, FinaQueryParams params, QMap paramMap,Long companyId) {		
+		String btype = (String) paramMap.get("btype");
+		Long accountSetId = (Long) paramMap.get("accountSetId");
+		sysId = (Long) paramMap.get("sysId");
+		// 用户登陆信息
+		LoginInfo loginInfo = (LoginInfo) paramMap.get("loginInfo");
+		FlowResult<String> flowResult = new FlowResult<String>();
+		List<String> errDesc = flowResult.getDebugInfo().getErrDesc();
+		List<String> errBills = new ArrayList<String>();
+		List<FiEntryData> entryDataList = null;
+		
+		//合并单存放MAP中   KEY为合并单号   VALUE为合并的单据 
+		Map<String,List<FinaData>> mergDates = new HashMap<String, List<FinaData>>();
+		List<FinaData> datas = null;
+		
+		//存放不需要合并的单据
+		List<FinaData> noMergDates = new ArrayList<FinaData>();
+		
+		// 根据业务表单类型过滤出来对应的凭证生成模板遍历匹配 凭证模板 status=1 启用的业务模板
+		Long typeId = Long.parseLong(params.getBillType());
+		   	
+		String key = null;
+		for (FinaData finaData : selectedList) {
+			finaData = fiVoucherTempTypeService.setTempTemplate(finaData,typeId);
+		
+			//############################单据合并分拣 #######获取合并号
+			String mergNum = (String)finaData.get("mergeNum");
+			if(StringUtils.isNotBlank(mergNum)){
+				//如果合并单号等于MAP的KEY的时候 则直接获取LIST集合，并将该单据放入
+				//到该集合中，反之不等于的话则需要改变KEY的值，并将数据存贮到新的集合中
+				if(mergNum.equals(key)){
+					List<FinaData> dts = mergDates.get(key);
+					dts.add(finaData);
+				}else{
+					key = mergNum;
+					
+					datas = new ArrayList<FinaData>();
+					datas.add(finaData);
+					mergDates.put(key, datas);
+				}
+					
+			}else{
+				noMergDates.add(finaData);
+			}
+			
+			
+		}
+		// 如果没有匹配到账套返回错误信息，如果匹配到了继续向下
+		if (errDesc.size() == 0) {
+			// 生成相关分录
+			//没有合并单据号单据生成凭证
+			for (FinaData finaData : noMergDates) {
+				boolean flag = false;//判断所有的分录都不匹配 // chc add 2016.6.23
+				// 贷方金额总和
+				double creditAmountSum = 0;
+				// 借方金额总和
+				double debitAmountSum = 0;
+				entryDataList = new ArrayList<FiEntryData>();
+				
+				//根据模板ID获取配置的分录（模板配置的分录）
+				List<FiVoucherEntry> voucherEntryList = getDao().findByHQL(FiVoucherEntry.class, "from FiVoucherEntry where voucherTemplateId=?",
+						finaData.get("voucherTemplateId"));
+				
+				if (voucherEntryList.size() > 0) {
+					List<FiEntryData> entryDatas = null;
+					int entryNumber = entryDataList.size();
+					for (FiVoucherEntry entryTemp : voucherEntryList) {
+						//根据单据生成的凭证分录
+						// chc 2016.6.23 edit start 
+						entryDatas = creatEntryDatasByTemp(finaData, entryTemp, errDesc, accountSetId,params.getBillType(),entryNumber,errBills,flag,companyId,typeId);
+						if(entryDatas != null){
+							entryDataList.addAll(entryDatas);
+							for(FiEntryData entryData:entryDatas){
+								creditAmountSum += entryData.getCrmny();
+								debitAmountSum += entryData.getDrmny();
+							}
+						}
+					}
+					/*if(!flag){
+						errBills.add(finaData.get("id")+"");
+					}*/
+					if(entryDataList==null || entryDataList.size()==0){
+						errBills.add(finaData.get("id")+"");
+					}
+					// chc 2016.6.23 edit end 
+				} else {
+					errDesc.add("单号：" + finaData.get("id") + "没有对应的分录模板！");
+				}
+				if(errDesc.size() <= 0 ){
+				// 匹配到凭证生成模板，生成分录成功（没有报错信息），开始生成凭证，保存分录和业务表单数据
+				if (entryDataList.size() > 0) {
+					Date now = new Date();
+					String voucherWord = (String) selectedList.get(0).get("flag");
+					flowResult.setSuccess(true);
+					FiVoucherData voucher = new FiVoucherData();//凭证
+					voucher.setBizTypeId((Long)finaData.get("typeTempId"));
+					voucher.setAccountSetId(accountSetId);
+					voucher.setSendStatus("0");
+					voucher.setVoucherNo("");
+					voucher.setState("1");
+					voucher.setCreateDate(new Date());
+					voucher.setFlag(voucherWord);
+					BigDecimal   b   =   new   BigDecimal(debitAmountSum); 
+					voucher.setDebitAmount(b.setScale(2,   BigDecimal.ROUND_HALF_UP).doubleValue());
+					BigDecimal   b1   =   new   BigDecimal(creditAmountSum); 
+					voucher.setCreditAmount(b1.setScale(2,   BigDecimal.ROUND_HALF_UP).doubleValue());
+					
+					FiAccountSet acccountSet = getDao()
+							.findFirstByHQL(FiAccountSet.class, "from FiAccountSet where id=?)", accountSetId);
+					
+					voucher.setCompany(acccountSet.getCompanyCode());
+					if(sysId == 2){
+						voucher.setReserve1(finaData.get("billType")+"");
+					}else{
+						voucher.setReserve1(btype);
+					}
+					voucher.setFiscalYear(Integer.parseInt(DateUtils.format(now, "yyyy")));// 会计年度
+					voucher.setAccountingPeriod(Integer.parseInt(DateUtils.format(now, "MM")));// 会计期间
+					voucher.setAttachmentNumber(selectedList.size());// 附单据数
+					voucher.setCreateDate(now);// 制单时间
+					voucher.setCreateUserId(loginInfo.getUserDTO().getId());
+					voucher.setEnter(loginInfo.getUserDTO().getRealName());// 制单人
+					voucher.setReserve2(loginInfo.getUserDTO().getLoginName());
+					voucher.setSignature("N");// 是否签字 Y/N
+					voucher.setChecker("");// 审核人?
+					voucher.setPostingDate(null);// 记账日期 ?
+					voucher.setPostingPerson("");// 记账人 ?
+					voucher.setVoucherType(params.getBillType());// 单据类型
+					voucher.setDr(0);
+					getDao().save(voucher);
+
+					//合并分录
+					List<FiEntryData> hebingEntryDataList = new ArrayList<FiEntryData>();
+					if(sysId != 2){
+						Map<String,FiEntryData> entryMap = new HashMap<String,FiEntryData>();
+						for (FiEntryData entryData : entryDataList) {
+							if(entryMap.get(entryData.getSummary()+entryData.getCaptionName()+entryData.getRealAssName())!=null){
+								FiEntryData data = entryMap.get(entryData.getSummary()+entryData.getCaptionName()+entryData.getRealAssName());
+								BigDecimal   bcrmny   =   new   BigDecimal(entryData.getCrmny()+data.getCrmny());
+								BigDecimal   bdrmny   =   new   BigDecimal(entryData.getDrmny()+data.getDrmny());
+								entryData.setCrmny(bcrmny.setScale(2,   BigDecimal.ROUND_HALF_UP).doubleValue());
+								entryData.setDrmny(bdrmny.setScale(2,   BigDecimal.ROUND_HALF_UP).doubleValue());
+							}
+							entryMap.put(entryData.getSummary()+entryData.getCaptionName()+entryData.getRealAssName(), entryData);
+						}
+						for (Map.Entry<String, FiEntryData> entry : entryMap.entrySet()) {
+							hebingEntryDataList.add(entry.getValue());
+						}
+					}else{
+						hebingEntryDataList.addAll(entryDataList);
+					}
+					// 给分录加上voucherId等信息  
+					//处理多辅助核算的分录
+					for (FiEntryData entryData : hebingEntryDataList) {
+						entryData.setVoucherDataId(voucher.getId());
+						entryData = getAssCompant(entryData);
+						entryData.setCreateDate(now);
+						entryData.setCreateUserId(loginInfo.getUserDTO().getId());
+					}
+					getDao().saveOrUpdateAll(hebingEntryDataList);
+					
+					//校验是否为不完整凭证
+					Map<Integer,String> messMap = fiVoucherService.isFull(voucher, hebingEntryDataList,accountSetId);
+					if(messMap.get(1).equals("true")){
+						voucher.setStatus(FULL_VOUCHER);
+					}else{
+						voucher.setNotFullError(messMap.get(2));
+						voucher.setStatus(NOTFULL_VOUCHER);
+					}
+					getDao().update(voucher);
+					
+					// 生成相关单据 并将id放入到list中
+					List<String> billIds = new ArrayList<String>(selectedList.size());
+					List<FiVoucherExBill> voucherBillList = new ArrayList<FiVoucherExBill>(selectedList.size());
+					FiVoucherExBill bill = fillExBill(finaData, SUCCESS_CREATEED, params.getBillType());
+					bill.setVoucherDataId(voucher.getId());
+					voucherBillList.add(bill);
+					//TODO 成本测试
+					//billIds.add(String.valueOf(finaData.get("regId")));
+					billIds.add(String.valueOf(finaData.get("id")));
+					getDao().saveOrUpdateAll(voucherBillList);
+					
+					//######################调用平台的回写接口 费用接口 start##############
+					fiVoucherService.rewrite(voucher, null,errBills,null,sysId);
+					//######################调用平台的回写接口 费用接口 end################
+				} 
+				}else{
+					showErrDesc(flowResult);
+				}
+//				else {
+//					showErrDesc(flowResult);
+//					//errBills.add((String)finaData.get("id"));
+//					//fiVoucherService.rewrite(null, null,errBills,params.getBillType());
+//					//errDesc.clear();	
+//				}
+			}
+			/*if(errDesc.size() > 0 ){
+				showErrDesc(flowResult);
+			}*/
+			
+			//
+			//##########################存在单据合并号的单据生成凭证############
+			//
+			Iterator iter = mergDates.entrySet().iterator();
+			while (iter.hasNext()) {
+				Map.Entry entry = (Map.Entry) iter.next();
+				String k = (String) entry.getKey();
+				List<FinaData> finas = (List<FinaData>) entry.getValue();
+
+				// 贷方金额总和
+				double creditAmountSum = 0;
+				// 借方金额总和
+				double debitAmountSum = 0;
+				
+				entryDataList = new ArrayList<FiEntryData>();
+				for (FinaData finaData : finas) {
+					boolean flag = false;//// chc 2016.6.23 add
+					//根据模板ID获取配置的分录（模板配置的分录）
+					List<FiVoucherEntry> voucherEntryList = getDao().findByHQL(FiVoucherEntry.class, "from FiVoucherEntry where voucherTemplateId=?",
+							finaData.get("voucherTemplateId"));
+					
+					if (voucherEntryList.size() > 0) {
+						List<FiEntryData> entryDatas = null;
+						int entryNumber = entryDataList.size();
+						for (FiVoucherEntry entryTemp : voucherEntryList) {
+							//根据单据生成的凭证分录
+							// chc 2016.6.23 edit start 
+							entryDatas = creatEntryDatasByTemp(finaData, entryTemp, errDesc, accountSetId,params.getBillType(),entryNumber,errBills,flag,companyId,typeId);
+							if(entryDatas != null){
+								entryDataList.addAll(entryDatas);
+								for(FiEntryData entryData:entryDatas){
+									creditAmountSum += entryData.getCrmny();
+									debitAmountSum += entryData.getDrmny();
+								}
+							}
+						}
+						/*if(!flag){
+							errBills.add(finaData.get("id")+"");
+						}*/
+						if(entryDataList==null || entryDataList.size()==0){
+							errBills.add(finaData.get("id")+"");
+						}
+						// chc 2016.6.23 edit end
+					} else {
+						errDesc.add("单号：" + finaData.get("id") + "没有对应的分录模板！");
+					}
+				}
+//				if (Math.abs(creditAmountSum) - Math.abs(debitAmountSum) != 0) {
+//					errDesc.add("所有分录的借贷金额总和不相等,贷方金额总和为：" + creditAmountSum + "借方金额总和为：" + debitAmountSum);
+//				}
+				// 匹配到凭证生成模板，生成分录成功（没有报错信息），开始生成凭证，保存分录和业务表单数据
+				if(errDesc.size() <= 0 ){
+				if (entryDataList.size() > 0) {
+					Date now = new Date();
+					String voucherWord = (String) selectedList.get(0).get("flag");
+					flowResult.setSuccess(true);
+					FiVoucherData voucher = new FiVoucherData();
+					voucher.setBizTypeId((Long)finas.get(0).get("typeTempId"));
+					voucher.setAccountSetId(accountSetId);
+					voucher.setSendStatus("0");
+					voucher.setVoucherNo("");
+					voucher.setState("1");
+					voucher.setMergeNum(k);
+					voucher.setCreateDate(new Date());
+					voucher.setFlag(voucherWord);
+					BigDecimal   b   =   new   BigDecimal(debitAmountSum); 
+					voucher.setDebitAmount(b.setScale(2,   BigDecimal.ROUND_HALF_UP).doubleValue());
+					BigDecimal   b1   =   new   BigDecimal(creditAmountSum); 
+					voucher.setCreditAmount(b1.setScale(2,   BigDecimal.ROUND_HALF_UP).doubleValue());
+					
+					FiAccountSet acccountSet = getDao()
+							.findFirstByHQL(FiAccountSet.class, "from FiAccountSet where id=?)", accountSetId);
+					
+					voucher.setCompany(acccountSet.getCompanyCode());
+					voucher.setReserve1(btype);
+					voucher.setFiscalYear(Integer.parseInt(DateUtils.format(now, "yyyy")));// 会计年度
+					voucher.setAccountingPeriod(Integer.parseInt(DateUtils.format(now, "MM")));// 会计期间
+					voucher.setAttachmentNumber(selectedList.size());// 附单据数
+					voucher.setCreateDate(now);// 制单时间
+					voucher.setCreateUserId(loginInfo.getUserDTO().getId());
+					voucher.setEnter(loginInfo.getUserDTO().getRealName());// 制单人
+					voucher.setReserve2(loginInfo.getUserDTO().getLoginName());
+					voucher.setSignature("N");// 是否签字 Y/N
+					voucher.setChecker("");// 审核人?
+					voucher.setPostingDate(null);// 记账日期 ?
+					voucher.setPostingPerson("");// 记账人 ?
+					voucher.setVoucherType(params.getBillType());// 单据类型
+					voucher.setDr(0);
+					getDao().save(voucher);
+
+					//合并分录
+					List<FiEntryData> hebingEntryDataList = new ArrayList<FiEntryData>();
+					if(sysId != 2){
+						Map<String,FiEntryData> entryMap = new HashMap<String,FiEntryData>();
+						for (FiEntryData entryData : entryDataList) {
+							if(entryMap.get(entryData.getSummary()+entryData.getCaptionName()+entryData.getRealAssName())!=null){
+								FiEntryData data = entryMap.get(entryData.getSummary()+entryData.getCaptionName()+entryData.getRealAssName());
+								BigDecimal   bcrmny   =   new   BigDecimal(entryData.getCrmny()+data.getCrmny());
+								BigDecimal   bdrmny   =   new   BigDecimal(entryData.getDrmny()+data.getDrmny());
+								entryData.setCrmny(bcrmny.setScale(2,   BigDecimal.ROUND_HALF_UP).doubleValue());
+								entryData.setDrmny(bdrmny.setScale(2,   BigDecimal.ROUND_HALF_UP).doubleValue());
+							}
+							entryMap.put(entryData.getSummary()+entryData.getCaptionName()+entryData.getRealAssName(), entryData);
+						}
+						for (Map.Entry<String, FiEntryData> entry1 : entryMap.entrySet()) {
+							hebingEntryDataList.add(entry1.getValue());
+						}
+					}else{
+						hebingEntryDataList.addAll(entryDataList);
+					}
+					// 给分录加上voucherId等信息  
+					//处理多辅助核算的分录
+					for (FiEntryData entryData : hebingEntryDataList) {
+						entryData.setVoucherDataId(voucher.getId());
+						entryData = getAssCompant(entryData);
+						entryData.setCreateDate(now);
+						entryData.setCreateUserId(loginInfo.getUserDTO().getId());
+					}
+					getDao().saveOrUpdateAll(hebingEntryDataList);
+					
+					//校验是否为不完整凭证
+					boolean isFull = fiVoucherService.isFullVoucher(voucher, hebingEntryDataList,accountSetId);
+					if(isFull){
+						voucher.setStatus(FULL_VOUCHER);
+					}else{
+						voucher.setStatus(NOTFULL_VOUCHER);
+					}
+					getDao().update(voucher);
+					
+					// 生成相关单据 并将id放入到list中
+					List<String> billIds = new ArrayList<String>(selectedList.size());
+					List<FiVoucherExBill> voucherBillList = new ArrayList<FiVoucherExBill>(selectedList.size());
+					for (FinaData finaData : finas) {
+						FiVoucherExBill bill = fillExBill(finaData, SUCCESS_CREATEED, params.getBillType());
+						bill.setVoucherDataId(voucher.getId());
+						voucherBillList.add(bill);
+					}
+					
+					//TODO 成本测试
+					for (FinaData finaData : finas) {
+						billIds.add(String.valueOf(finaData.get("id")));
+					}
+					getDao().saveOrUpdateAll(voucherBillList);
+					//######################调用平台的回写接口 费用接口 start##############
+					fiVoucherService.rewrite(voucher, null,errBills,null,sysId);//// chc 2016.6.23 edit
+					//######################调用平台的回写接口 费用接口 end################
+				}  
+				}else {
+					showErrDesc(flowResult);
+				}
+			}
+			
+			
+		} else {
+			showErrDesc(flowResult);
+		}
+		return flowResult;
+	}
+	
+	
+	/**
+	 * 生成NC系统能识别的同步xml
+	 * 
+	 * @param voucher
+	 * @param entryDataList
+	 * @param voucherBillList
+	 * @return
+	 */
+	public String createSyncXml2NC(FiVoucherData voucher, List<FiEntryData> entryDataList,Integer syid) {
+		
+		// 会计平台和NC系统的对照
+		FiAccountSet accountSet = getDao().findFirstByHQL(FiAccountSet.class, "from FiAccountSet where id=?", voucher.getAccountSetId());
+		if (accountSet == null) {
+			logger.error("根据凭证没有找到对应的账套");
+		}
+		FiSysinfo sysinfo = getDao().findFirstByHQL(FiSysinfo.class, "from FiSysinfo where id=?", accountSet.getFiSysId());
+		if (sysinfo == null) {
+			logger.error("凭证账套,对应的财务系统为空");
+		}
+		VoucherHead vh = new VoucherHead();
+		vh.setCompany(voucher.getCompany());
+		vh.setReveiver("");
+		//凭证号设置成0，就是有nc自动处理凭证号
+		/*
+		//香港置地 自编辑凭证号
+		if(StringUtils.isNotBlank(voucher.getVoucherNo()) && !voucher.getVoucherNo().equals("null")){
+			vh.setVoucherId(voucher.getVoucherNo());
+		}else{
+			vh.setVoucherId("0");
+		}*/
+		vh.setVoucherId("0");
+		// 凭证字
+		vh.setVoucherType(voucher.getFlag());
+		vh.setFiscalYear(voucher.getFiscalYear().toString());
+		String period = voucher.getAccountingPeriod().toString();
+		if(period.length()==1){
+			period = "0" + period;
+		}
+		vh.setAccountingPeriod(period);
+		//vh.setVoucherId(voucher.getVoucherNo());// 设置成凭证的id
+		vh.setAttachmentNumber(voucher.getAttachmentNumber().toString());
+		// 制单日期
+		SimpleDateFormat sf = new SimpleDateFormat("yyyy-MM-dd");
+		vh.setPrepareddate(sf.format(voucher.getCreateDate()));
+		// 在nc系统中对应的登录的用户名称 暂时设置系统里面的测试数据 wangf
+		vh.setEnter(voucher.getReserve2());
+//		vh.setCashier(voucher.getCashier());
+		vh.setCashier("");
+		vh.setSignature(voucher.getSignature());
+//		vh.setChecker(voucher.getChecker());
+		vh.setChecker("");
+		// vh.setPostingDate(voucher.getPostingDate().toString());
+		vh.setPostingPerson(voucher.getPostingPerson());
+		//外部系统名称 XS
+		//vh.setVoucherMakingSystem("GL");
+		if(syid==1){
+			vh.setVoucherMakingSystem("XS");
+		}else if(syid==2){
+			vh.setVoucherMakingSystem("CO");
+		}else{
+			vh.setVoucherMakingSystem("EX");
+		}
+		vh.setMemo1(voucher.getNote());
+		vh.setMemo2(voucher.getNote());
+		vh.setReserve1(voucher.getReserve1());
+		vh.setReserve2(voucher.getReserve2());
+
+		List<Entry> enlist = new ArrayList<Entry>();
+        Integer entyId = 0;
+		for (int i = 0; i < entryDataList.size(); i++) {
+			
+			Entry entry = new Entry();
+			FiEntryData fed = entryDataList.get(i);
+			String accountCode = fed.getCaptionCode();
+			entry.setAccountCode(accountCode);
+			entyId++;
+			entry.setEntryId("" + entyId);
+			entry.setAbstracT(fed.getSummary());
+			entry.setSettlement("");
+			entry.setDocumentId("");
+			entry.setDocumentDate(new Date());
+			// 货币
+			entry.setCurrency("CNY");
+			entry.setUnitPrice("");
+			entry.setExchangeRate1("1");
+			entry.setExchangeRate2("0");
+			entry.setDebitQuantity("");
+			// 四个金额配对
+			Double crmny = 0.0;
+			Double drmny = 0.0;
+			if(fed.getCrmny()!=null){
+				crmny = fed.getCrmny();
+			}
+			if(fed.getDrmny()!=null){
+				drmny = fed.getDrmny();
+			}
+			entry.setPrimaryCreditAmount("" + crmny);
+			entry.setPrimaryDebitAmount("" + drmny);
+			entry.setNaturalCreditCurrency("" + crmny);
+			entry.setNaturalDebitCurrency("" + drmny);
+			entry.setSecondaryCreditAmount("");
+			entry.setSecondaryDebitAmount("");
+			entry.setCreditQuantity("");
+			/*
+			//香港置地核销号
+			if(fed.getCaptionName().equals("其他应收款\\内部员工往来")){
+				FiVoucher fiVoucher = this.fiVoucherService.getFiVoucherById(voucher.getId());
+				if(fiVoucher.getVoucherBillList()!=null && fiVoucher.getVoucherBillList().size()>0){
+					FiVoucherExBill ex = fiVoucher.getVoucherBillList().get(0);
+					entry.setFree1(ex.getVapplynum());
+				}
+			}*/
+			entry.setBillDate("");
+			entry.setBillId("");
+			entry.setBillType("");
+			// 设置辅助核算相关数据
+			// 辅助核算明细代码,逗号分隔
+			// 辅助核算名称,逗号分隔
+			String assCodes = fed.getAssCode();
+			String assNames = fed.getAssName();
+			
+			// 如果辅助核算代码为空
+			if (StringUtils.isNotBlank(assNames)) {
+	
+				Map<String, String[]> map = splitAssNameAndCode(assCodes, assNames);
+				String[] assNameArr = map.get("name");
+				String[] assCodeArr = map.get("code");
+				List<AuxiliaryItem> auxiliaryItemList = new ArrayList<AuxiliaryItem>();
+				for (int n = 0; n < assNameArr.length; n++) {
+					AuxiliaryItem item = new AuxiliaryItem();
+					String mappingName = "";
+					String mappingValue = "";
+					if(StringUtils.isNotBlank(assNameArr[n])){
+						mappingName = assNameArr[n].trim();
+					}
+					if(StringUtils.isNotBlank(assCodeArr[n])){
+						mappingValue = assCodeArr[n].trim();
+					}
+					item.setName(mappingName);
+					item.setValue(mappingValue);
+					auxiliaryItemList.add(item);
+				}
+				entry.setAuxiliaryList(auxiliaryItemList);
+			}
+			
+			
+			String cashflowCode = fed.getCashFlowCode();
+			if(StringUtils.isNotBlank(cashflowCode)){
+				List<Cashflowcase> CashflowcaseList = new ArrayList<Cashflowcase>();
+				Cashflowcase cashFlow = new Cashflowcase();
+				String money = "0.0";
+				if(StringUtils.isNotBlank(entry.getPrimaryDebitAmount()) && !entry.getPrimaryDebitAmount().equals("0.0")){
+					money = entry.getPrimaryDebitAmount();
+				}else{
+					money = entry.getPrimaryCreditAmount();
+				}
+				cashFlow.setMoney(money);
+				cashFlow.setMoneyass("0");
+				cashFlow.setMoneymain(money);
+				cashFlow.setPk_cashflow(cashflowCode);
+				CashflowcaseList.add(cashFlow);
+				entry.setOtheruserdata(CashflowcaseList);
+			}
+			
+			enlist.add(entry);
+		}
+		VoucherBody vb = new VoucherBody();
+		vb.setEntry(enlist);
+		Voucher voucherxml = new Voucher();
+		voucherxml.setVoucherbody(vb);
+		voucherxml.setVoucherhead(vh);
+		Ufinterface ufi = new Ufinterface();
+		ufi.setRoottag("voucher");
+		ufi.setBilltype("gl");
+		ufi.setReplace("Y");
+		//设置发送方
+		ufi.setSender(sysinfo.getSender());
+		ufi.setReceiver(voucher.getCompany());
+		ufi.setIsexchange("Y");
+		ufi.setFilename(DateUtils.format(new Date(), "MM_DD_HH_mm") + ".xml");
+		ufi.setProc("add");
+		ufi.setOperation("req");
+		ufi.setVoucher(voucherxml);
+		String xml = "";
+		try {
+			xml = Jaxb2Util.objContextXml(ufi);
+			System.out.println("生成NC的XML===="+xml);
+		} catch (JAXBException e) {
+			e.printStackTrace();
+		}
+		return xml;
+	}
+	
+	public void mergeEnty(List<FiEntryData> feds,FiEntryData fed,String accountCode){
+		for(FiEntryData entry:feds){
+			String entyAccCode = entry.getCaptionCode();
+			if(entyAccCode.equals(accountCode)){
+				double drimny = entry.getDrmny();
+				double crmny = entry.getCrmny();
+				
+				entry.setCrmny(fed.getCrmny()+crmny);
+				entry.setDrmny(fed.getDrmny()+drimny);
+				
+			}
+		}
+		
+	}
+	
+	/**
+	 * 在生成分录之前合并
+	 * @param feds
+	 * @return
+	 */
+	public List<FiEntryData> mergeEnty(List<FiEntryData> feds){
+		//存储分录中的会计科目编码，用于后面相同的科目合并
+		List<String> accountCodes = new ArrayList<String>();
+        List<FiEntryData> entyDates = new ArrayList<FiEntryData>();
+		for (int i = 0; i < feds.size(); i++) {
+
+			FiEntryData fed = feds.get(i);
+			String accountCode = fed.getCaptionCode();
+
+			// 将分录科目CODE相同的合并为一条分录
+			if (accountCodes.contains(accountCode)) {
+				mergeEnty(entyDates, fed, accountCode);
+				continue;
+			}
+
+			accountCodes.add(accountCode);
+			
+			entyDates.add(fed);
+		}
+
+		return entyDates;
+		
+	}
+
+	private Map<String, String[]> splitAssNameAndCode(String assCodes, String assNames) {
+		String[] assNameArr = null;
+		String[] assCodeArr = null;
+		if (StringUtils.isNotBlank(assNames)) {
+			assNameArr = assNames.split(",");
+		}
+		if (StringUtils.isNotBlank(assCodes)) {
+			assCodeArr = assCodes.split(",");
+		}
+		if (assNameArr == null && assCodeArr != null) {
+			String err = "凭证分录数据中指定了辅助核算明细代码，但是没有指定辅助核算名称";
+			logger.error(err);
+			throw new RuntimeException(err);
+		}
+		if (assCodeArr == null && assNameArr != null) {
+			String err = "凭证分录数据中指定了辅助核算名称，但是没有指定辅助核算明细代码";
+			logger.error(err);
+			throw new RuntimeException(err);
+		}
+		if (assNameArr.length != assCodeArr.length) {
+			String err = "辅助核算名称有" + assNameArr.length + "个,而辅助核算明细代码有" + assCodeArr.length + "个" + "。两个值的个数应该一致";
+			logger.error(err);
+			throw new RuntimeException(err);
+		}
+		Map<String, String[]> map = new HashMap<String, String[]>();
+		map.put("name", assNameArr);
+		map.put("code", assCodeArr);
+		return map;
+	}
+
+	private void showErrDesc(FlowResult<String> flowResult) {
+		flowResult.setSuccess(false);
+	}
+	
+	/**
+	 * 根据分录模板生成凭证分录
+	 * 
+	 * @param finaData
+	 * @param errDesc
+	 * @return
+	 */
+	private List<FiEntryData> creatEntryDatasByTemp(FinaData finaData,
+			FiVoucherEntry entryTemp, List<String> errDesc, Long accountSetId,
+			String billType, int entryNumber,List<String> errBills,boolean flag,Long companyId,Long typeId) {
+		
+		String errDescPrefix = String.format("单号：%s在使用业务类型为[%s]的凭证模板解析分录时:",
+				finaData.get("id"), finaData.get("voucherTemplateName"));
+		List<FiEntryData> feds = new ArrayList<FiEntryData>();
+		FiEntryData entryData = null;
+		Double symbolValue = null;
+//		Long companyId = null;
+		
+		// 分录筛选条件
+		// 如果为空直接生成此分录 存在筛选条件才进行匹配 TODO
+		String filter = entryTemp.getFilter();
+		
+		// 预算科目 标识符 "00"
+		String drm = entryTemp.getDrmnyexpr();//借方金额：{!notaxmny2:科目分摊不含税金额;}
+		String drmPrarm = "";
+		if (StringUtils.isNotBlank(drm)) {
+			String[] syboms = drm.split(D_M_SYMBOL);
+			drm = syboms[0];
+			if(syboms.length == 2){
+				symbolValue = Double.parseDouble(syboms[1]);
+			}
+			drmPrarm = converIK(drm);
+		}
+		//销售业务单独提出来
+		if(sysId.intValue() == 1){
+			feds = saCreatEntry(entryTemp,finaData,drm,entryData,filter,errDesc,
+					errDescPrefix,symbolValue,drmPrarm,accountSetId,entryNumber,companyId);
+		    return feds;
+		}
+		else if(sysId == 2){
+			feds = coCreatEntry(entryTemp,finaData,drm,entryData,filter,errDesc,
+					errDescPrefix,symbolValue,drmPrarm,accountSetId,entryNumber,companyId,errBills);
+		    return feds;
+		}
+		if (StringUtils.isNotBlank(drm)) {
+			//根据科目分摊生成分录（当会计科目选择预算科目【预算科目标示00】、借方金额选择的是科目分摊税额、）
+			if (entryTemp.getCaptionId().equals(YS_FLAG) || drmPrarm.equals(EX_SE) || drmPrarm.equals(EX_NOSE)) {
+				// 科目分摊明细
+				List<FinaData> fts = (List<FinaData>) finaData.get("ft");
+				// 生成科目分摊的分录
+				for (FinaData ft : fts) {
+					if (StringUtils.isNotBlank(filter)) {
+						boolean isMach = fiVoucherTempTypeService.macherEntry(filter, ft);
+						if (!isMach) {
+							continue;
+						}
+					}
+					flag = true; // chc 2016.6.23 add
+					entryData = createFiEntry(ft, entryTemp,
+							errDescPrefix, errDesc,finaData);
+					// 设置贷方金额为0
+					entryData.setCrmny(0d);
+					// 借方金额
+					Double drmAmount = 0d;
+					String drmAmountStr = null;
+					String[] syboms = drm.split(D_M_SYMBOL);
+					drm = syboms[0];
+					if(syboms.length == 2){
+						symbolValue = Double.parseDouble(syboms[1]);
+					}
+					drmPrarm = converIK(drm);
+					drmAmountStr = String.valueOf(ft.get(drmPrarm.trim()));
+					if(StringUtils.isNotBlank(drmAmountStr) && !drmAmountStr.equals("null")){
+						drmAmount = Double.parseDouble(drmAmountStr);
+					}
+					if(symbolValue != null){
+						drmAmount = drmAmount * symbolValue;
+					}
+					entryData.setDrmny(drmAmount);
+					// 根据科目分摊编码获取对应的财务科目
+					//capCode：预算科目编码
+					String capCode = "";
+					//3：费用  2：成本  1：销售
+					FiBudgetCap ficap = null;
+					if(sysId == 2){
+						capCode = String.valueOf(ft.get("full_code"));
+						companyId = Long.parseLong((String.valueOf(ft.get("company_id"))));
+						ficap = fiBudgetCapService
+								.getFiBudgetCapByCode(capCode, STATUS_USED,companyId,accountSetId); //取预算科目
+					}else{
+						capCode = String.valueOf(ft.get("vcurrentcode"));
+						ficap = fiBudgetCapService
+								.getFiBudgetCapByCode(capCode, STATUS_USED,null,accountSetId); //取预算科目
+					}
+					
+//					FiBudgetCap ficap = fiBudgetCapService.getFiBudgetCapByCode(capCode, STATUS_USED,companyId,accountSetId); //取预算科目
+					Object id = finaData.get("id");
+					if (ficap == null) {
+						String err = "没有匹配到预算科目【单据ID：" + id + "预算科编码为:"
+								+ capCode + "】";
+						errDesc.add(err);
+						errBills.add(id+"");//// chc 2016.6.23 add
+						return feds;
+					}
+
+					// 现金流量项目
+					entryData = setCashFlow(entryData, ft, entryTemp,drmPrarm,accountSetId);
+
+					FiAccountCaption fc = fiAccountCaptionService.getFiAccountCaptionById(ficap.getAccountCapId());
+					/*
+					//香港置地事项请示--员工借款添加
+					FiVoucherTempType temptype = fiVoucherTempTypeService.getById(typeId);
+					if(temptype!=null && temptype.getName().equals("员工借款") && entryTemp.getCaptionName().equals("其他应收款\\内部员工往来")){
+						fc = fiAccountCaptionService.getFiAccountCaptionById(Long.valueOf(entryTemp.getCaptionId()));
+					}
+
+					if(temptype!=null && temptype.getName().equals("日常报销有冲账且员工需归还款项给公司") && !entryTemp.getCaptionName().contains("银行存款")){
+						
+					}else{
+						entryData = setCashFlow(entryData, ft, entryTemp,drmPrarm,accountSetId);
+					}
+					*/
+					if (fc == null) {
+						String err = "预算科目没有匹配到财务科目【单据ID：" + id + "预算科目编码:"
+								+ capCode + "】";
+						errDesc.add(err);
+						errBills.add(id+"");// chc 2016.6.23 add
+						return feds;
+					}
+					
+					if(drmPrarm.equals(EX_SE)){
+						//根据模板中配置的会计科目设置到生成的分录中
+						String captionId = entryTemp.getCaptionId();
+						FiAccountCaption fcEx = fiAccountCaptionService
+								.getFiAccountCaptionById(Long.parseLong(captionId)); //取会计科目
+						entryData.setCaptionCode(fcEx.getCode());
+						entryData.setCaptionName(fcEx.getName());
+						// 设置辅助核算信息 TODO后面配置好需要动态调用对应的辅助核算
+						if (StringUtils.isNotBlank(fcEx.getAssName())) {
+							entryData = setAssMaping(fcEx, ft, entryData,accountSetId,companyId,finaData,errDesc);
+						}
+					}else{
+						//根据预算科目获取对应的会计科目，并设置到生成的分录数据中
+						entryData.setCaptionCode(fc.getCode());
+						entryData.setCaptionName(fc.getName());
+						// 设置辅助核算信息 TODO后面配置好需要动态调用对应的辅助核算
+						if (StringUtils.isNotBlank(fc.getAssName())) {
+							entryData = setAssMaping(fc, ft, entryData,accountSetId,companyId,finaData,errDesc);
+						}
+					}
+					
+					entryData.setSort(++entryNumber);
+					feds.add(entryData);
+				}
+			}
+			//chc add 2016.6.28 start
+			else if (drmPrarm.equals(HK_SE)) {
+				// 还款明细
+				List<FinaData> hks = (List<FinaData>) finaData.get("hk");
+				// 生成手工还款的分录
+				for (FinaData hk : hks) {
+					if (StringUtils.isNotBlank(filter)) {
+						boolean isMach = fiVoucherTempTypeService.macherEntry(filter, hk);//校验分录筛选条件
+						if (!isMach) {
+							continue;
+						}
+					}
+					flag = true; 
+					entryData = createFiEntry(hk, entryTemp,errDescPrefix, errDesc,finaData);//添加摘要
+					// 设置贷方金额为0
+					entryData.setCrmny(0d);
+					// 借方金额
+					Double drmAmount = 0d;
+					String drmAmountStr = null;
+					String[] syboms = drm.split(D_M_SYMBOL);
+					drm = syboms[0];
+					if(syboms.length == 2){
+						symbolValue = Double.parseDouble(syboms[1]);
+					}
+					drmPrarm = converIK(drm);
+					drmAmountStr = String.valueOf(hk.get(drmPrarm.trim()));
+					if(StringUtils.isNotBlank(drmAmountStr) && !drmAmountStr.equals("null")){
+						drmAmount = Double.parseDouble(drmAmountStr);
+					}
+					if(symbolValue != null){
+						drmAmount = drmAmount * symbolValue;
+					}
+					entryData.setDrmny(drmAmount);
+					entryData = blFiEntry(hk,entryTemp,entryData,accountSetId,entryNumber,companyId,finaData,errDesc);
+					feds.add(entryData);
+
+				}
+			}
+			////chc add 2016.6.28 end
+			//chc add 2016.9.27 start
+			else if (drmPrarm.equals(FP_SE)) {
+				List<FinaData> hks = (List<FinaData>) finaData.get("fp");
+				for (FinaData hk : hks) {
+					if (StringUtils.isNotBlank(filter)) {
+						boolean isMach = fiVoucherTempTypeService.macherEntry(filter, hk);//校验分录筛选条件
+						if (!isMach) {
+							continue;
+						}
+					}
+					flag = true; 
+					entryData = createFiEntry(hk, entryTemp,errDescPrefix, errDesc,finaData);//添加摘要
+					// 设置贷方金额为0
+					entryData.setCrmny(0d);
+					// 借方金额
+					Double drmAmount = 0d;
+					String drmAmountStr = null;
+					String[] syboms = drm.split(D_M_SYMBOL);
+					drm = syboms[0];
+					if(syboms.length == 2){
+						symbolValue = Double.parseDouble(syboms[1]);
+					}
+					drmPrarm = converIK(drm);
+					drmAmountStr = String.valueOf(hk.get(drmPrarm.trim()));
+					if(StringUtils.isNotBlank(drmAmountStr) && !drmAmountStr.equals("null")){
+						drmAmount = Double.parseDouble(drmAmountStr);
+					}
+					if(symbolValue != null){
+						drmAmount = drmAmount * symbolValue;
+					}
+					entryData.setDrmny(drmAmount);
+					entryData = blFiEntry(hk,entryTemp,entryData,accountSetId,entryNumber,companyId,finaData,errDesc);
+					feds.add(entryData);
+
+				}
+			}
+			////chc add 2016.9.27 end
+			else {
+				if (StringUtils.isNotBlank(filter)) {
+					boolean isMach = fiVoucherTempTypeService.macherEntry(filter, finaData);
+					if (!isMach) {
+						return null;
+					}
+				}
+				flag = true;// chc 2016.6.23 add
+				
+				entryData = createFiEntry(finaData, entryTemp, errDescPrefix,errDesc,finaData);
+				// 设置贷方金额为0
+				entryData.setCrmny(0d);
+				// 借方金额
+				Double drmAmount = 0d;
+				String drmAmountStr = String.valueOf(finaData.get(drmPrarm.trim()));
+				//chc add 2016.8.15 start  河北项目张文帅要求
+				if(StringUtils.isEmpty(drmAmountStr) || drmAmountStr.equals("null")){
+					List<FinaData> fts = (List<FinaData>) finaData.get("ft");
+					for (FinaData ft : fts) {
+						if (StringUtils.isNotBlank(filter)) {
+							boolean isMach = fiVoucherTempTypeService.macherEntry(filter, ft);
+							if (isMach) {
+								drmAmountStr = String.valueOf(ft.get(drmPrarm.trim()));
+								break;
+							}
+						}else{
+							drmAmountStr = String.valueOf(ft.get(drmPrarm.trim()));
+							break;
+						}
+					}
+				}
+				if(StringUtils.isEmpty(drmAmountStr) || drmAmountStr.equals("null")){
+					drmAmount = Double.parseDouble("0.0");
+				}else{
+					drmAmount = Double.parseDouble(drmAmountStr);
+				}
+				//chc add 2016.8.15 end
+				//表达式处理
+				if(symbolValue != null){
+					drmAmount = drmAmount * symbolValue;
+				}
+				entryData.setDrmny(drmAmount);
+
+				entryData = blFiEntry(finaData,entryTemp,entryData,accountSetId,entryNumber,companyId,finaData,errDesc);
+				feds.add(entryData);
+			}
+			// 贷方分录处理
+		} else {
+			if (StringUtils.isNotBlank(filter)) {
+				boolean isMach = fiVoucherTempTypeService.macherEntry(filter, finaData);
+				if (!isMach) {
+					return null;
+				}
+			}
+			flag = true;// chc 2016.6.23 add
+			
+			String crm = entryTemp.getCrmnyexpr();
+			String crmPrarm = "";
+			if (StringUtils.isNotBlank(crm)) {
+				String[] syboms = crm.split(D_M_SYMBOL);
+				crm = syboms[0];
+				if(syboms.length == 2){
+					symbolValue = Double.parseDouble(syboms[1]);
+				}
+				crmPrarm = converIK(crm);
+			}
+			if (crmPrarm.equals("nthisrushmny")) {
+				// 冲账明细
+				List<FinaData> czs = (List<FinaData>) finaData.get("cz");
+				// 生成冲账明细的分录
+				for (FinaData cz : czs) {
+					entryData = createFiEntry(cz, entryTemp,errDescPrefix, errDesc,finaData);
+					// 贷方金额
+					entryData.setDrmny(0d);
+					String crmAmountStr = cz.get("nthisrushmny")+"";
+					Double crmAmount = 0d;
+					if(StringUtils.isNotBlank(crmAmountStr) && !crmAmountStr.equals("null")){
+						crmAmount = Double.parseDouble(crmAmountStr);
+					}
+					//表达式处理
+					if(symbolValue != null){
+						crmAmount = crmAmount * symbolValue;
+					}
+					entryData.setCrmny(crmAmount);
+
+					entryData = blFiEntry(cz,entryTemp,entryData,accountSetId,entryNumber,companyId,finaData,errDesc);
+					feds.add(entryData);
+
+				}
+			} else {
+				if (StringUtils.isNotBlank(filter)) {
+					boolean isMach = fiVoucherTempTypeService.macherEntry(filter, finaData);
+					if (!isMach) {
+						return null;
+					}
+				}
+				flag = true;// chc 2016.6.23 add
+				entryData = createFiEntry(finaData, entryTemp, errDescPrefix,errDesc,finaData);
+				// 贷方金额
+				entryData.setDrmny(0d);
+				Object co = finaData.get(crmPrarm.trim());
+				String crmAmountStr = String.valueOf(co);
+				Double crmAmount = 0d;
+				if(StringUtils.isNotBlank(crmAmountStr) && !crmAmountStr.equals("null")){
+					crmAmount = Double.parseDouble(crmAmountStr);
+				}
+				//表达式处理
+				if(symbolValue != null){
+					crmAmount = crmAmount * symbolValue;
+				}
+				entryData.setCrmny(crmAmount);
+
+				entryData = blFiEntry(finaData,entryTemp,entryData,accountSetId,entryNumber,companyId,finaData,errDesc);
+				feds.add(entryData);
+
+			}
+		}
+
+		return feds;
+	}
+	
+	public List<FiEntryData> saCreatEntry(FiVoucherEntry entryTemp,FinaData finaData,
+			String drm,FiEntryData entryData,String filter,List<String> errDesc,
+			String errDescPrefix,Double symbolValue,String drmPrarm,Long accountSetId,int entryNumber,Long companyId){
+		
+		List<FiEntryData> feds = new ArrayList<FiEntryData>();
+		String remarks = entryTemp.getRemarks();
+
+		if (StringUtils.isNotBlank(drm)) {
+				
+				if(drmPrarm.equals(SA_MAIN)){
+					if (StringUtils.isNotBlank(filter)) {
+						boolean isMach = fiVoucherTempTypeService.macherEntry(filter, finaData);
+						if (!isMach) {
+							return null;
+						}
+					}
+					entryData = createFiEntry(finaData, entryTemp, errDescPrefix,errDesc,finaData);
+					// 设置贷方金额为0
+					entryData.setCrmny(0d);
+					// 借方金额
+					Double drmAmount = 0d;
+					String drmAmountStr = String.valueOf(finaData.get(drmPrarm.trim()));
+					if(StringUtils.isNotBlank(drmAmountStr) && !drmAmountStr.equals("null")){
+						drmAmount = Double.parseDouble(drmAmountStr);
+					}
+					//表达式处理
+					if(symbolValue != null){
+						drmAmount = drmAmount * symbolValue;
+					}
+					entryData.setDrmny(drmAmount);
+					entryData = blFiEntry(finaData,entryTemp,entryData,accountSetId,entryNumber,companyId,finaData,errDesc);
+					feds.add(entryData);
+				}else{
+					
+					List<FinaData> fts = (List<FinaData>) finaData.get("ft");
+					// 生成科目分摊的分录
+					for (FinaData ft : fts) {
+						if (StringUtils.isNotBlank(filter)) {
+							boolean isMach = fiVoucherTempTypeService.macherEntry(filter, ft);
+							if (!isMach) {
+								continue;
+							}
+						}
+						
+						entryData = createFiEntry(ft, entryTemp,errDescPrefix, errDesc,finaData);
+						// 设置贷方金额为0
+						entryData.setCrmny(0d);
+						// 借方金额
+						Double drmAmount = 0d;
+						String drmAmountStr = null;
+						String[] syboms = drm.split(D_M_SYMBOL);
+						drm = syboms[0];
+						if(syboms.length == 2){
+							symbolValue = Double.parseDouble(syboms[1]);
+						}
+						drmPrarm = converIK(drm);
+						drmAmountStr = String.valueOf(ft.get(drmPrarm.trim()));
+						if(StringUtils.isNotBlank(drmAmountStr) && !drmAmountStr.equals("null")){
+							drmAmount = Double.parseDouble(drmAmountStr);
+						}
+						if(symbolValue != null){
+							drmAmount = drmAmount * symbolValue;
+						}
+						entryData.setDrmny(drmAmount);
+						
+						entryData = blFiEntry(ft,entryTemp,entryData,accountSetId,entryNumber,companyId,finaData,errDesc);
+						feds.add(entryData);
+		
+				}
+			}
+				
+			}else{
+				
+				String crm = entryTemp.getCrmnyexpr();
+				String crmPrarm = "";
+				if (StringUtils.isNotBlank(crm)) {
+					String[] syboms = crm.split(D_M_SYMBOL);
+					crm = syboms[0];
+					if(syboms.length == 2){
+						symbolValue = Double.parseDouble(syboms[1]);
+					}
+					crmPrarm = converIK(crm);
+				}
+				
+				if(crmPrarm.equals(SA_MAIN)){
+					
+					if (StringUtils.isNotBlank(filter)) {
+						boolean isMach = fiVoucherTempTypeService.macherEntry(filter, finaData);
+						if (!isMach) {
+							return null;
+						}
+					}
+					entryData = createFiEntry(finaData, entryTemp, errDescPrefix,errDesc,finaData);
+					// 贷方金额
+					entryData.setDrmny(0d);
+					Object co = finaData.get(crmPrarm.trim());
+					String crmAmountStr = String.valueOf(co);
+					Double crmAmount = 0d;
+					if(StringUtils.isNotBlank(crmAmountStr) && !crmAmountStr.equals("null")){
+						crmAmount = Double.parseDouble(crmAmountStr);
+					}
+					//表达式处理
+					if(symbolValue != null){
+						crmAmount = crmAmount * symbolValue;
+					}
+					entryData.setCrmny(crmAmount);
+					
+					entryData = blFiEntry(finaData,entryTemp,entryData,accountSetId,entryNumber,companyId,finaData,errDesc);
+					feds.add(entryData);
+					
+				}else{
+					
+					List<FinaData> fts = (List<FinaData>) finaData.get("ft");
+					// 生成科目分摊的分录
+					for (FinaData ft : fts) {
+						if (StringUtils.isNotBlank(filter)) {
+							boolean isMach = fiVoucherTempTypeService.macherEntry(filter, ft);
+							if (!isMach) {
+								continue;
+							}
+						}
+				
+						entryData = createFiEntry(ft, entryTemp, errDescPrefix,errDesc,finaData);
+						// 贷方金额
+						entryData.setDrmny(0d);
+						Object co = ft.get(crmPrarm.trim());
+						String crmAmountStr = String.valueOf(co);
+						Double crmAmount = 0d;
+						if(StringUtils.isNotBlank(crmAmountStr) && !crmAmountStr.equals("null")){
+							crmAmount = Double.parseDouble(crmAmountStr);
+						}
+						//表达式处理
+						if(symbolValue != null){
+							crmAmount = crmAmount * symbolValue;
+						}
+						entryData.setCrmny(crmAmount);
+						
+						entryData = blFiEntry(ft,entryTemp,entryData,accountSetId,entryNumber,companyId,finaData,errDesc);
+						feds.add(entryData);
+					}
+				}	
+			}
+		
+		return feds;
+	}
+	
+	public List<FiEntryData> coCreatEntry(FiVoucherEntry entryTemp,FinaData finaData,
+			String drm,FiEntryData entryData,String filter,List<String> errDesc,
+			String errDescPrefix,Double symbolValue,String drmPrarm,Long accountSetId,int entryNumber,Long companyId,List<String> errBills){
+		
+		List<FiEntryData> feds = new ArrayList<FiEntryData>();
+		if (StringUtils.isNotBlank(drm)) {
+			//根据科目分摊生成分录（当会计科目选择预算科目【预算科目标示00】、借方金额选择的是科目分摊税额、）
+			if (entryTemp.getCaptionId().equals("04") || entryTemp.getCaptionId().equals("05") || drmPrarm.equals(EX_SE) || drmPrarm.equals(EX_NOSE) || drmPrarm.equals("money") || drmPrarm.equals("zbmoney")  || drmPrarm.equals("invoiceMony")) {
+				// 科目分摊明细
+				List<FinaData> fts = (List<FinaData>) finaData.get("ft");
+				// 生成科目分摊的分录
+				for (FinaData ft : fts) {
+					if (StringUtils.isNotBlank(filter)) {
+						boolean isMach = fiVoucherTempTypeService.macherEntry(filter, ft);
+						if (!isMach) {
+							continue;
+						}
+					}
+					// 借方金额
+					Double drmAmount = 0d;
+					String drmAmountStr = null;
+					drmPrarm = converIK(drm);
+					/*if(drmPrarm.equals("zbmoney"))
+						drmPrarm = "money" ;*/
+					drmAmountStr = String.valueOf(ft.get(drmPrarm.trim()));
+					if(StringUtils.isNotBlank(drmAmountStr) && !drmAmountStr.equals("null")){
+						entryData = createFiEntry(ft, entryTemp,errDescPrefix, errDesc,finaData);
+						// 设置贷方金额为0
+						entryData.setCrmny(0d);
+						
+						String[] syboms = drm.split(D_M_SYMBOL);
+						drm = syboms[0];
+						if(syboms.length == 2){
+							symbolValue = Double.parseDouble(syboms[1]);
+						}
+						
+						drmAmount = Double.parseDouble(drmAmountStr);
+						
+						if(symbolValue != null){
+							drmAmount = drmAmount * symbolValue;
+						}
+						entryData.setDrmny(drmAmount);
+						
+						entryData = blFiEntry(ft,entryTemp,entryData,accountSetId,entryNumber,companyId,finaData,errDesc);
+						feds.add(entryData);
+					}
+				}
+			}
+			else {
+				if (StringUtils.isNotBlank(filter)) {
+					boolean isMach = fiVoucherTempTypeService.macherEntry(filter, finaData);
+					if (!isMach) {
+						return null;
+					}
+				}
+				
+				entryData = createFiEntry(finaData, entryTemp, errDescPrefix,errDesc,finaData);
+				// 设置贷方金额为0
+				entryData.setCrmny(0d);
+				// 借方金额
+				Double drmAmount = 0d;
+				String drmAmountStr = String.valueOf(finaData.get(drmPrarm.trim()));
+				//chc add 2016.8.15 start  河北项目张文帅要求
+				if(StringUtils.isEmpty(drmAmountStr) || drmAmountStr.equals("null")){
+					List<FinaData> fts = (List<FinaData>) finaData.get("ft");
+					for (FinaData ft : fts) {
+						if (StringUtils.isNotBlank(filter)) {
+							boolean isMach = fiVoucherTempTypeService.macherEntry(filter, ft);
+							if (isMach) {
+								drmAmountStr = String.valueOf(ft.get(drmPrarm.trim()));
+								break;
+							}
+						}else{
+							drmAmountStr = String.valueOf(ft.get(drmPrarm.trim()));
+							break;
+						}
+					}
+				}
+				if(StringUtils.isEmpty(drmAmountStr) || drmAmountStr.equals("null")){
+					drmAmount = Double.parseDouble("0.0");
+				}else{
+					drmAmount = Double.parseDouble(drmAmountStr);
+				}
+				//chc add 2016.8.15 end
+				//表达式处理
+				if(symbolValue != null){
+					drmAmount = drmAmount * symbolValue;
+				}
+				entryData.setDrmny(drmAmount);
+
+				entryData = blFiEntry(finaData,entryTemp,entryData,accountSetId,entryNumber,companyId,finaData,errDesc);
+				feds.add(entryData);
+			}
+			// 贷方分录处理
+		} else {
+			if (StringUtils.isNotBlank(filter)) {
+				boolean isMach = fiVoucherTempTypeService.macherEntry(filter, finaData);
+				if (!isMach) {
+					return null;
+				}
+			}
+			
+			String crm = entryTemp.getCrmnyexpr();
+			String crmPrarm = "";
+			if (StringUtils.isNotBlank(crm)) {
+				String[] syboms = crm.split(D_M_SYMBOL);
+				crm = syboms[0];
+				if(syboms.length == 2){
+					symbolValue = Double.parseDouble(syboms[1]);
+				}
+				crmPrarm = converIK(crm);
+			}
+			if (crmPrarm.equals("money") || crmPrarm.equals("zbmoney")  || crmPrarm.equals("invoiceMony")) {
+				/*if(crmPrarm.equals("zbmoney"))
+					crmPrarm = "money" ;*/
+				// 科目分摊明细
+				List<FinaData> fts = (List<FinaData>) finaData.get("ft");
+				// 生成科目分摊的分录
+				for (FinaData ft : fts) {
+					if (StringUtils.isNotBlank(filter)) {
+						boolean isMach = fiVoucherTempTypeService.macherEntry(filter, ft);
+						if (!isMach) {
+							continue;
+						}
+					}
+					String crmAmountStr = ft.get(crmPrarm.trim())+"";
+					Double crmAmount = 0d;
+					if(StringUtils.isNotBlank(crmAmountStr) && !crmAmountStr.equals("null")){
+						entryData = createFiEntry(ft, entryTemp,errDescPrefix, errDesc,finaData);
+						// 贷方金额
+						entryData.setDrmny(0d);
+						
+						crmAmount = Double.parseDouble(crmAmountStr);
+						
+						//表达式处理
+						if(symbolValue != null){
+							crmAmount = crmAmount * symbolValue;
+						}
+						entryData.setCrmny(crmAmount);
+						
+						entryData = blFiEntry(ft,entryTemp,entryData,accountSetId,entryNumber,companyId,finaData,errDesc);
+						feds.add(entryData);
+					}
+				}
+			} else {
+				if (StringUtils.isNotBlank(filter)) {
+					boolean isMach = fiVoucherTempTypeService.macherEntry(filter, finaData);
+					if (!isMach) {
+						return null;
+					}
+				}
+				entryData = createFiEntry(finaData, entryTemp, errDescPrefix,errDesc,finaData);
+				// 贷方金额
+				entryData.setDrmny(0d);
+				Object co = finaData.get(crmPrarm.trim());
+				String crmAmountStr = String.valueOf(co);
+				Double crmAmount = 0d;
+				if(StringUtils.isNotBlank(crmAmountStr) && !crmAmountStr.equals("null")){
+					crmAmount = Double.parseDouble(crmAmountStr);
+				}
+				//表达式处理
+				if(symbolValue != null){
+					crmAmount = crmAmount * symbolValue;
+				}
+				entryData.setCrmny(crmAmount);
+
+				entryData = blFiEntry(finaData,entryTemp,entryData,accountSetId,entryNumber,companyId,finaData,errDesc);
+				feds.add(entryData);
+
+			}
+		}
+
+		return feds;
+	}
+	
+	/**
+	 * 生成摘要和备注
+	 * @param finaData
+	 * @param crmny
+	 * @param drmny
+	 * @param ft
+	 * @return
+	 */
+	private FiEntryData createFiEntry(FinaData finaData,FiVoucherEntry entryTemp,String errDescPrefix,List<String> errDesc,FinaData finaData1){
+		FiEntryData entryData = new FiEntryData();
+    	entryData.setCreateDate(new Date());
+    	entryData.setSummary(createSummary(finaData, entryTemp.getSummary(), errDescPrefix, errDesc,finaData1));
+    	entryData.setRemarks(createSummary(finaData, entryTemp.getRemarks(), errDescPrefix, errDesc,finaData1));
+        return entryData;
+	}
+	
+	/**
+	 * 设置财务科目、辅助核算信息、现金流量
+	 * @param finaData
+	 * @param entryTemp
+	 * @param entryData
+	 * @param accountSetId
+	 * @param entryNumber
+	 * @return
+	 */
+	private FiEntryData blFiEntry(FinaData finaData,FiVoucherEntry entryTemp,FiEntryData entryData,Long accountSetId,int entryNumber
+			,Long companyId,FinaData finaData1,List<String> errDesc){
+		// 根据科目分摊编码获取对应的财务科目
+		String captionId = entryTemp.getCaptionId();
+		//chc add 2016.10.21
+		FiAccountCaption fc = null;
+		if(sysId == 1){
+			if(captionId.equals("01")){
+				String bid = String.valueOf(finaData.get("inassid"));	//银行账户id
+				List<FiBankCap> bankCapList = fiBankCapService.getFiBankCapListByBankId(accountSetId,bid,companyId,sysId);
+				if(bankCapList!=null && bankCapList.size()>0){
+					FiBankCap bankCap = bankCapList.get(0);
+					fc = fiAccountCaptionService.getFiAccountCaptionByCode(bankCap.getAccountCapCode(),accountSetId);
+				}
+			}else if(captionId.equals("02")){
+				String bid = String.valueOf(finaData.get("fundid"));	//代收类型id（款项名称）
+				List<FiCollectionTypeCap> typeCapList = fiCollectionTypeCapService.getFiCollectionTypeCapListByTypeId(accountSetId,bid);
+				if(typeCapList!=null && typeCapList.size()>0){
+					FiCollectionTypeCap typeCap = typeCapList.get(0);
+					fc = fiAccountCaptionService.getFiAccountCaptionByCode(typeCap.getAccountCapCode(),accountSetId);
+				}
+			}else{
+				fc = fiAccountCaptionService.getFiAccountCaptionById(Long.parseLong(captionId));
+			}
+		}else if(sysId == 2){
+			if(captionId.equals("01")){
+				String bankName = String.valueOf(finaData.get("acount_Number"));	//银行账户id
+				List<FiBankCap> bankCapList = fiBankCapService.getFiBankCapListByBankIdCo(accountSetId,bankName,companyId,sysId);
+				if(bankCapList!=null && bankCapList.size()>0){
+					FiBankCap bankCap = bankCapList.get(0);
+					fc = fiAccountCaptionService.getFiAccountCaptionByCode(bankCap.getAccountCapCode(),accountSetId);
+				}
+			}else if(captionId.equals("04")){
+				String capCode = String.valueOf(finaData.get("full_code"));	
+				FiCoCap fiCoCap = fiCoCapService.getFiCoCapByCode(capCode, STATUS_USED,companyId,accountSetId);
+				if(fiCoCap != null)
+					fc = fiAccountCaptionService.getFiAccountCaptionByCode(fiCoCap.getAccountCapCode(),accountSetId);
+			}else if(captionId.equals("05")){
+				String capCode = String.valueOf(finaData.get("full_code"));	
+				FiCoCapInput fiCoCap = fiCoCapInputService.getFiCoCapInputByCode(capCode, STATUS_USED,companyId,accountSetId);
+				if(fiCoCap != null)
+					fc = fiAccountCaptionService.getFiAccountCaptionByCode(fiCoCap.getAccountCapCode(),accountSetId);
+			}else if(captionId.equals("06")){
+				String fundsTypeId = String.valueOf(finaData.get("funds_Type_Id"));	
+				FiPaymentType fiPaymentType = fiPaymentTypeService.getFiPaymentTypeByCode(fundsTypeId, STATUS_USED,companyId,accountSetId);
+				if(fiPaymentType != null)
+					fc = fiAccountCaptionService.getFiAccountCaptionByCode(fiPaymentType.getAccountCapCode(),accountSetId);
+			}else{
+				fc = fiAccountCaptionService.getFiAccountCaptionById(Long.parseLong(captionId));
+			}
+		}else{
+			fc = fiAccountCaptionService.getFiAccountCaptionById(Long.parseLong(captionId));
+		}
+		if(fc!=null){
+			entryData.setCaptionCode(fc.getCode());
+			entryData.setCaptionName(fc.getName());
+			// 设置辅助核算信息
+			while(StringUtils.isBlank(fc.getAssName())  && fc.getAssName().equals("null")){
+				FiAccountCaption fcParent = fiAccountCaptionService.getFiAccountCaptionById(fc.getParentId());
+				if (null != fcParent && StringUtils.isNotBlank(fcParent.getAssName())  && !fcParent.getAssName().equals("null")) {
+					fc.setAssName(fcParent.getAssName());
+					break;
+				}else if(null == fcParent){
+					break;
+				}
+			}
+			if (StringUtils.isNotBlank(fc.getAssName())  && !fc.getAssName().equals("null")) {
+				entryData = setAssMaping(fc, finaData, entryData,accountSetId,companyId,finaData1,errDesc);
+			}
+		}else{
+			String dataid = "";
+			if(finaData.get("sourceid")!=null){
+				dataid = finaData.get("sourceid")+"";
+			}else{
+				dataid = finaData.get("id")+"";
+			}
+//			errDesc.add("单号：" + dataid + "没有对应的科目对照！");
+		}
+		entryData.setSort(++entryNumber);
+		// 现金流量项目
+		entryData = setCashFlow(entryData, finaData, entryTemp,"",accountSetId);
+		return entryData;
+	}
+	
+	/**
+	 * 设置凭证分录的现金流量项目
+	 * @param fiEntryDate
+	 * @param finaData
+	 * @param entryTemp
+	 * @return
+	 */
+	public FiEntryData setCashFlow(FiEntryData fiEntryDate,FinaData finaData,FiVoucherEntry entryTemp,String drmPrarm,Long accountSetId){
+		
+		if(entryTemp.getCashFlowId() != null && StringUtils.isNotBlank(entryTemp.getCashFlowName())){
+			String cashFlowCode = "";
+			String cashFlowName = "";
+			if(!entryTemp.getCashFlowId().equals(YS_CASHFLOW_FLAG) && !drmPrarm.equals(EX_SE) && !drmPrarm.equals(EX_NOSE) && !entryTemp.getCashFlowId().equals("04")){
+				//当选择模板中选择“预算科目对应的现金流量项目”时
+				cashFlowCode = entryTemp.getCashFlowCode();
+				cashFlowName = entryTemp.getCashFlowName();
+			}else {
+				if(entryTemp.getCashFlowId().equals(YS_CASHFLOW_FLAG)){
+		    	    String capCode = String.valueOf(finaData.get("vcurrentcode"));
+		    		FiBudgetCap ficap = fiBudgetCapService.getFiBudgetCapByCode(capCode, STATUS_USED,null,accountSetId);
+		    		cashFlowCode = ficap.getCashFlowCode();
+					cashFlowName = ficap.getCashFlowName();
+				}else if(entryTemp.getCashFlowId().equals("04")){
+					String capCode = String.valueOf(finaData.get("full_code"));
+					FiCoCap fiCoCap = fiCoCapService.getFiCoCapByCode(capCode, STATUS_USED,null,accountSetId); //取成本科目
+					cashFlowCode = fiCoCap.getCashFlowCode();
+					cashFlowName = fiCoCap.getCashFlowName();
+				}
+			}
+			
+			fiEntryDate.setCashFlowCode(cashFlowCode);
+			fiEntryDate.setCashFlowName(cashFlowName);
+		}
+		return fiEntryDate;
+	}
+	
+
+	/**
+	 * 根据科目设置分录的辅助核算信息
+	 * @param ac 会计科目
+	 * @param finaData 业务数据
+	 * @param entryData 生成的分录
+	 * @param accountSetId 账套ID
+	 * @return 
+	 */
+	public FiEntryData setAssMaping(FiAccountCaption ac,FinaData finaData,FiEntryData entryData,Long accountSetId,Long companyId,FinaData finaData1,List<String> errDesc){
+		String assNames = ac.getAssName();
+		String aicode = ac.getCode();
+		if (StringUtils.isNotBlank(assNames)) {
+			String assnames = "";
+			String realAssNames = "";
+			String asscodes = "";
+			int excenterIndex = 0;
+			int cashflowIndex = 0;
+			String assNameArrStr = "";
+			String[] assNameArr = assNames.split(",");
+			
+			for (String assName : assNameArr){
+				assNameArrStr += assName;
+			}
+			excenterIndex = assNameArrStr.indexOf(ASS_EXCENTER);
+			cashflowIndex = assNameArrStr.indexOf(ASS_BANKACCONT);
+			int i = 0;
+				for (String assName : assNameArr) {
+					
+					FiAssMapping fiAssMapping = this.fiAssMappingService.findFiAssMapping(accountSetId, assName.trim(),sysId,companyId);
+					//传输方式  1：核算代码  2：核算名称  3：业务对象代码  4：业务对象名称
+					Integer isDireCode = fiAssMapping.getIsDirectCode();
+					//默认设置  暂时只有现费用中心、银行账户 、现金流量项目
+					if(isDireCode == 5){
+						String assContent = ac.getAssContent();
+						String[] assContentArray = null;
+						String[] codeAndContent = null;
+						if(StringUtils.isNotEmpty(assContent)){
+							assContentArray = assContent.split(","); 
+		                    /*if(assName.equals(ASS_EXCENTER)){
+							    //暂时满足只有费用中心和现金流量辅助核算的情况   
+								if(assContentArray != null && assContentArray.length > 0 && excenterIndex > cashflowIndex){
+		                           if(assContentArray.length == 1){
+		                        	   codeAndContent = assContentArray[0].split("/");
+		                           }else{
+		                        	   codeAndContent = assContentArray[1].split("/"); 
+		                           }
+									
+								}else{
+									codeAndContent = assContentArray[0].split("/");
+								}
+								
+								assnames += ASS_EXCENTER + ",";
+								realAssNames += codeAndContent[1] +",";
+								asscodes += codeAndContent[0]+",";
+		                    }
+		                    
+		                    if(assName.equals(ASS_BANKACCONT)){
+								
+								if(assContentArray != null ){
+									//暂时满足只有费用中心和现金流量辅助核算的情况   
+									if(assContentArray != null && assContentArray.length > 0 && excenterIndex > cashflowIndex){
+			                            codeAndContent = assContentArray[1].split("/");
+									}else{
+										codeAndContent = assContentArray[0].split("/");
+									}
+									
+									assnames += ASS_BANKACCONT + ",";
+									realAssNames += codeAndContent[1] +",";
+									asscodes += codeAndContent[0]+",";
+								}
+						
+		                    }*/
+							if(assContentArray != null && assContentArray.length > 0){
+								assnames += assName + ",";
+//								for(int k=0;k<assContentArray.length;k++){
+								if(assContentArray[i]!=null){
+									codeAndContent = assContentArray[i].split("/");
+									realAssNames += codeAndContent[1] +",";
+									asscodes += codeAndContent[0]+",";
+								}
+//								}
+							}
+							i ++ ;
+						}else{
+//						    if(assName.trim().equals(ASS_CASHFLOWCASE)){
+								FiBudgetCap fc = fiBudgetCapService.getFiBudgetCapByAccCode(aicode, "1", sysId,accountSetId);
+								if(fc != null){
+									//String code = fc.getCode();
+									//FiAssDetailMapping detailMapping = fiAssMappingService.loadDetailByCode(code);
+									String aCode = fc.getCashFlowCode();
+									String aName = fc.getCashFlowName();
+									assnames += ASS_CASHFLOWCASE + ",";
+									realAssNames += aName +",";
+									asscodes += aCode+",";
+									entryData.setCashFlowCode(aCode);
+									entryData.setCashFlowName(aName);
+								}
+//						    }
+					  
+				       }
+					}else{
+					Map<String, String> map = this.transformAss(finaData, assName, accountSetId,companyId,finaData1,errDesc);
+					
+					try{
+						if(null != map && StringUtils.isNotBlank(map.get("err"))){
+							errDesc.add(map.get("err"));
+						}else{
+							assnames += assName + ",";
+							realAssNames += map.get("name")+",";
+							asscodes += map.get("code")+",";
+						}
+					}catch(Exception e){
+						if(null != map && StringUtils.isNotBlank(map.get("err"))){
+							errDesc.add(map.get("err"));
+						}else{
+							String dataid = "";
+							if(finaData.get("sourceid")!=null){
+								dataid = finaData.get("sourceid")+"";
+							}else{
+								dataid = finaData.get("id")+"";
+							}
+							errDesc.add("单号"+dataid+"没有找到对应的辅助核算明细");
+						}
+					}
+				}
+				entryData.setAssCode(asscodes);
+				entryData.setAssName(assnames);
+				entryData.setRealAssName(realAssNames);
+			}
+		}
+		return entryData;
+	}
+
+	/**
+	 * 转换辅助核算.根据给定的辅助核算名字和单据数据，从单据数据中找到对应的辅助核算字段，然后进行转换
+	 * 
+	 * @param finaData
+	 * @param assName
+	 * @param accountSetId
+	 * @return {code:"代码",name:"名称"}
+	 */
+	private Map<String, String> transformAss(FinaData finaData, String assName, Long accountSetId,Long companyId,FinaData finaData1,List<String> errDesc) {
+		StringBuffer debugInfo = new StringBuffer();
+		debugInfo.append("\t要转换的辅助核算名称:").append(assName).append("\n");
+		
+		FiAssMapping fiAssMapping = this.fiAssMappingService.findFiAssMapping(accountSetId, assName.trim(),sysId,companyId);
+		if (fiAssMapping == null) {
+			String err = "根据指定的账套id和辅助核算名字没有找到辅助核算信息【账套id:" + accountSetId + ",辅助核算名字:" + assName + "】";
+			throw new RuntimeException(err);
+		}
+		Map<String, String> map = new HashMap<String, String>();
+		//传输方式  1：核算代码  2：核算名称  3：业务对象代码  4：业务对象名称
+		Integer isDireCode = fiAssMapping.getIsDirectCode();
+		//传输核算代码或者名称
+		if(isDireCode == 1 || isDireCode == 2){
+			//根据辅助核算编码 获取辅助核算字段
+			String assField = fiAssMappingService.getFieldByAssName(assName.trim(),sysId);
+			debugInfo.append("\t对应单据中的字段名称:").append(assField).append("\n");
+			String assFieldValue = null;
+			if (StringUtils.isNotBlank(assField)) {
+				try {
+					assFieldValue = BeanUtils.getProperty(finaData, assField);
+					//成本供应商辅助核算与合同辅助核算
+					if(sysId==2 && (assName.trim().equals(ASS_PUBLLER) || assName.trim().equals(ASS_SUPPLIER))){
+						MDSupplierCacheService syncFinaSaData = (MDSupplierCacheService) App.getBean("mDSupplierCacheService");
+						if(StringUtils.isNotBlank(assFieldValue)){
+							SupplierInfoDTO dto = syncFinaSaData.getSupplierInfoById(Long.valueOf(assFieldValue)).getResult();
+							if(dto != null){
+								if(isDireCode == 1) map.put("code", dto.getCode());
+								if(isDireCode == 2) map.put("code", dto.getName());
+								map.put("name", dto.getName());
+								return map;
+							}else{
+								String err = "没有id为'" + assFieldValue + "'的供应商,请检查业务数据是否正确";
+//								errDesc.add(err);
+								map.put("err", err);
+								return map;
+							}
+						}else{
+							String err = "单据数据中没有属性'" + assField + "',请检查配置文件FiBizObject.json是否正确";
+//							errDesc.add(err);
+							map.put("err", err);
+							return map;
+						}
+					}
+					
+					//成本合同辅助核算与合同辅助核算
+					if(sysId==2 && assName.trim().equals(ASS_CONTRACT)){
+						if(StringUtils.isNotBlank(assFieldValue)){
+							FiCoContract dto = fiCoContractService.getFiCoContract(companyId,assFieldValue,null,null).get(0);
+							if(dto != null){
+								if(isDireCode == 1) map.put("code", dto.getNcCode());
+								if(isDireCode == 2) map.put("code", dto.getName());
+								map.put("name", dto.getName());
+								return map;
+							}else{
+								String err = "没有编号为'" + assFieldValue + "'的合同信息,请检查业务数据是否正确";
+//								errDesc.add(err);
+								map.put("err", err);
+								return map;
+							}
+						}else{
+							String err = "单据数据中没有属性'" + assField + "',请检查配置文件FiBizObject.json是否正确";
+//							errDesc.add(err);
+							map.put("err", err);
+							return map;
+						}
+					}
+					
+					if(assFieldValue == null && assName.equals(ASS_PUBLLER)){
+						assFieldValue = BeanUtils.getProperty(finaData, "receiveunitid");
+					}
+					if(assName.equals(ASS_DEPT)){
+						assFieldValue = BeanUtils.getProperty(finaData, "entitydeptid");
+					    //TODO 后续添加科目分摊单据和主单据判断来获取属性
+						if(assFieldValue == null){
+					    	assFieldValue = BeanUtils.getProperty(finaData, "deptid");
+					    }
+					}
+					if(assFieldValue == null && assName.equals(ASS_PERSON)){
+						assFieldValue = BeanUtils.getProperty(finaData, "vapplicant");
+					}
+					if(assFieldValue == null && assName.equals(ASS_PERSON)){
+						assFieldValue = BeanUtils.getProperty(finaData, "receiveunitid");
+					}
+					//如果以上在分摊数据中查找属性值，没有找到，则到主数据取属性值
+					if(assFieldValue == null && assName.equals(ASS_PUBLLER)){
+						assFieldValue = BeanUtils.getProperty(finaData1, "receiveunitid");
+					}
+					if(assName.equals(ASS_DEPT)){
+						assFieldValue = BeanUtils.getProperty(finaData1, "entitydeptid");
+					    //TODO 后续添加科目分摊单据和主单据判断来获取属性
+						if(assFieldValue == null){
+					    	assFieldValue = BeanUtils.getProperty(finaData1, "deptid");
+					    }
+					}
+					if(assFieldValue == null && assName.equals(ASS_PERSON)){
+						assFieldValue = BeanUtils.getProperty(finaData1, "vapplicant");
+					}
+					if(assFieldValue == null && assName.equals(ASS_PERSON)){
+						assFieldValue = BeanUtils.getProperty(finaData1, "receiveunitid");
+					}
+					
+				} catch (Exception e) {
+					String err = "单据数据中没有属性" + assField + "',请检查配置文件FiBizObject.json是否正确";
+					map.put("err", err);
+					return map;
+				}
+			} else {
+				String err = "辅助核算属性未取到值";
+				map.put("err", err);
+				return map;
+			}
+			Long assId = fiAssMapping.getId();
+			List<FiAssDetailMapping> list = this.fiAssMappingService.getFiAssDetailMappingByAssId(assId);
+			if (list == null) {
+				String err = "根据辅助核算id没有查询出辅助核算明细对照【辅助核算id：" + assId + "】";
+				map.put("err", err);
+				return map;
+			}
+
+			
+			for (FiAssDetailMapping detail : list) {
+				String name = "";
+				if(assName.equals(ASS_PERSON)){
+					name =  String.valueOf(detail.getAssItemName());
+				}else if(assName.trim().equals(ASS_HOUSE_INFO)){
+//					name = String.valueOf(detail.getAssItemCode());
+					name = String.valueOf(detail.getObjectItemCode());
+				}else if(assName.trim().equals(ASS_BANKACCONT) && sysId == 2){
+					name = String.valueOf(detail.getObjectItemName());
+				}
+				else{
+					name =  String.valueOf(detail.getObjectId());
+				}
+				           
+				if (assFieldValue != null && assFieldValue.equals(name)) {
+					String asscode = detail.getAssItemCode();
+					String assname = detail.getAssItemName();
+					//如果1传核算编码  2核算名称
+					if(isDireCode == 1) map.put("code", asscode);
+					if(isDireCode == 2) map.put("code", assname);
+					
+					map.put("name", assname);
+					return map;
+				}
+			}
+			if(map == null){
+				map = new HashMap<String, String>();
+				map.put("code", "");
+				map.put("name", "");
+				return map;
+			}
+		
+		}
+		//直接传输 编码或者名称
+		if(isDireCode == 3 || isDireCode == 4){
+			//TODO 暂时没有此情况  后续确定之后再继续补充代码
+			map = new HashMap<String, String>();
+			
+			try {
+				String fataxratio = BeanUtils.getProperty(finaData, "fptaxratio");
+				map.put("code", fataxratio.substring(0, fataxratio.indexOf("."))+"%");
+			} catch (IllegalAccessException e) {
+				e.printStackTrace();
+			} catch (InvocationTargetException e) {
+				e.printStackTrace();
+			} catch (NoSuchMethodException e) {
+				e.printStackTrace();
+			}
+			
+			map.put("name", " ");
+			return map;
+		}
+		debugInfo.append("没有找到对应的辅助核算明细");
+		logger.debug(debugInfo.toString());
+		return null;
+
+	}
+
+	/**
+	 * 创建贷方金额
+	 * 
+	 * @param amount
+	 * @param crmnyExpr
+	 *            1,-1,0
+	 * @return
+	 */
+	private Double createCrmny(Double amount, String crmnyExpr, String errDescPrefix, List<String> errDesc) {
+		double result = 0;
+		//TODO 此处需要乘以一个相对应的数值 具体看需求
+		if (StringUtils.isNumeric(crmnyExpr)) {
+			result = amount * Integer.parseInt(crmnyExpr);
+		} else {
+			errDesc.add(String.format("%s'贷方金额'表达式必须是数字", errDescPrefix));
+		}
+		return result;
+	}
+
+	/**
+	 * 创建借方金额
+	 * 
+	 * @param amount
+	 * @param crmnyExpr
+	 *            1,-1,0
+	 * @return
+	 */
+	private Double createDrmny(Double amount, String drmnyExpr, String errDescPrefix, List<String> errDesc) {
+		double result = 0;
+		if (StringUtils.isNumeric(drmnyExpr)) {
+			result = amount * Integer.parseInt(drmnyExpr);
+		} else {
+			errDesc.add(String.format("%s'借方金额'表达式必须是数字", errDescPrefix));
+		}
+		return result;
+	}
+
+	/**
+	 * 生成概要 解析模板 分析出其中的变量和名称
+	 * 
+	 * @param finaData
+	 * @param summaryTemp
+	 * @param errDescPrefix
+	 * @param errDesc
+	 * @return
+	 */
+	private String createSummary(FinaData finaData, String summaryTemp, String errDescPrefix, List<String> errDesc,FinaData finaData1) {
+		Pattern pt = Pattern.compile(VOUCHER_ENTRY_SUMMARY_VAR_EXPR);
+		Matcher mt = pt.matcher(summaryTemp);
+		StringBuffer result = new StringBuffer();
+		String key = "";
+		while (mt.find()) {
+			key = mt.group(1).trim();
+			Object value = finaData.get(key);
+			if(value == null){
+				value = finaData1.get(key);
+			}
+			if(value == null){
+				List<FinaData> fts = (List<FinaData>) finaData.get("ft");
+				for (FinaData ft : fts) {
+					value = ft.get(key);
+					if(value !=null)
+						break;
+				}
+			}
+			if (value != null) {
+				if (value instanceof Date) {
+					value = DateUtils.format((Date) value, "yyyy-MM-dd");
+				}
+				if((value+"").indexOf("00:00:00") > 0){
+					value = value.toString().substring(0, 10);
+				}
+				mt.appendReplacement(result, value.toString());
+//				logger.info(finaData.get(key) + " " + finaData.get(key).getClass());
+			} else {
+				errDesc.add(errDescPrefix + "解析:【" + summaryTemp + "】无法从单据中找到【" + mt.group().toString() + "】对应的值！");
+			}
+		}
+		mt.appendTail(result);
+		return result.toString();
+	}
+
+	
+	/**
+	 * 生成凭证流水号 yyyyMMXXXX,按照每个月的来累积4位流水号
+	 * 
+	 * @return
+	 */
+	private String createVoucherSerailNumber() {
+		String prefix = DateUtils.format(new Date(), "yyyy");
+		return fiVoucherDataDao.getVoucherSerialNumber(prefix);
+	}
+
+	public String converIK(String ikStr){
+		//转换IK表达式
+		Pattern pt = Pattern.compile(VOUCHER_ENTRY_SUMMARY_VAR_EXPR);
+		Matcher mt = pt.matcher(ikStr);
+		StringBuffer filResult = new StringBuffer();
+		while (mt.find()) {
+			mt.appendReplacement(filResult, mt.group(1));
+		}
+		mt.appendTail(filResult);
+		return filResult.toString();
+	}
+	
+	public String getBillType(String ltype){
+		//单据类型
+		Long billType = Long.parseLong(ltype);
+		FiVoucherTempType ft = fiVoucherTempTypeService.getById(billType);
+		String typeName = ft.getName(); 
+		return typeName;
+	}
+	
+	/**
+	 * 保存费用单据
+	 * @param finaData
+	 * @param status
+	 */
+	public FiVoucherExBill fillExBill(FinaData finaData,int status,String billType){
+		FiVoucherExBill feb = new FiVoucherExBill();
+		
+    	feb.setBillId(String.valueOf(finaData.get("id")));
+    	
+        feb.setCorpname(String.valueOf(finaData.get("corpname")));
+        feb.setDeptname(String.valueOf(finaData.get("deptname")));
+        feb.setMergeNum(String.valueOf(finaData.get("mergNum")));
+        feb.setNapplymny(String.valueOf(finaData.get("napplymny")));
+        feb.setNborrowmny(String.valueOf(finaData.get("nborrowmny")));
+        feb.setNchmny(String.valueOf(finaData.get("nchmny")));
+        feb.setNexpensemny(String.valueOf(finaData.get("nexpensemny")));
+	    feb.setNpaymny(String.valueOf(finaData.get("npaymny")));
+	    feb.setVbelongproject(String.valueOf(finaData.get("vbelongproject")));
+	    feb.setVapplicant(String.valueOf(finaData.get("vapplicant")));
+	    feb.setVpayunit(String.valueOf(finaData.get("vpayunit")));
+	    //领借款 收款单位
+	    feb.setVreceiveunit(String.valueOf(finaData.get("vpayunit")));
+	    //日常报销 收款单位
+	    feb.setVskunit(String.valueOf(finaData.get("vreceiveunit")));
+	    //合同付款 收款单位
+	    feb.setVskunit(String.valueOf(finaData.get("vskunit")));
+	    feb.setVborrowattr(String.valueOf(finaData.get("vborrowattr")));
+	    feb.setVpayapptype(String.valueOf(finaData.get("vpaytype")));
+	    feb.setStatus(status);
+	    
+        //将模板ID这是到对应的单据类型，后期获取根据模板ID获取业务类型
+    	FiVoucherTemplate temp = fiVoucherTemplateService.getFiVoucherTemplateByTypeId(Long.parseLong(billType));
+		String objectId = temp.getBizObjectId();
+		FiBusinessobject fbo = fiBizObjectService.getFiBusinessobjectByRegisClass(objectId,String.valueOf(sysId));
+		String btype = fbo.getBtype();
+    	feb.setBillType(btype);
+    	
+	    if(btype.equals("领借款")){
+	    	feb.setVapplynum(String.valueOf(finaData.get("vborrowcode")));
+	    	feb.setBillName(String.valueOf(finaData.get("vtheme")));
+	    }
+	    else if(btype.equals("日常报销")){
+	    	feb.setVapplynum(String.valueOf(finaData.get("vapplynum")));
+	    	feb.setBillName(String.valueOf(finaData.get("vtheme")));
+	    }
+	    else if(btype.equals("合同付款")){
+	    	feb.setVapplynum(String.valueOf(finaData.get("vapplynum")));
+	    	feb.setBillName(String.valueOf(finaData.get("vcontname")));
+	    }
+	    else if(btype.equals("领借款还款")){
+	    	feb.setVapplynum(String.valueOf(finaData.get("vrepaycode")));
+	    	//feb.setBillName(String.valueOf(finaData.get("vcontname")));
+	    }
+	    else if(btype.equals("收款单") || btype.equals("退款单") || btype.equals("结转单") || btype.equals("换票单") || btype.equals("放款单") || btype.equals("收结转")){
+	    	feb.setVapplynum(String.valueOf(finaData.get("id")));
+	    	feb.setBillName(String.valueOf(finaData.get("houseno")));
+	    }else if(btype.equals("事项请示")){
+	    	feb.setVapplynum(String.valueOf(finaData.get("vborrowcode")));
+	    	feb.setBillName(String.valueOf(finaData.get("vtheme")));
+	    }else if(btype.equals("付款记录") || btype.equals("工程投入") || btype.equals("单独收发票")){
+	    	feb.setVapplynum(String.valueOf(finaData.get("id")));
+	    	feb.setBillName(String.valueOf(finaData.get("contractName")));
+	    	feb.setBillType(finaData.get("billType")+"");
+	    	feb.setContractId(finaData.get("contractId")+"");
+	    }else{
+	    	feb.setVapplynum(String.valueOf(finaData.get("id")));
+	    	feb.setBillName(String.valueOf(finaData.get("houseno")));
+	    }
+	    	
+	    feb.setDeptId(String.valueOf(finaData.get("deptid")));
+	    feb.setCorpId(String.valueOf(finaData.get("corpid")));
+	    return feb;
+	}
+	
+	/**
+	 * 组装辅助核算项目
+	 * @param entryData
+	 * @return
+	 */
+	protected FiEntryData getAssCompant(FiEntryData entryData){
+		
+		String conmpantStr = "";
+		String[] assNameArray = null;
+		String[] assCodeArray = null;
+		String assName = entryData.getAssName();
+        String assCode = entryData.getAssCode();
+        String realAssName = entryData.getRealAssName();
+        if(StringUtils.isNotBlank(assName)){
+        	 assNameArray = assName.split(",");
+        }
+        if(StringUtils.isNotBlank(assCode)){
+        	 assCodeArray = assCode.split(",");
+        }
+        String[] realAssNameArray = null;
+        if(StringUtils.isNotBlank(realAssName) && !realAssName.equals(",")){
+        	realAssNameArray = realAssName.split(",");
+        }
+        if(assNameArray != null && assCodeArray != null){
+	        /*if(assNameArray.length == 1){
+	        	 
+	              //银行账户暂时写死，等银行账户规则出来再按照具体情况变动代码 TODO
+				if (assName.equals(ASS_BANKACCONT+",")) {
+					assCode = assCodeArray[0]+",";
+					realAssName = realAssNameArray[0]+",";
+					entryData.setRealAssName(realAssName);
+				}
+				if (StringUtils.isNotBlank(assName)
+						&& (StringUtils.isNotBlank(realAssName) && !realAssName.equals(","))) {
+					conmpantStr = "【" + assName.substring(0, assName.length() - 1)
+							+ "：" + assCode.substring(0, assCode.length() - 1)
+							+ "/"
+							+ realAssName.substring(0, realAssName.length() - 1)
+							+ "】";
+				}
+	        }else{
+	        	//存在多个辅助核算并且只包括费用中心和现金流量项目辅助核算
+				if (assName.contains(ASS_EXCENTER)
+						&& assName.contains(ASS_CASHFLOWCASE)
+						&& !assName.contains(ASS_BANKACCONT)
+						&& !assName.contains(ASS_DEPT)
+						&& !assName.contains(ASS_PERSON)
+						&& !assName.contains(ASS_PUBLLER)) {
+					
+					int excenterIndex = assName.indexOf(ASS_EXCENTER);
+					int cashflowIndex = assName.indexOf(ASS_CASHFLOWCASE);
+					String name = "";
+					String code = "";
+					String real = "";
+					if(excenterIndex < cashflowIndex){
+						name = assNameArray[0];
+						code = assCodeArray[0];
+						real = realAssNameArray[0];
+					}else{
+						name = assNameArray[1];
+						code = assCodeArray[1];
+						real = realAssNameArray[1];
+					}
+					
+					conmpantStr = "【" + name.substring(0, name.length())
+							+ "：" + code.substring(0, code.length())
+							+ "/"
+							+ real.substring(0, real.length())
+							+ "】";
+	
+				}
+				
+				//存在多个辅助核算并且只包括费用中心和现金流量项目辅助核算
+				if (assName.contains(ASS_HOUSE_WORD)
+						&& assName.contains(ASS_HOUSE_INFO)
+						) {
+					for(int i=0;i<assNameArray.length;i++){
+						
+						conmpantStr += "【" + assNameArray[i].substring(0, assNameArray[i].length())
+								+ "：" + assCodeArray[i].substring(0, assCodeArray[i].length())
+								+ "/"
+								+ realAssNameArray[i].substring(0, realAssNameArray[i].length())
+								+ "】";
+						
+					}
+				}
+				//TODO  存在其他的组合情况  继续往下.....
+				
+	        }*/
+        	for(int i=0;i<assNameArray.length;i++){
+				conmpantStr += "【" + assNameArray[i].substring(0, assNameArray[i].length())
+						+ "：" + assCodeArray[i].substring(0, assCodeArray[i].length())
+						+ "/"
+						+ realAssNameArray[i].substring(0, realAssNameArray[i].length())
+						+ "】";
+				
+			}
+	        entryData.setAssCompent(conmpantStr);
+	    }
+        return entryData;
+	}
+	
+	/**
+	 *更新凭证分录或者修改凭证分录
+	 * @param entrys
+	 * @param voucherId
+	 */
+	public void saveOrUpdateEntryDate(List<FiEntryData> entrys,Long voucherId){
+		for (FiEntryData entryData : entrys) {
+		    Long vId = entryData.getVoucherDataId();
+		    if(vId == null){
+		    	entryData.setVoucherDataId(voucherId);
+		    }
+		    getDao().saveOrUpdate(entryData);
+		}
+		
+	}
+
+	public FlowResult<String> rewrite(String ids,String btype,Long sysId) {		
+		FlowResult<String> flowResult = new FlowResult<String>();
+		flowResult.setSuccess(true);
+		fiVoucherService.rewrite(ids,btype,sysId);
+		return flowResult;
+	}
+
+}

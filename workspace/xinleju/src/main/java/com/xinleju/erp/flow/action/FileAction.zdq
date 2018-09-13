@@ -1,0 +1,1115 @@
+package com.xinleju.erp.flow.action;
+
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.UnsupportedEncodingException;
+import java.text.DecimalFormat;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import javax.servlet.http.HttpServletResponse;
+
+import net.sf.json.JSONObject;
+
+import org.apache.commons.codec.binary.Base64;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.log4j.Logger;
+import org.apache.tools.zip.ZipEntry;
+import org.apache.tools.zip.ZipOutputStream;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+
+
+import com.opensymphony.xwork2.Action;
+import com.xinleju.erp.base.app.action.BaseAction;
+import com.xinleju.erp.base.app.bean.Page;
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.base.app.exception.AppException;
+import com.xinleju.erp.base.utils.StringHelper;
+import com.xinleju.erp.com.service.zb.IZbBaseBizDataFileService;
+import com.xinleju.erp.flow.config.FilePathMap;
+import com.xinleju.erp.flow.models.Upload;
+import com.xinleju.erp.flow.service.FileService;
+import com.xinleju.erp.flow.utils.FileDESPlus;
+import com.xinleju.erp.flow.utils.FlowConstant;
+import com.xinleju.erp.flow.utils.LoginInfoUtils;
+import com.xinleju.erp.flowengine.action.FlowInstanceManagerAction;
+import com.xinleju.erp.flowengine.service.FlowInstanceStepService;
+import com.xinleju.erp.flowengine.utils.FreeMarkUtils;
+
+
+public class FileAction extends BaseAction{
+	private static final Logger logger = Logger.getLogger(FileAction.class);
+	public File filedata;
+	public String filedataFileName;
+	public String userLabel;
+	public String note;
+	public String filedataContentType;
+	
+	@Value("#{appProperties['file_disk_path']?:''}")
+    private String file_disk_path;
+	
+	public File[] filedatas;
+	public String[] filedatasFileName;
+	public String[] filedatasContentType;
+	public String[] userLabels;
+	public String[] notes;
+	
+	public String category;
+	public String ownerId;
+	@Autowired
+	private FileService fileService;
+	@Autowired
+	private FlowInstanceStepService flowInstanceStepService;
+    public String sid;
+    public String id_;
+    public Integer uploadLimit = 5;
+	public String fileSizeLimit = "50MB";
+	public Integer successTimeout = 5;
+	public Integer fadeOut = 1000;
+	public Integer fileUploadTimeout = 2000;
+	private Page page1;
+
+	/**
+	 * 解密
+	 * @throws Exception
+	 */
+	public void encrypt() {
+		Upload upload = null;
+		try{
+			if(id!=null){
+				upload = getCommonService().getById(Upload.class,id);
+			}
+			if(id!=null){
+				fileService.uploadDecrypt(id);
+			}
+		}catch (Exception e) {
+			renderHtml("<script>parent.alert('"+e.getMessage()+"');</script>");
+		}
+		if(upload!=null && upload.getId()!=null){
+			renderHtml("<script>window.location.href='file!download.ajax?id="+upload.getId()+"';if(parent && parent.finishDownLoad)parent.finishDownLoad();</script>");
+		}else{
+			renderHtml("<script>window.location.href='file!download.ajax?id=';if(parent && parent.finishDownLoad)parent.finishDownLoad();</script>");
+		}
+	}
+	
+	@SuppressWarnings("rawtypes")
+	public void checkDownLoad(){
+		Upload upload = null;
+		if(id!=null){
+			upload = getCommonService().getById(Upload.class,id);
+		}else if(StringUtils.isNotEmpty(category) && StringUtils.isNotEmpty(ownerId)){
+			upload = (Upload)getCommonService().findFirst(Upload.class,"category=? and ownerId=?", new Object[]{category,ownerId});
+		}
+		if(upload==null){
+			renderJson("{result:false,msg:'未上传文件！'}");
+			return;
+		}
+		Map uploadMap = (Map)App.getBean("uploadMap");
+		String configPath = "";
+		File file  = null;
+		String filePath = file_disk_path+upload.getPath();
+		configPath = (String)uploadMap.get(upload.getCategory());
+		if(!configPath.endsWith(File.separator))
+			configPath = configPath + File.separator;
+		file = new File(configPath + filePath);
+		if(!file.exists()){
+			renderJson("{result:false,msg:'对不起,未找到打开文件！'}");
+			return;
+		}
+		renderJson("{result:true}");
+	}
+	
+	/**
+	 * 下载
+	 * @throws Exception
+	 */
+	public void download(){
+		 
+		   String errorCode = "";
+		    Map uploadMap = (Map)App.getBean("uploadMap");
+		    String Authorization = this.request.getHeader("Authorization");
+		    String encode_test = getParameter("encode_test");
+		    Upload upload = null;
+		    logger.info(this.id +"==="+this.category +"===="+this.ownerId);
+		    if ((this.id.longValue() < 1000000000000L) && (this.id != null)) {
+		      upload = (Upload)getCommonService().getById(Upload.class, this.id, new String[0]);
+		    }
+		    else if ((StringUtils.isNotEmpty(this.category)) && (StringUtils.isNotEmpty(this.ownerId))) {
+		      upload = (Upload)getCommonService().findFirst(Upload.class, "category=? and ownerId=?", new Object[] { this.category, this.ownerId });
+		    }
+
+		    String filePath = "";
+		    String configPath = "";
+		    String fileName = "";
+		    File downLoadFile = null;
+		    File file_temp = null;
+		    File file = null;
+		    if (upload != null) {
+		      filePath =file_disk_path+ upload.getPath();
+		      configPath = (String)uploadMap.get(upload.getCategory());
+		      fileName = upload.getFileName();
+		      if (!configPath.endsWith(File.separator))
+		        configPath = configPath + File.separator;
+		      file = new File(filePath);
+		      if (!file.exists()) {
+		        errorCode = "404";
+		      }
+
+		    }
+
+		    boolean is_need_auth = this.request.getRequestURI().indexOf(".action") != -1;
+
+		    if (is_need_auth) {
+		      if (StringUtils.isEmpty(Authorization)) {
+		        this.response.setStatus(401);
+		        return;
+		      }
+		      if ("404".equals(errorCode)) {
+		        this.response.setStatus(404);
+		        return;
+		      }
+
+		      if ((Authorization != null) && (Authorization.indexOf("Basic") != -1)) {
+		        try {
+		          Authorization = Authorization.substring(6);
+		          String token = new String(Base64.decodeBase64(Authorization.getBytes("UTF-8")), "UTF-8");
+
+		          String u = "";
+		          String p = "";
+
+		          int delim = token.indexOf(":");
+		          if (delim != -1) {
+		            u = token.substring(0, delim);
+		            p = token.substring(delim + 1);
+		          }
+		        }
+		        catch (UnsupportedEncodingException e) {
+		          this.response.setStatus(404);
+		          return;
+		        }
+
+		      }
+
+		    }
+
+		    String msg = "";
+		    if (!"404".equals(errorCode))
+		    {
+		      if ((upload != null) && ("true".equals(upload.getIsEncrypt()))) {
+		        filePath = filePath.replaceAll(upload.getExt(), "temp" + upload.getExt());
+		        file_temp = new File(configPath + filePath);
+
+		        if ((!file_temp.exists()) || (!file_temp.isFile())) {
+		          try
+		          {
+		            FileDESPlus FileDESPlus = new FileDESPlus();
+		            FileDESPlus.decryptFile(file, file_temp);
+		          }
+		          catch (Exception e) {
+		            errorCode = "500";
+		            msg = "解密文件出错";
+		            e.printStackTrace();
+		          }
+
+		        }
+		        logger.info("==================报错===" +this.id +"==="+this.category +"===="+this.ownerId);
+		        downLoadFile = file_temp;
+		      } else {
+		        downLoadFile = file;
+		      }
+		      try
+		      {
+		        byte[] bty = null;
+		        BufferedInputStream br = null;
+		        if (this.id.longValue() > 1000000000000L) {
+		          IZbBaseBizDataFileService iZbBaseBizDataFileService = (IZbBaseBizDataFileService)App.getBean(IZbBaseBizDataFileService.class);
+		          Map map = iZbBaseBizDataFileService.getUploadFile(this.id.toString());
+		          fileName = (String)map.get("fileName");
+		          bty = (byte[])map.get("fileByte");
+		        }
+		        else {
+		          br = new BufferedInputStream(new FileInputStream(downLoadFile));
+		        }
+
+		        String agent = this.request.getHeader("User-Agent");
+		        boolean isfirefox = (agent != null) && (agent.toLowerCase().indexOf("firefox") > 0);
+		        this.response.reset();
+		        this.response.setCharacterEncoding("UTF-8");
+		        this.response.setContentType("application/x-msdownload");
+		        if (!StringHelper.parseBoolean(encode_test)) {
+		          if (isfirefox) {
+		            this.response.setHeader("Content-Disposition", "attachment; filename=\"" + new String(fileName.getBytes("UTF-8"), "ISO-8859-1") + "\"");
+		          }
+		          else {
+		            fileName = toUtf8String(fileName);
+		            this.response.setHeader("Content-Disposition", "attachment; filename=\"" + new String(fileName.getBytes(), "ISO-8859-1") + "\"");
+		          }
+		        }
+		        else {
+		          fileName = toUtf8String(fileName);
+		          String testName = new String(fileName.getBytes(), "ISO-8859-1") + "-" + StringHelper.gbk2iso(fileName) + "-" + StringHelper.iso2uft8(fileName) + 
+		            "-" + new String(fileName.getBytes("UTF-8"), "ISO-8859-1");
+		          this.response.setHeader("Content-Disposition", "attachment; filename=\"" + testName + "\"");
+		        }
+		        OutputStream out=  response.getOutputStream();
+		        if (this.id.longValue() > 1000000000000L) {
+		          try {
+		        	  out.write(bty);
+		        	  out.flush();
+		        	  out.close();
+		          } catch (IOException e) {
+		            e.printStackTrace();
+		            errorCode = "505";
+		            msg = "文件读取出错";
+		          }finally{
+		        	 if(out!=null){
+		        		  out.flush();
+			        	  out.close();
+		        	 }
+		          }
+		        } else {
+		          this.response.setHeader("Content-Length", String.valueOf(downLoadFile.length()));
+
+		          byte[] b = new byte[10240];
+		          try
+		          {
+		            int len;
+		            while ((len = br.read(b)) > 0)
+		            {
+		            	out.write(b, 0, len);
+		            }
+		          } catch (IOException e) {
+		            e.printStackTrace();
+		            errorCode = "505";
+		            msg = "文件读取出错";
+		          }finally{
+			            out.flush();
+			            out.close();
+			            br.close();
+		          }
+
+		        }
+
+		      }
+		      catch (Exception e)
+		      {
+		        e.printStackTrace();
+		        errorCode = "505";
+		        msg = "文件读取出错";
+		      }
+		      finally {
+		        if ((file_temp != null) && ((file_temp.exists()) || (file_temp.isFile()))) {
+		          file_temp.delete();
+		        }
+		      }
+		    }
+		    else
+		    {
+		      throw new AppException("对不起,未找到打开文件！");
+		    }
+	}
+	private String toUtf8String(String s) { 
+		StringBuffer sb = new StringBuffer();
+        for (int i = 0; i < s.length(); i++) { 
+            char c = s.charAt(i); 
+            if (c >= 0 && c <= 255) { 
+                sb.append(c); 
+            } else { 
+                byte[] b; 
+                try { 
+                    b = Character.toString(c).getBytes("utf-8"); 
+                } catch (Exception ex) { 
+                    //exceptionUtil.error("灏嗘枃浠跺悕涓殑姹夊瓧杞负UTF8缂栫爜鐨勪覆鏃堕敊璇紝杈撳叆鐨勫瓧绗︿覆涓猴細" + s); 
+                    b = new byte[0]; 
+                } 
+                for (int j = 0; j < b.length; j++) { 
+                    int k = b[j]; 
+                    if (k < 0) 
+                        k += 256; 
+                        sb.append("%" + Integer.toHexString(k).toUpperCase()); 
+                } 
+            } 
+         } 
+         return sb.toString(); 
+    }
+	/**
+	 * 上传
+	 * @return
+	 */
+	
+	
+
+	public void upload() {
+		String category = getParameter("category");
+		String ownerId = getParameter("ownerId");
+		if(StringUtils.isNotEmpty(file_disk_path)){
+			String realPath = file_disk_path+ File.separator ;
+			processFile(category,ownerId,realPath, FileService.PATH_STYLE_OWNERID,false,false);
+		}
+
+	}
+	protected void processFile(String category, String ownerId, String realPath, int pathStyle, boolean isSingle,boolean inDb) {
+		if (filedatas != null){
+			fileService.upload(filedatas, filedatasFileName, realPath, userLabels, notes,category, ownerId, pathStyle, LoginInfoUtils.getLoginInfo(request), inDb);
+		} else if (filedata != null){
+			try{
+			fileService.upload(filedata, filedataFileName,  realPath, userLabel, note,category,ownerId, pathStyle, LoginInfoUtils.getLoginInfo(request), isSingle,inDb);
+			}catch(Exception e){
+				e.printStackTrace();
+			}
+		}
+		renderJson("");
+	}
+
+	/**
+	 * 跳转到编辑页面
+	 */
+	public String listptflow() {
+		this.list();
+		return "fileuploadPTFlow";
+	}
+
+	/**
+	 * 跳转到显示页面
+	 */
+	public String listptflowView() {
+		this.list();
+		return "fileuploadPTFlowView";
+	}
+	
+	public String list() {
+		String category = getParameter("category");
+		String ownerId = getParameter("ownerId");
+		DetachedCriteria dc = DetachedCriteria.forClass(Upload.class);
+		if(StringUtils.isNotEmpty(category)){
+			dc.add(Restrictions.eq("category", category));
+		}
+		if(StringUtils.isNotEmpty(ownerId)){
+			dc.add(Restrictions.eq("ownerId", ownerId));
+		}
+		
+		String name = getParameter("name");
+		if(StringUtils.isNotBlank(name)){
+			dc.add( Restrictions.and( Restrictions.like( "fileName", "%"+name+"%" ) ) );
+		}
+		
+		page = getCommonService().findPage(dc, start, limit);
+		
+		request.setAttribute("category", category);
+		request.setAttribute("ownerId", ownerId);
+		
+		initFileUploadConfig();
+		return "fileupload";
+	}
+
+	public void findUploadedFile(){
+		String category = getParameter("category");
+		String ownerId = getParameter("ownerId");
+		
+		if(StringUtils.isBlank(category) || StringUtils.isBlank(ownerId)){
+			renderJson(StringUtils.EMPTY);
+			return;
+		}
+		List<Upload> lstUpload = getCommonService().findAll(Upload.class, "category = ? and ownerId = ? ",new Object[]{category,ownerId});
+		
+		// 生成模板
+		Map<String, Object> root = new HashMap<String, Object>();
+		root.put("lstUpload",lstUpload);
+
+		String directory = request.getSession().getServletContext()
+				.getRealPath("")
+				+ File.separator
+				+ "page"
+				+ File.separator
+				+ "File";
+		String htmlString = FreeMarkUtils.getTemplateParse(directory,"File-approve.ftl", root);
+		
+		renderText(htmlString);
+	}
+	
+	public String list2() {
+		String category = getParameter("category");
+		String ownerId = getParameter("ownerId");
+		DetachedCriteria dc = DetachedCriteria.forClass(Upload.class);
+		if(StringUtils.isNotEmpty(category)){
+			dc.add(Restrictions.eq("category", category));
+		}
+		if(StringUtils.isNotEmpty(ownerId)){
+			dc.add(Restrictions.eq("ownerId", ownerId));
+		}
+		
+		String name = getParameter("name");
+		if(StringUtils.isNotBlank(name)){
+			dc.add( Restrictions.and( Restrictions.like( "fileName", "%"+name+"%" ) ) );
+		}
+		
+		page = getCommonService().findPage(dc, start, limit);
+		if(page!=null&&page.getItems()!=null&&page.getItems().size()>0){
+			for(int i=0;i<page.getItems().size();i++){
+				Upload u=(Upload) page.getItems().get(i);
+				u.setFileSize(getFileSize(u.getId()));
+			}
+		}
+		
+		request.setAttribute("category", category);
+		request.setAttribute("ownerId", ownerId);
+		
+		initFileUploadConfig();
+		return "fileupload2";
+	}
+	
+	/**
+	 * 针对销售系统查询用附件列表
+	 * @return
+	 */
+	public String xsList() {
+		this.list();
+		return "fileuploadXSQuery";
+	}
+	
+	/**
+	 * 传两个ownId来查询附件
+	 * @return
+	 */
+	public String xsList2(){
+		//校稿前Category
+		String category = getParameter("category");
+		//校稿后Category
+		String category2 = getParameter("category2");
+		//校稿前OwnerId
+		String ownerId = getParameter("ownerId");
+		//较高后OwnerId
+		String ownerId2 = getParameter("ownerId2");
+		
+		if(StringUtils.isNotBlank(category) && StringUtils.isNotBlank(ownerId)){
+			
+			DetachedCriteria dc = DetachedCriteria.forClass(Upload.class);
+			
+			dc.add(Restrictions.eq("category", category));
+			dc.add(Restrictions.eq("ownerId", ownerId));
+			
+			String name = getParameter("name");
+			if(StringUtils.isNotBlank(name)){
+				dc.add( Restrictions.and( Restrictions.like( "fileName", "%"+name+"%" ) ) );
+			}
+			
+			page = getCommonService().findPage(dc, start, limit);
+			
+			if(page!=null&&page.getItems()!=null&&page.getItems().size()>0){
+				for(int i=0;i<page.getItems().size();i++){
+					Upload u=(Upload) page.getItems().get(i);
+					u.setFileSize(getFileSize(u.getId()));
+				}
+			}
+			request.setAttribute("category", category);
+			request.setAttribute("ownerId", ownerId);
+		}else{
+			page = new Page();
+		}
+		String fiId = null;
+		boolean isProofreadStepUploadFile = true;
+		if(StringUtils.isNotBlank(category2) && StringUtils.isNotBlank(ownerId2)){
+			
+			
+			String[] arrOwnerId = ownerId2.split(",");
+			
+			if(arrOwnerId.length>0){
+				fiId = arrOwnerId[0].split("_")[1];
+				isProofreadStepUploadFile = flowInstanceStepService.isProofreadStepUploadFile(fiId);
+			}
+			
+			DetachedCriteria dc1 = DetachedCriteria.forClass(Upload.class);
+			
+			dc1.add(Restrictions.eq("category", category2));
+			dc1.add(Restrictions.in("ownerId", arrOwnerId));
+			
+			String name2 = getParameter("name2");
+			if(StringUtils.isNotBlank(name2)){
+				dc1.add( Restrictions.and( Restrictions.like( "fileName", "%"+name2+"%" ) ) );
+			}
+			
+			page1 = getCommonService().findPage(dc1, start, limit);
+			
+			if(page1!=null&&page1.getItems()!=null&&page1.getItems().size()>0){
+				for(int i=0;i<page1.getItems().size();i++){
+					Upload u=(Upload) page1.getItems().get(i);
+					u.setFileSize(getFileSize(u.getId()));
+				}
+			}
+			request.setAttribute("category2", category2);
+			request.setAttribute("ownerId2", ownerId2);
+		}else{
+			page1 = new Page();
+		}
+		
+		if(page1.getItems().size()== 0 && page.getItems().size()>0 && !isProofreadStepUploadFile){
+			List<Upload> items = new ArrayList<Upload>();
+			for(int i=0;i<page.getItems().size();i++){
+				items.add((Upload) page.getItems().get(i));
+			}
+			page1.setItems(items);
+		}
+
+		initFileUploadConfig();
+		return "fileuploadXSQuery2";
+	}
+	
+	/**
+	 * 初始化文件上传组件配置
+	 */
+	private void initFileUploadConfig() {
+		FilePathMap uploadMap = App.getBean(FilePathMap.class, FilePathMap.MAP_UPLOADMAP);
+		setUploadLimit( uploadMap.getIntConfig(FilePathMap.KEY_UPLOADLIMIT) );
+		setFileSizeLimit( uploadMap.getConfig(FilePathMap.KEY_FILESIZELIMIT) );
+		setSuccessTimeout( uploadMap.getIntConfig(FilePathMap.KEY_SUCCESSTIMEOUT) );
+		setFadeOut( uploadMap.getIntConfig(FilePathMap.KEY_FADEOUT) );
+		setFileUploadTimeout( uploadMap.getIntConfig(FilePathMap.KEY_FILEUPLOADTIMEOUT) );
+		
+	}
+	
+	/**
+	 * 上传url
+	 * @return
+	 */
+	public String urlupload() {
+		String category = getParameter("category");
+		String ownerId = getParameter("ownerId");
+		
+		request.setAttribute("category", category);
+		request.setAttribute("ownerId", ownerId);
+		
+		return "urlupload";
+	}
+	
+	public String urluploadPTFlow() {
+		this.urlupload();
+		
+		return "urluploadPTFlow";
+	}
+	
+	public String urlUploadForNewFlow() {
+		this.urlupload();
+		return "urlUploadForNewFlow";
+	}
+	
+	/**
+	 * 保存url
+	 * @return
+	 */
+	public void urlSave() {
+		String category = getParameter("category");
+		String ownerId = getParameter("ownerId");
+		if ( !filedataFileName.endsWith(".url") ) {
+			filedataFileName += ".url";
+		}
+		
+		fileService.urlUpload(userLabel, filedataFileName, category, ownerId, LoginInfoUtils.getLoginInfo(request));
+	}
+	
+	public void checkUploadUrl() {
+		String category = request.getParameter("category");
+		String ownerId = request.getParameter("ownerId");
+		String filedataFileName = request.getParameter("param");
+		filedataFileName = ( filedataFileName.endsWith(".url") ? filedataFileName : filedataFileName + ".url" );
+		boolean isExsist = fileService.checkUploadUrl(category, ownerId, filedataFileName);
+
+		Map<String, Object> r = new HashMap<String, Object>();
+		r.put("status", isExsist ? "n" : "y");
+		r.put("info", isExsist ? "该连接已上传，请修改名称！" : "");
+
+		super.renderJson(r);
+	}
+	
+	/**
+	 * 删除文件
+	 *
+	 */
+	public void delete() {
+
+		if(id!=null){
+			rmUpload(id);
+		}
+		else if(ids!=null && ids.length>0){
+			for(Long id : ids){
+				rmUpload(id);
+			}
+		}
+		
+		String ifExtGrid = getParameter("ifExtGrid", FlowConstant.STR_TRUE);
+		if(StringHelper.parseBoolean(ifExtGrid)){
+			renderJson("");
+		}
+		else{
+			renderHtml("");
+		}
+	}
+	
+
+	/**
+	 * 删除文件
+	 *
+	 */
+	public void delete2() {
+		
+		String uids=getParameter("uids");
+		if(StringUtils.isNotBlank(uids)){
+			String[] ss=uids.split(",");
+			if(ss!=null&&ss.length>0){
+				for(String s:ss){
+					rmUpload(Long.parseLong(s));
+				}
+			}
+		}
+		
+		String ifExtGrid = getParameter("ifExtGrid", FlowConstant.STR_TRUE);
+		if(StringHelper.parseBoolean(ifExtGrid)){
+			renderJson("");
+		}
+		else{
+			renderHtml("");
+		}
+	}
+
+	private void rmUpload(Long id){
+		Upload upload = getCommonService().getById(Upload.class, id);
+		if(upload!=null){
+//			Map uploadMap = (Map)App.getBean("uploadMap");
+//			String configPath = (String)uploadMap.get(upload.getCategory());
+			String filePath = file_disk_path+upload.getPath();
+			
+			if ( filePath != null && filePath.length() > 0 ) {
+				File file = new File(filePath);
+				if(file.isFile()&&file.exists()){
+					file.delete();
+				}
+			}
+
+			getCommonService().delete(upload);
+			JSONObject jsonObject = JSONObject.fromObject(upload);
+			renderJson(jsonObject.toString());
+		}
+	}
+	/**
+     * 打包下载
+     * @author jun
+     * @param response response
+     * @param uploadIds uploadIds
+     */
+    public void downloadZip() {
+    	String dataId = request.getParameter("dateId");
+    	String[] uploadIdArray = null;
+    	if(StringUtils.isNotBlank(dataId)){
+    		uploadIdArray = request.getParameterValues("zipUploadIds_"+dataId);
+    	}else{
+    		uploadIdArray = request.getParameterValues("zipUploadIds");
+    	}
+        
+        String uploadIds = StringHelper.join(uploadIdArray, ",");
+        Map uploadMap = (Map)App.getBean("uploadMap");
+        byte[] b = new byte[FlowConstant.ATT_PACK_READ_SIZE];
+        ZipOutputStream out = null;
+        List<Upload> toZipList = null;
+        if (StringUtils.isNotBlank(uploadIds)){
+            toZipList = fileService.getUploadList(uploadIds);
+        }
+        if (null != toZipList && toZipList.size() > 0) {
+            try {
+                response.reset();
+                response.setContentType("application/x-msdownload"); 
+                response.setHeader("Content-Disposition", "attachment; filename=\"" 
+                        + new String(FlowConstant.ATT_PACK_NAME.getBytes(FlowConstant.ATT_BYTES_CODE), "ISO8859-1") + "\""); 
+                out = new ZipOutputStream(new BufferedOutputStream(response.getOutputStream()));
+                //设置编码
+                out.setEncoding(FlowConstant.ATT_BYTES_CODE);
+                File file = null;
+                for (Upload upload : toZipList) {
+                	// 针对URL打包下载过程中直接过滤掉
+                	if ( "url".equals( upload.getExt().toLowerCase()) ) {
+                		continue;
+                	}
+                	
+                    if (upload != null) {
+                        if (FlowConstant.STR_TRUE.equals(upload.getIsEncrypt())) {
+                            file = fileService.uploadDecrypt(upload.getId());
+                        } else {
+                            String filePath = file_disk_path+upload.getPath();
+                            String configPath = (String)uploadMap.get(upload.getCategory());
+                            if (!configPath.endsWith(File.separator)) {
+                                configPath = configPath + File.separator;
+                            }
+                            file = new File(filePath);
+                        }
+                        
+                        //处理压缩包所包含的下载文件
+                        if (file != null && file.isFile() && file.exists()) {
+                            FileInputStream fis = new FileInputStream(file);  
+                            BufferedInputStream bis = new BufferedInputStream(fis);
+                            //填充文件名
+                            String fileName = file.getName();
+                            ZipEntry entry = new ZipEntry(fileName); 
+                            out.putNextEntry(entry); 
+                            int len;
+                            while ((len = bis.read(b)) > 0){
+                                out.write(b, 0, len); //写入文件中
+                            }
+                            try {
+                                fis.close();
+                                fis = null;
+                                bis.close();
+                                bis = null;
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                            }
+                        }
+                        
+                    }
+                }
+            } catch (Exception e) {
+                throw new AppException("对不起，打包时发生如下错误:" + e.getMessage() + "，如有疑问请及时联系管理员。");
+            } finally {
+                if (out != null) {
+                    try {
+                    	out.flush();
+                        out.closeEntry();
+                        out.close();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                    out = null;
+                }
+            }
+        } else {
+            throw new AppException("对不起,系统未找到可下载附件，如有疑问请联系管理员。");
+        }
+    }
+    
+    
+    /**
+     * 选择下载
+     * @author luocheng
+     * @param response response
+     * @param uploadIds uploadIds
+     */
+    public void downloadChooseZip() {
+        String uploadIds = getParameter("uids");
+        Map uploadMap = (Map)App.getBean("uploadMap");
+        byte[] b = new byte[FlowConstant.ATT_PACK_READ_SIZE];
+        ZipOutputStream out = null;
+        List<Upload> toZipList = null;
+        logger.info("附件下载=====downloadChooseZip=="+uploadIds);
+        System.out.print("附件下载=====downloadChooseZip=="+uploadIds);
+        if (StringUtils.isNotBlank(uploadIds)){
+            toZipList = fileService.getUploadList(uploadIds);
+        }
+        if (null != toZipList && toZipList.size() > 0) {
+            try {
+                response.reset();
+                response.setContentType("application/x-msdownload"); 
+                response.setHeader("Content-Disposition", "attachment; filename=\"" 
+                        + new String(FlowConstant.ATT_PACK_NAME.getBytes(FlowConstant.ATT_BYTES_CODE), "ISO8859-1") + "\""); 
+                out = new ZipOutputStream(new BufferedOutputStream(response.getOutputStream()));
+                //设置编码
+                out.setEncoding(FlowConstant.ATT_BYTES_CODE);
+                File file = null;
+                for (Upload upload : toZipList) {
+                	// 针对URL打包下载过程中直接过滤掉
+                	if ( "url".equals( upload.getExt().toLowerCase()) ) {
+                		continue;
+                	}
+                	
+                    if (upload != null) {
+                        if (FlowConstant.STR_TRUE.equals(upload.getIsEncrypt())) {
+                            file = fileService.uploadDecrypt(upload.getId());
+                        } else {
+                            String filePath = file_disk_path+upload.getPath();
+                            String configPath = (String)uploadMap.get(upload.getCategory());
+                            if (!configPath.endsWith(File.separator)) {
+                                configPath = configPath + File.separator;
+                            }
+                            file = new File(filePath);
+                        }
+                        
+                        //处理压缩包所包含的下载文件
+                        if (file != null && file.isFile() && file.exists()) {
+                            FileInputStream fis = new FileInputStream(file);  
+                            BufferedInputStream bis = new BufferedInputStream(fis);
+                            //填充文件名
+                            String fileName = file.getName();
+                            ZipEntry entry = new ZipEntry(fileName); 
+                            out.putNextEntry(entry); 
+                            int len;
+                            while ((len = bis.read(b)) > 0){
+                                out.write(b, 0, len); //写入文件中
+                            }
+                            try {
+                                fis.close();
+                                fis = null;
+                                bis.close();
+                                bis = null;
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                            }finally {
+                                if (fis != null  || bis != null) {
+                                    try {
+                                    	fis.close();
+                                    	bis.close();
+                                    } catch (IOException e) {
+                                        e.printStackTrace();
+                                    }
+                                    fis = null;
+                                    bis=null;
+                                }
+                            }
+                        }
+                        
+                    }
+                }
+            } catch (Exception e) {
+                throw new AppException("对不起，打包时发生如下错误:" + e.getMessage() + "，如有疑问请及时联系管理员。");
+            } finally {
+                if (out != null) {
+                    try {
+                    	out.flush();
+                        out.closeEntry();
+                        out.close();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                    out = null;
+                }
+            }
+        } else {
+            throw new AppException("对不起,系统未找到可下载附件，如有疑问请联系管理员。");
+        }
+    }
+    
+    //传附件id得到附件大小
+    public String getFileSize(Long uid){
+    	try{
+    		return FormetFileSize(getFileSizes(new File(file_disk_path+getCommonService().getById(Upload.class, uid).getPath())));
+    	}catch(Exception ex){
+    		System.out.println(uid+"根据附件id取附件大小时出错:"+ex.toString());
+    	}
+    	return Action.NONE;
+    }
+    
+    @SuppressWarnings("resource")
+	public long getFileSizes(File f) throws Exception{//取得文件大小
+        long s=0;
+        if (f.exists()) {
+            FileInputStream fis = null;
+            fis = new FileInputStream(f);
+            s= fis.available();
+        } else {
+            f.createNewFile();
+            System.out.println("文件不存在");
+        }
+        return s;
+    }
+    
+    public String FormetFileSize(long fileS) {//转换文件大小
+        DecimalFormat df = new DecimalFormat("#.00");
+        String fileSizeString = "";
+        if (fileS < 1024) {
+            fileSizeString = df.format((double) fileS) + "B";
+        } else if (fileS < 1048576) {
+            fileSizeString = df.format((double) fileS / 1024) + "K";
+        } else if (fileS < 1073741824) {
+            fileSizeString = df.format((double) fileS / 1048576) + "M";
+        } else {
+            fileSizeString = df.format((double) fileS / 1073741824) + "G";
+        }
+        return fileSizeString;
+    }
+    
+    
+	public String getCategory() {
+		return category;
+	}
+
+	public void setCategory(String category) {
+		this.category = category;
+	}
+
+	public String getOwnerId() {
+		return ownerId;
+	}
+
+	public void setOwnerId(String ownerId) {
+		this.ownerId = ownerId;
+	}
+	
+	Upload upload;
+	public String view_html_index(){
+		upload = getCommonService().getById(Upload.class, id);
+		return "view_html_index";
+	}
+	
+	
+	public void view_html(){
+		super.renderHtml("");
+	}
+
+	public Upload getUpload() {
+		return upload;
+	}
+
+	public void setUpload(Upload upload) {
+		this.upload = upload;
+	}
+
+    public String getSid() {
+        return sid;
+    }
+
+    public void setSid(String sid) {
+        this.sid = sid;
+    }
+
+    public String getId_() {
+        return id_;
+    }
+
+    public void setId_(String id) {
+        id_ = id;
+    }
+
+	public File getFiledata() {
+		return filedata;
+	}
+
+	public void setFiledata(File filedata) {
+		this.filedata = filedata;
+	}
+
+	public String getFiledataFileName() {
+		return filedataFileName;
+	}
+
+	public void setFiledataFileName(String filedataFileName) {
+		this.filedataFileName = filedataFileName;
+	}
+
+	public String getUserLabel() {
+		return userLabel;
+	}
+
+	public void setUserLabel(String userLabel) {
+		this.userLabel = userLabel;
+	}
+
+	public String getNote() {
+		return note;
+	}
+
+	public void setNote(String note) {
+		this.note = note;
+	}
+
+	public String getFiledataContentType() {
+		return filedataContentType;
+	}
+
+	public void setFiledataContentType(String filedataContentType) {
+		this.filedataContentType = filedataContentType;
+	}
+
+	public File[] getFiledatas() {
+		return filedatas;
+	}
+
+	public void setFiledatas(File[] filedatas) {
+		this.filedatas = filedatas;
+	}
+
+	public String[] getFiledatasFileName() {
+		return filedatasFileName;
+	}
+
+	public void setFiledatasFileName(String[] filedatasFileName) {
+		this.filedatasFileName = filedatasFileName;
+	}
+
+	public String[] getFiledatasContentType() {
+		return filedatasContentType;
+	}
+
+	public void setFiledatasContentType(String[] filedatasContentType) {
+		this.filedatasContentType = filedatasContentType;
+	}
+
+	public String[] getUserLabels() {
+		return userLabels;
+	}
+
+	public void setUserLabels(String[] userLabels) {
+		this.userLabels = userLabels;
+	}
+
+	public String[] getNotes() {
+		return notes;
+	}
+
+	public void setNotes(String[] notes) {
+		this.notes = notes;
+	}
+
+	public Integer getUploadLimit() {
+		return uploadLimit;
+	}
+
+	public void setUploadLimit(Integer uploadLimit) {
+		this.uploadLimit = uploadLimit;
+	}
+
+	public String getFileSizeLimit() {
+		return fileSizeLimit;
+	}
+
+	public void setFileSizeLimit(String fileSizeLimit) {
+		this.fileSizeLimit = fileSizeLimit;
+	}
+
+	public Integer getSuccessTimeout() {
+		return successTimeout;
+	}
+
+	public void setSuccessTimeout(Integer successTimeout) {
+		this.successTimeout = successTimeout;
+	}
+
+	public Integer getFadeOut() {
+		return fadeOut;
+	}
+
+	public void setFadeOut(Integer fadeOut) {
+		this.fadeOut = fadeOut;
+	}
+
+	public Integer getFileUploadTimeout() {
+		return fileUploadTimeout;
+	}
+
+	public void setFileUploadTimeout(Integer fileUploadTimeout) {
+		this.fileUploadTimeout = fileUploadTimeout;
+	}
+
+	public Page getPage1() {
+		return page1;
+	}
+
+	public void setPage1(Page page1) {
+		this.page1 = page1;
+	}
+	
+	
+}

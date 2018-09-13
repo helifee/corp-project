@@ -1,0 +1,44 @@
+package com.xinleju.platform.univ.task.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Table(value="PT_UNIV_TASK_PARAMETERS",desc="任务参数")
+public class TaskParameters extends BaseEntity{
+	
+		
+	@Column(value="task_id",desc="任务")
+	private String taskId;
+    
+  		
+	@Column(value="details",desc="参数描述")
+	private String details;
+    
+  		
+		
+	public String getTaskId() {
+		return taskId;
+	}
+	public void setTaskId(String taskId) {
+		this.taskId = taskId;
+	}
+    
+  		
+	public String getDetails() {
+		return details;
+	}
+	public void setDetails(String details) {
+		this.details = details;
+	}
+    
+  		
+	
+}

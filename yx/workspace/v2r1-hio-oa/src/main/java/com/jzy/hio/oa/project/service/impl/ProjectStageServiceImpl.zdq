@@ -1,0 +1,473 @@
+
+package com.jzy.hio.oa.project.service.impl;
+
+import com.jzy.hio.ApiFeignResponse;
+import com.jzy.hio.entity.*;
+
+import com.jzy.hio.exception.HioMybatisGetException;
+import com.jzy.hio.exception.HioMybatisInsertException;
+import com.jzy.hio.exception.HioMybatisQueryException;
+import com.jzy.hio.exception.HioMybatisUpdateException;
+import com.jzy.hio.feign.SysExtrenalFeignService;
+import com.jzy.hio.oa.OaConstant;
+import com.jzy.hio.oa.project.dto.*;
+import com.jzy.hio.oa.project.mapper.ProjectStageMapper;
+import com.jzy.hio.oa.project.mapper.ProjectStageTaskInfoMapper;
+import com.jzy.hio.oa.project.service.*;
+import com.jzy.hio.sys.external.dto.UserIsNormalDto;
+import com.jzy.hio.sys.external.param.UserIsNormalParam;
+import com.jzy.hio.utils.OaUserUtil;
+import com.jzy.hio.utils.Page;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Collectors;
+
+/**
+ * 项目阶段
+ * 
+ * @author yangning
+ */
+@Service("projectStageService")
+public class ProjectStageServiceImpl extends BaseServiceImpl<ProjectStage> implements ProjectStageService {
+
+	private static Logger logger = LoggerFactory.getLogger(ProjectStageServiceImpl.class);
+
+	@Autowired
+	private ProjectStageMapper projectStageMapper;
+
+	@Autowired
+	private ProjectStageTeamPersonService projectStageTeamPersonService;
+
+	@Autowired
+	private ProjectStageGroupService projectStageGroupService;
+
+	@Autowired
+	private ProjectTrendsService projectTrendsService;
+
+	@Autowired
+	private ProjectInfoService projectInfoService;
+	@Autowired
+	private ProjectStageTaskInfoMapper projectStageTaskInfoMapper;
+
+	@Autowired
+	private SysExtrenalFeignService sysExtrenalFeignService;
+
+
+	@Autowired
+	private OaUserUtil oaUserUtil;
+	/**
+	 * 根据阶段id查询阶段
+	 * 
+	 * @param id
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public ProjectStageDto getProjectStageById(String id) throws HioMybatisGetException {
+
+		try {
+			ProjectStage projectStage = getObjectById(id);
+			ProjectStageDto projectStageDto = new ProjectStageDto();
+			if (isNotEmpty(projectStage)) {
+				BeanUtils.copyProperties(projectStage, projectStageDto);
+			}
+			return projectStageDto;
+		} catch (Exception e) {
+			logger.error("根据阶段id获得阶段失败!" + e.getMessage());
+			throw new HioMybatisGetException(e);
+		}
+
+	}
+
+	/**
+	 * 根据项目id查询阶段
+	 * 
+	 * @param id
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public List<ProjectStage> getProjectStageByProjectId(String id) throws HioMybatisQueryException {
+		try {
+			// 用户项目信息表
+			ProjectStagePageParam projectStagePageParam = new ProjectStagePageParam();
+			projectStagePageParam.setProjectId(id);
+			return projectStageMapper.queryProjectStageListByProjectInfoId(projectStagePageParam);
+		} catch (Exception e) {
+			logger.error("根据项目id获得阶段列表失败!" + e.getMessage());
+			throw new HioMybatisGetException(e);
+		}
+	}
+
+	/**
+	 * 保存阶段
+	 * 
+	 * @param projectStageDto
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public int saveProjectStage(ProjectStageDto projectStageDto) throws HioMybatisInsertException {
+		String permission = projectInfoService.queryProjectPermission(projectStageDto.getProjectId(), OaConstant.PROJECTINPERSON, getLoginUser());
+		int result = 0;
+
+		if (OaConstant.PROJECTADMIN.equals(permission) || OaConstant.PROJECTCREATEPERSON.equals(permission) || OaConstant.PROJECTRESPONSIBLEPERSON.equals(permission)) {
+			ProjectStage projectStage = new ProjectStage();
+			BeanUtils.copyProperties(projectStageDto, projectStage);
+			projectStage.setId(generatePk());
+
+			List<ProjectStage> sameNameStage = projectStageMapper.queryProjectStageByProjectInfoIdAndStageName(projectStage);
+			if (isNotEmpty(sameNameStage)) {
+				throw new HioMybatisInsertException("阶段名称不可重复!");
+			}
+
+			int projectStageCount = projectStageMapper.queryProjectStageCountByProjectInfoId(projectStageDto.getProjectId());
+			if (projectStageCount >= OaConstant.PROJECTSTAGEMAXCOUNT) {
+				throw new HioMybatisInsertException("阶段最多能创建50个!");
+			}
+
+			List<ProjectStageTeamPersonDto> stageParticipantPersonList = projectStageDto.getStageParticipantPersonList();
+			/**
+			 * 保存阶段负责人
+			 */
+			ProjectStageTeamPersonDto stageResponsiblePerson = new ProjectStageTeamPersonDto();
+			stageResponsiblePerson.setStageTeamType(OaConstant.PROJECTRESPONSIBLEPERSON);
+			stageResponsiblePerson.setStageId(projectStage.getId());
+			stageResponsiblePerson.setStageTeamPersonId(projectStage.getStageResponsiblePersonId());
+			stageResponsiblePerson.setStageTeamPersonName(projectStage.getStageResponsiblePersonName());
+			stageResponsiblePerson.setStageTeamPersonTag("");
+			stageResponsiblePerson.setStagTeamPersonCompany("");
+
+			/**
+			 * 保存阶段参与人
+			 */
+
+			stageParticipantPersonList.add(stageResponsiblePerson);
+
+			/**
+			 * 验证用户状态 是否离职
+			 */
+			checkUserStatus(stageParticipantPersonList);
+
+			result = save(projectStage);
+
+			List<ProjectStageTeamPerson> projectStageTeamPersonList = stageParticipantPersonList.stream().map(projectStageTeamPersonDto -> {
+				return change2ProjectStageTeamPerson(projectStageTeamPersonDto);
+			}).collect(Collectors.toList());
+
+			projectStageTeamPersonService.saveBatch(projectStageTeamPersonList);
+
+			/**
+			 * 初始化项目阶段分组
+			 */
+			ProjectStageGroupDto planning = new ProjectStageGroupDto();
+			planning.setStageGroupName(OaConstant.PLANNING);
+			planning.setStageId(projectStage.getId());
+			planning.setStageGroupOrder(1000);
+			projectStageGroupService.saveProjectStageGroup(planning);
+
+			ProjectStageGroupDto preparing = new ProjectStageGroupDto();
+			preparing.setStageGroupName(OaConstant.PREPARING);
+			preparing.setStageId(projectStage.getId());
+			preparing.setStageGroupOrder(2000);
+			projectStageGroupService.saveProjectStageGroup(preparing);
+
+			ProjectStageGroupDto executing = new ProjectStageGroupDto();
+			executing.setStageGroupName(OaConstant.EXECUTING);
+			executing.setStageId(projectStage.getId());
+			executing.setStageGroupOrder(3000);
+			projectStageGroupService.saveProjectStageGroup(executing);
+
+			ProjectStageGroupDto finished = new ProjectStageGroupDto();
+			finished.setStageGroupName(OaConstant.FINISHED);
+			finished.setStageId(projectStage.getId());
+			finished.setStageGroupOrder(4000);
+			projectStageGroupService.saveProjectStageGroup(finished);
+
+			/**
+			 * 保存项目阶段动态
+			 */
+			ProjectTrendsDto projectTrendsDto = new ProjectTrendsDto();
+			projectTrendsDto.setProjectId(projectStage.getId());
+			projectTrendsDto.setTrendContent("创建项目阶段");
+
+			projectTrendsDto.setTrendPersonId(projectStage.getCreatePersonId());
+			projectTrendsDto.setTrendPersonName(projectStage.getCreatePersonName());
+			projectTrendsService.saveProjectTrends(projectTrendsDto);
+
+		} else {
+			logger.error("您当前无创建阶段的权限!");
+			throw new HioMybatisQueryException("您当前无创建阶段的权限!");
+		}
+		return result;
+
+	}
+
+	/**
+	 * 修改阶段
+	 * 
+	 * @param projectStageDto
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public int updateProjectStage(ProjectStageDto projectStageDto) throws HioMybatisUpdateException {
+		String permission = projectInfoService.queryProjectPermission(projectStageDto.getProjectId(), OaConstant.PROJECTINPERSON, getLoginUser());
+		int result = 0;
+
+		if (OaConstant.PROJECTADMIN.equals(permission) || OaConstant.PROJECTCREATEPERSON.equals(permission) || OaConstant.PROJECTRESPONSIBLEPERSON.equals(permission)) {
+
+			ProjectStage projectStage = new ProjectStage();
+			BeanUtils.copyProperties(projectStageDto, projectStage);
+			projectStageTeamPersonService.deleteProjectStageTeamPerson(projectStageDto.getId());
+			/**
+			 * 阶段参与人
+			 */
+			List<ProjectStageTeamPersonDto> stageParticipantPersonList = projectStageDto.getStageParticipantPersonList();
+			/**
+			 * 保存阶段负责人
+			 */
+			ProjectStageTeamPersonDto stageResponsiblePerson = new ProjectStageTeamPersonDto();
+			stageResponsiblePerson.setStageTeamType(OaConstant.PROJECTRESPONSIBLEPERSON);
+			stageResponsiblePerson.setStageId(projectStage.getId());
+			stageResponsiblePerson.setStageTeamPersonId(projectStage.getStageResponsiblePersonId());
+			stageResponsiblePerson.setStageTeamPersonName(projectStage.getStageResponsiblePersonName());
+			stageResponsiblePerson.setStageTeamPersonTag("");
+			stageResponsiblePerson.setStagTeamPersonCompany("");
+
+
+			/**
+			 * 负责人
+			 */
+			stageParticipantPersonList.add(stageResponsiblePerson);
+
+			/**
+			 * 验证用户状态 是否离职
+			 */
+			checkUserStatus(stageParticipantPersonList);
+
+			List<ProjectStageTeamPerson> projectStageTeamPersonList = stageParticipantPersonList.stream().map(projectStageTeamPersonDto -> {
+				return change2ProjectStageTeamPerson(projectStageTeamPersonDto);
+			}).collect(Collectors.toList());
+
+			projectStageTeamPersonService.saveBatch(projectStageTeamPersonList);
+
+			result = update(projectStageDto);
+		} else {
+			logger.error("您当前无编辑阶段的权限!");
+			throw new HioMybatisQueryException("您当前无编辑阶段的权限!");
+		}
+		return result;
+
+	}
+
+	/**
+	 * 删除阶段
+	 * 
+	 * @param projectStageDto
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public int deleteProjectStageById(ProjectStageDto projectStageDto) throws HioMybatisUpdateException {
+		String permission = projectInfoService.queryProjectPermission(projectStageDto.getProjectId(), OaConstant.PROJECTINPERSON, getLoginUser());
+		int result = 0;
+
+		if (OaConstant.PROJECTADMIN.equals(permission) || OaConstant.PROJECTCREATEPERSON.equals(permission) || OaConstant.PROJECTRESPONSIBLEPERSON.equals(permission)) {
+
+			// 查看当前项目是否有包含项目任务
+			ProjectStageTaskInfoParam projectStageTaskInfoParam = new ProjectStageTaskInfoParam();
+			projectStageTaskInfoParam.setProjectStageId(projectStageDto.getId());
+			if (isNotEmpty(projectStageTaskInfoMapper.queryTaskInfoList(projectStageTaskInfoParam))) {
+				logger.error("该阶段下存在任务，不能删除!");
+				throw new HioMybatisQueryException("该阶段下存在任务，不能删除!");
+			}
+
+			result = projectStageMapper.deleteProjectStageById(projectStageDto.getId());
+		} else {
+			logger.error("您当前无编辑阶段的权限!");
+			throw new HioMybatisQueryException("您当前无编辑阶段的权限!");
+		}
+		return result;
+
+	}
+
+	/**
+	 * 查询阶段 分页
+	 * @param projectStagePageParam
+	 * @return
+	 * @throws HioMybatisQueryException
+	 */
+	@Override
+	public Page queryProjectStagePageByProjectInfoId(ProjectStagePageParam projectStagePageParam) throws HioMybatisQueryException {
+
+		String projectId = projectStagePageParam.getProjectId();
+		// 每页条数
+		Integer pageCount = projectStagePageParam.getPageCount();
+		pageCount = pageCount == null ? 10 : pageCount;
+		// 页码
+		Integer pageNum = projectStagePageParam.getPageNum();
+		pageNum = pageNum == null ? 1 : pageNum;
+		int start = (pageNum - 1) * pageCount;
+		projectStagePageParam.setStart(start);
+
+		Integer count = projectStageMapper.queryProjectStageCountByProjectInfoId(projectId);
+		List<ProjectStage> projectStageList = projectStageMapper.queryProjectStageListByProjectInfoId(projectStagePageParam);
+		List<ProjectStageDto> projectStageDtoList = projectStageList.stream().map(projectStageGroup -> {
+			return change2ProjectStageDto(projectStageGroup);
+		}).collect(Collectors.toList());
+		count = count == null ? 0 : count;
+
+		Page page = new Page();
+		Integer pageTotal = count % pageCount > 0 ? count / pageCount + 1 : count / pageCount;
+		page.setList(projectStageDtoList);
+		page.setPageTotal(pageTotal);
+		page.setTotal(count);
+		page.setPageCount(pageCount);
+		page.setPageNum(pageNum);
+		return page;
+
+	}
+
+	private ProjectStageDto change2ProjectStageDto(ProjectStage projectStage) {
+
+		try {
+
+			ProjectStageDto projectStageDto = new ProjectStageDto();
+			BeanUtils.copyProperties(projectStage, projectStageDto);
+			ProjectStageTaskInfoParam projectStageTaskInfoParam = new ProjectStageTaskInfoParam();
+			projectStageTaskInfoParam.setProjectStageId(projectStage.getId());
+			projectStageDto.setTaskCount(projectStageTaskInfoMapper.queryTaskInfoList(projectStageTaskInfoParam).size());
+
+			ProjectStageTeamPersonDto reponsibleParam = new ProjectStageTeamPersonDto();
+			reponsibleParam.setStageId(projectStage.getId());
+			reponsibleParam.setStageTeamType(OaConstant.PROJECTRESPONSIBLEPERSON);
+
+			List<ProjectStageTeamPersonDto> reponsibleList = queryTeamPerson(reponsibleParam);
+			if(isEmpty(reponsibleList)){
+				throw new HioMybatisQueryException("queryTeamPerson           error  ");
+			}
+			projectStageDto.setStageResponsiblePerson(reponsibleList.get(0));
+
+			ProjectStageTeamPersonDto participantParam = new ProjectStageTeamPersonDto();
+			reponsibleParam.setStageId(projectStage.getId());
+			reponsibleParam.setStageTeamType(OaConstant.PROJECTPARTICIPANTPERSON);
+
+			List<ProjectStageTeamPersonDto> participantList = queryTeamPerson(participantParam);
+			if(isNotEmpty(participantList)){
+				projectStageDto.setStageParticipantPersonList(participantList);
+			}
+
+
+
+			return projectStageDto;
+		} catch (Exception e) {
+			logger.error("change2ProjectStageDto失败!" + e.getMessage());
+			throw new HioMybatisGetException(e);
+		}
+
+	}
+
+	private ProjectStageTeamPerson change2ProjectStageTeamPerson(ProjectStageTeamPersonDto projectStageTeamPersonDto) {
+
+		try {
+
+			ProjectStageTeamPerson projectStageTeamPerson = new ProjectStageTeamPerson();
+			BeanUtils.copyProperties(projectStageTeamPersonDto, projectStageTeamPerson);
+
+
+
+
+			return projectStageTeamPerson;
+		} catch (Exception e) {
+			logger.error("change2ProjectStageTeamPerson ******error!" + e.getMessage());
+			throw new HioMybatisGetException(e);
+		}
+
+	}
+
+
+	private ProjectStageTeamPersonDto change2ProjectStageTeamPersonDto(ProjectStageTeamPerson projectStageTeamPerson) {
+
+		try {
+			ProjectStageTeamPersonDto projectStageTeamPersonDto = new ProjectStageTeamPersonDto();
+			BeanUtils.copyProperties(projectStageTeamPerson, projectStageTeamPersonDto);
+
+			projectStageTeamPersonDto.setPersonName(oaUserUtil.selectUserName(projectStageTeamPerson.getStageTeamPersonId()));
+			projectStageTeamPersonDto.setProfilePic(oaUserUtil.queryImgUrlByImId(projectStageTeamPerson.getStageTeamPersonImId()));
+
+
+			return projectStageTeamPersonDto;
+		} catch (Exception e) {
+			logger.error("change2ProjectStageTeamPersonDto error!" + e.getMessage());
+			throw new HioMybatisGetException(e);
+		}
+
+	}
+
+	private List<ProjectStageTeamPersonDto> queryTeamPerson(ProjectStageTeamPersonDto param) {
+
+		try {
+
+			List<ProjectStageTeamPerson> projectStageTeamPersonList = projectStageTeamPersonService.queryProjectStageTeamPerson(param);
+			List<ProjectStageTeamPersonDto> projectStageTeamPersonDtoList = projectStageTeamPersonList.stream().map(projectStageTeamPerson -> {
+				return change2ProjectStageTeamPersonDto(projectStageTeamPerson);
+			}).collect(Collectors.toList());
+
+			return projectStageTeamPersonDtoList;
+		} catch (Exception e) {
+			logger.error("queryTeamPerson             error!" + e.getMessage());
+			throw new HioMybatisGetException(e);
+		}
+
+	}
+
+	/**
+	 * 调用sys接口 检查用户状态是否正确
+	 * 
+	 * @param oldTeamPersonList
+	 */
+	private void checkUserStatus(List<ProjectStageTeamPersonDto> oldTeamPersonList) {
+		List<String> inUserList = new ArrayList<>();
+		List<String> outUserList = new ArrayList<>();
+		for (ProjectStageTeamPerson projectTeamPerson : oldTeamPersonList) {
+
+			inUserList.add(projectTeamPerson.getStageTeamPersonId());
+
+		}
+		UserIsNormalParam queryUserIsNormal = new UserIsNormalParam();
+		queryUserIsNormal.setTendId(getTendId());
+		queryUserIsNormal.setSysUserIds(inUserList);
+		queryUserIsNormal.setSysExternalIds(outUserList);
+		ApiFeignResponse<UserIsNormalDto> userStatusResponse = sysExtrenalFeignService.queryUserIsNormal(queryUserIsNormal);
+		if (userStatusResponse.getStatus() == OaConstant.SUCCESSSTATUS) {
+			UserIsNormalDto userIsNormalDto = userStatusResponse.getResult();
+			String names = "";
+			if (isNotEmpty(userIsNormalDto.getErrorName())) {
+				names = userIsNormalDto.getErrorName();
+			}
+			if (isNotEmpty(userIsNormalDto.getErrorExternalName())) {
+				if (isEmpty(names)) {
+					names = userIsNormalDto.getErrorExternalName();
+				} else {
+					names = names + "," + userIsNormalDto.getErrorExternalName();
+				}
+			}
+			if (isNotEmpty(names)) {
+				logger.error("用户:{}已离职或该联系人已删除", names);
+				throw new HioMybatisUpdateException("用户:" + names + "已离职或该联系人已删除");
+			}
+			logger.info("********************************调用查询人员状态信息接口结束*****************************");
+		} else {
+			logger.info("调用查询人员状态信息接口返回状态" + userStatusResponse.getStatus() + "***********接口返回message." + userStatusResponse.getMessage());
+		}
+	}
+}

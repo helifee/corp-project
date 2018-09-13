@@ -1,0 +1,39 @@
+package com.xinleju.platform.flow.service.impl;
+
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.flow.dao.AgentFlDao;
+import com.xinleju.platform.flow.dto.AgentFlDto;
+import com.xinleju.platform.flow.entity.AgentFl;
+import com.xinleju.platform.flow.service.AgentFlService;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class AgentFlServiceImpl extends  BaseServiceImpl<String,AgentFl> implements AgentFlService{
+	
+
+	@Autowired
+	private AgentFlDao agentFlDao;
+
+	@Override
+	public List<AgentFlDto> queryAgentFlowList(Map<String, String> paramMap) {
+		return agentFlDao.queryAgentFlowList(paramMap);
+	}
+
+	@Override
+	public List<String> queryAgentFlsBy(String agentId) {
+		return agentFlDao.queryAgentFlsBy(agentId);
+	}
+	
+
+}

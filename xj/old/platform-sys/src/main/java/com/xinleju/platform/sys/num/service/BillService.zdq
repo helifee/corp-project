@@ -1,0 +1,24 @@
+package com.xinleju.platform.sys.num.service;
+
+import java.util.Map;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.sys.num.entity.Bill;
+
+/**
+ * @author ly
+ * 
+ * 
+ */
+
+public interface BillService extends  BaseService <String,Bill>{
+
+	public int updateStatus(Bill billBean) throws Exception;
+
+	public Page getBillDataByPage(Map<String, Object> map)throws Exception;
+
+	public int saveBillAndRuler(String saveJson)throws Exception;
+
+	
+}

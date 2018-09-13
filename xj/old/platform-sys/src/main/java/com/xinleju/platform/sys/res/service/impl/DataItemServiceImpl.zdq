@@ -1,0 +1,113 @@
+package com.xinleju.platform.sys.res.service.impl;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.sys.res.dao.DataItemDao;
+import com.xinleju.platform.sys.res.dto.DataNodeDto;
+import com.xinleju.platform.sys.res.dto.DataPointDto;
+import com.xinleju.platform.sys.res.entity.DataItem;
+import com.xinleju.platform.sys.res.entity.DataPoint;
+import com.xinleju.platform.sys.res.service.DataItemService;
+import com.xinleju.platform.sys.res.service.DataPointService;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+
+public class DataItemServiceImpl extends  BaseServiceImpl<String,DataItem> implements DataItemService{
+
+
+	@Autowired
+	private DataItemDao dataItemDao;
+	@Autowired
+	private DataPointService dataPointService;
+
+	@Override
+	public List<DataNodeDto> queryDataPointList(String id) throws Exception{
+		List<DataPointDto> dataPointDto = dataItemDao.querylistDataPoint(id);
+		List<DataNodeDto> list =new ArrayList<>();
+		for (DataPointDto dp : dataPointDto) {
+			DataNodeDto dataNode=new DataNodeDto();
+			String itemId = dp.getItemId();
+			BeanUtils.copyProperties(dp, dataNode);
+			dataNode.setParentId(itemId);
+			list.add(dataNode);
+		}
+		return list;
+	}
+
+	@Override
+	public List<DataPointDto> getDataPointDtoList(String id) throws Exception {
+		List<DataPointDto> dataPointDto = dataItemDao.querylistDataPoint(id);
+		return dataPointDto;
+	}
+
+	/**
+	 * 校验某系统下的作用域编码是否已存在
+	 * @param map 系统ID和作用域编码
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public Integer checkAppIdAndItemCode(Map<String, Object> map) throws Exception {
+		return dataItemDao.checkAppIdAndItemCode(map);
+	}
+	/**
+	 * 查询作用域业务对象和控制点
+	 * @param map 查询条件
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public List<Map<String,Object>> queryDataItemAndPointList(Map<String, Object> map) throws Exception {
+		return dataItemDao.queryDataItemAndPointList(map);
+	}
+	/**
+	 * 查询作用域业务对象
+	 * @param map 查询条件
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public List<Map<String,Object>> queryDataItem(Map<String, Object> map) throws Exception {
+		return dataItemDao.queryDataItem(map);
+	}
+	/**
+	 * 查询作用域业务对象及其控制点和数据授权情况 
+	 * @param map 查询条件
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public List<Map<String,Object>> queryDataItemAndPointAuthList(Map<String, Object> param) throws Exception {
+		//查询符合条件的控制对象dataItem
+		List<Map<String,Object>> dataItemlist=queryDataItem(param);
+		//控制对象 添加其下控制点points
+		for (Map<String,Object> m : dataItemlist) {
+			param.put("itemId", m.get("id").toString());
+			param.put("delflag",0);
+			List<DataPoint> pointList=dataPointService.queryDataPointByPram(param);
+			m.put("point", pointList);
+			//查询已授权控制点
+			Map<String,Object> selPoint =dataPointService.queryDataPointSelByPram(param);
+			if(selPoint!=null){
+				m.putAll(selPoint);
+			}
+		}
+		return dataItemlist;
+	}
+
+
+}

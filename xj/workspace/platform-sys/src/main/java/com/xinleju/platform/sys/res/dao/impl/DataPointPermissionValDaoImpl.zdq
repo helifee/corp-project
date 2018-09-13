@@ -1,0 +1,46 @@
+package com.xinleju.platform.sys.res.dao.impl;
+
+import java.util.Map;
+
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.platform.base.dao.impl.BaseDaoImpl;
+import com.xinleju.platform.sys.res.dao.DataPointPermissionValDao;
+import com.xinleju.platform.sys.res.entity.DataPointPermissionVal;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Repository
+public class DataPointPermissionValDaoImpl extends BaseDaoImpl<String,DataPointPermissionVal> implements DataPointPermissionValDao{
+
+	public DataPointPermissionValDaoImpl() {
+		super();
+	}
+
+	
+	/**
+	 * 保存指定数据授权值
+	 * @param param
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public Integer saveDataAuthVal(Map<String, Object> param) throws Exception {
+		return getSqlSession().insert("com.xinleju.platform.sys.res.entity.DataPointPermissionVal.insertDataValBatch", param);
+	}
+	
+	/**
+	 * 删除指定数据授权值
+	 * @param param
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public Integer delDataAuthVal(Map<String, Object> param) throws Exception {
+		return getSqlSession().insert("com.xinleju.platform.sys.res.entity.DataPointPermissionVal.delDataAuthRoleToData", param);
+	}
+}

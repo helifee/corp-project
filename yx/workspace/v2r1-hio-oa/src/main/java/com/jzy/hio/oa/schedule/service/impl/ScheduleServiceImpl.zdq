@@ -1,0 +1,3262 @@
+package com.jzy.hio.oa.schedule.service.impl;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.commons.lang.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.util.StopWatch;
+
+import com.jzy.hio.annotation.DataSource;
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.BaseConstants;
+import com.jzy.hio.base.anno.TargetIM;
+import com.jzy.hio.entity.Calendar;
+import com.jzy.hio.entity.Schedule;
+import com.jzy.hio.entity.ScheduleDelete;
+import com.jzy.hio.entity.ScheduleGroup;
+import com.jzy.hio.entity.ScheduleNewTwo;
+import com.jzy.hio.entity.ScheduleRemind;
+import com.jzy.hio.entity.ScheduleShared;
+import com.jzy.hio.entity.SharedCalendar;
+import com.jzy.hio.entity.TaskShared;
+import com.jzy.hio.exception.HioException;
+import com.jzy.hio.feign.SysFeignService;
+import com.jzy.hio.oa.OaConstant;
+import com.jzy.hio.oa.schedule.dto.QueryScheduleDetailsDto;
+import com.jzy.hio.oa.schedule.dto.QueryScheduleDto;
+import com.jzy.hio.oa.schedule.dto.QueryScheduleIndexDto;
+import com.jzy.hio.oa.schedule.dto.QueryScheduleIndexListDto;
+import com.jzy.hio.oa.schedule.dto.QueryScheduleListDto;
+import com.jzy.hio.oa.schedule.dto.QueryTaskIndexDto;
+import com.jzy.hio.oa.schedule.dto.ScheduleCalendarSharedDto;
+import com.jzy.hio.oa.schedule.dto.ScheduleSharedDto;
+import com.jzy.hio.oa.schedule.dto.SharedCalendarDto;
+import com.jzy.hio.oa.schedule.dto.SharedCreatePersonDto;
+import com.jzy.hio.oa.schedule.mapper.CalendarMapper;
+import com.jzy.hio.oa.schedule.mapper.QueryScheduleDetailsMapper;
+import com.jzy.hio.oa.schedule.mapper.QueryScheduleListMapper;
+import com.jzy.hio.oa.schedule.mapper.QuerySharedCreatePersonListMapper;
+import com.jzy.hio.oa.schedule.mapper.ScheduleDeleteMapper;
+import com.jzy.hio.oa.schedule.mapper.ScheduleGroupMapper;
+import com.jzy.hio.oa.schedule.mapper.ScheduleMapper;
+import com.jzy.hio.oa.schedule.mapper.ScheduleMapperNewTwoMapper;
+import com.jzy.hio.oa.schedule.mapper.ScheduleNewTwoMapper;
+import com.jzy.hio.oa.schedule.mapper.ScheduleRemindMapper;
+import com.jzy.hio.oa.schedule.mapper.ScheduleSharedMapper;
+import com.jzy.hio.oa.schedule.mapper.SharedCalendarMapper;
+import com.jzy.hio.oa.schedule.param.BuildScheduleParam;
+import com.jzy.hio.oa.schedule.param.CreatePersonParam;
+import com.jzy.hio.oa.schedule.param.DeleteScheduleParam;
+import com.jzy.hio.oa.schedule.param.QueryImScheduleDetailsParam;
+import com.jzy.hio.oa.schedule.param.QueryScheduleDetailsParam;
+import com.jzy.hio.oa.schedule.param.QueryScheduleListParam;
+import com.jzy.hio.oa.schedule.param.ScheduleAuthParam;
+import com.jzy.hio.oa.schedule.param.ScheduleSharedParam;
+import com.jzy.hio.oa.schedule.param.SharedCalendarParam;
+import com.jzy.hio.oa.schedule.param.UpdateScheduleParam;
+import com.jzy.hio.oa.schedule.service.ScheduleService;
+import com.jzy.hio.oa.task.dto.QueryTaskDto;
+import com.jzy.hio.oa.task.mapper.QueryScheduleTaskListMapper;
+import com.jzy.hio.oa.task.mapper.TaskMapper;
+import com.jzy.hio.oa.task.mapper.TaskSharedMapper;
+import com.jzy.hio.oa.task.param.QueryScheduleTaskListParam;
+import com.jzy.hio.oa.task.param.QueryTaskListParam;
+import com.jzy.hio.platform.constant.UserOrFriendConstant;
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.sys.redis.SysRedis;
+import com.jzy.hio.utils.DateUtil;
+import com.jzy.hio.utils.IDGenerator;
+import com.jzy.hio.utils.JacksonUtils;
+import com.jzy.hio.utils.LoginUser;
+import com.jzy.hio.utils.OaUserUtil;
+
+/**
+ * 日程
+ * 
+ * @author wdy
+ *
+ */
+@Service
+public class ScheduleServiceImpl implements ScheduleService {
+
+	private static Logger logger = LoggerFactory.getLogger(ScheduleServiceImpl.class);
+
+	@Autowired
+	private CalendarMapper calendarMapper;// 日历表
+	@Autowired
+	private ScheduleMapper scheduleMapper;// 日程表
+	@Autowired
+	private ScheduleNewTwoMapper scheduleNewTwoMapper;// 日程表改造
+	@Autowired
+	private ScheduleMapperNewTwoMapper scheduleMapperNewTwoMapper;// 日程表
+	@Autowired
+	private ScheduleRemindMapper scheduleRemindMapper;// 提醒表
+	@Autowired
+	private ScheduleGroupMapper scheduleGroupMapper;// 日程组表
+	@Autowired
+	private QueryScheduleDetailsMapper queryScheduleDetailsMapper;// 查询日程详情
+	@Autowired
+	private ScheduleSharedMapper scheduleSharedMapper;// 共享人员表
+	@Autowired
+	private QueryScheduleListMapper queryScheduleListMapper;// 查询日程列表
+	@Autowired
+	private QueryScheduleTaskListMapper queryScheduleTaskListMapper;// 查询日程中任务列表
+	@Autowired
+	private QuerySharedCreatePersonListMapper querySharedCreatePersonListMapper;// 查询日程共享创建人列表
+	@Autowired
+	private OaUserUtil oaUserUtil;// oa fengin工具类
+	@Autowired
+	private SysFeignService sysFeignService;// sys feign接口
+	@Autowired
+	private TaskSharedMapper taskSharedMapper;// 任务共享表
+	@Autowired
+	private ScheduleDeleteMapper scheduleDeleteMapper;// 日程删除表
+	@Autowired
+	private SharedCalendarMapper sharedCalendarMapper;//共享日历表
+	@Autowired
+	private TaskMapper taskMapper;//任务表
+	@Autowired
+	private SysRedis sysRedis;// sys redis
+
+	/**
+	 * 新建日程
+	 * 
+	 * @param buildScheduleParam
+	 */
+	@Override
+	public int save(BuildScheduleParam buildScheduleParam, LoginUser loginUser) {
+
+		String createPersonName = oaUserUtil.selectUserName(loginUser.getUserId());
+
+		// 插入日历表
+		String calendarId = "";
+		Calendar calendar = new Calendar();
+		calendar.setCreatePersonId(loginUser.getUserId());
+		calendar = calendarMapper.selectOne(calendar);
+		if (calendar == null) {
+			Calendar calendar1 = new Calendar();
+			calendarId = IDGenerator.getUUID();
+			calendar1.setId(Base.generatePk(Calendar.class));
+			calendar1.setCalendarId(calendarId);
+			calendar1.setCalendarCode("v2");
+			calendar1.setCalendarName("v2日历");
+			calendar1.setCreatePersonId(loginUser.getUserId());
+			calendar1.setCreatePersonName(oaUserUtil.selectUserName(loginUser.getUserId()));
+			calendar1.setCreateDate(new Date());
+			calendar1.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+			calendarMapper.insert(calendar1);
+		} else {
+			calendarId = calendar.getCalendarId();
+		}
+
+		// 判断是否重复
+		if (OaConstant.ISREPEAT_IS.equals(buildScheduleParam.getIsRepeat())) {
+
+			// long startTime3=System.currentTimeMillis();
+			// System.out.println("最开始时间是：：：：：：：：：：：：："+(startTime3));
+
+			buildNewRepeatSchedule(buildScheduleParam, calendarId, loginUser, createPersonName);
+
+			// long startTime4=System.currentTimeMillis();
+			// System.out.println("结束的时间是：：：：：：：：：：：：："+(startTime4));
+			// System.out.println("创建日程重复的总时间是：：：：：：：：：：：：："+(startTime4 - startTime3));
+
+		} else if (OaConstant.ISREPEAT_NOT.equals(buildScheduleParam.getIsRepeat())) {
+
+			Date beginTime = DateUtil.getDate(buildScheduleParam.getBeginTime());
+			Date endTime = DateUtil.getDate(buildScheduleParam.getEndTime());
+			Date remindTime = DateUtil.getDate(DateUtil.getLastDateMinut(buildScheduleParam.getBeginTime(), buildScheduleParam.getAdvanceTime()));
+
+			// 插入提醒表
+			String remindId = saveRemind(remindTime, loginUser, createPersonName);
+
+			// 插入日程表
+			String scheduleId = saveSchedule(buildScheduleParam, beginTime, endTime, remindId, "", calendarId, loginUser, createPersonName);
+
+			if (buildScheduleParam.getScheduleSharedParam() != null) {
+				// 插入共享人
+				saveSharedPerson(buildScheduleParam, scheduleId, loginUser, createPersonName);
+			}
+
+		} else {
+			logger.info("是否重复参数传入错误=={}", buildScheduleParam.getIsRepeat());
+		}
+
+		return 1;
+	}
+
+	/**
+	 * 新建日程(改造) 插入日程表改为一条，日程重复每个日程的开始结束时间由查询实时计算
+	 * 
+	 * @param buildScheduleParam
+	 */
+	@Override
+	public int saveTwo(BuildScheduleParam buildScheduleParam, LoginUser loginUser) {
+
+		String createPersonName = oaUserUtil.selectUserName(loginUser.getUserId());
+
+		// 插入日历表
+		String calendarId = "";
+		Calendar calendar = new Calendar();
+		calendar.setCreatePersonId(loginUser.getUserId());
+		calendar = calendarMapper.selectOne(calendar);
+		if (calendar == null) {
+			Calendar calendar1 = new Calendar();
+			calendarId = IDGenerator.getUUID();
+			calendar1.setId(Base.generatePk(Calendar.class));
+			calendar1.setCalendarId(calendarId);
+			calendar1.setCalendarCode("v2");
+			calendar1.setCalendarName("v2日历");
+			calendar1.setCreatePersonId(loginUser.getUserId());
+			calendar1.setCreatePersonName(oaUserUtil.selectUserName(loginUser.getUserId()));
+			calendar1.setCreateDate(new Date());
+			calendar1.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+			calendarMapper.insert(calendar1);
+		} else {
+			calendarId = calendar.getCalendarId();
+		}
+
+		Date beginTime = DateUtil.getDate(buildScheduleParam.getBeginTime());
+		Date endTime = DateUtil.getDate(buildScheduleParam.getEndTime());
+		Date remindTime = DateUtil.getDate(buildScheduleParam.getBeginTime());
+
+		// 插入提醒表
+		String remindId = saveNewRemind(remindTime, loginUser, createPersonName, buildScheduleParam);
+
+		String repetitionResult = (String) getTimes(buildScheduleParam).get("repetitionResult");// 获取重复结果
+
+		// 插入日程表
+		String scheduleId = saveScheduleTwo(buildScheduleParam, beginTime, endTime, remindId, "", calendarId, loginUser, createPersonName, repetitionResult);
+
+		if (buildScheduleParam.getScheduleSharedParam() != null) {
+			// 插入共享人
+			saveSharedPerson(buildScheduleParam, scheduleId, loginUser, createPersonName);
+		}
+
+		return 1;
+	}
+
+	/**
+	 * 查询日程详情
+	 * 
+	 * @param queryScheduleDetailsReqDto
+	 * @return
+	 */
+	@Override
+	public QueryScheduleDetailsDto queryScheduleDetails(QueryScheduleDetailsParam queryScheduleDetailsParam, LoginUser loginUser, Boolean isSuper) {
+
+		Boolean isDelete = false;// 是否可以删除
+
+		// 查询日程详情，不包括共享人员列表
+		QueryScheduleDetailsDto queryScheduleDetailsDto = queryScheduleDetailsMapper.queryScheduleDetails(queryScheduleDetailsParam);
+
+		if (queryScheduleDetailsDto != null) {
+
+			// 判断是否可以删除
+			if (queryScheduleDetailsDto.getCreatePersonId().equals(loginUser.getUserId())) {
+				isDelete = true;
+			}
+
+			queryScheduleDetailsDto.setDelete(isDelete);// 是否可以删除日程
+
+			String scheduleGroupId = queryScheduleDetailsDto.getScheduleGroupId();// 日程组id
+
+			// 查询共享人员列表
+			// 查询人员列表
+			List<SharedCreatePersonDto> personListDto = new ArrayList<SharedCreatePersonDto>();
+
+			ScheduleShared scheduleSharedShowPerson = new ScheduleShared();
+			if (StringUtils.isNotBlank(scheduleGroupId)) {
+				scheduleSharedShowPerson.setScheduleGroupId(scheduleGroupId);
+			} else {
+				scheduleSharedShowPerson.setScheduleId(queryScheduleDetailsParam.getScheduleId());
+			}
+			scheduleSharedShowPerson.setType(OaConstant.SHAREDSHOW_TYPE0);
+
+			List<ScheduleShared> personList = scheduleSharedMapper.select(scheduleSharedShowPerson);
+			for (ScheduleShared scheduleShared : personList) {
+				SharedCreatePersonDto sharedCreatePersonDto = new SharedCreatePersonDto();
+				sharedCreatePersonDto.setSharedShowId(scheduleShared.getSharedShowId());
+
+				String sharedShowName = oaUserUtil.selectUserNameByTendIdAndQuit(scheduleShared.getSharedShowId(),loginUser.getTendId());
+
+				if (StringUtils.isBlank(sharedShowName)) {// 如果名称为空，不将用户id返回给前端
+					continue;
+				}
+
+				sharedCreatePersonDto.setSharedShowName(sharedShowName);
+				personListDto.add(sharedCreatePersonDto);
+			}
+
+			// 查询角色列表
+			List<SharedCreatePersonDto> roleListDto = new ArrayList<SharedCreatePersonDto>();
+
+			ScheduleShared scheduleSharedShowRole = new ScheduleShared();
+			if (StringUtils.isNotBlank(scheduleGroupId)) {
+				scheduleSharedShowRole.setScheduleGroupId(scheduleGroupId);
+			} else {
+				scheduleSharedShowRole.setScheduleId(queryScheduleDetailsParam.getScheduleId());
+			}
+			scheduleSharedShowRole.setType(OaConstant.SHAREDSHOW_TYPE1);
+			List<ScheduleShared> roleList = scheduleSharedMapper.select(scheduleSharedShowRole);
+			for (ScheduleShared scheduleShared : roleList) {
+				SharedCreatePersonDto sharedCreatePersonDto = new SharedCreatePersonDto();
+				sharedCreatePersonDto.setSharedShowId(scheduleShared.getSharedShowId());
+
+				String sharedShowName = oaUserUtil.selectRoleName(scheduleShared.getSharedShowId(), loginUser.getTendId());
+
+				if (StringUtils.isBlank(sharedShowName)) {// 如果名称为空，不将用户id返回给前端
+					continue;
+				}
+
+				sharedCreatePersonDto.setSharedShowName(sharedShowName);
+				roleListDto.add(sharedCreatePersonDto);
+			}
+
+			// 查询部门列表
+			List<SharedCreatePersonDto> departmentListDto = new ArrayList<SharedCreatePersonDto>();
+
+			ScheduleShared scheduleSharedShowDepartment = new ScheduleShared();
+			if (StringUtils.isNotBlank(scheduleGroupId)) {
+				scheduleSharedShowDepartment.setScheduleGroupId(scheduleGroupId);
+			} else {
+				scheduleSharedShowDepartment.setScheduleId(queryScheduleDetailsParam.getScheduleId());
+			}
+			scheduleSharedShowDepartment.setType(OaConstant.SHAREDSHOW_TYPE2);
+			List<ScheduleShared> departmentList = scheduleSharedMapper.select(scheduleSharedShowDepartment);
+			for (ScheduleShared scheduleShared : departmentList) {
+				SharedCreatePersonDto sharedCreatePersonDto = new SharedCreatePersonDto();
+				sharedCreatePersonDto.setSharedShowId(scheduleShared.getSharedShowId());
+
+				String sharedShowName = oaUserUtil.selectOrgName(scheduleShared.getSharedShowId(), loginUser.getTendId());
+
+				if (StringUtils.isBlank(sharedShowName)) {// 如果名称为空，不将用户id返回给前端
+					continue;
+				}
+
+				sharedCreatePersonDto.setSharedShowName(sharedShowName);
+				departmentListDto.add(sharedCreatePersonDto);
+			}
+
+			ScheduleSharedDto scheduleSharedDto = new ScheduleSharedDto();
+			scheduleSharedDto.setPersonList(personListDto);
+			scheduleSharedDto.setRoleList(roleListDto);
+			scheduleSharedDto.setDepartmentList(departmentListDto);
+
+			queryScheduleDetailsDto.setScheduleSharedDto(scheduleSharedDto);
+		}else{
+			throw new HioException("该日程已经删除!");
+		}
+		
+		return queryScheduleDetailsDto;
+	}
+
+	/**
+	 * 查询IM日程详情
+	 * 
+	 * @param queryScheduleDetailsReqDto
+	 * @return
+	 */
+	@TargetIM
+	@Override
+	public QueryScheduleDetailsDto queryImScheduleDetails(@DataSource String tendId, QueryImScheduleDetailsParam queryImScheduleDetailsParam, LoginUser loginUser, Boolean isSuper) {
+
+		Boolean isDelete = false;// 是否可以删除
+
+		// 查询日程详情，不包括共享人员列表
+		QueryScheduleDetailsParam queryScheduleDetailsParam = new QueryScheduleDetailsParam();
+		queryScheduleDetailsParam.setScheduleId(queryImScheduleDetailsParam.getScheduleId());
+		QueryScheduleDetailsDto queryScheduleDetailsDto = queryScheduleDetailsMapper.queryScheduleDetails(queryScheduleDetailsParam);
+
+		if (queryScheduleDetailsDto != null) {
+
+			// 判断是否可以删除
+			if (queryScheduleDetailsDto.getCreatePersonId().equals(loginUser.getUserId())) {
+				isDelete = true;
+			}
+			
+			queryScheduleDetailsDto.setDelete(isDelete);// 是否可以删除日程
+			String scheduleGroupId = queryScheduleDetailsDto.getScheduleGroupId();// 日程组id
+			
+			// 查询共享人员列表
+			// 查询人员列表
+			List<SharedCreatePersonDto> personListDto = new ArrayList<SharedCreatePersonDto>();
+
+			ScheduleShared scheduleSharedShowPerson = new ScheduleShared();
+			scheduleSharedShowPerson.setScheduleId(queryScheduleDetailsParam.getScheduleId());
+			scheduleSharedShowPerson.setType(OaConstant.SHAREDSHOW_TYPE0);
+
+			List<ScheduleShared> personList = scheduleSharedMapper.select(scheduleSharedShowPerson);
+			for (ScheduleShared scheduleShared : personList) {
+				SharedCreatePersonDto sharedCreatePersonDto = new SharedCreatePersonDto();
+				sharedCreatePersonDto.setSharedShowId(scheduleShared.getSharedShowId());
+
+				String sharedShowName = oaUserUtil.selectUserNameByTendIdAndQuit(scheduleShared.getSharedShowId(),tendId);
+
+				if (StringUtils.isBlank(sharedShowName)) {// 如果名称为空，不将用户id返回给前端
+					continue;
+				}
+
+				sharedCreatePersonDto.setSharedShowName(sharedShowName);
+				personListDto.add(sharedCreatePersonDto);
+			}
+
+			// 查询角色列表
+			List<SharedCreatePersonDto> roleListDto = new ArrayList<SharedCreatePersonDto>();
+
+			ScheduleShared scheduleSharedShowRole = new ScheduleShared();
+			if (StringUtils.isNotBlank(scheduleGroupId)) {
+				scheduleSharedShowRole.setScheduleGroupId(scheduleGroupId);
+			} else {
+				scheduleSharedShowRole.setScheduleId(queryScheduleDetailsParam.getScheduleId());
+			}
+			
+			scheduleSharedShowRole.setType(OaConstant.SHAREDSHOW_TYPE1);
+			List<ScheduleShared> roleList = scheduleSharedMapper.select(scheduleSharedShowRole);
+			for (ScheduleShared scheduleShared : roleList) {
+				SharedCreatePersonDto sharedCreatePersonDto = new SharedCreatePersonDto();
+				sharedCreatePersonDto.setSharedShowId(scheduleShared.getSharedShowId());
+				sharedCreatePersonDto.setSharedShowName(oaUserUtil.selectRoleName(scheduleShared.getSharedShowId(), tendId));
+				roleListDto.add(sharedCreatePersonDto);
+			}
+
+			// 查询部门列表
+			List<SharedCreatePersonDto> departmentListDto = new ArrayList<SharedCreatePersonDto>();
+
+			ScheduleShared scheduleSharedShowDepartment = new ScheduleShared();
+			if (StringUtils.isNotBlank(scheduleGroupId)) {
+				scheduleSharedShowDepartment.setScheduleGroupId(scheduleGroupId);
+			} else {
+				scheduleSharedShowDepartment.setScheduleId(queryScheduleDetailsParam.getScheduleId());
+			}
+			
+			scheduleSharedShowDepartment.setType(OaConstant.SHAREDSHOW_TYPE2);
+			List<ScheduleShared> departmentList = scheduleSharedMapper.select(scheduleSharedShowDepartment);
+			for (ScheduleShared scheduleShared : departmentList) {
+				SharedCreatePersonDto sharedCreatePersonDto = new SharedCreatePersonDto();
+				sharedCreatePersonDto.setSharedShowId(scheduleShared.getSharedShowId());
+
+				String sharedShowName = oaUserUtil.selectOrgName(scheduleShared.getSharedShowId(), tendId);
+
+				if (StringUtils.isBlank(sharedShowName)) {// 如果名称为空，不将用户id返回给前端
+					continue;
+				}
+
+				sharedCreatePersonDto.setSharedShowName(sharedShowName);
+				departmentListDto.add(sharedCreatePersonDto);
+			}
+
+			ScheduleSharedDto scheduleSharedDto = new ScheduleSharedDto();
+			scheduleSharedDto.setPersonList(personListDto);
+			scheduleSharedDto.setRoleList(roleListDto);
+			scheduleSharedDto.setDepartmentList(departmentListDto);
+
+			queryScheduleDetailsDto.setScheduleSharedDto(scheduleSharedDto);
+		}else{
+			throw new HioException("该日程已被更新，请从应用中查看!");
+		}
+		
+		return queryScheduleDetailsDto;
+	}
+
+	/**
+	 * 查询日程详情(改造) 详情页的起始、结束日期需要前端传入
+	 * 
+	 * @param queryScheduleDetailsReqDto
+	 * @return
+	 */
+	@Override
+	public QueryScheduleDetailsDto queryNewScheduleDetails(QueryScheduleDetailsParam queryScheduleDetailsParam, LoginUser loginUser, Boolean isSuper) {
+
+		Boolean isDelete = false;// 是否可以删除
+
+		// 查询日程详情，不包括共享人员列表
+		QueryScheduleDetailsDto queryScheduleDetailsDto = queryScheduleDetailsMapper.queryNewScheduleDetails(queryScheduleDetailsParam);
+
+		if (queryScheduleDetailsDto != null) {
+
+			// 判断是否可以删除
+			if (queryScheduleDetailsDto.getCreatePersonId().equals(loginUser.getUserId())) {
+				isDelete = true;
+			}
+
+			queryScheduleDetailsDto.setDelete(isDelete);// 是否可以删除日程
+
+			// 详情起始日期、结束日期由前端从列表中取传入详情页
+//			if (StringUtils.isNotBlank(queryScheduleDetailsParam.getBeginTime()) && StringUtils.isNotBlank(queryScheduleDetailsParam.getEndTime())) {
+//				queryScheduleDetailsDto.setBeginTime(DateUtil.getDate(queryScheduleDetailsParam.getBeginTime()));
+//				queryScheduleDetailsDto.setEndTime(DateUtil.getDate(queryScheduleDetailsParam.getEndTime()));
+//			}
+
+			// 查询共享人员列表
+			// 查询人员列表
+			List<SharedCreatePersonDto> personListDto = new ArrayList<SharedCreatePersonDto>();
+
+			ScheduleShared scheduleSharedShowPerson = new ScheduleShared();
+
+			scheduleSharedShowPerson.setScheduleId(queryScheduleDetailsParam.getScheduleId());
+
+			scheduleSharedShowPerson.setType(OaConstant.SHAREDSHOW_TYPE0);
+
+			List<ScheduleShared> personList = scheduleSharedMapper.select(scheduleSharedShowPerson);
+			for (ScheduleShared scheduleShared : personList) {
+				SharedCreatePersonDto sharedCreatePersonDto = new SharedCreatePersonDto();
+				sharedCreatePersonDto.setSharedShowId(scheduleShared.getSharedShowId());
+
+				String sharedShowName = oaUserUtil.selectUserName(scheduleShared.getSharedShowId());
+
+				if (StringUtils.isBlank(sharedShowName)) {// 如果名称为空，不将用户id返回给前端
+					continue;
+				}
+
+				sharedCreatePersonDto.setSharedShowName(sharedShowName);
+				personListDto.add(sharedCreatePersonDto);
+			}
+
+			// 查询角色列表
+			List<SharedCreatePersonDto> roleListDto = new ArrayList<SharedCreatePersonDto>();
+
+			ScheduleShared scheduleSharedShowRole = new ScheduleShared();
+
+			scheduleSharedShowRole.setScheduleId(queryScheduleDetailsParam.getScheduleId());
+
+			scheduleSharedShowRole.setType(OaConstant.SHAREDSHOW_TYPE1);
+			List<ScheduleShared> roleList = scheduleSharedMapper.select(scheduleSharedShowRole);
+			for (ScheduleShared scheduleShared : roleList) {
+				SharedCreatePersonDto sharedCreatePersonDto = new SharedCreatePersonDto();
+				sharedCreatePersonDto.setSharedShowId(scheduleShared.getSharedShowId());
+
+				String sharedShowName = oaUserUtil.selectRoleName(scheduleShared.getSharedShowId(), loginUser.getTendId());
+
+				if (StringUtils.isBlank(sharedShowName)) {// 如果名称为空，不将用户id返回给前端
+					continue;
+				}
+
+				sharedCreatePersonDto.setSharedShowName(sharedShowName);
+				roleListDto.add(sharedCreatePersonDto);
+			}
+
+			// 查询部门列表
+			List<SharedCreatePersonDto> departmentListDto = new ArrayList<SharedCreatePersonDto>();
+
+			ScheduleShared scheduleSharedShowDepartment = new ScheduleShared();
+
+			scheduleSharedShowDepartment.setScheduleId(queryScheduleDetailsParam.getScheduleId());
+
+			scheduleSharedShowDepartment.setType(OaConstant.SHAREDSHOW_TYPE2);
+			List<ScheduleShared> departmentList = scheduleSharedMapper.select(scheduleSharedShowDepartment);
+			for (ScheduleShared scheduleShared : departmentList) {
+				SharedCreatePersonDto sharedCreatePersonDto = new SharedCreatePersonDto();
+				sharedCreatePersonDto.setSharedShowId(scheduleShared.getSharedShowId());
+
+				String sharedShowName = oaUserUtil.selectOrgName(scheduleShared.getSharedShowId(), loginUser.getTendId());
+
+				if (StringUtils.isBlank(sharedShowName)) {// 如果名称为空，不将用户id返回给前端
+					continue;
+				}
+
+				sharedCreatePersonDto.setSharedShowName(sharedShowName);
+				departmentListDto.add(sharedCreatePersonDto);
+			}
+
+			ScheduleSharedDto scheduleSharedDto = new ScheduleSharedDto();
+			scheduleSharedDto.setPersonList(personListDto);
+			scheduleSharedDto.setRoleList(roleListDto);
+			scheduleSharedDto.setDepartmentList(departmentListDto);
+
+			queryScheduleDetailsDto.setScheduleSharedDto(scheduleSharedDto);
+		}
+		return queryScheduleDetailsDto;
+	}
+
+	/**
+	 * 查询IM日程详情(改造) 详情页的起始、结束日期需要前端传入
+	 * 
+	 * @param queryScheduleDetailsReqDto
+	 * @return
+	 */
+	@TargetIM
+	@Override
+	public QueryScheduleDetailsDto queryNewImScheduleDetails(@DataSource String tendId, QueryScheduleDetailsParam queryScheduleDetailsParam, LoginUser loginUser, Boolean isSuper) {
+
+		Boolean isDelete = false;// 是否可以删除
+
+		// 查询日程详情，不包括共享人员列表
+		QueryScheduleDetailsDto queryScheduleDetailsDto = queryScheduleDetailsMapper.queryNewScheduleDetails(queryScheduleDetailsParam);
+
+		if (queryScheduleDetailsDto != null) {
+
+			// 判断是否可以删除
+			if (queryScheduleDetailsDto.getCreatePersonId().equals(loginUser.getUserId())) {
+				isDelete = true;
+				queryScheduleDetailsDto.setDelete(isDelete);// 是否可以删除日程
+			}
+
+			// 详情起始日期、结束日期由前端从列表中取传入详情页
+//			if (StringUtils.isNotBlank(queryScheduleDetailsParam.getBeginTime()) && StringUtils.isNotBlank(queryScheduleDetailsParam.getEndTime())) {
+//				queryScheduleDetailsDto.setBeginTime(DateUtil.getDate(queryScheduleDetailsParam.getBeginTime()));
+//				queryScheduleDetailsDto.setEndTime(DateUtil.getDate(queryScheduleDetailsParam.getEndTime()));
+//			}
+
+			// 查询共享人员列表
+			// 查询人员列表
+			List<SharedCreatePersonDto> personListDto = new ArrayList<SharedCreatePersonDto>();
+
+			ScheduleShared scheduleSharedShowPerson = new ScheduleShared();
+			scheduleSharedShowPerson.setScheduleId(queryScheduleDetailsParam.getScheduleId());
+			scheduleSharedShowPerson.setType(OaConstant.SHAREDSHOW_TYPE0);
+
+			List<ScheduleShared> personList = scheduleSharedMapper.select(scheduleSharedShowPerson);
+			for (ScheduleShared scheduleShared : personList) {
+				SharedCreatePersonDto sharedCreatePersonDto = new SharedCreatePersonDto();
+				sharedCreatePersonDto.setSharedShowId(scheduleShared.getSharedShowId());
+
+				String sharedShowName = oaUserUtil.selectUserName(scheduleShared.getSharedShowId());
+
+				if (StringUtils.isBlank(sharedShowName)) {// 如果名称为空，不将用户id返回给前端
+					continue;
+				}
+
+				sharedCreatePersonDto.setSharedShowName(sharedShowName);
+				personListDto.add(sharedCreatePersonDto);
+			}
+
+			// 查询角色列表
+			List<SharedCreatePersonDto> roleListDto = new ArrayList<SharedCreatePersonDto>();
+
+			ScheduleShared scheduleSharedShowRole = new ScheduleShared();
+
+			scheduleSharedShowRole.setScheduleId(queryScheduleDetailsParam.getScheduleId());
+			scheduleSharedShowRole.setType(OaConstant.SHAREDSHOW_TYPE1);
+			List<ScheduleShared> roleList = scheduleSharedMapper.select(scheduleSharedShowRole);
+			for (ScheduleShared scheduleShared : roleList) {
+				SharedCreatePersonDto sharedCreatePersonDto = new SharedCreatePersonDto();
+				sharedCreatePersonDto.setSharedShowId(scheduleShared.getSharedShowId());
+				sharedCreatePersonDto.setSharedShowName(oaUserUtil.selectRoleName(scheduleShared.getSharedShowId(), tendId));
+				roleListDto.add(sharedCreatePersonDto);
+			}
+
+			// 查询部门列表
+			List<SharedCreatePersonDto> departmentListDto = new ArrayList<SharedCreatePersonDto>();
+
+			ScheduleShared scheduleSharedShowDepartment = new ScheduleShared();
+			scheduleSharedShowDepartment.setScheduleId(queryScheduleDetailsParam.getScheduleId());
+			scheduleSharedShowDepartment.setType(OaConstant.SHAREDSHOW_TYPE2);
+			List<ScheduleShared> departmentList = scheduleSharedMapper.select(scheduleSharedShowDepartment);
+			for (ScheduleShared scheduleShared : departmentList) {
+				SharedCreatePersonDto sharedCreatePersonDto = new SharedCreatePersonDto();
+				sharedCreatePersonDto.setSharedShowId(scheduleShared.getSharedShowId());
+
+				String sharedShowName = oaUserUtil.selectOrgName(scheduleShared.getSharedShowId(), tendId);
+
+				if (StringUtils.isBlank(sharedShowName)) {// 如果名称为空，不将用户id返回给前端
+					continue;
+				}
+
+				sharedCreatePersonDto.setSharedShowName(sharedShowName);
+				departmentListDto.add(sharedCreatePersonDto);
+			}
+
+			ScheduleSharedDto scheduleSharedDto = new ScheduleSharedDto();
+			scheduleSharedDto.setPersonList(personListDto);
+			scheduleSharedDto.setRoleList(roleListDto);
+			scheduleSharedDto.setDepartmentList(departmentListDto);
+
+			queryScheduleDetailsDto.setScheduleSharedDto(scheduleSharedDto);
+		}
+		return queryScheduleDetailsDto;
+	}
+
+	/**
+	 * 修改日程
+	 * 
+	 * @param scheduleReqDto
+	 * @return
+	 */
+	@Override
+	public int update(UpdateScheduleParam updateScheduleParam, LoginUser loginUser) {
+
+		String createPersonName = oaUserUtil.selectUserName(loginUser.getUserId());
+
+		// 查询日历id
+		Schedule schedule4 = new Schedule();
+		schedule4.setScheduleId(updateScheduleParam.getScheduleId());
+		schedule4 = scheduleMapper.queryScheduleId(schedule4);
+		String calendarId = schedule4.getCalendarId();
+
+		// 判断是否重复
+		if (OaConstant.ISREPEAT_IS.equals(updateScheduleParam.getIsRepeat())) {
+
+			if (OaConstant.UPDATE_OPERATION1.equals(updateScheduleParam.getUpdateType())) {
+
+				// 仅修改当前
+				delete(updateScheduleParam,loginUser);
+
+				// step6、重新新建重复日程
+				BuildScheduleParam buildScheduleParam = new BuildScheduleParam();
+				buildScheduleParam.setScheduleTitle(updateScheduleParam.getScheduleTitle());
+				buildScheduleParam.setBeginTime(updateScheduleParam.getBeginTime());
+				buildScheduleParam.setEndTime(updateScheduleParam.getEndTime());
+				buildScheduleParam.setAdvanceTime(updateScheduleParam.getAdvanceTime());
+				buildScheduleParam.setIsRepeat(updateScheduleParam.getIsRepeat());
+				buildScheduleParam.setRepetitionFrequency(updateScheduleParam.getRepetitionFrequency());
+				buildScheduleParam.setEndFrequency(updateScheduleParam.getEndFrequency());
+				buildScheduleParam.setScheduleSharedParam(updateScheduleParam.getScheduleSharedParam());
+				buildScheduleParam.setAddress(updateScheduleParam.getAddress());
+				buildScheduleParam.setScheduleDetails(updateScheduleParam.getScheduleDetails());
+				buildScheduleParam.setEndFrequencyTime(updateScheduleParam.getEndFrequencyTime());
+				buildScheduleParam.setEndFrequencyNum(updateScheduleParam.getEndFrequencyNum());
+				buildNewRepeatSchedule(buildScheduleParam, calendarId, loginUser, createPersonName);
+
+			} else if (OaConstant.UPDATE_OPERATION0.equals(updateScheduleParam.getUpdateType())) {
+
+				// 修改整个重复事件
+				deleteAll(updateScheduleParam,loginUser);
+
+				// step6 重新新建重复日程
+				BuildScheduleParam buildScheduleParam = new BuildScheduleParam();
+				buildScheduleParam.setScheduleTitle(updateScheduleParam.getScheduleTitle());
+				buildScheduleParam.setBeginTime(updateScheduleParam.getBeginTime());
+				buildScheduleParam.setEndTime(updateScheduleParam.getEndTime());
+				buildScheduleParam.setAdvanceTime(updateScheduleParam.getAdvanceTime());
+				buildScheduleParam.setIsRepeat(updateScheduleParam.getIsRepeat());
+				buildScheduleParam.setRepetitionFrequency(updateScheduleParam.getRepetitionFrequency());
+				buildScheduleParam.setEndFrequency(updateScheduleParam.getEndFrequency());
+				buildScheduleParam.setScheduleSharedParam(updateScheduleParam.getScheduleSharedParam());
+				buildScheduleParam.setAddress(updateScheduleParam.getAddress());
+				buildScheduleParam.setScheduleDetails(updateScheduleParam.getScheduleDetails());
+				buildScheduleParam.setEndFrequencyTime(updateScheduleParam.getEndFrequencyTime());
+				buildScheduleParam.setEndFrequencyNum(updateScheduleParam.getEndFrequencyNum());
+				buildNewRepeatSchedule(buildScheduleParam, calendarId, loginUser, createPersonName);
+
+			} else {
+				logger.info("==修改日程类型选择错误，无法修改日程==");
+			}
+
+		} else if (OaConstant.ISREPEAT_NOT.equals(updateScheduleParam.getIsRepeat())) {
+
+			Date beginTime = DateUtil.getDate(updateScheduleParam.getBeginTime());
+			Date endTime = DateUtil.getDate(updateScheduleParam.getEndTime());
+			Date remindTime = DateUtil.getDate(DateUtil.getLastDateMinut(updateScheduleParam.getBeginTime(), updateScheduleParam.getAdvanceTime()));
+
+			// 更新共享人员表,判断是否有共享人，如果存在插入共享表
+			if (updateScheduleParam.getScheduleSharedParam() != null) {
+
+				// 伪删除共享人员
+				ScheduleShared scheduleShared = new ScheduleShared();
+				scheduleShared.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+				scheduleShared.setScheduleId(updateScheduleParam.getScheduleId());
+				scheduleSharedMapper.deleteScheduleSharedId(scheduleShared);
+
+			}
+
+			// 删除日程提醒表
+			Schedule schedule1 = new Schedule();
+			schedule1.setScheduleId(updateScheduleParam.getScheduleId());
+			schedule1 = scheduleMapper.queryScheduleId(schedule1);
+
+			ScheduleRemind scheduleRemind = new ScheduleRemind();
+			scheduleRemind.setRemindId(schedule1.getRemindId());
+			scheduleRemind.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+				
+			//TODO 删除redis中的remind
+			String key = OaConstant.SCHEDULE_REMIND_REDIS_KEY + ":" + loginUser.getTendId() + ":" + OaConstant.SCHEDULE_REMIND_TABLE_REMIND;
+			ScheduleRemind sr = new ScheduleRemind();
+			sr.setRemindStatus(OaConstant.REMIND_STATUS1);
+			sr.setRemindId(schedule1.getRemindId());
+			List<ScheduleRemind> srList = scheduleRemindMapper.queryScheduleRemindList(sr);
+			if(Base.isNotEmpty(srList)){
+				JedisUtil.delRow(key,srList.get(0).getId());
+			}
+			//redis用到id的查询,删除remind数据
+			scheduleRemindMapper.deleteScheduleRemindId(scheduleRemind);
+
+			// 删除日程表
+			Schedule schedule = new Schedule();
+			schedule.setScheduleId(updateScheduleParam.getScheduleId());
+			schedule.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+			scheduleMapper.deletescheduleId(schedule);
+
+			// 插入提醒表
+			String remindId = saveRemind(remindTime, loginUser, createPersonName);
+
+			// 插入日程表
+			BuildScheduleParam buildScheduleParam = new BuildScheduleParam();
+			buildScheduleParam.setScheduleTitle(updateScheduleParam.getScheduleTitle());
+			buildScheduleParam.setAdvanceTime(updateScheduleParam.getAdvanceTime());
+			buildScheduleParam.setIsRepeat(updateScheduleParam.getIsRepeat());
+			buildScheduleParam.setAddress(updateScheduleParam.getAddress());
+			buildScheduleParam.setScheduleDetails(updateScheduleParam.getScheduleDetails());
+			buildScheduleParam.setScheduleSharedParam(updateScheduleParam.getScheduleSharedParam());
+
+			String scheduleId = saveSchedule(buildScheduleParam, beginTime, endTime, remindId, "", calendarId, loginUser, createPersonName);
+
+			if (buildScheduleParam.getScheduleSharedParam() != null) {
+				// 插入共享人
+				saveSharedPerson(buildScheduleParam, scheduleId, loginUser, createPersonName);
+			}
+
+		} else {
+			logger.info("是否重复参数传入错误=={}", updateScheduleParam.getIsRepeat());
+		}
+
+		return 1;
+	}
+
+	/**
+	 * 修改日程(改造)
+	 * 
+	 * @param scheduleReqDto
+	 * @return
+	 */
+	@Override
+	public int updateNew(UpdateScheduleParam updateScheduleParam, LoginUser loginUser) {
+
+		String createPersonName = oaUserUtil.selectUserName(loginUser.getUserId());
+
+		// 查询日历id
+		Schedule schedule4 = new Schedule();
+		schedule4.setScheduleId(updateScheduleParam.getScheduleId());
+		schedule4 = scheduleMapper.queryScheduleId(schedule4);
+		String calendarId = schedule4.getCalendarId();
+
+		// 判断是否重复
+		if (OaConstant.ISREPEAT_IS.equals(updateScheduleParam.getIsRepeat())) {
+
+			if (OaConstant.UPDATE_OPERATION1.equals(updateScheduleParam.getUpdateType())) {
+
+				// 仅删除当前
+				ScheduleDelete scheduleDelete = new ScheduleDelete();
+				scheduleDelete.setId(Base.generatePk(ScheduleDelete.class));
+				scheduleDelete.setScheduleId(updateScheduleParam.getScheduleId());
+				scheduleDelete.setBeginTime(DateUtil.getDate(updateScheduleParam.getBeginTime()));
+				scheduleDelete.setEndTime(DateUtil.getDate(updateScheduleParam.getEndTime()));
+				scheduleDelete.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+				scheduleDelete.setCreateDate(new Date());
+				scheduleDelete.setCreatePersonId(loginUser.getUserId());
+				scheduleDelete.setCreatePersonName(createPersonName);
+				scheduleDeleteMapper.insert(scheduleDelete);
+
+				Date beginTime = DateUtil.getDate(updateScheduleParam.getBeginTime());
+				Date endTime = DateUtil.getDate(updateScheduleParam.getEndTime());
+				Date remindTime = DateUtil.getDate(updateScheduleParam.getBeginTime());
+
+				// 插入提醒表
+				String remindId = saveRemind(remindTime, loginUser, createPersonName);
+
+				BuildScheduleParam buildScheduleParam = new BuildScheduleParam();
+				buildScheduleParam.setScheduleTitle(updateScheduleParam.getScheduleTitle());
+				buildScheduleParam.setAdvanceTime(updateScheduleParam.getAdvanceTime());
+				buildScheduleParam.setIsRepeat(updateScheduleParam.getIsRepeat());
+				buildScheduleParam.setAddress(updateScheduleParam.getAddress());
+				buildScheduleParam.setScheduleDetails(updateScheduleParam.getScheduleDetails());
+				buildScheduleParam.setRepetitionFrequency(updateScheduleParam.getRepetitionFrequency());
+				buildScheduleParam.setEndFrequency(updateScheduleParam.getEndFrequency());
+				buildScheduleParam.setEndFrequencyTime(updateScheduleParam.getEndFrequencyTime());
+				buildScheduleParam.setEndFrequencyNum(updateScheduleParam.getEndFrequencyNum());
+
+				String repetitionResult = (String) getTimes(buildScheduleParam).get("repetitionResult");// 获取重复结果
+
+				// 插入日程表
+				String scheduleId = saveScheduleTwo(buildScheduleParam, beginTime, endTime, remindId, "", calendarId, loginUser, createPersonName, repetitionResult);
+
+				if (updateScheduleParam.getScheduleSharedParam() != null) {
+					// 插入共享人
+					saveSharedPerson(buildScheduleParam, scheduleId, loginUser, createPersonName);
+				}
+
+			} else if (OaConstant.UPDATE_OPERATION0.equals(updateScheduleParam.getUpdateType())) {
+
+				Date beginTime = DateUtil.getDate(updateScheduleParam.getBeginTime());
+				Date endTime = DateUtil.getDate(updateScheduleParam.getEndTime());
+				Date remindTime = DateUtil.getDate(updateScheduleParam.getBeginTime());
+
+				// step1 删除共享人
+				ScheduleShared scheduleShared = new ScheduleShared();
+				scheduleShared.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+				scheduleShared.setScheduleId(updateScheduleParam.getScheduleId());
+				scheduleSharedMapper.deleteScheduleSharedId(scheduleShared);
+
+				// step2 删除提醒表
+				Schedule schedule1 = new Schedule();
+				schedule1.setScheduleId(updateScheduleParam.getScheduleId());
+				schedule1 = scheduleMapper.queryScheduleId(schedule1);
+
+				ScheduleRemind scheduleRemind = new ScheduleRemind();
+				scheduleRemind.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+				scheduleRemind.setRemindId(schedule1.getRemindId());
+				scheduleRemindMapper.deleteScheduleRemindId(scheduleRemind);
+
+				// step3 删除日程表
+				Schedule schedule = new Schedule();
+				schedule.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+				schedule.setScheduleId(updateScheduleParam.getScheduleId());
+				scheduleMapper.deletescheduleId(schedule);
+
+				// 插入提醒表
+				String remindId = saveRemind(remindTime, loginUser, createPersonName);
+
+				BuildScheduleParam buildScheduleParam = new BuildScheduleParam();
+				buildScheduleParam.setScheduleTitle(updateScheduleParam.getScheduleTitle());
+				buildScheduleParam.setAdvanceTime(updateScheduleParam.getAdvanceTime());
+				buildScheduleParam.setIsRepeat(updateScheduleParam.getIsRepeat());
+				buildScheduleParam.setAddress(updateScheduleParam.getAddress());
+				buildScheduleParam.setScheduleDetails(updateScheduleParam.getScheduleDetails());
+				buildScheduleParam.setRepetitionFrequency(updateScheduleParam.getRepetitionFrequency());
+				buildScheduleParam.setEndFrequency(updateScheduleParam.getEndFrequency());
+				buildScheduleParam.setEndFrequencyTime(updateScheduleParam.getEndFrequencyTime());
+				buildScheduleParam.setEndFrequencyNum(updateScheduleParam.getEndFrequencyNum());
+
+				String repetitionResult = (String) getTimes(buildScheduleParam).get("repetitionResult");// 获取重复结果
+
+				// 插入日程表
+				String scheduleId = saveScheduleTwo(buildScheduleParam, beginTime, endTime, remindId, "", calendarId, loginUser, createPersonName, repetitionResult);
+
+				if (updateScheduleParam.getScheduleSharedParam() != null) {
+					// 插入共享人
+					saveSharedPerson(buildScheduleParam, scheduleId, loginUser, createPersonName);
+				}
+			} else {
+				logger.info("==修改日程类型选择错误，无法修改日程==");
+			}
+
+		} else if (OaConstant.ISREPEAT_NOT.equals(updateScheduleParam.getIsRepeat())) {
+
+			Date beginTime = DateUtil.getDate(updateScheduleParam.getBeginTime());
+			Date endTime = DateUtil.getDate(updateScheduleParam.getEndTime());
+			Date remindTime = DateUtil.getDate(updateScheduleParam.getBeginTime());
+
+			// 更新共享人员表,判断是否有共享人，如果存在插入共享表
+			if (updateScheduleParam.getScheduleSharedParam() != null) {
+
+				// 伪删除共享人员
+				ScheduleShared scheduleShared = new ScheduleShared();
+				scheduleShared.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+				scheduleShared.setScheduleId(updateScheduleParam.getScheduleId());
+				scheduleSharedMapper.deleteScheduleSharedId(scheduleShared);
+
+			}
+
+			// 删除日程提醒表
+			Schedule schedule1 = new Schedule();
+			schedule1.setScheduleId(updateScheduleParam.getScheduleId());
+			schedule1 = scheduleMapper.queryScheduleId(schedule1);
+
+			ScheduleRemind scheduleRemind = new ScheduleRemind();
+			scheduleRemind.setRemindId(schedule1.getRemindId());
+			scheduleRemind.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+			scheduleRemindMapper.deleteScheduleRemindId(scheduleRemind);
+
+			// 删除日程表
+			Schedule schedule = new Schedule();
+			schedule.setScheduleId(updateScheduleParam.getScheduleId());
+			schedule.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+			scheduleMapper.deletescheduleId(schedule);
+
+			// 插入提醒表
+			String remindId = saveRemind(remindTime, loginUser, createPersonName);
+
+			// 插入日程表
+			BuildScheduleParam buildScheduleParam = new BuildScheduleParam();
+			buildScheduleParam.setScheduleTitle(updateScheduleParam.getScheduleTitle());
+			buildScheduleParam.setAdvanceTime(updateScheduleParam.getAdvanceTime());
+			buildScheduleParam.setIsRepeat(updateScheduleParam.getIsRepeat());
+			buildScheduleParam.setAddress(updateScheduleParam.getAddress());
+			buildScheduleParam.setScheduleDetails(updateScheduleParam.getScheduleDetails());
+			buildScheduleParam.setScheduleSharedParam(updateScheduleParam.getScheduleSharedParam());
+
+			String scheduleId = saveSchedule(buildScheduleParam, beginTime, endTime, remindId, "", calendarId, loginUser, createPersonName);
+
+			if (buildScheduleParam.getScheduleSharedParam() != null) {
+				// 插入共享人
+				saveSharedPerson(buildScheduleParam, scheduleId, loginUser, createPersonName);
+			}
+
+		} else {
+			logger.info("是否重复参数传入错误=={}", updateScheduleParam.getIsRepeat());
+		}
+
+		return 1;
+	}
+
+	/**
+	 * 共享日历，此功能在第一次共享时是新增，第二次如果有共享人personList不为空，实际应该为修改，为了简化操作，采用全部删除，在全部新增的方式
+	 * 
+	 * @param sharedCalendarParam
+	 * @return
+	 */
+	@Override
+	public int sharedCalendar(SharedCalendarParam sharedCalendarParam, LoginUser loginUser) {
+
+		String userId = loginUser.getUserId();
+		String createPersonName = oaUserUtil.selectUserName(loginUser.getUserId());
+
+		// 插入日历表
+		String calendarId = "";
+		Calendar calendar = new Calendar();
+		calendar.setCreatePersonId(loginUser.getUserId());
+		calendar = calendarMapper.selectOne(calendar);
+		if (calendar == null) {
+			Calendar calendar1 = new Calendar();
+			calendarId = IDGenerator.getUUID();
+			calendar1.setId(Base.generatePk(Calendar.class));
+			calendar1.setCalendarId(calendarId);
+			calendar1.setCalendarCode("v2");
+			calendar1.setCalendarName("v2日历");
+			calendar1.setCreatePersonId(loginUser.getUserId());
+			calendar1.setCreatePersonName(createPersonName);
+			calendar1.setCreateDate(new Date());
+			calendar1.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+			calendarMapper.insert(calendar1);
+		} else {
+			calendarId = calendar.getCalendarId();
+		}
+
+		if (calendarId != null) {
+
+			// 删除日程日历共享
+			ScheduleShared deleteScheduleShared = new ScheduleShared();
+			deleteScheduleShared.setCalendarId(calendarId);
+			deleteScheduleShared.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+			deleteScheduleShared.setUpdateDate(new Date());
+			deleteScheduleShared.setUpdatePersonId(userId);
+			deleteScheduleShared.setUpdatePersonName(createPersonName);
+			scheduleSharedMapper.deleteScheduleSharedId(deleteScheduleShared);
+
+			// 删除任务日历共享
+			TaskShared deleteTaskShared = new TaskShared();
+			deleteTaskShared.setCalendarId(calendarId);
+			deleteTaskShared.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+			deleteTaskShared.setUpdatePersonId(userId);
+			deleteTaskShared.setUpdatePersonName(createPersonName);
+			taskSharedMapper.delete(deleteTaskShared);
+			
+			//删除日历共享表
+			SharedCalendar sharedCalendar = new SharedCalendar();
+			sharedCalendar.setCalendarId(calendarId);
+			sharedCalendar.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+			sharedCalendar.setUpdatePersonId(userId);
+			sharedCalendar.setUpdatePersonName(createPersonName);
+			sharedCalendar.setSharedshowId(loginUser.getUserId());
+			sharedCalendarMapper.deleteSharedCalendarId(sharedCalendar);
+			
+			// 插入日程共享表
+			List<ScheduleShared> schedulePersonList = sharedCalendarParam.getPersonList();
+			if (schedulePersonList != null && schedulePersonList.size() > 0) {
+				for (ScheduleShared scheduleShared : schedulePersonList) {
+					scheduleShared.setId(Base.generatePk(ScheduleShared.class));
+					scheduleShared.setCalendarId(calendarId);
+					scheduleShared.setSource(OaConstant.SHARED_SOURCE1);
+					scheduleShared.setType(OaConstant.SHAREDSHOW_TYPE0);
+					scheduleShared.setCreatePersonId(userId);
+					scheduleShared.setCreatePersonName(createPersonName);
+					scheduleShared.setCreateDate(new Date());
+					scheduleShared.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+					scheduleSharedMapper.insert(scheduleShared);
+				}
+
+			}
+
+			// 插入任务共享表
+			List<ScheduleShared> taskPersonList = sharedCalendarParam.getPersonList();
+			for (ScheduleShared scheduleShared : taskPersonList) {
+				TaskShared taskShared = new TaskShared();
+				taskShared.setId(Base.generatePk(TaskShared.class));
+				taskShared.setCalendarId(calendarId);
+				taskShared.setSharedshowId(scheduleShared.getSharedShowId());
+				taskShared.setType(OaConstant.SHAREDSHOW_TYPE0);
+				taskShared.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+				taskShared.setCreatePersonId(userId);
+				taskShared.setCreatePersonName(createPersonName);
+				taskShared.setCreateDate(new Date());
+				taskShared.setIsfollow(false);
+				taskShared.setIsShowTitle(scheduleShared.getIsShowTitle());
+				taskSharedMapper.insert(taskShared);
+			}
+			
+			//插入共享日历表
+			List<ScheduleShared> sharedCalendarList = sharedCalendarParam.getPersonList();
+			for (ScheduleShared scheduleShared : sharedCalendarList) {
+				SharedCalendar sharedCalendarInsert = new SharedCalendar();
+				sharedCalendarInsert.setId(Base.generatePk(SharedCalendar.class));
+				sharedCalendarInsert.setCalendarId(calendarId);
+				sharedCalendarInsert.setSharedshowId(loginUser.getUserId());
+				sharedCalendarInsert.setUnSharedshowId(scheduleShared.getSharedShowId());
+				sharedCalendarInsert.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+				sharedCalendarInsert.setCreatePersonId(userId);
+				sharedCalendarInsert.setCreatePersonName(createPersonName);
+				sharedCalendarInsert.setCreateDate(new Date());
+				sharedCalendarInsert.setIsShowtitle(scheduleShared.getIsShowTitle());
+				sharedCalendarMapper.insert(sharedCalendarInsert);
+			}
+			
+			return 1;
+		} else {
+			return 0;
+		}
+
+	}
+
+	/**
+	 * 查询共享日历共享人信息
+	 * 
+	 * @return
+	 */
+	@Override
+	public SharedCalendarDto querySharedCalendar(LoginUser loginUser) {
+
+		SharedCalendarDto sharedCalendarDto = new SharedCalendarDto();
+		List<ScheduleCalendarSharedDto> personList1 = new ArrayList<ScheduleCalendarSharedDto>();
+
+		String userId = loginUser.getUserId();
+
+		Calendar calendar = new Calendar();
+		calendar.setCreatePersonId(userId);
+		calendar = calendarMapper.selectOne(calendar);
+
+		if (calendar != null) {
+			String calendarId = calendar.getCalendarId();
+
+			ScheduleShared scheduleShared = new ScheduleShared();
+			scheduleShared.setCalendarId(calendarId);
+			scheduleShared.setSource(OaConstant.SHARED_SOURCE1);
+			scheduleShared.setType(OaConstant.SHAREDSHOW_TYPE0);
+			List<ScheduleShared> personList = scheduleSharedMapper.select(scheduleShared);
+
+			if (personList.size() > 0) {
+				for (ScheduleShared scheduleShared2 : personList) {
+
+					ScheduleCalendarSharedDto scheduleCalendarSharedDto = new ScheduleCalendarSharedDto();
+					String sharedShowId = scheduleShared2.getSharedShowId();
+
+					String sharedShowName = oaUserUtil.selectUserName(sharedShowId);
+					scheduleCalendarSharedDto.setSharedShowName(sharedShowName);
+					scheduleCalendarSharedDto.setSharedShowId(sharedShowId);
+					scheduleCalendarSharedDto.setIsShowTitle(scheduleShared2.getIsShowTitle());
+					personList1.add(scheduleCalendarSharedDto);
+					sharedCalendarDto.setPersonList(personList1);
+				}
+			} else {
+				sharedCalendarDto.setPersonList(personList1);
+			}
+		} else {
+			sharedCalendarDto.setPersonList(personList1);
+		}
+
+		return sharedCalendarDto;
+	}
+
+	/**
+	 * 删除日程
+	 * 
+	 * @param deleteScheduleParam
+	 * @return
+	 */
+	@Override
+	public int delete(DeleteScheduleParam deleteScheduleParam,LoginUser loginUser) {
+
+		// 判断是否重复
+		if (OaConstant.ISREPEAT_IS.equals(deleteScheduleParam.getIsRepeat())) {
+			if (OaConstant.UPDATE_OPERATION1.equals(deleteScheduleParam.getUpdateType())) {
+
+				// 仅删除当前
+				UpdateScheduleParam updateScheduleParam = new UpdateScheduleParam();
+				updateScheduleParam.setScheduleId(deleteScheduleParam.getScheduleId());
+				delete(updateScheduleParam,loginUser);
+			} else if (OaConstant.UPDATE_OPERATION0.equals(deleteScheduleParam.getUpdateType())) {
+
+				// 删除整个重复事件
+				UpdateScheduleParam updateScheduleParam = new UpdateScheduleParam();
+				updateScheduleParam.setScheduleId(deleteScheduleParam.getScheduleId());
+				deleteAll(updateScheduleParam,loginUser);
+			} else {
+				logger.info("==删除日程类型选择错误，无法修改日程==");
+			}
+		} else if (OaConstant.ISREPEAT_NOT.equals(deleteScheduleParam.getIsRepeat())) {
+
+			// step1 删除共享人
+			ScheduleShared scheduleShared = new ScheduleShared();
+			scheduleShared.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+			scheduleShared.setScheduleId(deleteScheduleParam.getScheduleId());
+			scheduleSharedMapper.deleteScheduleSharedId(scheduleShared);
+
+			// step2 删除提醒表
+			Schedule schedule1 = new Schedule();
+			schedule1.setScheduleId(deleteScheduleParam.getScheduleId());
+			schedule1 = scheduleMapper.queryScheduleId(schedule1);
+
+			ScheduleRemind scheduleRemind = new ScheduleRemind();
+			scheduleRemind.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+			scheduleRemind.setRemindId(schedule1.getRemindId());
+			
+			//TODO 删除redis中的remind
+			String key = OaConstant.SCHEDULE_REMIND_REDIS_KEY + ":" + loginUser.getTendId() + ":" + OaConstant.SCHEDULE_REMIND_TABLE_REMIND;
+			ScheduleRemind sr = new ScheduleRemind();
+			sr.setRemindStatus(OaConstant.REMIND_STATUS1);
+			sr.setRemindId(schedule1.getRemindId());
+			List<ScheduleRemind> srList = scheduleRemindMapper.queryScheduleRemindList(sr);
+			if(Base.isNotEmpty(srList)){
+				JedisUtil.delRow(key,srList.get(0).getId());
+			}
+			//redis用到id的查询,删除remind数据
+			scheduleRemindMapper.deleteScheduleRemindId(scheduleRemind);
+			
+			// step3 删除日程表
+			Schedule schedule = new Schedule();
+			schedule.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+			schedule.setScheduleId(deleteScheduleParam.getScheduleId());
+			scheduleMapper.deletescheduleId(schedule);
+
+		} else {
+			logger.info("是否重复参数传入错误=={}", deleteScheduleParam.getIsRepeat());
+		}
+
+		return 1;
+	}
+
+	/**
+	 * 删除日程(改造) 删除当日日程改为插入删除表，查询时从删除表中排除
+	 * 
+	 * @param deleteScheduleParam
+	 * @return
+	 */
+	@Override
+	public int deleteNew(DeleteScheduleParam deleteScheduleParam, LoginUser loginUser) {
+
+		// 判断是否重复
+		if (OaConstant.ISREPEAT_IS.equals(deleteScheduleParam.getIsRepeat())) {
+			if (OaConstant.UPDATE_OPERATION1.equals(deleteScheduleParam.getUpdateType())) {
+
+				String createPersonName = oaUserUtil.selectUserName(loginUser.getUserId());
+
+				// 仅删除当前
+				ScheduleDelete scheduleDelete = new ScheduleDelete();
+				scheduleDelete.setId(Base.generatePk(ScheduleDelete.class));
+				scheduleDelete.setScheduleId(deleteScheduleParam.getScheduleId());
+				scheduleDelete.setBeginTime(DateUtil.getDate(deleteScheduleParam.getBeginTime()));
+				scheduleDelete.setEndTime(DateUtil.getDate(deleteScheduleParam.getEndTime()));
+				scheduleDelete.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+				scheduleDelete.setCreateDate(new Date());
+				scheduleDelete.setCreatePersonId(loginUser.getUserId());
+				scheduleDelete.setCreatePersonName(createPersonName);
+				scheduleDeleteMapper.insert(scheduleDelete);
+
+			} else if (OaConstant.UPDATE_OPERATION0.equals(deleteScheduleParam.getUpdateType())) {
+
+				// 删除整个重复事件
+
+				// step1 删除共享人
+				ScheduleShared scheduleShared = new ScheduleShared();
+				scheduleShared.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+				scheduleShared.setScheduleId(deleteScheduleParam.getScheduleId());
+				scheduleSharedMapper.deleteScheduleSharedId(scheduleShared);
+
+				// step2 删除提醒表
+				Schedule schedule1 = new Schedule();
+				schedule1.setScheduleId(deleteScheduleParam.getScheduleId());
+				schedule1 = scheduleMapper.queryScheduleId(schedule1);
+
+				ScheduleRemind scheduleRemind = new ScheduleRemind();
+				scheduleRemind.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+				scheduleRemind.setRemindId(schedule1.getRemindId());
+				scheduleRemindMapper.deleteScheduleRemindId(scheduleRemind);
+
+				// step3 删除日程表
+				Schedule schedule = new Schedule();
+				schedule.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+				schedule.setScheduleId(deleteScheduleParam.getScheduleId());
+				scheduleMapper.deletescheduleId(schedule);
+
+			} else {
+				logger.info("==删除日程类型选择错误，无法修改日程==");
+			}
+		} else if (OaConstant.ISREPEAT_NOT.equals(deleteScheduleParam.getIsRepeat())) {
+
+			// step1 删除共享人
+			ScheduleShared scheduleShared = new ScheduleShared();
+			scheduleShared.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+			scheduleShared.setScheduleId(deleteScheduleParam.getScheduleId());
+			scheduleSharedMapper.deleteScheduleSharedId(scheduleShared);
+
+			// step2 删除提醒表
+			Schedule schedule1 = new Schedule();
+			schedule1.setScheduleId(deleteScheduleParam.getScheduleId());
+			schedule1 = scheduleMapper.queryScheduleId(schedule1);
+
+			ScheduleRemind scheduleRemind = new ScheduleRemind();
+			scheduleRemind.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+			scheduleRemind.setRemindId(schedule1.getRemindId());
+			scheduleRemindMapper.deleteScheduleRemindId(scheduleRemind);
+
+			// step3 删除日程表
+			Schedule schedule = new Schedule();
+			schedule.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+			schedule.setScheduleId(deleteScheduleParam.getScheduleId());
+			scheduleMapper.deletescheduleId(schedule);
+
+		} else {
+			logger.info("是否重复参数传入错误=={}", deleteScheduleParam.getIsRepeat());
+		}
+
+		return 1;
+	}
+
+	/**
+	 * 查询日程列表
+	 * 
+	 * @param queryScheduleListParam
+	 * @return
+	 */
+	@Override
+	public QueryScheduleListDto queryScheduleList(QueryScheduleListParam queryScheduleListParam, LoginUser loginUser) {
+
+		String userId = loginUser.getUserId();
+		List<String> roleList = loginUser.getRoleIds();
+		
+		//获取当前登录用户的部门
+		Set<String> orgIds = new HashSet<String>();
+		orgIds = oaUserUtil.findAllOrgIdsToSet(loginUser.getTendId(),userId);
+
+		Date BeginTime = null;
+		Date EndTime = null;
+		String view_id = "";
+
+		QueryScheduleListDto queryScheduleList = new QueryScheduleListDto();
+
+		// 显示当前月前一个月第一天到后一个月最后一天共3个月数据
+		if (queryScheduleListParam.getBeginTime() == null && queryScheduleListParam.getEndTime() == null) {
+			BeginTime = DateUtil.getDate(DateUtil.getFirstDay(-1));
+			EndTime = DateUtil.getDate(DateUtil.getLastDay(1));
+			view_id = OaConstant.VIEW_ID2;
+		} else {
+			BeginTime = queryScheduleListParam.getBeginTime();
+			EndTime = queryScheduleListParam.getEndTime();
+			view_id = queryScheduleListParam.getViewId();
+		}
+
+		List<CreatePersonParam> createPersonList = new ArrayList<CreatePersonParam>();
+
+		if (queryScheduleListParam.getCreatePersonList() != null) {
+			if (queryScheduleListParam.getCreatePersonList().size() <= 0) {
+				// // 插入共享创建人默认值，默认我创建的
+				// CreatePersonParam createPersonParam = new CreatePersonParam();
+				// createPersonParam.setCreatePersonId(userId);
+				//
+				// createPersonList.add(createPersonParam);
+				// queryScheduleListParam.setCreatePersonList(createPersonList);
+
+				List<QueryScheduleDto> scheduleList = new ArrayList<QueryScheduleDto>();
+				List<QueryTaskDto> taskList = new ArrayList<QueryTaskDto>();
+				queryScheduleList.setScheduleList(scheduleList);
+				queryScheduleList.setTaskList(taskList);
+				return queryScheduleList;
+			} else {
+				createPersonList = queryScheduleListParam.getCreatePersonList();
+			}
+		}
+
+		queryScheduleListParam.setUserId(userId);
+		queryScheduleListParam.setRoleList(roleList);
+		queryScheduleListParam.setDepartmentList(orgIds);
+		queryScheduleListParam.setBeginTime(BeginTime);
+		queryScheduleListParam.setEndTime(EndTime);
+		queryScheduleListParam.setViewId(view_id);
+
+		// ///日程列表左侧包括：
+		// ///列表查询结果：
+		// 1、我创建的日程
+		// 2、日程共享给我的日程
+		// 3、共享日历给我的日程
+		// //日程结果字段
+		// /1、日程创建人
+		// /2、日程标题
+		// /3、日程查询权限 0：可以查看 1：不可以查看
+		// /4、日程标题是否显示 0:显示 1：不显示
+		// /5、日程开始时间
+		// /6、日程结束时间
+		// /7、日程id
+		// 4、任务共享给我的任务
+		// 5、我创建的任务
+		// 6、我负责的任务
+		// 7、我参与的任务
+		// //任务结果字段
+		// /1、任务起始日期
+		// /2、任务到期日
+		// /3、任务创建人
+		// /4、任务标题
+
+		// ///日程列表查询条件：
+		// 1、按日程查询
+		// 2、按任务查询
+		// 3、日视图查询
+		// 4、按周视图查询
+		// 5、按月视图查询
+		// 6、按人员列表
+
+		// /////日程列表右侧包括：
+		// 1、日程共享给我日程的创建人
+		// 2、共享日历给我日程的创建人
+		// 3、任务共享给我任务的创建人
+
+		// 查询日程列表
+		List<QueryScheduleDto> scheduleList = queryScheduleListMapper.queryScheduleList(queryScheduleListParam);
+
+		// 查询日程中任务列表
+		QueryScheduleTaskListParam queryScheduleTaskListParam = new QueryScheduleTaskListParam();
+		queryScheduleTaskListParam.setUserId(userId);
+		queryScheduleTaskListParam.setRoleList(roleList);
+		queryScheduleTaskListParam.setDepartmentList(orgIds);
+		queryScheduleTaskListParam.setBeginTime(BeginTime);
+		queryScheduleTaskListParam.setEndTime(EndTime);
+		queryScheduleTaskListParam.setViewId(view_id);
+		queryScheduleTaskListParam.setCreatePersonList(createPersonList);
+
+		List<QueryTaskDto> taskList = queryScheduleTaskListMapper.queryScheduleTaskList(queryScheduleTaskListParam);
+
+		queryScheduleList.setScheduleList(scheduleList);
+		queryScheduleList.setTaskList(taskList);
+		return queryScheduleList;
+	}
+
+	/**
+	 * 查询日程列表（改造）
+	 * 
+	 * @param queryScheduleListParam
+	 * @return
+	 */
+	@Override
+	public QueryScheduleListDto queryNewScheduleList(QueryScheduleListParam queryScheduleListParam, LoginUser loginUser) {
+
+		String userId = loginUser.getUserId();
+		List<String> roleList = loginUser.getRoleIds();
+		
+//		 long startTime1 = System.currentTimeMillis();
+//		logger.info("开始时间:{}",startTime1);
+		
+		//获取当前登录用户的部门
+		Set<String> orgIds = new HashSet<String>();
+		orgIds = oaUserUtil.findAllOrgIdsToSet(loginUser.getTendId(),userId);
+		
+		//移动端外部联系人特殊处理，移动取不到外部联系oaUserId,由后端拼接
+		Boolean isExternal = sysRedis.isExternal(loginUser.getTendId(), loginUser.getUserId());// 是否是外部联系人
+		logger.info("是否是外部联系人>>>>>{}", isExternal);
+		
+			if(isExternal){
+				List<CreatePersonParam> list = new ArrayList<CreatePersonParam>();
+				CreatePersonParam createPersonParam = new CreatePersonParam();
+				createPersonParam.setCreatePersonId(userId);
+				list.add(createPersonParam);
+				queryScheduleListParam.getCreatePersonList().addAll(list);
+			}
+				
+//		long startTime2 = System.currentTimeMillis();
+//		logger.info("调用fegin接口查询用户部门时间:{}",startTime2 - startTime1);
+		
+		Date BeginTime = null;
+		Date EndTime = null;
+		String view_id = "";
+
+		QueryScheduleListDto queryScheduleList = new QueryScheduleListDto();
+
+		// 显示当前月前一个月第一天到后一个月最后一天共3个月数据
+		if (queryScheduleListParam.getBeginTime() == null && queryScheduleListParam.getEndTime() == null) {
+			BeginTime = DateUtil.getDate(DateUtil.getFirstDay(-1));
+			EndTime = DateUtil.getDate(DateUtil.getLastDay(1));
+			view_id = OaConstant.VIEW_ID2;
+		} else {
+			BeginTime = queryScheduleListParam.getBeginTime();
+			EndTime = queryScheduleListParam.getEndTime();
+			view_id = queryScheduleListParam.getViewId();
+		}
+
+		List<CreatePersonParam> createPersonList = new ArrayList<CreatePersonParam>();
+
+		if (queryScheduleListParam.getCreatePersonList() != null) {
+			if (queryScheduleListParam.getCreatePersonList().size() <= 0) {
+				// 插入共享创建人默认值，默认我创建的
+				// CreatePersonParam createPersonParam = new CreatePersonParam();
+				// createPersonParam.setCreatePersonId(userId);
+				//
+				// createPersonList.add(createPersonParam);
+				// queryScheduleListParam.setCreatePersonList(createPersonList);
+
+				List<QueryScheduleDto> scheduleList = new ArrayList<QueryScheduleDto>();
+				List<QueryTaskDto> taskList = new ArrayList<QueryTaskDto>();
+				queryScheduleList.setScheduleList(scheduleList);
+				queryScheduleList.setTaskList(taskList);
+			} else {
+				createPersonList = queryScheduleListParam.getCreatePersonList();
+			}
+		}
+
+		queryScheduleListParam.setUserId(userId);
+		queryScheduleListParam.setRoleList(roleList);
+		queryScheduleListParam.setDepartmentList(orgIds);
+		queryScheduleListParam.setBeginTime(BeginTime);
+		queryScheduleListParam.setEndTime(EndTime);
+		queryScheduleListParam.setViewId(view_id);
+
+		// ///日程列表左侧包括：
+		// ///列表查询结果：
+		// //1、根据右侧人员查询右侧人员创建的日程
+		// //日程结果字段
+		// /1、日程创建人
+		// /2、日程标题
+		// /3、日程查询权限 0：可以查看 1：不可以查看
+		// /4、日程标题是否显示 0:显示 1：不显示
+		// /5、日程开始时间
+		// /6、日程结束时间
+		// /7、日程id
+		// 2、根据右侧人员查询右侧人员负责的任务
+		// //任务结果字段
+		// /1、任务起始日期
+		// /2、任务到期日
+		// /3、任务创建人
+		// /4、任务标题
+
+		// ///日程列表查询条件：
+		// 1、按日程查询
+		// 2、按任务查询
+		// 3、日视图查询
+		// 4、按周视图查询
+		// 5、按月视图查询
+		// 6、按人员列表
+
+		// /////日程列表右侧包括：
+		// 1、日程共享给我日程的创建人
+		// 2、共享日历给我日程的创建人
+		// 3、任务共享给我任务的创建人
+		// 4、共享日历给我任务的创建人
+
+		List<QueryScheduleDto> scheduleDtoList = new ArrayList<QueryScheduleDto>();
+		List<QueryScheduleDto> scheduleDtoList1 = new ArrayList<QueryScheduleDto>();
+
+		List<QueryScheduleDto> scheduleCalendaList = queryScheduleListMapper.queryNewScheduleCalendaList(queryScheduleListParam);
+
+		if (scheduleCalendaList.size() == 0) {// 查询日程列表,获取一定显示标题的日程列表
+			List<QueryScheduleDto> scheduleList = queryScheduleListMapper.queryNewScheduleList(queryScheduleListParam);
+			for (QueryScheduleDto queryScheduleDto : scheduleList) {
+				queryScheduleDto.setIsShowTitle(OaConstant.IS_SHOWTITLE0);
+				scheduleDtoList.add(queryScheduleDto);
+			}
+		} else {// 查询日程，共享人员（日历）列表,获取共享日历的日程列表，根据共享日历选择标题情况反显页面
+			
+			//查询共享日历日程
+			for (QueryScheduleDto queryScheduleDto : scheduleCalendaList) {
+				List<QueryScheduleDto> scheduleList = queryScheduleListMapper.queryNewScheduleList(queryScheduleListParam);
+				if(scheduleList.size() > 0){
+					for (QueryScheduleDto queryScheduleDto2 : scheduleList) {
+						if (queryScheduleDto2.getScheduleId().equals(queryScheduleDto.getScheduleId())) {
+							queryScheduleDto.setIsShowTitle(OaConstant.IS_SHOWTITLE0);
+						}
+					}
+				}
+				scheduleDtoList.add(queryScheduleDto);
+			}
+			
+			//查询共享日程
+			List<QueryScheduleDto> scheduleList = queryScheduleListMapper.queryNewScheduleList(queryScheduleListParam);
+			if(scheduleList.size() > 0){
+				for (QueryScheduleDto queryScheduleDto2 : scheduleList) {
+					boolean flag = false;
+					for (QueryScheduleDto queryScheduleDto : scheduleDtoList) {
+						
+						if (queryScheduleDto2.getScheduleId().equals(queryScheduleDto.getScheduleId())) {
+							flag = true;
+							continue;
+						}
+					}
+					if(!flag){
+						scheduleDtoList1.add(queryScheduleDto2);
+					}
+					
+				}
+				
+				if(scheduleDtoList1 != null){
+					scheduleDtoList.addAll(scheduleDtoList1);
+				}
+			}
+			
+		}
+		
+//		long startTime3 = System.currentTimeMillis();
+//		logger.info("查询日程时间时间:{}",startTime3 - startTime1);
+		
+		// 查询日程中任务列表
+		QueryScheduleTaskListParam queryScheduleTaskListParam = new QueryScheduleTaskListParam();
+		queryScheduleTaskListParam.setUserId(userId);
+		queryScheduleTaskListParam.setRoleList(roleList);
+		queryScheduleTaskListParam.setDepartmentList(orgIds);
+		queryScheduleTaskListParam.setBeginTime(BeginTime);
+		queryScheduleTaskListParam.setEndTime(EndTime);
+		queryScheduleTaskListParam.setViewId(view_id);
+		queryScheduleTaskListParam.setCreatePersonList(createPersonList);
+
+		// 查询任务列表,获取一定显示标题的任务列表
+		List<QueryTaskDto> taskDtoList = new ArrayList<QueryTaskDto>();
+		List<QueryTaskDto> taskDtoList1 = new ArrayList<QueryTaskDto>();
+
+		// 查询任务，共享人员（日历）列表,获取共享日历的任务列表，根据共享日历选择标题情况反显页面
+		List<QueryTaskDto> taskCalendaList = queryScheduleTaskListMapper.queryNewScheduleTaskCalendaList(queryScheduleTaskListParam);
+		if (taskCalendaList.size() == 0) {
+			List<QueryTaskDto> taskList = queryScheduleTaskListMapper.queryNewScheduleTaskList(queryScheduleTaskListParam);
+			for (QueryTaskDto queryTaskDto : taskList) {
+				queryTaskDto.setIsShowTitle(OaConstant.IS_SHOWTITLE0);
+				taskDtoList.add(queryTaskDto);
+			}
+		} else {
+			
+			//查询共享日历任务
+			for (QueryTaskDto queryTaskDto : taskCalendaList) {
+				List<QueryTaskDto> taskList = queryScheduleTaskListMapper.queryNewScheduleTaskList(queryScheduleTaskListParam);
+				if(taskList.size() > 0){
+					for (QueryTaskDto queryTaskDto2 : taskList) {
+						if (queryTaskDto2.getTaskId().equals(queryTaskDto.getTaskId())) {
+							queryTaskDto.setIsShowTitle(OaConstant.IS_SHOWTITLE0);
+						}
+					}
+				}
+				taskDtoList.add(queryTaskDto);
+			}
+			
+			//查询共享任务
+			List<QueryTaskDto> taskList = queryScheduleTaskListMapper.queryNewScheduleTaskList(queryScheduleTaskListParam);
+			if(taskList.size() > 0){
+				for (QueryTaskDto queryTaskDto2 : taskList) {
+					boolean flag = false;
+					for (QueryTaskDto queryTaskDto : taskDtoList) {
+
+						if (queryTaskDto2.getTaskId().equals(queryTaskDto.getTaskId())) {
+							flag = true;
+							continue;
+						}
+					}
+					if(!flag){
+						taskDtoList1.add(queryTaskDto2);
+					}
+				}
+				
+				if(taskDtoList1 != null){
+					taskDtoList.addAll(taskDtoList1);
+				}
+				
+			}
+		}
+		
+//		long startTime4 = System.currentTimeMillis();
+//		logger.info("查询任务时间时间:{}",startTime4 - startTime1);
+		
+		queryScheduleList.setScheduleList(scheduleDtoList);
+		queryScheduleList.setTaskList(taskDtoList);
+		
+//		long startTime5 = System.currentTimeMillis();
+//		logger.info("最后返回时间:{}",startTime5 - startTime1);
+		
+		return queryScheduleList;
+	}
+
+	/**
+	 * 查询日程列表（改造） 起始日期、结束日期实时计算 优化共享日历标题显示功能
+	 * 
+	 * @param queryScheduleListParam
+	 * @return
+	 */
+	@Override
+	public QueryScheduleListDto queryNewTwoScheduleList(QueryScheduleListParam queryScheduleListParam, LoginUser loginUser) {
+		QueryScheduleListDto queryScheduleList = new QueryScheduleListDto();
+		
+		String userId = loginUser.getUserId();
+		List<String> roleList = loginUser.getRoleIds();
+		
+		//获取当前登录用户的部门
+		Set<String> orgIds = new HashSet<String>();
+		orgIds = oaUserUtil.findAllOrgIdsToSet(loginUser.getTendId(),userId);
+		
+		Date BeginTime = null;
+		Date EndTime = null;
+		String view_id = "";
+
+		// 显示当前月前一个月第一天到后一个月最后一天共3个月数据
+		if (queryScheduleListParam.getBeginTime() == null && queryScheduleListParam.getEndTime() == null) {
+			BeginTime = DateUtil.getDate(DateUtil.getFirstDay(-1));
+			EndTime = DateUtil.getDate(DateUtil.getLastDay(1));
+			view_id = OaConstant.VIEW_ID2;
+		} else {
+			BeginTime = queryScheduleListParam.getBeginTime();
+			EndTime = queryScheduleListParam.getEndTime();
+			view_id = queryScheduleListParam.getViewId();
+		}
+
+		List<CreatePersonParam> createPersonList = new ArrayList<CreatePersonParam>();
+
+		if (queryScheduleListParam.getCreatePersonList() != null) {
+			if (queryScheduleListParam.getCreatePersonList().size() <= 0) {
+				// 插入共享创建人默认值，默认我创建的
+				// CreatePersonParam createPersonParam = new CreatePersonParam();
+				// createPersonParam.setCreatePersonId(userId);
+				//
+				// createPersonList.add(createPersonParam);
+				// queryScheduleListParam.setCreatePersonList(createPersonList);
+
+				List<QueryScheduleDto> scheduleList = new ArrayList<QueryScheduleDto>();
+				List<QueryTaskDto> taskList = new ArrayList<QueryTaskDto>();
+				queryScheduleList.setScheduleList(scheduleList);
+				queryScheduleList.setTaskList(taskList);
+			} else {
+				createPersonList = queryScheduleListParam.getCreatePersonList();
+			}
+		}
+
+		queryScheduleListParam.setUserId(userId);
+		queryScheduleListParam.setRoleList(roleList);
+		queryScheduleListParam.setDepartmentList(orgIds);
+		queryScheduleListParam.setBeginTime(BeginTime);
+		queryScheduleListParam.setEndTime(EndTime);
+		queryScheduleListParam.setViewId(view_id);
+
+		// ///日程列表左侧包括：
+		// ///列表查询结果：
+		// //1、根据右侧人员查询右侧人员创建的日程
+		// //日程结果字段
+		// /1、日程创建人
+		// /2、日程标题
+		// /3、日程查询权限 0：可以查看 1：不可以查看
+		// /4、日程标题是否显示 0:显示 1：不显示
+		// /5、日程开始时间
+		// /6、日程结束时间
+		// /7、日程id
+		// 2、根据右侧人员查询右侧人员负责的任务
+		// //任务结果字段
+		// /1、任务起始日期
+		// /2、任务到期日
+		// /3、任务创建人
+		// /4、任务标题
+
+		// ///日程列表查询条件：
+		// 1、按日程查询
+		// 2、按任务查询
+		// 3、日视图查询
+		// 4、按周视图查询
+		// 5、按月视图查询
+		// 6、按人员列表
+
+		// /////日程列表右侧包括：
+		// 1、日程共享给我日程的创建人
+		// 2、共享日历给我日程的创建人
+		// 3、任务共享给我任务的创建人
+		// 4、共享日历给我任务的创建人
+
+		List<QueryScheduleDto> scheduleDtoList = new ArrayList<QueryScheduleDto>();
+
+		// 查询不重复日程
+		List<QueryScheduleDto> scheduleCalendaList = queryScheduleListMapper.queryNewTwoNotScheduleCalendaList(queryScheduleListParam);
+
+		if (scheduleCalendaList.size() == 0) {// 查询日程列表,获取一定显示标题的日程列表
+
+			List<QueryScheduleDto> scheduleList = queryScheduleListMapper.queryNewTwoNotScheduleList(queryScheduleListParam);
+			for (QueryScheduleDto queryScheduleDto : scheduleList) {
+
+				// 查询日程删除列表
+				ScheduleDelete scheduleDelete = new ScheduleDelete();
+				scheduleDelete.setScheduleId(queryScheduleDto.getScheduleId());
+				scheduleDelete.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+				List<ScheduleDelete> deleteList = scheduleDeleteMapper.select(scheduleDelete);
+
+				if (deleteList.size() > 0) {
+					for (ScheduleDelete scheduleDelete2 : deleteList) {
+						if ((scheduleDelete2.getScheduleId().equals(queryScheduleDto.getScheduleId()))
+								&& (scheduleDelete2.getBeginTime().compareTo(queryScheduleDto.getBeginTime()) != 0)
+								&& (scheduleDelete2.getEndTime().compareTo(queryScheduleDto.getEndTime()) != 0)) {
+
+							queryScheduleDto.setIsShowTitle(OaConstant.IS_SHOWTITLE0);
+
+							scheduleDtoList.add(queryScheduleDto);
+						}
+					}
+				}else{
+					queryScheduleDto.setIsShowTitle(OaConstant.IS_SHOWTITLE0);
+
+					scheduleDtoList.add(queryScheduleDto);
+				}
+			}
+		} else {// 查询日程，共享人员（日历）列表,获取共享日历的日程列表，根据共享日历选择标题情况反显页面
+			for (QueryScheduleDto queryScheduleDto : scheduleCalendaList) {
+				List<QueryScheduleDto> scheduleList = queryScheduleListMapper.queryNewTwoNotScheduleList(queryScheduleListParam);
+				for (QueryScheduleDto queryScheduleDto2 : scheduleList) {
+
+					// 查询日程删除列表
+					ScheduleDelete scheduleDelete = new ScheduleDelete();
+					scheduleDelete.setScheduleId(queryScheduleDto2.getScheduleId());
+					scheduleDelete.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+					List<ScheduleDelete> deleteList = scheduleDeleteMapper.select(scheduleDelete);
+
+					if (deleteList.size() > 0) {
+						for (ScheduleDelete scheduleDelete2 : deleteList) {
+							if ((scheduleDelete2.getScheduleId().equals(queryScheduleDto.getScheduleId()))
+									&& (scheduleDelete2.getBeginTime().compareTo(queryScheduleDto.getBeginTime()) != 0)
+									&& (scheduleDelete2.getEndTime().compareTo(queryScheduleDto.getEndTime()) != 0)) {
+
+								if (queryScheduleDto2.getScheduleId().equals(queryScheduleDto.getScheduleId())) {
+									queryScheduleDto.setIsShowTitle(OaConstant.IS_SHOWTITLE0);
+								}
+
+								scheduleDtoList.add(queryScheduleDto);
+							}
+						}
+					}else{
+						if (queryScheduleDto2.getScheduleId().equals(queryScheduleDto.getScheduleId())) {
+							queryScheduleDto.setIsShowTitle(OaConstant.IS_SHOWTITLE0);
+						}
+
+						scheduleDtoList.add(queryScheduleDto);
+					}
+				}
+			}
+		}
+
+		// 查询重复日程
+		List<QueryScheduleDto> scheduleNewTwoCalendaList = queryScheduleListMapper.queryNewTwoScheduleCalendaList(queryScheduleListParam);
+
+		if (scheduleNewTwoCalendaList.size() == 0) {// 查询日程列表,获取一定显示标题的日程列表
+			List<QueryScheduleDto> scheduleList = queryScheduleListMapper.queryNewTwoScheduleList(queryScheduleListParam);
+			for (QueryScheduleDto queryScheduleDto : scheduleList) {
+				String scheduleId = queryScheduleDto.getScheduleId();
+
+				// 查询日程删除列表
+				ScheduleDelete scheduleDelete = new ScheduleDelete();
+				scheduleDelete.setScheduleId(scheduleId);
+				scheduleDelete.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+				List<ScheduleDelete> deleteList = scheduleDeleteMapper.select(scheduleDelete);
+
+				ScheduleNewTwo scheduleNewTwo = new ScheduleNewTwo();
+				scheduleNewTwo.setScheduleId(scheduleId);
+				ScheduleNewTwo scheduleResult = scheduleNewTwoMapper.selectOne(scheduleNewTwo);
+				if (scheduleResult != null) {
+					String beginTimeProcess = DateUtil.dateToDateString(scheduleResult.getBeginTime(), DateUtil.DATATIMEF_STR);// 起始时间
+					String endTimeProcess = DateUtil.dateToDateString(scheduleResult.getEndTime(), DateUtil.DATATIMEF_STR);// 结束时间
+
+					// 计算开始日期结束日期
+					BuildScheduleParam buildScheduleParam = new BuildScheduleParam();
+					buildScheduleParam.setRepetitionFrequency(scheduleResult.getRepetitionFrequency());
+					buildScheduleParam.setEndFrequency(scheduleResult.getEndFrequency());
+					buildScheduleParam.setBeginTime(DateUtil.dateToDateString(scheduleResult.getBeginTime(), DateUtil.DATATIMEF_STR));
+					buildScheduleParam.setEndTime(DateUtil.dateToDateString(scheduleResult.getEndTime(), DateUtil.DATATIMEF_STR));
+
+					if (OaConstant.ENDFREQUENCY_TIMES.equals(buildScheduleParam.getEndFrequency())) {// 次数
+						buildScheduleParam.setEndFrequencyNum(scheduleResult.getEndFrequencyNum());
+					}
+
+					if (OaConstant.ENDFREQUENCY_DATE.equals(buildScheduleParam.getEndFrequency())) {// 日期
+						buildScheduleParam.setEndFrequencyTime(DateUtil.dateToDateString(scheduleResult.getEndFrequencyTime(), DateUtil.DATATIMEF_STR));
+					}
+
+					int times = (int) getTimes(buildScheduleParam).get("times");// 获取重复次数
+
+					logger.info(">>>>>>>>>新建重复日程重复次数>>>>>>>>>>{}", times);
+
+					for (int i = 0; i < times; i++) {
+
+						QueryScheduleDto queryScheduleDtoResult = new QueryScheduleDto();
+
+						String beginTime = "";
+						String endTime = "";
+
+						if (i == 0) {
+							beginTime = buildScheduleParam.getBeginTime();
+							endTime = buildScheduleParam.getEndTime();
+						} else {
+							if (OaConstant.REPETITIONFREQUENCY_DAY.equals(buildScheduleParam.getRepetitionFrequency())) {// 每天
+								beginTime = DateUtil.nextDay(beginTimeProcess, i);// 起始时间
+								endTime = DateUtil.nextDay(endTimeProcess, i);// 结束时间
+								// remindTimeProcess = DateUtil.getLastDateMinut(beginTimeProcess, buildScheduleParam.getAdvanceTime());// 提醒时间
+							} else if (OaConstant.REPETITIONFREQUENCY_WEEK.equals(buildScheduleParam.getRepetitionFrequency())) {// 每周
+								beginTime = DateUtil.nextWeek(beginTimeProcess, i);// 起始时间
+								endTime = DateUtil.nextWeek(endTimeProcess, i);// 结束时间
+								// remindTimeProcess = DateUtil.getLastDateMinut(beginTimeProcess, buildScheduleParam.getAdvanceTime());// 提醒时间
+							} else if (OaConstant.REPETITIONFREQUENCY_MONTH.equals(buildScheduleParam.getRepetitionFrequency())) {// 每月
+								beginTime = DateUtil.nextMonth(beginTimeProcess, i);// 起始时间
+								endTime = DateUtil.nextMonth(endTimeProcess, i);// 结束时间
+								// remindTimeProcess = DateUtil.getLastDateMinut(beginTimeProcess, buildScheduleParam.getAdvanceTime());// 提醒时间
+							} else if (OaConstant.REPETITIONFREQUENCY_YEAR.equals(buildScheduleParam.getRepetitionFrequency())) {// 每年
+								beginTime = DateUtil.nextYear(beginTimeProcess, i);// 起始时间
+								endTime = DateUtil.nextYear(endTimeProcess, i);// 结束时间
+								// remindTimeProcess = DateUtil.getLastDateMinut(beginTimeProcess, buildScheduleParam.getAdvanceTime());// 提醒时间
+							} else {
+
+							}
+						}
+
+						// 日期筛选
+						Date jBeginTime = DateUtil.getDate(beginTime);// 计算开始日期
+						Date jEndTime = DateUtil.getDate(endTime);// 计算结束日期
+						Date iBeginTime = queryScheduleListParam.getBeginTime();// 传入开始日期
+						Date iEndTime = queryScheduleListParam.getEndTime();// 传入结束日期
+
+						// 1、计算开始日期 < 传入开始日期 && 计算结束日期 > 传入结束日期
+						// 2、计算开始日期 > 传入开始日期 && 计算结束日期 < 传入结束日期
+						// 3、计算开始日期 > 传入开始日期 && 计算开始日期 < 传入结束日期
+						// 4、计算结束日期 > 传入开始日期 && 计算结束日期 < 传入结束日期
+
+						if ((jBeginTime.compareTo(iBeginTime) < 0 && jEndTime.compareTo(iEndTime) > 0)
+								|| (jBeginTime.compareTo(iBeginTime) > 0 && jEndTime.compareTo(iEndTime) < 0)
+								|| (jBeginTime.compareTo(iBeginTime) > 0 && jBeginTime.compareTo(iEndTime) < 0)
+								|| (jEndTime.compareTo(iBeginTime) > 0 && jEndTime.compareTo(iEndTime) < 0)) {
+
+							if (deleteList.size() > 0) {
+								for (ScheduleDelete scheduleDelete2 : deleteList) {
+									if ((scheduleDelete2.getScheduleId().equals(queryScheduleDto.getScheduleId())) && (scheduleDelete2.getBeginTime().compareTo(jBeginTime) != 0)
+											&& (scheduleDelete2.getEndTime().compareTo(jEndTime) != 0)) {
+
+										queryScheduleDtoResult.setCreatePersonId(queryScheduleDto.getCreatePersonId());
+										queryScheduleDtoResult.setCreatePersonName(queryScheduleDto.getCreatePersonName());
+										queryScheduleDtoResult.setScheduleId(queryScheduleDto.getScheduleId());
+										queryScheduleDtoResult.setScheduleTitle(queryScheduleDto.getScheduleTitle());
+										queryScheduleDtoResult.setSource(queryScheduleDto.getSource());
+										queryScheduleDtoResult.setBeginTime(DateUtil.getDate(beginTime));
+										queryScheduleDtoResult.setEndTime(DateUtil.getDate(endTime));
+										queryScheduleDtoResult.setIsShowTitle(OaConstant.IS_SHOWTITLE0);
+										scheduleDtoList.add(queryScheduleDtoResult);
+									}
+								}
+							} else {
+								queryScheduleDtoResult.setCreatePersonId(queryScheduleDto.getCreatePersonId());
+								queryScheduleDtoResult.setCreatePersonName(queryScheduleDto.getCreatePersonName());
+								queryScheduleDtoResult.setScheduleId(queryScheduleDto.getScheduleId());
+								queryScheduleDtoResult.setScheduleTitle(queryScheduleDto.getScheduleTitle());
+								queryScheduleDtoResult.setSource(queryScheduleDto.getSource());
+								queryScheduleDtoResult.setBeginTime(DateUtil.getDate(beginTime));
+								queryScheduleDtoResult.setEndTime(DateUtil.getDate(endTime));
+								queryScheduleDtoResult.setIsShowTitle(OaConstant.IS_SHOWTITLE0);
+								scheduleDtoList.add(queryScheduleDtoResult);
+							}
+
+						}
+					}
+				}
+			}
+
+		} else {// 查询日程，共享人员（日历）列表,获取共享日历的日程列表，根据共享日历选择标题情况反显页面
+			for (QueryScheduleDto queryScheduleDto : scheduleCalendaList) {
+
+				// 查询日程删除列表
+				ScheduleDelete scheduleDelete = new ScheduleDelete();
+				scheduleDelete.setScheduleId(queryScheduleDto.getScheduleId());
+				scheduleDelete.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+				List<ScheduleDelete> deleteList = scheduleDeleteMapper.select(scheduleDelete);
+
+				List<QueryScheduleDto> scheduleList = queryScheduleListMapper.queryNewTwoScheduleList(queryScheduleListParam);
+				for (QueryScheduleDto queryScheduleDto2 : scheduleList) {
+
+					ScheduleNewTwo scheduleNewTwo = new ScheduleNewTwo();
+					scheduleNewTwo.setScheduleId(queryScheduleDto2.getScheduleId());
+					ScheduleNewTwo scheduleResult = scheduleNewTwoMapper.selectOne(scheduleNewTwo);
+					if (scheduleResult != null) {
+
+						String beginTimeProcess = DateUtil.dateToDateString(scheduleResult.getBeginTime(), DateUtil.DATATIMEF_STR);// 起始时间
+						String endTimeProcess = DateUtil.dateToDateString(scheduleResult.getEndTime(), DateUtil.DATATIMEF_STR);// 结束时间
+
+						// 计算开始日期结束日期
+						BuildScheduleParam buildScheduleParam = new BuildScheduleParam();
+						buildScheduleParam.setRepetitionFrequency(scheduleResult.getRepetitionFrequency());
+						buildScheduleParam.setEndFrequency(scheduleResult.getEndFrequency());
+						buildScheduleParam.setBeginTime(DateUtil.dateToDateString(scheduleResult.getBeginTime(), DateUtil.DATATIMEF_STR));
+						buildScheduleParam.setEndTime(DateUtil.dateToDateString(scheduleResult.getEndTime(), DateUtil.DATATIMEF_STR));
+
+						if (OaConstant.ENDFREQUENCY_TIMES.equals(buildScheduleParam.getEndFrequency())) {// 次数
+							buildScheduleParam.setEndFrequencyNum(scheduleResult.getEndFrequencyNum());
+						}
+
+						if (OaConstant.ENDFREQUENCY_DATE.equals(buildScheduleParam.getEndFrequency())) {// 日期
+							buildScheduleParam.setEndFrequencyTime(DateUtil.dateToDateString(scheduleResult.getEndFrequencyTime(), DateUtil.DATATIMEF_STR));
+						}
+
+						int times = (int) getTimes(buildScheduleParam).get("times");// 获取重复次数
+
+						logger.info(">>>>>>>>>新建重复日程重复次数>>>>>>>>>>{}", times);
+
+						for (int i = 0; i < times; i++) {
+
+							QueryScheduleDto queryScheduleDtoResult = new QueryScheduleDto();
+
+							if (queryScheduleDto2.getScheduleId().equals(queryScheduleDto.getScheduleId())) {
+								queryScheduleDtoResult.setIsShowTitle(OaConstant.IS_SHOWTITLE0);
+							}
+
+							String beginTime = "";
+							String endTime = "";
+
+							if (i == 0) {
+								beginTime = buildScheduleParam.getBeginTime();
+								endTime = buildScheduleParam.getEndTime();
+							} else {
+								if (OaConstant.REPETITIONFREQUENCY_DAY.equals(buildScheduleParam.getRepetitionFrequency())) {// 每天
+									beginTime = DateUtil.nextDay(beginTimeProcess, i);// 起始时间
+									endTime = DateUtil.nextDay(endTimeProcess, i);// 结束时间
+									// remindTimeProcess = DateUtil.getLastDateMinut(beginTimeProcess, buildScheduleParam.getAdvanceTime());// 提醒时间
+								} else if (OaConstant.REPETITIONFREQUENCY_WEEK.equals(buildScheduleParam.getRepetitionFrequency())) {// 每周
+									beginTime = DateUtil.nextWeek(beginTimeProcess, i);// 起始时间
+									endTime = DateUtil.nextWeek(endTimeProcess, i);// 结束时间
+									// remindTimeProcess = DateUtil.getLastDateMinut(beginTimeProcess, buildScheduleParam.getAdvanceTime());// 提醒时间
+								} else if (OaConstant.REPETITIONFREQUENCY_MONTH.equals(buildScheduleParam.getRepetitionFrequency())) {// 每月
+									beginTime = DateUtil.nextMonth(beginTimeProcess, i);// 起始时间
+									endTime = DateUtil.nextMonth(endTimeProcess, i);// 结束时间
+									// remindTimeProcess = DateUtil.getLastDateMinut(beginTimeProcess, buildScheduleParam.getAdvanceTime());// 提醒时间
+								} else if (OaConstant.REPETITIONFREQUENCY_YEAR.equals(buildScheduleParam.getRepetitionFrequency())) {// 每年
+									beginTime = DateUtil.nextYear(beginTimeProcess, i);// 起始时间
+									endTime = DateUtil.nextYear(endTimeProcess, i);// 结束时间
+									// remindTimeProcess = DateUtil.getLastDateMinut(beginTimeProcess, buildScheduleParam.getAdvanceTime());// 提醒时间
+								} else {
+
+								}
+							}
+
+							// 日期筛选
+							Date jBeginTime = DateUtil.getDate(beginTime);// 计算开始日期
+							Date jEndTime = DateUtil.getDate(endTime);// 计算结束日期
+							Date iBeginTime = queryScheduleListParam.getBeginTime();// 传入开始日期
+							Date iEndTime = queryScheduleListParam.getEndTime();// 传入结束日期
+
+							// 1、计算开始日期 < 传入开始日期 && 计算结束日期 > 传入结束日期
+							// 2、计算开始日期 > 传入开始日期 && 计算结束日期 < 传入结束日期
+							// 3、计算开始日期 > 传入开始日期 && 计算开始日期 < 传入结束日期
+							// 4、计算结束日期 > 传入开始日期 && 计算结束日期 < 传入结束日期
+
+							if ((jBeginTime.compareTo(iBeginTime) < 0 && jEndTime.compareTo(iEndTime) > 0)
+									|| (jBeginTime.compareTo(iBeginTime) > 0 && jEndTime.compareTo(iEndTime) < 0)
+									|| (jBeginTime.compareTo(iBeginTime) > 0 && jBeginTime.compareTo(iEndTime) < 0)
+									|| (jEndTime.compareTo(iBeginTime) > 0 && jEndTime.compareTo(iEndTime) < 0)) {
+
+								if (deleteList.size() > 0) {
+
+									for (ScheduleDelete scheduleDelete2 : deleteList) {
+										if ((scheduleDelete2.getScheduleId().equals(queryScheduleDto.getScheduleId()))
+												&& (scheduleDelete2.getBeginTime().compareTo(jBeginTime) != 0) && (scheduleDelete2.getEndTime().compareTo(jEndTime) != 0)) {
+											queryScheduleDtoResult.setCreatePersonId(queryScheduleDto.getCreatePersonId());
+											queryScheduleDtoResult.setCreatePersonName(queryScheduleDto.getCreatePersonName());
+											queryScheduleDtoResult.setScheduleId(queryScheduleDto.getScheduleId());
+											queryScheduleDtoResult.setScheduleTitle(queryScheduleDto.getScheduleTitle());
+											queryScheduleDtoResult.setSource(queryScheduleDto.getSource());
+											queryScheduleDtoResult.setBeginTime(DateUtil.getDate(beginTime));
+											queryScheduleDtoResult.setEndTime(DateUtil.getDate(endTime));
+											queryScheduleDtoResult.setIsShowTitle(queryScheduleDto2.getIsShowTitle());
+											scheduleDtoList.add(queryScheduleDtoResult);
+										}
+									}
+								} else {
+									queryScheduleDtoResult.setCreatePersonId(queryScheduleDto.getCreatePersonId());
+									queryScheduleDtoResult.setCreatePersonName(queryScheduleDto.getCreatePersonName());
+									queryScheduleDtoResult.setScheduleId(queryScheduleDto.getScheduleId());
+									queryScheduleDtoResult.setScheduleTitle(queryScheduleDto.getScheduleTitle());
+									queryScheduleDtoResult.setSource(queryScheduleDto.getSource());
+									queryScheduleDtoResult.setBeginTime(DateUtil.getDate(beginTime));
+									queryScheduleDtoResult.setEndTime(DateUtil.getDate(endTime));
+									queryScheduleDtoResult.setIsShowTitle(queryScheduleDto2.getIsShowTitle());
+									scheduleDtoList.add(queryScheduleDtoResult);
+								}
+
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// 查询日程中任务列表
+		QueryScheduleTaskListParam queryScheduleTaskListParam = new QueryScheduleTaskListParam();
+		queryScheduleTaskListParam.setUserId(userId);
+		queryScheduleTaskListParam.setRoleList(roleList);
+		queryScheduleTaskListParam.setDepartmentList(orgIds);
+		queryScheduleTaskListParam.setBeginTime(BeginTime);
+		queryScheduleTaskListParam.setEndTime(EndTime);
+		queryScheduleTaskListParam.setViewId(view_id);
+		queryScheduleTaskListParam.setCreatePersonList(createPersonList);
+
+		// 查询任务列表,获取一定显示标题的任务列表
+		List<QueryTaskDto> taskDtoList = new ArrayList<QueryTaskDto>();
+
+		// 查询任务，共享人员（日历）列表,获取共享日历的任务列表，根据共享日历选择标题情况反显页面
+		List<QueryTaskDto> taskCalendaList = queryScheduleTaskListMapper.queryNewScheduleTaskCalendaList(queryScheduleTaskListParam);
+		if (taskCalendaList.size() == 0) {
+			List<QueryTaskDto> taskList = queryScheduleTaskListMapper.queryNewScheduleTaskList(queryScheduleTaskListParam);
+			for (QueryTaskDto queryTaskDto : taskList) {
+				queryTaskDto.setIsShowTitle(OaConstant.IS_SHOWTITLE0);
+				taskDtoList.add(queryTaskDto);
+			}
+		} else {
+			for (QueryTaskDto queryTaskDto : taskCalendaList) {
+				List<QueryTaskDto> taskList = queryScheduleTaskListMapper.queryNewScheduleTaskList(queryScheduleTaskListParam);
+				for (QueryTaskDto queryTaskDto2 : taskList) {
+					if (queryTaskDto2.getTaskId().equals(queryTaskDto.equals(queryTaskDto.getTaskId()))) {
+						queryTaskDto.setIsShowTitle(OaConstant.IS_SHOWTITLE0);
+					}
+
+					taskDtoList.add(queryTaskDto);
+
+				}
+			}
+		}
+
+		queryScheduleList.setScheduleList(scheduleDtoList);
+		queryScheduleList.setTaskList(taskDtoList);
+
+		return queryScheduleList;
+	}
+
+	/**
+	 * 查询日程共享创建人列表 仅仅查询共享给我日程、任务的人;共享日历给我日程、任务的人
+	 * 
+	 * @author wdy
+	 *
+	 */
+	@Override
+	public List<SharedCreatePersonDto> querySharedCreatePersonList(QueryScheduleTaskListParam queryScheduleTaskListParam, LoginUser loginUser) {
+
+		String userId = loginUser.getUserId();
+		List<String> roleList = loginUser.getRoleIds();
+		
+		//获取当前登录用户的部门
+		Set<String> orgIds = new HashSet<String>();
+		orgIds = oaUserUtil.findAllOrgIdsToSet(loginUser.getTendId(),userId);
+
+		// ///日程列表左侧包括：
+		// ///列表查询结果：
+		// 1、我创建的日程
+		// 2、日程共享给我的日程
+		// 3、共享日历给我的日程
+		// //日程结果字段
+		// /1、日程创建人
+		// /2、日程标题
+		// /3、日程查询权限 0：可以查看 1：不可以查看
+		// /4、日程标题是否显示 0:显示 1：不显示
+		// /5、日程开始时间
+		// /6、日程结束时间
+		// /7、日程id
+		// 4、任务共享给我的任务
+		// 5、我创建的任务
+		// 6、我负责的任务
+		// 7、我参与的任务
+		// //任务结果字段
+		// /1、任务起始日期
+		// /2、任务到期日
+		// /3、任务创建人
+		// /4、任务标题
+
+		// ///日程列表查询条件：
+		// 1、按日程查询
+		// 2、按任务查询
+		// 3、日视图查询
+		// 4、按周视图查询
+		// 5、按月视图查询
+		// 6、按人员列表
+
+		// /////日程列表右侧包括：
+		// 1、日程共享给我日程的创建人
+		// 2、共享日历给我日程的创建人
+		// 3、任务共享给我任务的创建人
+
+		queryScheduleTaskListParam.setUserId(userId);
+		queryScheduleTaskListParam.setRoleList(roleList);
+		queryScheduleTaskListParam.setDepartmentList(orgIds);
+		List<SharedCreatePersonDto> sharedCreatePersonList = querySharedCreatePersonListMapper.querySharedCreatePersonList(queryScheduleTaskListParam);
+		List<SharedCreatePersonDto> sharedCreatePersonListResult = new ArrayList<SharedCreatePersonDto>();
+		// 插入默认值
+		// SharedCreatePersonDto sharedCreatePersonDto = new SharedCreatePersonDto();
+		// sharedCreatePersonDto.setSharedShowId(userId);
+		// sharedCreatePersonDto.setSharedShowName("我");
+		// sharedCreatePersonDto.setResourceImgUrl(oaUserUtil.queryImgUrl(loginUser.getTendId(), loginUser.getUserId()));
+		// sharedCreatePersonListResult.add(sharedCreatePersonDto);
+
+		if (sharedCreatePersonList.size() > 0) {
+			for (SharedCreatePersonDto sharedCreatePersonDto1 : sharedCreatePersonList) {
+
+				SharedCreatePersonDto sharedCreatePersonDto2 = new SharedCreatePersonDto();
+
+				// if (loginUser.getUserId().equals(sharedCreatePersonDto1.getSharedShowId())) {// 如果日程是我自己创建的跳过，因为已经设置默认值了
+				// continue;
+				// } else {
+				String imgUrl = "";
+				// 从redis里取出用户头像
+
+				String imgStr = JedisUtil.fetchRow(UserOrFriendConstant.IM_USER_INFO, sharedCreatePersonDto1.getImUserId());
+				if (!StringUtils.isEmpty(imgStr)) {
+					Map<String, Object> imgMap = JacksonUtils.fromJson(imgStr, Map.class);
+					if (imgMap != null) {
+						imgUrl = (String) imgMap.get("resourceImgUrl");
+						// logger.info("通过oaUserId查询imUserId，并且通过imUserId从redis里取出用户头像,userId:{}，imgUrl：{}",userId,imgUrl);
+					}
+				}
+
+				sharedCreatePersonDto2.setSharedShowId(sharedCreatePersonDto1.getSharedShowId());
+				sharedCreatePersonDto2.setSharedShowName(sharedCreatePersonDto1.getSharedShowName());
+				sharedCreatePersonDto2.setResourceImgUrl(imgUrl);
+				// }
+
+				sharedCreatePersonListResult.add(sharedCreatePersonDto2);
+			}
+		}
+
+		return sharedCreatePersonListResult;
+	}
+
+	/**
+	 * 日程权限查询
+	 * 
+	 * @param scheduleAuthParam
+	 *            输入对象
+	 */
+	@Override
+	public Boolean queryScheduleAuth(ScheduleAuthParam scheduleAuthParam) {
+
+		Boolean scheduleAuth = true;
+		ScheduleShared scheduleShared = new ScheduleShared();
+		scheduleShared.setScheduleId(scheduleAuthParam.getScheduleId());
+		List<ScheduleShared> scheduleSharedList = scheduleSharedMapper.select(scheduleShared);
+
+		if (scheduleSharedList.size() == 0) {
+			scheduleAuth = false;
+		}
+
+		return scheduleAuth;
+	}
+
+	/**
+	 * 新建重复日程
+	 * 
+	 * @param buildScheduleParam
+	 *            输入对象
+	 * @param calendarId
+	 *            日历id
+	 */
+	public void buildRepeatSchedule(BuildScheduleParam buildScheduleParam, String calendarId, LoginUser loginUser, String createPersonName) {
+
+		int times = (int) getTimes(buildScheduleParam).get("times");// 获取重复次数
+
+		logger.info(">>>>>>>>>新建重复日程重复次数>>>>>>>>>>{}", times);
+
+		String repetitionResult = (String) getTimes(buildScheduleParam).get("repetitionResult");// 获取重复结果
+		String beginTimeProcess = buildScheduleParam.getBeginTime();// 起始时间
+		String endTimeProcess = buildScheduleParam.getEndTime();// 结束时间
+		String remindTimeProcess = null;// 提醒时间
+
+		// 插入日程组表
+		String scheduleGroupId = IDGenerator.getUUID();
+		ScheduleGroup scheduleGroup = new ScheduleGroup();
+		scheduleGroup.setId(Base.generatePk(ScheduleGroup.class));
+		scheduleGroup.setScheduleGroupId(scheduleGroupId);
+		scheduleGroup.setRepetitionFrequency(buildScheduleParam.getRepetitionFrequency());
+		scheduleGroup.setEndFrequency(buildScheduleParam.getEndFrequency());
+		scheduleGroup.setRepetitionResult(repetitionResult);
+		scheduleGroup.setCreatePersonId(loginUser.getUserId());
+		scheduleGroup.setCreatePersonName(createPersonName);
+		scheduleGroup.setCreateDate(new Date());
+		scheduleGroup.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+		scheduleGroup.setEndFrequencyNum(buildScheduleParam.getEndFrequencyNum());
+
+		String endFrequencyTime = buildScheduleParam.getEndFrequencyTime();
+		if (StringUtils.isNotBlank(endFrequencyTime)) {
+			scheduleGroup.setEndFrequencyTime(DateUtil.getDate(endFrequencyTime));
+		}
+
+		scheduleGroupMapper.insert(scheduleGroup);
+
+		// long startTime6_1 = System.currentTimeMillis();
+		List<ScheduleRemind> listScheduleRemind = new ArrayList<ScheduleRemind>();
+		List<Schedule> listSchedule = new ArrayList<Schedule>();
+		List<ScheduleShared> listScheduleShared = new ArrayList<ScheduleShared>();
+
+		// 判断是否有共享人，如果存在插入共享表
+		if (buildScheduleParam.getScheduleSharedParam() != null) {
+			generateBatchSharedPerson(listScheduleShared, buildScheduleParam, scheduleGroupId, loginUser, createPersonName);
+			if (listScheduleShared.size() > 0) {
+				scheduleSharedMapper.insertList(listScheduleShared);
+			}
+
+		}
+
+		// 插入提醒表
+		// 计算提醒结束时间
+		Date remindEndtime = null;
+		if (OaConstant.REPETITIONFREQUENCY_DAY.equals(buildScheduleParam.getRepetitionFrequency())) {// 每天
+
+			remindEndtime = DateUtil.getDate(DateUtil.nextDay(beginTimeProcess, times));
+
+		} else if (OaConstant.REPETITIONFREQUENCY_WEEK.equals(buildScheduleParam.getRepetitionFrequency())) {// 每周
+
+			remindEndtime = DateUtil.getDate(DateUtil.nextWeek(beginTimeProcess, times));
+
+		} else if (OaConstant.REPETITIONFREQUENCY_MONTH.equals(buildScheduleParam.getRepetitionFrequency())) {// 每月
+
+			remindEndtime = DateUtil.getDate(DateUtil.nextMonth(beginTimeProcess, times));
+
+		} else if (OaConstant.REPETITIONFREQUENCY_YEAR.equals(buildScheduleParam.getRepetitionFrequency())) {// 每年
+			remindEndtime = DateUtil.getDate(DateUtil.nextYear(beginTimeProcess, times));
+		} else {
+
+		}
+
+		remindTimeProcess = buildScheduleParam.getBeginTime();// 提醒时间
+		ScheduleRemind scheduleRemind = null;
+		scheduleRemind = generateRemind(DateUtil.getDate(remindTimeProcess), loginUser, createPersonName, buildScheduleParam, remindEndtime);
+		listScheduleRemind.add(scheduleRemind);
+		scheduleRemindMapper.insertList(listScheduleRemind);
+
+		// long startTime1_0 = System.currentTimeMillis();
+		for (int i = 0; i < times; i++) {
+
+			if (i == 0) {
+				beginTimeProcess = buildScheduleParam.getBeginTime();
+				endTimeProcess = buildScheduleParam.getEndTime();
+			} else {
+				if (OaConstant.REPETITIONFREQUENCY_DAY.equals(buildScheduleParam.getRepetitionFrequency())) {// 每天
+					beginTimeProcess = DateUtil.nextDay(beginTimeProcess);// 起始时间
+					endTimeProcess = DateUtil.nextDay(endTimeProcess);// 结束时间
+					// remindTimeProcess = DateUtil.getLastDateMinut(beginTimeProcess, buildScheduleParam.getAdvanceTime());// 提醒时间
+				} else if (OaConstant.REPETITIONFREQUENCY_WEEK.equals(buildScheduleParam.getRepetitionFrequency())) {// 每周
+					beginTimeProcess = DateUtil.nextWeek(beginTimeProcess);// 起始时间
+					endTimeProcess = DateUtil.nextWeek(endTimeProcess);// 结束时间
+					// remindTimeProcess = DateUtil.getLastDateMinut(beginTimeProcess, buildScheduleParam.getAdvanceTime());// 提醒时间
+				} else if (OaConstant.REPETITIONFREQUENCY_MONTH.equals(buildScheduleParam.getRepetitionFrequency())) {// 每月
+					beginTimeProcess = DateUtil.nextMonth(beginTimeProcess);// 起始时间
+					endTimeProcess = DateUtil.nextMonth(endTimeProcess);// 结束时间
+					// remindTimeProcess = DateUtil.getLastDateMinut(beginTimeProcess, buildScheduleParam.getAdvanceTime());// 提醒时间
+				} else if (OaConstant.REPETITIONFREQUENCY_YEAR.equals(buildScheduleParam.getRepetitionFrequency())) {// 每年
+					beginTimeProcess = DateUtil.nextYear(beginTimeProcess);// 起始时间
+					endTimeProcess = DateUtil.nextYear(endTimeProcess);// 结束时间
+					// remindTimeProcess = DateUtil.getLastDateMinut(beginTimeProcess, buildScheduleParam.getAdvanceTime());// 提醒时间
+				} else {
+
+				}
+			}
+			// }
+			// long startTime1_1 = System.currentTimeMillis();
+			// logger.info("起始结束日期计算：：：：：：：：：：：：：" + (startTime1_1 - startTime1_0));
+
+			Schedule schedule = null;
+			// long startTime3_0 = System.currentTimeMillis();
+			// for (int i = 0; i < times; i++) {
+			// 插入日程表
+			schedule = generateSchedule(buildScheduleParam, DateUtil.getDate(beginTimeProcess), DateUtil.getDate(endTimeProcess), scheduleRemind.getRemindId(), scheduleGroupId,
+					calendarId, loginUser, createPersonName);
+
+			listSchedule.add(schedule);
+			// }
+			// long startTime3_1 = System.currentTimeMillis();
+			// logger.info("组装日程表：：：：：：：：：：：：：" + (startTime3_1 - startTime3_0));
+
+			// long startTime4_0 = System.currentTimeMillis();
+			// for (int i = 0; i < times; i++) {
+		}
+
+		if (listSchedule.size() > 0) {
+			scheduleMapper.insertList(listSchedule);
+		}
+
+		// long startTime4_1 = System.currentTimeMillis();
+		// logger.info("组装共享人表：：：：：：：：：：：：：" + (startTime4_1 - startTime4_0));
+
+		// long startTime6_2 = System.currentTimeMillis();
+		// logger.info("计算所有开始时间和结束以及提醒时间的总时间并生成list的时间：：：：：：：：：：：：：" + (startTime6_2 - startTime6_1));
+
+		// long startTime6_0 = System.currentTimeMillis();
+		// logger.info("执行批量insert的时间3个总和：：：：：：：：：：：：：" + (startTime6_0 - startTime6_2));
+	}
+
+	/**
+	 * 新建重复日程(改造) 起始时间、结束时间放弃递归相加方式,改用起始时间*times,结束时间*times方式
+	 * 
+	 * @param buildScheduleParam
+	 *            输入对象
+	 * @param calendarId
+	 *            日历id
+	 */
+	public void buildNewRepeatSchedule(BuildScheduleParam buildScheduleParam, String calendarId, LoginUser loginUser, String createPersonName) {
+
+		int times = (int) getTimes(buildScheduleParam).get("times");// 获取重复次数
+
+		logger.info(">>>>>>>>>新建重复日程重复次数>>>>>>>>>>{}", times);
+
+		String repetitionResult = (String) getTimes(buildScheduleParam).get("repetitionResult");// 获取重复结果
+		String beginTimeProcess = buildScheduleParam.getBeginTime();// 起始时间
+		String endTimeProcess = buildScheduleParam.getEndTime();// 结束时间
+		String remindTimeProcess = null;// 提醒时间
+
+		// 插入日程组表
+		String scheduleGroupId = IDGenerator.getUUID();
+		ScheduleGroup scheduleGroup = new ScheduleGroup();
+		scheduleGroup.setId(Base.generatePk(ScheduleGroup.class));
+		scheduleGroup.setScheduleGroupId(scheduleGroupId);
+		scheduleGroup.setRepetitionFrequency(buildScheduleParam.getRepetitionFrequency());
+		scheduleGroup.setEndFrequency(buildScheduleParam.getEndFrequency());
+		scheduleGroup.setRepetitionResult(repetitionResult);
+		scheduleGroup.setCreatePersonId(loginUser.getUserId());
+		scheduleGroup.setCreatePersonName(createPersonName);
+		scheduleGroup.setCreateDate(new Date());
+		scheduleGroup.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+		scheduleGroup.setEndFrequencyNum(buildScheduleParam.getEndFrequencyNum());
+
+		String endFrequencyTime = buildScheduleParam.getEndFrequencyTime();
+		if (StringUtils.isNotBlank(endFrequencyTime)) {
+			scheduleGroup.setEndFrequencyTime(DateUtil.getDate(endFrequencyTime));
+		}
+
+		scheduleGroupMapper.insert(scheduleGroup);
+
+		// long startTime6_1 = System.currentTimeMillis();
+		List<ScheduleRemind> listScheduleRemind = new ArrayList<ScheduleRemind>();
+		List<Schedule> listSchedule = new ArrayList<Schedule>();
+		List<ScheduleShared> listScheduleShared = new ArrayList<ScheduleShared>();
+
+		// 判断是否有共享人，如果存在插入共享表
+		if (buildScheduleParam.getScheduleSharedParam() != null) {
+			generateBatchSharedPerson(listScheduleShared, buildScheduleParam, scheduleGroupId, loginUser, createPersonName);
+			if (listScheduleShared.size() > 0) {
+				scheduleSharedMapper.insertList(listScheduleShared);
+			}
+
+		}
+
+		// 插入提醒表
+		// 计算提醒结束时间
+		Date remindEndtime = null;
+		if (OaConstant.REPETITIONFREQUENCY_DAY.equals(buildScheduleParam.getRepetitionFrequency())) {// 每天
+
+			remindEndtime = DateUtil.getDate(DateUtil.nextDay(beginTimeProcess, times));
+
+		} else if (OaConstant.REPETITIONFREQUENCY_WEEK.equals(buildScheduleParam.getRepetitionFrequency())) {// 每周
+
+			remindEndtime = DateUtil.getDate(DateUtil.nextWeek(beginTimeProcess, times));
+
+		} else if (OaConstant.REPETITIONFREQUENCY_MONTH.equals(buildScheduleParam.getRepetitionFrequency())) {// 每月
+
+			remindEndtime = DateUtil.getDate(DateUtil.nextMonth(beginTimeProcess, times));
+
+		} else if (OaConstant.REPETITIONFREQUENCY_YEAR.equals(buildScheduleParam.getRepetitionFrequency())) {// 每年
+			remindEndtime = DateUtil.getDate(DateUtil.nextYear(beginTimeProcess, times));
+		} else {
+
+		}
+
+		remindTimeProcess = buildScheduleParam.getBeginTime();// 提醒时间
+		ScheduleRemind scheduleRemind = null;
+		scheduleRemind = generateRemind(DateUtil.getDate(remindTimeProcess), loginUser, createPersonName, buildScheduleParam, remindEndtime);
+		listScheduleRemind.add(scheduleRemind);
+		scheduleRemindMapper.insertList(listScheduleRemind);
+		
+		//TODO
+		JedisUtil.addRow(OaConstant.SCHEDULE_REMIND_REDIS_KEY + ":" + loginUser.getTendId(), scheduleRemind);
+
+		// long startTime1_0 = System.currentTimeMillis();
+		for (int i = 0; i < times; i++) {
+
+			String beginTime = "";
+			String endTime = "";
+
+			if (i == 0) {
+				beginTime = buildScheduleParam.getBeginTime();
+				endTime = buildScheduleParam.getEndTime();
+			} else {
+				if (OaConstant.REPETITIONFREQUENCY_DAY.equals(buildScheduleParam.getRepetitionFrequency())) {// 每天
+					beginTime = DateUtil.nextDay(beginTimeProcess, i);// 起始时间
+					endTime = DateUtil.nextDay(endTimeProcess, i);// 结束时间
+					// remindTimeProcess = DateUtil.getLastDateMinut(beginTimeProcess, buildScheduleParam.getAdvanceTime());// 提醒时间
+				} else if (OaConstant.REPETITIONFREQUENCY_WEEK.equals(buildScheduleParam.getRepetitionFrequency())) {// 每周
+					beginTime = DateUtil.nextWeek(beginTimeProcess, i);// 起始时间
+					endTime = DateUtil.nextWeek(endTimeProcess, i);// 结束时间
+					// remindTimeProcess = DateUtil.getLastDateMinut(beginTimeProcess, buildScheduleParam.getAdvanceTime());// 提醒时间
+				} else if (OaConstant.REPETITIONFREQUENCY_MONTH.equals(buildScheduleParam.getRepetitionFrequency())) {// 每月
+					beginTime = DateUtil.nextMonth(beginTimeProcess, i);// 起始时间
+					endTime = DateUtil.nextMonth(endTimeProcess, i);// 结束时间
+					// remindTimeProcess = DateUtil.getLastDateMinut(beginTimeProcess, buildScheduleParam.getAdvanceTime());// 提醒时间
+				} else if (OaConstant.REPETITIONFREQUENCY_YEAR.equals(buildScheduleParam.getRepetitionFrequency())) {// 每年
+					beginTime = DateUtil.nextYear(beginTimeProcess, i);// 起始时间
+					endTime = DateUtil.nextYear(endTimeProcess, i);// 结束时间
+					// remindTimeProcess = DateUtil.getLastDateMinut(beginTimeProcess, buildScheduleParam.getAdvanceTime());// 提醒时间
+				} else {
+
+				}
+			}
+			// }
+			// long startTime1_1 = System.currentTimeMillis();
+			// logger.info("起始结束日期计算：：：：：：：：：：：：：" + (startTime1_1 - startTime1_0));
+
+			Schedule schedule = null;
+			// long startTime3_0 = System.currentTimeMillis();
+			// for (int i = 0; i < times; i++) {
+			// 插入日程表
+			schedule = generateSchedule(buildScheduleParam, DateUtil.getDate(beginTime), DateUtil.getDate(endTime), scheduleRemind.getRemindId(), scheduleGroupId, calendarId,
+					loginUser, createPersonName);
+
+			listSchedule.add(schedule);
+			// }
+			// long startTime3_1 = System.currentTimeMillis();
+			// logger.info("组装日程表：：：：：：：：：：：：：" + (startTime3_1 - startTime3_0));
+
+			// long startTime4_0 = System.currentTimeMillis();
+			// for (int i = 0; i < times; i++) {
+		}
+
+		if (listSchedule.size() > 0) {
+			scheduleMapper.insertList(listSchedule);
+		}
+
+		// long startTime4_1 = System.currentTimeMillis();
+		// logger.info("组装共享人表：：：：：：：：：：：：：" + (startTime4_1 - startTime4_0));
+
+		// long startTime6_2 = System.currentTimeMillis();
+		// logger.info("计算所有开始时间和结束以及提醒时间的总时间并生成list的时间：：：：：：：：：：：：：" + (startTime6_2 - startTime6_1));
+
+		// long startTime6_0 = System.currentTimeMillis();
+		// logger.info("执行批量insert的时间3个总和：：：：：：：：：：：：：" + (startTime6_0 - startTime6_2));
+	}
+
+	/**
+	 * 删除当前重复日程 param updateScheduleParam 输入对象
+	 */
+	public void delete(UpdateScheduleParam updateScheduleParam,LoginUser loginUser) {
+		// step1、删除日程组对应日程
+		Schedule schedule = new Schedule();
+		schedule.setScheduleId(updateScheduleParam.getScheduleId());
+		schedule = scheduleMapper.queryScheduleId(schedule);
+
+		ScheduleGroup scheduleGroup = new ScheduleGroup();
+		scheduleGroup.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+		scheduleGroup.setScheduleGroupId(schedule.getScheduleGroupId());
+		scheduleGroupMapper.deleteScheduleGroup(scheduleGroup);
+
+		// step2、删除共享人员表对应日程
+		ScheduleShared scheduleShared = new ScheduleShared();
+		scheduleShared.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+		scheduleShared.setScheduleId(updateScheduleParam.getScheduleId());
+		scheduleSharedMapper.deleteScheduleSharedId(scheduleShared);
+
+		// step3、删除提醒表对应日程
+		Schedule schedule1 = new Schedule();
+		schedule1.setScheduleId(updateScheduleParam.getScheduleId());
+		schedule1 = scheduleMapper.queryScheduleId(schedule1);
+
+		ScheduleRemind scheduleRemind = new ScheduleRemind();
+		scheduleRemind.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+		scheduleRemind.setRemindId(schedule1.getRemindId());
+		
+		//删除redis对应数据
+		String key = OaConstant.SCHEDULE_REMIND_REDIS_KEY + ":" + loginUser.getTendId() + ":" + OaConstant.SCHEDULE_REMIND_TABLE_REMIND;
+		ScheduleRemind sr = new ScheduleRemind();
+		sr.setRemindStatus(OaConstant.REMIND_STATUS1);
+		sr.setRemindId(schedule1.getRemindId());
+		List<ScheduleRemind> srList = scheduleRemindMapper.queryScheduleRemindList(sr);
+		if(Base.isNotEmpty(srList)){
+			JedisUtil.delRow(key,srList.get(0).getId());
+		}
+		//redis用到id的查询,删除remind数据
+		scheduleRemindMapper.deleteScheduleRemindId(scheduleRemind);
+		
+		// step4 删除共享人员表对应日历
+		Schedule schedule2 = new Schedule();
+		schedule2.setScheduleId(updateScheduleParam.getScheduleId());
+		schedule2 = scheduleMapper.queryScheduleId(schedule2);
+
+		ScheduleShared scheduleShared1 = new ScheduleShared();
+		scheduleShared1.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+		scheduleShared1.setCalendarId(schedule2.getCalendarId());
+		scheduleSharedMapper.deleteScheduleSharedId(scheduleShared1);
+
+		// step5 删除日程表对应日程
+		Schedule schedule3 = new Schedule();
+		schedule3.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+		schedule3.setScheduleId(updateScheduleParam.getScheduleId());
+		scheduleMapper.deletescheduleId(schedule3);
+	}
+
+	/**
+	 * 删除整个重复日程
+	 */
+	public void deleteAll(UpdateScheduleParam updateScheduleParam,LoginUser loginUser) {
+
+		String scheduleGroupId = "";// 日程组id
+
+		// step1 根据日程id查询日程对应日程组id,删除日程组表对应组日程
+		Schedule schedule = new Schedule();
+		schedule.setScheduleId(updateScheduleParam.getScheduleId());
+		schedule = scheduleMapper.queryScheduleId(schedule);
+
+		if (schedule != null) {
+			scheduleGroupId = schedule.getScheduleGroupId();
+		}
+
+		ScheduleGroup scheduleGroup = new ScheduleGroup();
+		scheduleGroup.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+		scheduleGroup.setScheduleGroupId(scheduleGroupId);
+		scheduleGroupMapper.deleteScheduleGroup(scheduleGroup);
+
+		// step2 根据日程id,查询日程组id，根据日程组id，查询日程组下提醒id列表，根据提醒id列表删除所有提醒
+		Schedule schedule2 = new Schedule();
+		schedule2.setScheduleId(updateScheduleParam.getScheduleId());
+		//List<Schedule> remindIdList = scheduleMapper.select(schedule2);// 提醒id列表
+		List<ScheduleRemind> scheduleRemindList = new ArrayList<ScheduleRemind>();
+		/*for (Schedule schedule3 : remindIdList) {
+			ScheduleRemind scheduleRemind = new ScheduleRemind();
+			scheduleRemind.setRemindId(schedule3.getRemindId());
+			scheduleRemindList.add(scheduleRemind);
+		}*/
+		//提醒表中只有一条未提醒数据
+		if(Base.isNotEmpty(schedule)){
+			ScheduleRemind scheduleRemind = new ScheduleRemind();
+			scheduleRemind.setRemindId(schedule.getRemindId());
+			scheduleRemindList.add(scheduleRemind);
+		}
+
+		if (scheduleRemindList.size() > 0) {			
+			//TODO 删除redis中的remind
+			String key = OaConstant.SCHEDULE_REMIND_REDIS_KEY + ":" + loginUser.getTendId() + ":" + OaConstant.SCHEDULE_REMIND_TABLE_REMIND;
+			ScheduleRemind sr = scheduleRemindList.get(0);
+			sr.setRemindStatus(OaConstant.REMIND_STATUS1);
+			List<ScheduleRemind> srList = scheduleRemindMapper.queryScheduleRemindList(sr);
+			//remind只存在一条数据
+			if(Base.isNotEmpty(srList)){
+				JedisUtil.delRow(key,srList.get(0).getId());
+			}
+			//redis用到id的查询,删除remind
+			scheduleRemindMapper.deleteAllScheduleRemindId(scheduleRemindList);
+		}
+
+		// step3 根据日程id,查询日程组id，根据日程组id，查询日程组下日程id列表，根据日程id列表删除所有日程共享人
+		Schedule schedule11 = new Schedule();
+		schedule11.setScheduleGroupId(scheduleGroupId);
+		List<Schedule> scheduleIdList = scheduleMapper.select(schedule11);// 日程id列表
+		List<ScheduleShared> scheduleSharedList = new ArrayList<ScheduleShared>();
+
+		for (Schedule schedule5 : scheduleIdList) {
+			ScheduleShared scheduleShared = new ScheduleShared();
+			scheduleShared.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+			scheduleShared.setScheduleId(schedule5.getScheduleId());
+			scheduleSharedList.add(scheduleShared);
+		}
+
+		if (scheduleSharedList.size() > 0) {
+			scheduleSharedMapper.deleteAllScheduleSharedId(scheduleSharedList);
+		}
+
+		// step4 根据日程id,查询日程组id，根据日程组id，查询日程组下日历id列表，根据日历id列表删除所有日历共享人
+		Schedule schedule6 = new Schedule();
+		schedule6.setScheduleGroupId(scheduleGroupId);
+		List<Schedule> calendarIdList = scheduleMapper.select(schedule6);// 日历id列表
+		List<ScheduleShared> scheduleSharedList1 = new ArrayList<ScheduleShared>();
+		for (Schedule schedule7 : calendarIdList) {
+			ScheduleShared scheduleShared = new ScheduleShared();
+			scheduleShared.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+			scheduleShared.setCalendarId(schedule7.getCalendarId());
+			scheduleSharedList1.add(scheduleShared);
+		}
+
+		if (scheduleSharedList1.size() > 0) {
+			scheduleSharedMapper.deleteAllScheduleSharedCalendarId(scheduleSharedList1);
+		}
+
+		// step5 根据日程id查询日程组id，根据日程组id，查询日程组下日程id列表，根据日程id列表删除所有日程
+		Schedule schedule8 = new Schedule();
+		schedule8.setScheduleGroupId(scheduleGroupId);
+		List<Schedule> scheduleIdList1 = scheduleMapper.select(schedule8);// 日程id列表
+		List<Schedule> scheduleList = new ArrayList<Schedule>();
+		for (Schedule schedule9 : scheduleIdList1) {
+			Schedule schedule10 = new Schedule();
+			schedule10.setDelflag(BaseConstants.MYSQL_DELFLAG_DELETED);
+			schedule10.setScheduleId(schedule9.getScheduleId());
+			scheduleList.add(schedule10);
+		}
+
+		if (scheduleList.size() > 0) {
+			scheduleMapper.deleteAllscheduleId(scheduleList);
+		}
+
+	}
+
+	/**
+	 * 保存日程表
+	 * 
+	 * @param buildScheduleParam
+	 *            输入对象
+	 * @param beginTime
+	 *            起始时间
+	 * @param endTime
+	 *            结束时间
+	 * @param remindId
+	 *            提醒id
+	 * @param scheduleGroupId
+	 *            日程组id
+	 * @param calendarId
+	 *            日历id
+	 * @param createPersonName
+	 *            创建者name
+	 * @return
+	 */
+	public String saveSchedule(BuildScheduleParam buildScheduleParam, Date beginTime, Date endTime, String remindId, String scheduleGroupId, String calendarId,
+			LoginUser loginUser, String createPersonName) {
+
+		Schedule schedule = new Schedule();
+		schedule.setId(Base.generatePk(Schedule.class));
+		schedule.setScheduleId(IDGenerator.getUUID());
+		schedule.setScheduleTitle(buildScheduleParam.getScheduleTitle());
+		schedule.setBeginTime(beginTime);
+		schedule.setEndTime(endTime);
+		schedule.setAdvanceTime(buildScheduleParam.getAdvanceTime());
+		schedule.setIsRepeat(buildScheduleParam.getIsRepeat());
+		schedule.setAddress(buildScheduleParam.getAddress());
+		schedule.setScheduleDetails(buildScheduleParam.getScheduleDetails());
+		schedule.setRemindId(remindId);
+		schedule.setCalendarId(calendarId);
+		schedule.setCreatePersonId(loginUser.getUserId());
+		schedule.setCreatePersonName(createPersonName);
+		schedule.setCreateDate(new Date());
+		if (!StringUtils.isBlank(scheduleGroupId)) {
+			schedule.setScheduleGroupId(scheduleGroupId);
+		}
+		schedule.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+		schedule.setRemindStatus(OaConstant.REMIND_STATUS1);
+		scheduleMapper.insert(schedule);
+		return schedule.getScheduleId();
+	}
+
+	/**
+	 * 保存日程表(改造) 增加重复频率、结束频率、重复结果、结束频率日期、结束频率次数
+	 * 
+	 * @param buildScheduleParam
+	 *            输入对象
+	 * @param beginTime
+	 *            起始时间
+	 * @param endTime
+	 *            结束时间
+	 * @param remindId
+	 *            提醒id
+	 * @param scheduleGroupId
+	 *            日程组id
+	 * @param calendarId
+	 *            日历id
+	 * @param createPersonName
+	 *            创建者name
+	 * @return
+	 */
+	public String saveScheduleTwo(BuildScheduleParam buildScheduleParam, Date beginTime, Date endTime, String remindId, String scheduleGroupId, String calendarId,
+			LoginUser loginUser, String createPersonName, String repetitionResult) {
+
+		ScheduleNewTwo schedule = new ScheduleNewTwo();
+		schedule.setId(Base.generatePk(Schedule.class));
+		schedule.setScheduleId(IDGenerator.getUUID());
+		schedule.setScheduleTitle(buildScheduleParam.getScheduleTitle());
+		schedule.setBeginTime(beginTime);
+		schedule.setEndTime(endTime);
+		schedule.setAdvanceTime(buildScheduleParam.getAdvanceTime());
+		schedule.setIsRepeat(buildScheduleParam.getIsRepeat());
+		schedule.setAddress(buildScheduleParam.getAddress());
+		schedule.setScheduleDetails(buildScheduleParam.getScheduleDetails());
+		schedule.setRemindId(remindId);
+		schedule.setCalendarId(calendarId);
+		schedule.setCreatePersonId(loginUser.getUserId());
+		schedule.setCreatePersonName(createPersonName);
+		schedule.setCreateDate(new Date());
+		if (!StringUtils.isBlank(scheduleGroupId)) {
+			schedule.setScheduleGroupId(scheduleGroupId);
+		}
+		schedule.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+		schedule.setRepetitionFrequency(buildScheduleParam.getRepetitionFrequency());
+		schedule.setEndFrequency(buildScheduleParam.getEndFrequency());
+		schedule.setRepetitionResult(repetitionResult);
+		schedule.setEndFrequencyTime(DateUtil.getDate(buildScheduleParam.getEndFrequencyTime()));
+		schedule.setEndFrequencyNum(buildScheduleParam.getEndFrequencyNum());
+		scheduleMapperNewTwoMapper.insert(schedule);
+		return schedule.getScheduleId();
+	}
+
+	/**
+	 * 生成一个日程对象
+	 *
+	 * @param buildScheduleParam
+	 *            输入对象
+	 * @param beginTime
+	 *            起始时间
+	 * @param endTime
+	 *            结束时间
+	 * @param remindId
+	 *            提醒id
+	 * @param scheduleGroupId
+	 *            日程组id
+	 * @param calendarId
+	 *            日历id
+	 * @return
+	 */
+	public Schedule generateSchedule(BuildScheduleParam buildScheduleParam, Date beginTime, Date endTime, String remindId, String scheduleGroupId, String calendarId,
+			LoginUser loginUser, String loginUserName) {
+
+		Schedule schedule = new Schedule();
+		schedule.setId(Base.generatePk(Schedule.class));
+		schedule.setScheduleId(IDGenerator.getUUID());
+		schedule.setScheduleTitle(buildScheduleParam.getScheduleTitle());
+		schedule.setBeginTime(beginTime);
+		schedule.setEndTime(endTime);
+		schedule.setAdvanceTime(buildScheduleParam.getAdvanceTime());
+		schedule.setIsRepeat(buildScheduleParam.getIsRepeat());
+		schedule.setAddress(buildScheduleParam.getAddress());
+		schedule.setScheduleDetails(buildScheduleParam.getScheduleDetails());
+		schedule.setRemindId(remindId);
+		schedule.setCalendarId(calendarId);
+		schedule.setCreatePersonId(loginUser.getUserId());
+		schedule.setCreatePersonName(loginUserName);
+		// schedule.setCreatePersonName(oaUserUtil.selectUserName(loginUser.getUserId()));
+		schedule.setCreateDate(new Date());
+		if (!StringUtils.isBlank(scheduleGroupId)) {
+			schedule.setScheduleGroupId(scheduleGroupId);
+		}
+		schedule.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+		schedule.setRemindStatus(OaConstant.REMIND_STATUS1);
+
+		// logger.info(">>>>>>>>>>>>>>>>日程主键是多少>>>>>>>>>>>>>{}",schedule.getId());
+		return schedule;
+	}
+
+	/**
+	 * 保存提醒表
+	 * 
+	 * @param remindTime
+	 *            提醒时间
+	 */
+	public String saveRemind(Date remindTime, LoginUser loginUser, String createPersonName) {
+
+		ScheduleRemind remind = new ScheduleRemind();
+		remind.setId(Base.generatePk(ScheduleRemind.class));
+		remind.setRemindId(IDGenerator.getUUID());
+		remind.setRemindTime(remindTime);
+		remind.setRemindStatus(OaConstant.REMIND_STATUS1);
+		remind.setCreatePersonId(loginUser.getUserId());
+		remind.setCreatePersonName(createPersonName);
+		remind.setCreateDate(new Date());
+		remind.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+		scheduleRemindMapper.insert(remind);
+		//插入redis
+		JedisUtil.addRow(OaConstant.SCHEDULE_REMIND_REDIS_KEY + ":" + loginUser.getTendId(), remind);
+		return remind.getRemindId();
+	}
+
+	/**
+	 * 保存提醒表
+	 * 
+	 * @param remindTime
+	 *            提醒时间
+	 */
+	public String saveNewRemind(Date remindTime, LoginUser loginUser, String createPersonName, BuildScheduleParam buildScheduleParam) {
+
+		ScheduleRemind remind = new ScheduleRemind();
+		remind.setId(Base.generatePk(ScheduleRemind.class));
+		remind.setRemindId(IDGenerator.getUUID());
+		remind.setRemindTime(remindTime);
+		remind.setRemindStatus(OaConstant.REMIND_STATUS1);
+		remind.setCreatePersonId(loginUser.getUserId());
+		remind.setCreatePersonName(createPersonName);
+		remind.setCreateDate(new Date());
+		remind.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+		remind.setRepetitionFrequency(buildScheduleParam.getRepetitionFrequency());
+		remind.setEndFrequency(buildScheduleParam.getEndFrequency());
+		scheduleRemindMapper.insert(remind);
+		//插入redis
+		JedisUtil.addRow(OaConstant.SCHEDULE_REMIND_REDIS_KEY + ":" + loginUser.getTendId(), remind);
+		return remind.getRemindId();
+	}
+
+	/**
+	 * 生成一个提醒对象
+	 *
+	 * @param remindTime
+	 *            提醒时间
+	 */
+	public ScheduleRemind generateRemind(Date remindTime, LoginUser loginUser, String loginUserName, BuildScheduleParam buildScheduleParam, Date remindEndtime) {
+
+		ScheduleRemind remind = new ScheduleRemind();
+		remind.setId(Base.generatePk(ScheduleRemind.class));
+		remind.setRemindId(IDGenerator.getUUID());
+		remind.setRemindTime(remindTime);
+		remind.setRemindStatus(OaConstant.REMIND_STATUS1);
+		remind.setCreatePersonId(loginUser.getUserId());
+		// remind.setCreatePersonName(oaUserUtil.selectUserName(loginUser.getUserId()));
+		remind.setCreatePersonName(loginUserName);
+		remind.setCreateDate(new Date());
+		remind.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+		remind.setRepetitionFrequency(buildScheduleParam.getRepetitionFrequency());
+		remind.setEndFrequency(buildScheduleParam.getEndFrequency());
+		remind.setRemindEndtime(remindEndtime);
+		return remind;
+	}
+
+	/**
+	 * 保存共享人
+	 * 
+	 * @param buildScheduleParam
+	 *            输入对象
+	 * @param scheduleId
+	 *            日程id
+	 */
+	public void saveSharedPerson(BuildScheduleParam buildScheduleParam, String scheduleId, LoginUser loginUser, String createPersonName) {
+
+		String createPersonId = loginUser.getUserId();
+
+		ScheduleSharedParam scheduleSharedParam = buildScheduleParam.getScheduleSharedParam();
+		
+		
+		
+		if (scheduleSharedParam != null) {
+			
+			//为了查询自己创建的日程方便，初始化一条共享人，创建人是自己的记录
+//			ScheduleShared ScheduleShared = new ScheduleShared();
+//			ScheduleShared.setId(Base.generatePk(ScheduleShared.class));
+//			ScheduleShared.setSharedShowId(createPersonId);
+//			ScheduleShared.setScheduleId(scheduleId);
+//			ScheduleShared.setType(OaConstant.SHAREDSHOW_TYPE0);
+//			ScheduleShared.setSource(OaConstant.SHARED_SOURCE0);
+//			ScheduleShared.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+//			ScheduleShared.setCreatePersonId(createPersonId);
+//			ScheduleShared.setCreatePersonName(createPersonName);
+//			ScheduleShared.setCreateDate(new Date());
+//			scheduleSharedMapper.insert(ScheduleShared);
+			
+			List<ScheduleShared> personList = scheduleSharedParam.getPersonList();// 人员列表
+			if (personList.size() > 0) {
+				for (ScheduleShared scheduleSharedShow : personList) {
+					scheduleSharedShow.setId(Base.generatePk(ScheduleShared.class));
+					scheduleSharedShow.setSharedShowId(scheduleSharedShow.getSharedShowId());
+					scheduleSharedShow.setScheduleId(scheduleId);
+					scheduleSharedShow.setType(OaConstant.SHAREDSHOW_TYPE0);
+					scheduleSharedShow.setSource(OaConstant.SHARED_SOURCE0);
+					scheduleSharedShow.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+					scheduleSharedShow.setCreatePersonId(createPersonId);
+					scheduleSharedShow.setCreatePersonName(createPersonName);
+					scheduleSharedShow.setCreateDate(new Date());
+					scheduleSharedMapper.insert(scheduleSharedShow);
+				}
+			}
+
+			List<ScheduleShared> roleList = scheduleSharedParam.getRoleList();// 角色列表
+			if (roleList.size() > 0) {
+				for (ScheduleShared scheduleSharedShow : roleList) {
+					scheduleSharedShow.setId(Base.generatePk(ScheduleShared.class));
+					scheduleSharedShow.setSharedShowId(scheduleSharedShow.getSharedShowId());
+					scheduleSharedShow.setScheduleId(scheduleId);
+					scheduleSharedShow.setType(OaConstant.SHAREDSHOW_TYPE1);
+					scheduleSharedShow.setSource(OaConstant.SHARED_SOURCE0);
+					scheduleSharedShow.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+					scheduleSharedShow.setCreatePersonId(createPersonId);
+					scheduleSharedShow.setCreatePersonName(createPersonName);
+					scheduleSharedShow.setCreateDate(new Date());
+					scheduleSharedMapper.insert(scheduleSharedShow);
+				}
+			}
+
+			List<ScheduleShared> departmentList = scheduleSharedParam.getDepartmentList();// 部门列表
+			if (departmentList.size() > 0) {
+				for (ScheduleShared scheduleSharedShow : departmentList) {
+					scheduleSharedShow.setSharedShowId(scheduleSharedShow.getSharedShowId());
+					scheduleSharedShow.setId(Base.generatePk(ScheduleShared.class));
+					scheduleSharedShow.setScheduleId(scheduleId);
+					scheduleSharedShow.setType(OaConstant.SHAREDSHOW_TYPE2);
+					scheduleSharedShow.setSource(OaConstant.SHARED_SOURCE0);
+					scheduleSharedShow.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+					scheduleSharedShow.setCreatePersonId(createPersonId);
+					scheduleSharedShow.setCreatePersonName(createPersonName);
+					scheduleSharedShow.setCreateDate(new Date());
+					scheduleSharedMapper.insert(scheduleSharedShow);
+				}
+			}
+		}
+	}
+
+	/**
+	 * 批量生成共享人
+	 *
+	 * @param buildScheduleParam
+	 *            输入对象
+	 * @param scheduleId
+	 *            日程id
+	 */
+	public List<ScheduleShared> generateBatchSharedPerson(List<ScheduleShared> listScheduleShared, BuildScheduleParam buildScheduleParam, String scheduleGroupId,
+			LoginUser loginUser, String CreatePersonName) {
+
+		String createPersonId = loginUser.getUserId();
+		// String CreatePersonName = oaUserUtil.selectUserName(loginUser.getUserId());
+		ScheduleSharedParam scheduleSharedParam = buildScheduleParam.getScheduleSharedParam();
+
+		
+		if (scheduleSharedParam != null) {
+			
+//			ScheduleShared scheduleShared1 = new ScheduleShared();
+//			scheduleShared1.setId(Base.generatePk(ScheduleShared.class));
+//			scheduleShared1.setSharedShowId(createPersonId);
+//			scheduleShared1.setScheduleGroupId(scheduleGroupId);
+//			scheduleShared1.setType(OaConstant.SHAREDSHOW_TYPE0);
+//			scheduleShared1.setSource(OaConstant.SHARED_SOURCE0);
+//			scheduleShared1.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+//			scheduleShared1.setCreatePersonId(createPersonId);
+//			scheduleShared1.setCreatePersonName(CreatePersonName);
+//			scheduleShared1.setCreateDate(new Date());
+//			listScheduleShared.add(scheduleShared1);
+			
+			List<ScheduleShared> personList = scheduleSharedParam.getPersonList();// 人员列表
+			if (personList.size() > 0) {
+				for (ScheduleShared scheduleSharedShow : personList) {
+					ScheduleShared scheduleShared = new ScheduleShared();
+					scheduleShared.setId(Base.generatePk(ScheduleShared.class));
+					scheduleShared.setSharedShowId(scheduleSharedShow.getSharedShowId());
+					scheduleShared.setScheduleGroupId(scheduleGroupId);
+					scheduleShared.setType(OaConstant.SHAREDSHOW_TYPE0);
+					scheduleShared.setSource(OaConstant.SHARED_SOURCE0);
+					scheduleShared.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+					scheduleShared.setCreatePersonId(createPersonId);
+					scheduleShared.setCreatePersonName(CreatePersonName);
+					scheduleShared.setCreateDate(new Date());
+					listScheduleShared.add(scheduleShared);
+					// scheduleSharedMapper.insert(scheduleSharedShow);
+				}
+			}
+
+			List<ScheduleShared> roleList = scheduleSharedParam.getRoleList();// 角色列表
+			if (roleList.size() > 0) {
+				for (ScheduleShared scheduleSharedShow : roleList) {
+					ScheduleShared scheduleShared = new ScheduleShared();
+					scheduleShared.setId(Base.generatePk(ScheduleShared.class));
+					scheduleShared.setSharedShowId(scheduleSharedShow.getSharedShowId());
+					scheduleShared.setScheduleGroupId(scheduleGroupId);
+					scheduleShared.setType(OaConstant.SHAREDSHOW_TYPE1);
+					scheduleShared.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+					scheduleShared.setCreatePersonId(createPersonId);
+					scheduleShared.setCreatePersonName(CreatePersonName);
+					scheduleShared.setCreateDate(new Date());
+					listScheduleShared.add(scheduleShared);
+					// scheduleSharedMapper.insert(scheduleSharedShow);
+				}
+			}
+
+			List<ScheduleShared> departmentList = scheduleSharedParam.getDepartmentList();// 部门列表
+			if (departmentList.size() > 0) {
+				for (ScheduleShared scheduleSharedShow : departmentList) {
+					ScheduleShared scheduleShared = new ScheduleShared();
+					scheduleShared.setSharedShowId(scheduleSharedShow.getSharedShowId());
+					scheduleShared.setId(Base.generatePk(ScheduleShared.class));
+					scheduleShared.setScheduleGroupId(scheduleGroupId);
+					scheduleShared.setType(OaConstant.SHAREDSHOW_TYPE2);
+					scheduleShared.setDelflag(BaseConstants.MYSQL_DELFLAG_NORMAL);
+					scheduleShared.setCreatePersonId(createPersonId);
+					scheduleShared.setCreatePersonName(CreatePersonName);
+					scheduleShared.setCreateDate(new Date());
+					listScheduleShared.add(scheduleShared);
+					// scheduleSharedMapper.insert(scheduleSharedShow);
+				}
+			}
+		}
+
+		return listScheduleShared;
+	}
+
+	/**
+	 * 获取事件重复次数
+	 * 
+	 * @param buildScheduleParam
+	 *            输入对象
+	 * @return
+	 */
+	public Map<String, Object> getTimes(BuildScheduleParam buildScheduleParam) {
+
+		Map<String, Object> map = new HashMap<String, Object>();
+
+		String repetitionResult = "";
+		String beginTime = "";// 计算时使用起始时间
+		String endTime = "";// 计算时使用结束时间
+
+		int times = 0;// 重复次数
+
+		if (OaConstant.REPETITIONFREQUENCY_DAY.equals(buildScheduleParam.getRepetitionFrequency())) {// 每天
+
+			if (OaConstant.ENDFREQUENCY_NEVER.equals(buildScheduleParam.getEndFrequency())) {// 永不
+
+				beginTime = buildScheduleParam.getBeginTime();
+				endTime = DateUtil.addYear(beginTime, OaConstant.SCHEDULE_YEAR);
+				times = DateUtil.reductDate(beginTime, endTime) + 1;// 此算法是按时期间隔计算的，实际是包头尾日期
+				repetitionResult = "每天";
+
+			} else if (OaConstant.ENDFREQUENCY_TIMES.equals(buildScheduleParam.getEndFrequency())) {// 次数
+
+				times = buildScheduleParam.getEndFrequencyNum();
+				repetitionResult = "每天 共" + times + "次";
+
+			} else if (OaConstant.ENDFREQUENCY_DATE.equals(buildScheduleParam.getEndFrequency())) {// 日期
+
+				beginTime = buildScheduleParam.getBeginTime();
+				endTime = buildScheduleParam.getEndFrequencyTime();
+				times = DateUtil.reductDate(beginTime, endTime) + 1;// 此算法是按时期间隔计算的，实际是包头尾日期
+				repetitionResult = "每天 截止到" + endTime + "";
+			} else {
+				logger.info("结束类型参数传入错误=={}", buildScheduleParam.getEndFrequency());
+			}
+
+		} else if (OaConstant.REPETITIONFREQUENCY_WEEK.equals(buildScheduleParam.getRepetitionFrequency())) {// 每周
+
+			if (OaConstant.ENDFREQUENCY_NEVER.equals(buildScheduleParam.getEndFrequency())) {// 永不
+
+				beginTime = buildScheduleParam.getBeginTime();
+				endTime = DateUtil.addYear(beginTime, OaConstant.SCHEDULE_YEAR);
+				times = DateUtil.reductWeek(beginTime, endTime) + 1;// 此算法是按时期间隔计算的，实际是包头尾日期
+				repetitionResult = "每周";
+
+			} else if (OaConstant.ENDFREQUENCY_TIMES.equals(buildScheduleParam.getEndFrequency())) {// 次数
+
+				times = buildScheduleParam.getEndFrequencyNum();
+				repetitionResult = "每周 共" + times + "次";
+
+			} else if (OaConstant.ENDFREQUENCY_DATE.equals(buildScheduleParam.getEndFrequency())) {// 日期
+
+				beginTime = buildScheduleParam.getBeginTime();
+				endTime = buildScheduleParam.getEndFrequencyTime();
+				times = DateUtil.reductWeek(beginTime, endTime) + 1;// 此算法是按时期间隔计算的，实际是包头尾日期
+				repetitionResult = "每周 截止到" + endTime + "";
+
+			} else {
+				logger.info("结束类型参数传入错误=={}", buildScheduleParam.getEndFrequency());
+			}
+		} else if (OaConstant.REPETITIONFREQUENCY_MONTH.equals(buildScheduleParam.getRepetitionFrequency())) {// 每月
+
+			if (OaConstant.ENDFREQUENCY_NEVER.equals(buildScheduleParam.getEndFrequency())) {// 永不
+
+				beginTime = buildScheduleParam.getBeginTime();
+				endTime = DateUtil.addYear(beginTime, OaConstant.SCHEDULE_YEAR);
+				times = DateUtil.reductMonth(beginTime, endTime) + 1;// 此算法是按时期间隔计算的，实际是包头尾日期
+				repetitionResult = "每月";
+
+			} else if (OaConstant.ENDFREQUENCY_TIMES.equals(buildScheduleParam.getEndFrequency())) {// 次数
+
+				times = buildScheduleParam.getEndFrequencyNum();
+				repetitionResult = "每月 共" + times + "次";
+
+			} else if (OaConstant.ENDFREQUENCY_DATE.equals(buildScheduleParam.getEndFrequency())) {// 日期
+
+				beginTime = buildScheduleParam.getBeginTime();
+				endTime = buildScheduleParam.getEndFrequencyTime();
+				times = DateUtil.reductMonth(beginTime, endTime) + 1;// 此算法是按时期间隔计算的，实际是包头尾日期
+				repetitionResult = "每月 截止到" + endTime + "";
+
+			} else {
+				logger.info("结束类型参数传入错误=={}", buildScheduleParam.getEndFrequency());
+			}
+		} else if (OaConstant.REPETITIONFREQUENCY_YEAR.equals(buildScheduleParam.getRepetitionFrequency())) {// 每年
+
+			if (OaConstant.ENDFREQUENCY_NEVER.equals(buildScheduleParam.getEndFrequency())) {// 永不
+
+				beginTime = buildScheduleParam.getBeginTime();
+				endTime = DateUtil.addYear(beginTime, OaConstant.SCHEDULE_YEAR);
+				times = DateUtil.reductYear(beginTime, endTime) + 1;// 此算法是按时期间隔计算的，实际是包头尾日期
+				repetitionResult = "每年";
+
+			} else if (OaConstant.ENDFREQUENCY_TIMES.equals(buildScheduleParam.getEndFrequency())) {// 次数
+
+				times = buildScheduleParam.getEndFrequencyNum();
+				repetitionResult = "每年 共" + times + "次";
+
+			} else if (OaConstant.ENDFREQUENCY_DATE.equals(buildScheduleParam.getEndFrequency())) {// 日期
+
+				beginTime = buildScheduleParam.getBeginTime();
+				endTime = buildScheduleParam.getEndFrequencyTime();
+				times = DateUtil.reductYear(beginTime, endTime) + 1;// 此算法是按时期间隔计算的，实际是包头尾日期
+				repetitionResult = "每年 截止到" + endTime + "";
+
+			} else {
+				logger.info("结束类型参数传入错误=={}", buildScheduleParam.getEndFrequency());
+			}
+		} else {
+			logger.info("重复类型参数传入错误=={}", buildScheduleParam.getRepetitionFrequency());
+		}
+
+		map.put("repetitionResult", repetitionResult);
+		map.put("times", times);
+		return map;
+	}
+	
+	/**
+	 * 查询首页是否有日程
+	 */
+	@Override
+	public QueryScheduleIndexListDto queryScheduleIndexCount(QueryScheduleListParam queryScheduleListParam,LoginUser loginUser) {
+		
+		String userId = loginUser.getUserId();
+		queryScheduleListParam.setUserId(userId);
+		
+		long startTime1 = System.currentTimeMillis();
+		
+		List<QueryScheduleIndexDto> scheduleList = scheduleMapper.queryScheduleIndexCount(queryScheduleListParam);
+		
+		long startTime2 = System.currentTimeMillis();
+		
+		logger.info("日程查询：{}",startTime2-startTime1);
+		
+		QueryScheduleTaskListParam queryScheduleTaskListParam = new QueryScheduleTaskListParam();
+		queryScheduleTaskListParam.setUserId(userId);
+		queryScheduleTaskListParam.setBeginTime(queryScheduleListParam.getBeginTime());
+		queryScheduleTaskListParam.setEndTime(queryScheduleListParam.getEndTime());
+		List<QueryTaskIndexDto> taskList = taskMapper.queryTaskIndexCount(queryScheduleTaskListParam);
+		
+		long startTime3 = System.currentTimeMillis();
+		logger.info("任务查询：{}",startTime3-startTime1);
+		
+		QueryScheduleIndexListDto queryScheduleIndexListDto = new QueryScheduleIndexListDto();
+		queryScheduleIndexListDto.setScheduleList(scheduleList);
+		queryScheduleIndexListDto.setTaskList(taskList);
+		
+		long startTime4 = System.currentTimeMillis();
+		logger.info("最后时间：{}",startTime4-startTime1);
+		
+		return queryScheduleIndexListDto;
+	}
+	
+	/**
+	 * 查询首页日程列表
+	 */
+	@Override
+	public QueryScheduleListDto queryScheduleIndexList(QueryScheduleListParam queryScheduleListParam, LoginUser loginUser) {
+		
+//		long startTime1 = System.currentTimeMillis();
+//		StopWatch sw = new StopWatch();
+//		sw.start("queryScheduleIndexList");
+		
+		String userId = loginUser.getUserId();
+		
+		queryScheduleListParam.setUserId(userId);
+		List<QueryScheduleDto> scheduleList = scheduleMapper.queryScheduleIndexList(queryScheduleListParam);
+		
+//		sw.stop();
+//		
+//		sw.start("queryTaskIndexList");
+//		long startTime2 = System.currentTimeMillis();
+//		logger.info("日程查询：{}",startTime2-startTime1);
+		
+		QueryScheduleTaskListParam queryScheduleTaskListParam = new QueryScheduleTaskListParam();
+		queryScheduleTaskListParam.setUserId(userId);
+		queryScheduleTaskListParam.setBeginTime(queryScheduleListParam.getBeginTime());
+		queryScheduleTaskListParam.setEndTime(queryScheduleListParam.getEndTime());
+		List<QueryTaskDto> taskList = taskMapper.queryTaskIndexList(queryScheduleTaskListParam);
+		
+//		long startTime3 = System.currentTimeMillis();
+//		logger.info("任务查询：{}",startTime3-startTime1);
+		
+//		sw.stop();
+		
+		QueryScheduleListDto queryScheduleListDto = new QueryScheduleListDto();
+		queryScheduleListDto.setScheduleList(scheduleList);
+		queryScheduleListDto.setTaskList(taskList);
+		
+//		long startTime4 = System.currentTimeMillis();
+//		logger.info("最后时间：{}",startTime4-startTime1);
+		return queryScheduleListDto;
+	}
+
+}

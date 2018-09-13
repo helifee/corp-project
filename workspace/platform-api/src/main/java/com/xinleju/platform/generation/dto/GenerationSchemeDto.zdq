@@ -1,0 +1,138 @@
+package com.xinleju.platform.generation.dto;
+
+import com.xinleju.platform.base.dto.BaseDto;
+
+
+/**
+ * @author sy
+ * 
+ *
+ */
+public class GenerationSchemeDto extends BaseDto{
+	
+	
+	private String remarks;
+	
+	private String describes;
+	
+	private String author;
+	
+	private String functionNameSimple;
+	
+	private String functionName;
+	
+	private String subModuleName;
+	
+	private String moduleName;
+	
+	private String localUrl;
+	
+	private String packageName;
+	
+	private String codeStyle;
+	
+	private String schemeName;
+	
+	private String systableId;
+
+	public String getRemarks() {
+		return remarks;
+	}
+
+	public void setRemarks(String remarks) {
+		this.remarks = remarks;
+	}
+
+	public String getDescribes() {
+		return describes;
+	}
+
+	public void setDescribes(String describes) {
+		this.describes = describes;
+	}
+
+	public String getAuthor() {
+		return author;
+	}
+
+	public void setAuthor(String author) {
+		this.author = author;
+	}
+
+	public String getFunctionNameSimple() {
+		return functionNameSimple;
+	}
+
+	public void setFunctionNameSimple(String functionNameSimple) {
+		this.functionNameSimple = functionNameSimple;
+	}
+
+	public String getFunctionName() {
+		return functionName;
+	}
+
+	public void setFunctionName(String functionName) {
+		this.functionName = functionName;
+	}
+
+	public String getSubModuleName() {
+		return subModuleName;
+	}
+
+	public void setSubModuleName(String subModuleName) {
+		this.subModuleName = subModuleName;
+	}
+
+	public String getModuleName() {
+		return moduleName;
+	}
+
+	public void setModuleName(String moduleName) {
+		this.moduleName = moduleName;
+	}
+
+	public String getLocalUrl() {
+		return localUrl;
+	}
+
+	public void setLocalUrl(String localUrl) {
+		this.localUrl = localUrl;
+	}
+
+	public String getPackageName() {
+		return packageName;
+	}
+
+	public void setPackageName(String packageName) {
+		this.packageName = packageName;
+	}
+
+	public String getCodeStyle() {
+		return codeStyle;
+	}
+
+	public void setCodeStyle(String codeStyle) {
+		this.codeStyle = codeStyle;
+	}
+
+	public String getSchemeName() {
+		return schemeName;
+	}
+
+	public void setSchemeName(String schemeName) {
+		this.schemeName = schemeName;
+	}
+
+	public String getSystableId() {
+		return systableId;
+	}
+
+	public void setSystableId(String systableId) {
+		this.systableId = systableId;
+	}
+
+
+	
+	
+	
+}

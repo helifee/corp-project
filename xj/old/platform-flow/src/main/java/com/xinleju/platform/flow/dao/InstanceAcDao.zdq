@@ -1,0 +1,20 @@
+package com.xinleju.platform.flow.dao;
+
+import java.util.Map;
+
+import com.xinleju.platform.base.dao.BaseDao;
+import com.xinleju.platform.flow.entity.InstanceAc;
+
+/**
+ * @author admin
+ *
+ */
+
+public interface InstanceAcDao extends BaseDao<String, InstanceAc> {
+
+	boolean setStatus(String currentAcId, String status);
+	
+	
+	//校验code重复
+	public Integer checkCode(Map<String, String> paramMap) throws Exception;
+}

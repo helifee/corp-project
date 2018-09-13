@@ -1,0 +1,697 @@
+package com.xinleju.cloud.oa.shortcutmenu.controller;
+
+import java.io.InputStream;
+import java.io.PrintWriter;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+import com.xinleju.cloud.oa.util.CompressImgUtil;
+import com.xinleju.platform.base.utils.*;
+import com.xinleju.platform.uitls.LoginUtils;
+import org.apache.commons.lang.StringUtils;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseBody;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.multipart.MultipartHttpServletRequest;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.xinleju.cloud.oa.shortcutmenu.dto.ShortcutMenuDto;
+import com.xinleju.cloud.oa.shortcutmenu.dto.service.ShortcutMenuDtoServiceCustomer;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+
+/**
+ * 快捷菜单控制层
+ *
+ * @author admin
+ */
+@Controller
+@RequestMapping("/oa/shortcutMenu")
+public class ShortcutMenuController {
+
+    private static Logger log = Logger.getLogger(ShortcutMenuController.class);
+
+    @Autowired
+    private ShortcutMenuDtoServiceCustomer shortcutMenuDtoServiceCustomer;
+
+    /**
+     * 根据Id获取业务对象
+     *
+     * @param id 业务对象主键
+     * @return 业务对象
+     */
+    @RequestMapping(value = "/get/{id}", method = RequestMethod.GET)
+    public
+    @ResponseBody
+    MessageResult get(@PathVariable("id") String id) {
+        MessageResult result = new MessageResult();
+        try {
+            SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+            String userInfo = JacksonUtils.toJson(securityUserBeanInfo);
+
+            String dubboResultInfo = shortcutMenuDtoServiceCustomer.getObjectById(userInfo, "{\"id\":\"" + id + "\"}");
+            DubboServiceResultInfo dubboServiceResultInfo = JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+            if (dubboServiceResultInfo.isSucess()) {
+                String resultInfo = dubboServiceResultInfo.getResult();
+                ShortcutMenuDto shortcutMenuDto = JacksonUtils.fromJson(resultInfo, ShortcutMenuDto.class);
+                result.setResult(shortcutMenuDto);
+                result.setSuccess(MessageInfo.GETSUCCESS.isResult());
+                result.setMsg(MessageInfo.GETSUCCESS.getMsg());
+            } else {
+                result.setSuccess(MessageInfo.GETERROR.isResult());
+                result.setMsg(MessageInfo.GETERROR.getMsg() + "【" + dubboServiceResultInfo.getExceptionMsg() + "】");
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            log.error("调用get方法:  【参数" + id + "】======" + "【" + e.getMessage() + "】");
+            result.setSuccess(MessageInfo.GETERROR.isResult());
+            result.setMsg(MessageInfo.GETERROR.getMsg() + "【" + e.getMessage() + "】");
+        }
+        return result;
+    }
+
+
+    /**
+     * 返回分页对象
+     *
+     * @param map
+     * @return
+     */
+    @RequestMapping(value = "/page", method = {RequestMethod.POST}, consumes = "application/json")
+    public
+    @ResponseBody
+    MessageResult page(@RequestBody Map<String, Object> map) {
+        MessageResult result = new MessageResult();
+        String paramaterJson = JacksonUtils.toJson(map);
+        try {
+            String dubboResultInfo = shortcutMenuDtoServiceCustomer.getPage(getSecurityUserInfo(), paramaterJson);
+            DubboServiceResultInfo dubboServiceResultInfo = JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+            if (dubboServiceResultInfo.isSucess()) {
+                String resultInfo = dubboServiceResultInfo.getResult();
+                PageBeanInfo pageInfo = JacksonUtils.fromJson(resultInfo, PageBeanInfo.class);
+                result.setResult(pageInfo);
+                result.setSuccess(MessageInfo.GETSUCCESS.isResult());
+                result.setMsg(MessageInfo.GETSUCCESS.getMsg());
+            } else {
+                result.setSuccess(MessageInfo.GETERROR.isResult());
+                result.setMsg(MessageInfo.GETERROR.getMsg() + "【" + dubboServiceResultInfo.getExceptionMsg() + "】");
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            log.error("调用page方法:  【参数" + paramaterJson + "】======" + "【" + e.getMessage() + "】");
+            result.setSuccess(MessageInfo.GETERROR.isResult());
+            result.setMsg(MessageInfo.GETERROR.getMsg() + "【" + e.getMessage() + "】");
+        }
+        return result;
+    }
+
+    /**
+     * 返回符合条件的列表
+     *
+     * @param map
+     * @return
+     */
+    @RequestMapping(value = "/queryList", method = {RequestMethod.POST}, consumes = "application/json")
+    public
+    @ResponseBody
+    MessageResult queryList(@RequestBody Map<String, Object> map) {
+        MessageResult result = new MessageResult();
+        String paramaterJson = null;
+        try {
+            SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+            map.put("ownerId", securityUserBeanInfo.getSecurityUserDto().getId());
+            paramaterJson = JacksonUtils.toJson(map);
+
+            String userInfo = JacksonUtils.toJson(securityUserBeanInfo);
+            String dubboResultInfo = shortcutMenuDtoServiceCustomer.queryList(userInfo, paramaterJson);
+            DubboServiceResultInfo dubboServiceResultInfo = JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+            if (dubboServiceResultInfo.isSucess()) {
+                String resultInfo = dubboServiceResultInfo.getResult();
+                List<ShortcutMenuDto> list = JacksonUtils.fromJson(resultInfo, ArrayList.class, ShortcutMenuDto.class);
+                if(list != null && list.size()>0){
+                	for(int i = 0; i < list.size(); i++){
+                		if(list.get(i).getIcon() != null){
+                			list.get(i).setIconShow(Base64.getEncoder().encodeToString(list.get(i).getIcon()));
+                		}
+                	}
+                }
+                result.setResult(list);
+                result.setSuccess(MessageInfo.GETSUCCESS.isResult());
+                result.setMsg(MessageInfo.GETSUCCESS.getMsg());
+            } else {
+                result.setSuccess(MessageInfo.GETERROR.isResult());
+                result.setMsg(MessageInfo.GETERROR.getMsg() + "【" + dubboServiceResultInfo.getExceptionMsg() + "】");
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            log.error("调用queryList方法:  【参数" + paramaterJson + "】======" + "【" + e.getMessage() + "】");
+            result.setSuccess(MessageInfo.GETERROR.isResult());
+            result.setMsg(MessageInfo.GETERROR.getMsg() + "【" + e.getMessage() + "】");
+        }
+        return result;
+    }
+
+
+    /**
+     * 保存实体对象
+     *
+     * @param request
+     * @return
+     */
+    @RequestMapping(value = "/save",method = RequestMethod.POST)
+    public void save(MultipartHttpServletRequest request, HttpServletResponse response) {
+        MessageResult result = new MessageResult();
+        ShortcutMenuDto t = new ShortcutMenuDto();
+        PrintWriter pw = null;
+		Boolean isReturn = true;
+        try {
+        	response.setContentType("text/html;charset=UTF-8");
+        	pw = response.getWriter();
+			MultipartFile uploadfile =  request.getFile("icon");
+        	if(uploadfile != null){
+        		long length = uploadfile.getSize();
+        		if(length>1*1024*1024){
+        			result.setSuccess(false);
+        			result.setMsg("图片尺寸不能大于1M");
+        			pw.print(JacksonUtils.toJson(result));
+					pw.flush();
+					isReturn = false;
+        		}
+        	}
+    		if(isReturn){
+	    		String id = request.getParameter("id");
+	    		String name = request.getParameter("name");
+				String code = request.getParameter("code");
+                String adminUser = request.getParameter("adminUser");
+				Boolean innerLink = null;
+				if(request.getParameter("innerLink") != null){
+					innerLink = Boolean.valueOf(request.getParameter("innerLink"));
+				}
+				String resourceId = request.getParameter("resourceId");
+				String resourceName = request.getParameter("resourceName");
+				String linkAddr = request.getParameter("linkAddr");
+				String isDelPic = request.getParameter("isDelPic");
+                String sortNum = request.getParameter("sortNum");
+				byte[] headpic={};
+				if("1".equals(isDelPic) && uploadfile != null){
+					InputStream is = uploadfile.getInputStream();
+					headpic = new byte[is.available()];  
+					is.read(headpic);  
+					is.close();  
+				}
+				t.setId(id);
+				t.setName(name);
+				t.setCode(code);
+				t.setResourceId(resourceId);
+				t.setResourceName(resourceName);
+				t.setLinkAddr(linkAddr);
+				t.setInnerLink(innerLink);
+				t.setIcon(headpic);
+                t.setDelflag(false);
+                t.setSortNum(sortNum!=null?Integer.parseInt(sortNum):null);
+                SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+                if (!StringUtils.isBlank(adminUser)){
+                    t.setOwnerId(adminUser);
+                }else{
+                    t.setOwnerId(securityUserBeanInfo.getSecurityUserDto().getId());
+                    t.setOwner(securityUserBeanInfo.getSecurityUserDto().getRealName());
+                }
+
+	            String saveJson = JacksonUtils.toJson(t);
+
+	            String dubboResultInfo = shortcutMenuDtoServiceCustomer.save(getSecurityUserInfo(), saveJson);
+	            DubboServiceResultInfo dubboServiceResultInfo = JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+	            if (dubboServiceResultInfo.isSucess()) {
+	                String resultInfo = dubboServiceResultInfo.getResult();
+	                ShortcutMenuDto shortcutMenuDto = JacksonUtils.fromJson(resultInfo, ShortcutMenuDto.class);
+	                result.setResult(shortcutMenuDto);
+	                result.setSuccess(MessageInfo.SAVESUCCESS.isResult());
+	                result.setMsg(MessageInfo.SAVESUCCESS.getMsg());
+	            } else {
+	                result.setSuccess(MessageInfo.SAVEERROR.isResult());
+	                String msg = dubboServiceResultInfo.getExceptionMsg()==null?dubboServiceResultInfo.getMsg():dubboServiceResultInfo.getExceptionMsg();
+	                result.setMsg(MessageInfo.SAVEERROR.getMsg() + "【" + msg + "】");
+	            }
+	            pw.print(JacksonUtils.toJson(result));
+				pw.flush();
+    		}
+        } catch (Exception e) {
+            try {
+                ObjectMapper mapper = new ObjectMapper();
+                String paramJson = mapper.writeValueAsString(t);
+                log.error("调用save方法:  【参数" + paramJson + "】======" + "【" + e.getMessage() + "】");
+                result.setSuccess(MessageInfo.SAVEERROR.isResult());
+                result.setMsg(MessageInfo.SAVEERROR.getMsg() + "【" + e.getMessage() + "】");
+                pw.print(JacksonUtils.toJson(result));
+				pw.flush();
+            } catch (JsonProcessingException e1) {
+                // TODO Auto-generated catch block
+                e1.printStackTrace();
+            }
+
+        }finally {
+			try {
+				pw.close();
+			} catch (Exception e){}
+		}
+    }
+
+    /**
+     * 删除实体对象
+     *
+     * @param id
+     * @return
+     */
+    @RequestMapping(value = "/delete/{id}", method = RequestMethod.DELETE)
+    public
+    @ResponseBody
+    MessageResult delete(@PathVariable("id") String id) {
+        MessageResult result = new MessageResult();
+        try {
+
+            String dubboResultInfo = null;
+            String[] ids = id.split("_");
+            String adminUser = ids.length>1?ids[1]:null;
+            id = ids[0];
+            if (adminUser!=null){
+
+                dubboResultInfo = shortcutMenuDtoServiceCustomer.deleteObjectById(getSecurityUserInfo(), "{\"id\":\"" + id + "\"}");
+            }else{
+                dubboResultInfo = shortcutMenuDtoServiceCustomer.deletePseudoObjectById(getSecurityUserInfo(),"{\"id\":\"" + id + "\"}");
+            }
+
+            DubboServiceResultInfo dubboServiceResultInfo = JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+            if (dubboServiceResultInfo.isSucess()) {
+                String resultInfo = dubboServiceResultInfo.getResult();
+                ShortcutMenuDto shortcutMenuDto = JacksonUtils.fromJson(resultInfo, ShortcutMenuDto.class);
+                result.setResult(shortcutMenuDto);
+                result.setSuccess(MessageInfo.DELETESUCCESS.isResult());
+                result.setMsg(MessageInfo.DELETESUCCESS.getMsg());
+            } else {
+                result.setSuccess(MessageInfo.DELETEERROR.isResult());
+                result.setMsg(MessageInfo.DELETEERROR.getMsg() + "【" + dubboServiceResultInfo.getExceptionMsg() + "】");
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            log.error("调用delete方法:  【参数" + id + "】======" + "【" + e.getMessage() + "】");
+            result.setSuccess(MessageInfo.DELETEERROR.isResult());
+            result.setMsg(MessageInfo.DELETEERROR.getMsg() + "【" + e.getMessage() + "】");
+        }
+
+        return result;
+    }
+
+
+    /**
+     * 删除实体对象
+     *
+     * @param ids
+     * @return
+     */
+    @RequestMapping(value = "/deleteBatch/{ids}", method = RequestMethod.DELETE)
+    public
+    @ResponseBody
+    MessageResult deleteBatch(@PathVariable("ids") String ids) {
+        MessageResult result = new MessageResult();
+        try {
+            String dubboResultInfo = shortcutMenuDtoServiceCustomer.deleteAllObjectByIds(getSecurityUserInfo(), "{\"id\":\"" + ids + "\"}");
+            DubboServiceResultInfo dubboServiceResultInfo = JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+            if (dubboServiceResultInfo.isSucess()) {
+                String resultInfo = dubboServiceResultInfo.getResult();
+                ShortcutMenuDto shortcutMenuDto = JacksonUtils.fromJson(resultInfo, ShortcutMenuDto.class);
+                result.setResult(shortcutMenuDto);
+                result.setSuccess(MessageInfo.DELETESUCCESS.isResult());
+                result.setMsg(MessageInfo.DELETESUCCESS.getMsg());
+            } else {
+                result.setSuccess(MessageInfo.DELETEERROR.isResult());
+                result.setMsg(MessageInfo.DELETEERROR.getMsg() + "【" + dubboServiceResultInfo.getExceptionMsg() + "】");
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            log.error("调用delete方法:  【参数" + ids + "】======" + "【" + e.getMessage() + "】");
+            result.setSuccess(MessageInfo.DELETEERROR.isResult());
+            result.setMsg(MessageInfo.DELETEERROR.getMsg() + "【" + e.getMessage() + "】");
+        }
+
+        return result;
+    }
+
+    /**
+     * 修改修改实体对象
+     *
+     * @param map
+     * @return
+     */
+    @RequestMapping(value = "/update/{id}", method = RequestMethod.PUT, consumes = "application/json")
+    public
+    @ResponseBody
+    MessageResult update(@PathVariable("id") String id, @RequestBody Map<String, Object> map) {
+        MessageResult result = new MessageResult();
+        ShortcutMenuDto shortcutMenuDto = null;
+        try {
+            String dubboResultInfo = shortcutMenuDtoServiceCustomer.getObjectById(getSecurityUserInfo(), "{\"id\":\"" + id + "\"}");
+            DubboServiceResultInfo dubboServiceResultInfo = JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+            if (dubboServiceResultInfo.isSucess()) {
+                String resultInfo = dubboServiceResultInfo.getResult();
+                Map<String, Object> oldMap = JacksonUtils.fromJson(resultInfo, HashMap.class);
+                oldMap.putAll(map);
+                String updateJson = JacksonUtils.toJson(oldMap);
+                String updateDubboResultInfo = shortcutMenuDtoServiceCustomer.update(getSecurityUserInfo(), updateJson);
+                DubboServiceResultInfo updateDubboServiceResultInfo = JacksonUtils.fromJson(updateDubboResultInfo, DubboServiceResultInfo.class);
+                if (updateDubboServiceResultInfo.isSucess()) {
+                    Integer i = JacksonUtils.fromJson(updateDubboServiceResultInfo.getResult(), Integer.class);
+                    result.setResult(i);
+                    result.setSuccess(MessageInfo.UPDATESUCCESS.isResult());
+                    result.setMsg(MessageInfo.UPDATESUCCESS.getMsg());
+                } else {
+                    result.setSuccess(MessageInfo.UPDATEERROR.isResult());
+                    result.setMsg(updateDubboServiceResultInfo.getMsg() + "【" + updateDubboServiceResultInfo.getExceptionMsg() + "】");
+                }
+            } else {
+                result.setSuccess(MessageInfo.UPDATEERROR.isResult());
+                result.setMsg("不存在更新的对象");
+            }
+        } catch (Exception e) {
+            try {
+                e.printStackTrace();
+                ObjectMapper mapper = new ObjectMapper();
+                String paramJson = mapper.writeValueAsString(shortcutMenuDto);
+                log.error("调用update方法:  【参数" + id + "," + paramJson + "】======" + "【" + e.getMessage() + "】");
+                result.setSuccess(MessageInfo.UPDATEERROR.isResult());
+                result.setMsg(MessageInfo.UPDATEERROR.getMsg() + "【" + e.getMessage() + "】");
+            } catch (JsonProcessingException e1) {
+                // TODO Auto-generated catch block
+                e1.printStackTrace();
+            }
+
+        }
+        return result;
+    }
+
+    /**
+     * 伪删除实体对象
+     *
+     * @param id
+     * @return
+     */
+    @RequestMapping(value = "/deletePseudo/{id}", method = RequestMethod.DELETE)
+    public
+    @ResponseBody
+    MessageResult deletePseudo(@PathVariable("id") String id) {
+        MessageResult result = new MessageResult();
+        try {
+            String dubboResultInfo = shortcutMenuDtoServiceCustomer.deletePseudoObjectById(getSecurityUserInfo(), "{\"id\":\"" + id + "\"}");
+            DubboServiceResultInfo dubboServiceResultInfo = JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+            if (dubboServiceResultInfo.isSucess()) {
+                String resultInfo = dubboServiceResultInfo.getResult();
+                ShortcutMenuDto shortcutMenuDto = JacksonUtils.fromJson(resultInfo, ShortcutMenuDto.class);
+                result.setResult(shortcutMenuDto);
+                result.setSuccess(MessageInfo.DELETESUCCESS.isResult());
+                result.setMsg(MessageInfo.DELETESUCCESS.getMsg());
+            } else {
+                result.setSuccess(MessageInfo.DELETEERROR.isResult());
+                result.setMsg(MessageInfo.DELETEERROR.getMsg() + "【" + dubboServiceResultInfo.getExceptionMsg() + "】");
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            log.error("调用deletePseudo方法:  【参数" + id + "】======" + "【" + e.getMessage() + "】");
+            result.setSuccess(MessageInfo.DELETEERROR.isResult());
+            result.setMsg(MessageInfo.DELETEERROR.getMsg() + "【" + e.getMessage() + "】");
+        }
+
+        return result;
+    }
+
+
+    /**
+     * 伪删除实体对象
+     *
+     * @param ids
+     * @return
+     */
+    @RequestMapping(value = "/deletePseudoBatch/{ids}", method = RequestMethod.DELETE)
+    public
+    @ResponseBody
+    MessageResult deletePseudoBatch(@PathVariable("ids") String ids) {
+        MessageResult result = new MessageResult();
+        try {
+            String dubboResultInfo = shortcutMenuDtoServiceCustomer.deletePseudoAllObjectByIds(getSecurityUserInfo(), "{\"id\":\"" + ids + "\"}");
+            DubboServiceResultInfo dubboServiceResultInfo = JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+            if (dubboServiceResultInfo.isSucess()) {
+                String resultInfo = dubboServiceResultInfo.getResult();
+                ShortcutMenuDto shortcutMenuDto = JacksonUtils.fromJson(resultInfo, ShortcutMenuDto.class);
+                result.setResult(shortcutMenuDto);
+                result.setSuccess(MessageInfo.DELETESUCCESS.isResult());
+                result.setMsg(MessageInfo.DELETESUCCESS.getMsg());
+            } else {
+                result.setSuccess(MessageInfo.DELETEERROR.isResult());
+                result.setMsg(MessageInfo.DELETEERROR.getMsg() + "【" + dubboServiceResultInfo.getExceptionMsg() + "】");
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            log.error("调用deletePseudoBatch方法:  【参数" + ids + "】======" + "【" + e.getMessage() + "】");
+            result.setSuccess(MessageInfo.DELETEERROR.isResult());
+            result.setMsg(MessageInfo.DELETEERROR.getMsg() + "【" + e.getMessage() + "】");
+        }
+
+        return result;
+    }
+
+
+    @RequestMapping(value = "/getUserInfo", method = RequestMethod.GET)
+    public
+    @ResponseBody
+    MessageResult getUserInfo() {
+        MessageResult result = new MessageResult();
+        try {
+            /*SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+			String userInfo = JacksonUtils.toJson(securityUserBeanInfo);*/
+            result.setResult(getSecurityUserInfo());
+            result.setSuccess(MessageInfo.GETSUCCESS.isResult());
+            result.setMsg(MessageInfo.GETSUCCESS.getMsg());
+        } catch (Exception e) {
+            e.printStackTrace();
+            log.error("调用getUserInfo方法:  【" + e.getMessage() + "】");
+            result.setSuccess(MessageInfo.GETERROR.isResult());
+            result.setMsg(MessageInfo.GETERROR.getMsg() + "【" + e.getMessage() + "】");
+        }
+        return result;
+    }
+    
+    /**
+     * 门户首页展示
+     *
+     * @param request
+     * @return
+     */
+    @RequestMapping(value = "/getShortcutMenuPortal", method = RequestMethod.GET,produces = "text/html; charset=utf-8")
+    @ResponseBody
+    public String getShortcutMenuPortal(HttpServletRequest request) {
+        String paramaterJson = null;
+        StringBuffer buffer = new StringBuffer();
+        String html = "";
+        try {
+        	Map<String,Object> map = new HashMap<String, Object>();
+            SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+            String adminUser = request.getParameter("adminUser");
+            if(StringUtils.isNotBlank(adminUser)){
+                map.put("ownerId", adminUser);
+            }else{
+                map.put("ownerId", securityUserBeanInfo.getSecurityUserDto().getId());
+            }
+
+            map.put("sidx", "sortNum");
+            map.put("sord", "asc");
+            map.put("delflag", false);
+            paramaterJson = JacksonUtils.toJson(map);
+            String userInfo = JacksonUtils.toJson(securityUserBeanInfo);
+            String dubboResultInfo = shortcutMenuDtoServiceCustomer.queryList(userInfo, paramaterJson);
+            DubboServiceResultInfo dubboServiceResultInfo = JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+            String loginName = securityUserBeanInfo.getSecurityUserDto().getLoginName();
+            String sessionId = request.getSession().getId();
+            buffer.append("<div class=\"scm-glyphicons\" id=\"shortcutMenuListDiv\">\n");
+        	buffer.append("<ul class=\"scm-glyphicons-list clearfix\">\n");
+            if (dubboServiceResultInfo.isSucess()) {
+                String resultInfo = dubboServiceResultInfo.getResult();
+                List<ShortcutMenuDto> list = JacksonUtils.fromJson(resultInfo, ArrayList.class, ShortcutMenuDto.class);
+                if(list != null && list.size()>0){
+                	for(int i = 0; i < list.size(); i++){
+                		ShortcutMenuDto shortcutMenuDto = list.get(i);
+                		String iconShow = null;
+                		if(shortcutMenuDto.getIcon() != null){
+                            byte[] icon1 = shortcutMenuDto.getIcon();
+                            byte[] icon2 = icon1;//icon1!=null? CompressImgUtil.compressImg2(icon1,42,42):null;
+                            if(icon1!=null&&icon1.length>32*1024){
+                                icon2 = icon1!=null? CompressImgUtil.compressImg2(icon1,42,42):null;
+                            }
+                			iconShow = icon2!=null?"data:image/jpeg;base64,"+Base64.getEncoder().encodeToString(icon2):"../../common/img/default2.png";
+                		}
+                		String linkAddr = shortcutMenuDto.getLinkAddr();
+                		if(linkAddr.contains("#[userName]")){
+                			linkAddr = linkAddr.replace("#[userName]", loginName);
+                		}
+                		if(linkAddr.contains("#[sessionId]")){
+                			linkAddr = linkAddr.replace("#[sessionId]", sessionId);
+                		}
+                		
+            			buffer.append("<li  data-id=\""+shortcutMenuDto.getId()+"\" title=\""+shortcutMenuDto.getName()+"\">\n");
+            			buffer.append("<a href=\"javascript:void(0)\" data-href=\""+linkAddr+"\" data-linktype=\""+shortcutMenuDto.getInnerLink()+"\"><img src=\""+ iconShow+"\">");
+            			buffer.append("<span class=\"glyphicon-class\">"+shortcutMenuDto.getName()+"</span></a>\n");
+            			buffer.append("<span class=\"removeShortcutSpan imgPosition del_menuBd\" title=\"删除\" onclick=\"removeShortcutMenu('"+shortcutMenuDto.getId()+"')\"></span>\n");
+            			buffer.append("</li>\n");
+                	}
+                }
+
+                if(list == null || list.size() < 12){
+                	buffer.append("<li  title=\"添加\" class=\"shorcut-add-item\">\n");
+                	buffer.append("<a href=\"javascript:void(0)\" onclick=\"window.open('/platform-app/oa/shortcutMenu/shortcutMenu_edit.html?adminUser='+$.xljUtils.getUrlParams().adminUser+'&sortNum='+($('#shortcutMenuListDiv li').length-1))\"><img src=\"/platform-app/image/oa/addmore.png\" >");
+                	buffer.append("<span class=\"glyphicon-class\">添加</span></a>\n");
+                	buffer.append("</li>\n");
+                }
+            } 
+            buffer.append("</ul>\n</div>\n");
+            buffer.append("<script type=\"text/javascript\">\n");
+            buffer.append("$(function(){\n" +
+                    "       $('#shortcutMenuListDiv>ul>li>a').on('click',function(){\n" +
+                    "          // debugger;\n " +
+                    "           var href = $(this).attr('data-href');\n" +
+                    "           var linkType = $(this).attr('data-linkType');\n" +
+                    "           if(linkType=='false'){\n" +
+                    "               window.open(href);\n" +
+                    "           }else{\n" +
+                    "               var aLink = href;\n" +
+                    "		        if(aLink.indexOf(\"?\") >= 0){\n" +
+                    "               aLink = aLink.substring(aLink.indexOf('?'));\n" +
+                    "               aLink = aLink.replace('?', '').replace(/&/g, '\",\"');\n" +
+                    "               aLink = aLink.replace(/=/g, '\":\"');\n" +
+                    "               var menuUrlObj ;\n" +
+                    "               if (aLink != \"\") {\n" +
+                    "                   menuUrlObj = JSON.parse('{\"' + aLink + '\"}');\n" +
+                    "               }\n" +
+                    "               if(menuUrlObj._proCode&&!menuUrlObj._menuCode){\n" +
+                    "                   window.parent.switchPro(menuUrlObj._proCode);\n" +
+                    "               }else if(menuUrlObj._proCode&&menuUrlObj._menuCode){\n" +
+                    "                   window.parent.switchPro(menuUrlObj._proCode,menuUrlObj._menuCode);\n" +
+                    "               }else{\n" +
+                    "                   window.location.href = href;\n" +
+                    "               }\n" +
+                    "            }else{\n" +
+                    "           	window.location.href = href;\n" +
+                    "            }\n" +
+                    "           }\n" +
+                    "       });\n" +
+                    "       $('#shortcutMenuListDiv ul').sortable({\n" +
+                    "           items:'li:not(.shorcut-add-item)',\n" +
+                    "           cancel:'.shorcut-add-item',\n" +
+                    "           update:function(event,ui){\n" +
+                    "               var liArr = $('#shortcutMenuListDiv ul li:not(.shorcut-add-item)');\n" +
+                    "               var shortCutIds = [];\n" +
+                    "               $.each(liArr,function(i,liObj){\n" +
+                    "                   shortCutIds.push($(liObj).attr('data-id'));\n" +
+                    "               });\n" +
+                    "               $.ajax({\n" +
+                    "                   url:hostUrl + 'oa/shortcutMenu/updateSort',\n" +
+                    "                   type:'POST',\n" +
+                    "                   dataType:'JSON',\n" +
+                    "                   contentType: 'application/json',\n" +
+                    "                   data:JSON.stringify({shortcutIds:shortCutIds.join(',')}),\n" +
+                    "                   success:function(data){}\n" +
+                    "               \n" +
+                    "               });\n"+
+                    "       }});\n" +
+                    "       $('#shortcutMenuListDiv ul li.shorcut-add-item').disableSelection();\n" +
+                    "});\n");
+            buffer.append("function removeShortcutMenu(id) {\n" +
+                    "    var allUrl = hostUrl + 'oa/shortcutMenu/delete/' + id;\n" +
+                    "    if ($.xljUtils.getUrlParams().adminUser) {\n" +
+                    "        allUrl += '_' + $.xljUtils.getUrlParams().adminUser;\n" +
+                    "    }\n" +
+                    "    $.xljUtils.confirm('blue','确定要删除当前快捷菜单么？',function () {\n" +
+                    "        $.ajax({\n" +
+                    "            url: allUrl,\n" +
+                    "            type: 'DELETE',\n" +
+                    "            dataType: 'JSON',\n" +
+                    "            success: function (resultData) {\n" +
+                    "                if (resultData && resultData.success) {\n" +
+                    "                    divRefresh();\n" +
+                    "                    $.xljUtils.tip('green', \"数据删除成功！\");\n" +
+                    "                } else {\n" +
+                    "                    $.xljUtils.tip('red', \"删除数据失败！\");\n" +
+                    "                }\n" +
+                    "            }\n" +
+                    "        });\n" +
+                    "    },true);\n" +
+                    "    \n" +
+                    "}");
+            
+            buffer.append("function divRefresh(){\n" +
+            		"$.ajaxSetup ({ cache: false });\n" +
+                    "\t var adminUser=$.xljUtils.getUrlParams().adminUser;\n" +
+                    "\t if(adminUser&&adminUser!='undefined'&&adminUser!=''){\n" +
+                    "\t $(\"#shortcutMenuListDiv\").parent().load(\"/platform-app/oa/shortcutMenu/getShortcutMenuPortal?adminUser=\"+adminUser);\n"+
+                    "\t }else{" +
+                    "\t $(\"#shortcutMenuListDiv\").parent().load(\"/platform-app/oa/shortcutMenu/getShortcutMenuPortal\");\n" +
+                    "\t }\n" +
+                    "\t}\n");
+            buffer.append("</script>");
+            html = buffer.toString();
+        } catch (Exception e) {
+        	 log.error("调用getShortcutMenuPortal方法出错："+e.getMessage());
+        }
+        return html;
+    }
+
+    @RequestMapping(value = "/updateSort", method = {RequestMethod.POST}, consumes = "application/json")
+    @ResponseBody
+    public MessageResult updateSort(@RequestBody Map<String, Object> map){
+        MessageResult result = new MessageResult();
+        String paramaterJson =  JacksonUtils.toJson(map);
+        try {
+            SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+            map.put("ownerId", securityUserBeanInfo.getSecurityUserDto().getId());
+            paramaterJson = JacksonUtils.toJson(map);
+            String dubboResultInfo = shortcutMenuDtoServiceCustomer.updateSort(getSecurityUserInfo(), paramaterJson);
+            DubboServiceResultInfo dubboServiceResultInfo = JacksonUtils.fromJson(dubboResultInfo, DubboServiceResultInfo.class);
+            if (dubboServiceResultInfo.isSucess()) {
+                String resultInfo = dubboServiceResultInfo.getResult();
+                PageBeanInfo pageInfo = JacksonUtils.fromJson(resultInfo, PageBeanInfo.class);
+                result.setResult(pageInfo);
+                result.setSuccess(MessageInfo.GETSUCCESS.isResult());
+                result.setMsg(MessageInfo.GETSUCCESS.getMsg());
+            } else {
+                result.setSuccess(MessageInfo.GETERROR.isResult());
+                result.setMsg(MessageInfo.GETERROR.getMsg() + "【" + dubboServiceResultInfo.getExceptionMsg() + "】");
+            }
+
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            log.error("调用updateSort方法:  【参数" + paramaterJson + "】======" + "【" + e.getMessage() + "】");
+            result.setSuccess(MessageInfo.GETERROR.isResult());
+            result.setMsg(MessageInfo.GETERROR.getMsg() + "【" + e.getMessage() + "】");
+        }
+        return result;
+    }
+
+    private String getSecurityUserInfo() {
+        SecurityUserBeanInfo securityUserBeanInfo = LoginUtils.getSecurityUserBeanInfo();
+        String userInfo = JacksonUtils.toJson(securityUserBeanInfo);
+
+        return userInfo;
+    }
+}

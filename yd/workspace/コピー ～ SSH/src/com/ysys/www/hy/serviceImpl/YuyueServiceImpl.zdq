@@ -1,0 +1,1119 @@
+package com.ysys.www.hy.serviceImpl;
+
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.List;
+
+import com.ysys.www.hy.dao.YuyueDAO;
+import com.ysys.www.hy.dao.condition.TabHysyl;
+import com.ysys.www.hy.dao.condition.TabMrhycjz;
+import com.ysys.www.hy.dao.condition.TabMrhycjzPK;
+import com.ysys.www.hy.dao.condition.TabMrhyyl;
+import com.ysys.www.hy.dao.condition.TabMrhyylPK;
+import com.ysys.www.hy.dao.condition.TabZqhcjz;
+import com.ysys.www.hy.dao.condition.TabZqhcjzPK;
+import com.ysys.www.hy.dao.condition.TabZqhyyl;
+import com.ysys.www.hy.dao.condition.TabZqhyylPK;
+import com.ysys.www.hy.service.YuyueService;
+import com.ysys.www.hy.service.condition.YuyueInfo;
+import com.ysys.www.hy.service.common.CommonConstants;
+import com.ysys.www.hy.service.common.SessionManager;
+import com.ysys.www.hy.service.common.UserInfo;
+
+public class YuyueServiceImpl implements YuyueService {
+
+	private YuyueInfo yuyueinfo = null;
+	private TabMrhyyl mrhyyl = null;
+	private TabZqhyyl zqhyyl = null;
+	private TabZqhcjz zqhcjz = null;
+	private YuyueDAO yuyueDAO;
+
+	public TabMrhyyl getMrhyyl() {
+		return mrhyyl;
+	}
+
+	public void setMrhyyl(TabMrhyyl mrhyyl) {
+		this.mrhyyl = mrhyyl;
+	}
+
+	public void setYuyueDAO(YuyueDAO yuyueDAO) {
+		this.yuyueDAO = yuyueDAO;
+	}
+
+	//----------------- 保存预约数据 ---------------//
+	@Override
+    public boolean saveYuyueData(YuyueInfo yuyueinfo) {
+
+		this.yuyueinfo = yuyueinfo;
+				
+    	//--------------- common data 准备 --------------//
+		SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd");	//MM：月份		mm：分
+		SimpleDateFormat format2 = new SimpleDateFormat("HH:mm");		//HH：24小时制	hh：十二小时制
+		
+		//开始日期
+		Date start_date = null;
+		try {
+			start_date = format.parse(yuyueinfo.getStartdate());
+		} catch(ParseException e) {
+			e.printStackTrace();
+		}
+		yuyueinfo.setStart_date(start_date);
+		
+		//开始时间
+		Date start_time = null;
+		String st = yuyueinfo.getStart_hour() + ":" + yuyueinfo.getStart_minute();
+		
+		try {
+			start_time = format2.parse(st);
+		} catch (ParseException e) {
+			e.printStackTrace();
+		}
+		yuyueinfo.setStart_time(start_time);	//saveMrhy()用
+			
+		//结束时间
+		Date end_time = null;
+		String et = yuyueinfo.getEnd_hour() + ":" + yuyueinfo.getEnd_minute();
+
+		try {
+			end_time = format2.parse(et);
+		} catch (ParseException e) {
+			e.printStackTrace();
+		}
+		yuyueinfo.setEnd_time(end_time);		//saveMrhy()用
+		
+		//会议室ID
+		int hysid = Integer.parseInt(yuyueinfo.getHys());
+		yuyueinfo.setHysid(hysid);
+	
+		//预约人ID
+		SessionManager session = new SessionManager();
+		String yyrid = ((UserInfo)session.get(CommonConstants.USERINFO)).getUserID();
+		yuyueinfo.setYyrid(yyrid);
+	
+		//预约类型分别处理
+    	String yuyueType = yuyueinfo.getYuyuetype();
+    	int type = Integer.parseInt(yuyueType);
+    	
+    	if(CommonConstants.DAY_MEETING == type) {	//当日预约
+    		boolean insertable = check(hysid, start_date, start_time, end_time);	//冲突预约检查
+    		if(insertable) {
+    			saveMrhy(start_date, 0);
+    		}else{
+    			return false;
+    		}
+    	} 
+    	
+    	if(CommonConstants.CYCLE_MEETING == type) {	//周期预约
+    		
+    		String zhouqitype = yuyueinfo.getZhouqitype();
+    		if(CommonConstants.SCYCLE_DAY.equals(zhouqitype)) {
+    			if (saveZqhyDay(zhouqitype) == false ) {
+    				return false;
+    			}
+    		}
+    		else if(CommonConstants.SCYCLE_WEEK.equals(zhouqitype)) {
+    			if (saveZqhyWeek(zhouqitype) == false) {
+    				return false;
+    			}
+    		}
+    		else if(CommonConstants.SCYCLE_MONTH.equals(zhouqitype)) {
+    			if (saveZqhyMonth(zhouqitype) == false) {
+    				return false;
+    			}
+    		}
+    	}
+    	
+    	return true;
+	}
+
+	//------------------- 每日会议保存 -----------------------//
+	public void saveMrhy(Date yuyuedate, int zqhyid) {	//参数用于周期预约时，保存每日会议数据，每条明细的会议日期
+		
+		TabMrhyyl mrhyyl = new TabMrhyyl();
+    	TabMrhyylPK mrhyylpk = new TabMrhyylPK();
+    	
+    	//预约日期
+		mrhyylpk.setHyrq(yuyuedate);
+		
+		//开始时间
+		mrhyylpk.setHykssj(yuyueinfo.getStart_time());
+		
+		//结束时间
+		mrhyyl.setHyjssj(yuyueinfo.getEnd_time());
+		
+		//会议室ID
+		mrhyylpk.setHysid(yuyueinfo.getHysid());
+		
+		//set PK
+		mrhyyl.setId(mrhyylpk);
+		
+		//会议主题
+		mrhyyl.setHyzt(yuyueinfo.getHyzt());
+		
+		//预约人ID
+		mrhyyl.setYyrid(yuyueinfo.getYyrid());
+		
+		//参加者人数
+		mrhyyl.setCjzrs(3);
+		
+		//周期会议区分
+		if(yuyueinfo.getYuyuetype().equals("0")) {
+			mrhyyl.setZqhyqf(CommonConstants.DAY_MEETING);
+		} else {
+			mrhyyl.setZqhyqf(CommonConstants.CYCLE_MEETING);
+			
+			//周期会议ID
+			mrhyyl.setZqhyid(zqhyid);		//周期用
+		}
+
+		//更改标志
+		mrhyyl.setGgbz(yuyueinfo.getGgbz());
+		
+		//会议室报告
+		mrhyyl.setHysbg(yuyueinfo.getHyjl());
+		
+		//更新时间
+		mrhyyl.setUpdatetime(new Date());
+		
+		
+		//save to TabMrhyyl
+		yuyueDAO.saveData(mrhyyl);
+		
+		//save to TabMrhycjz
+		String ids = "200604,200822,200823";
+		String[] idArray = ids.split(",");
+		for(int i=0; i<=idArray.length - 1; i++) {
+			
+			TabMrhycjz mrhycjz = new TabMrhycjz();  
+			TabMrhycjzPK mrhycjzpk = new TabMrhycjzPK();	// for内每次得重新 new
+			
+			mrhycjzpk.setHyrq(yuyuedate);
+			mrhycjzpk.setHykssj(yuyueinfo.getStart_time());		
+			mrhycjzpk.setHysid(yuyueinfo.getHysid()); 
+			mrhycjzpk.setCjzid(idArray[i]);
+			
+			mrhycjz.setId(mrhycjzpk);
+			mrhycjz.setHzqr(0);
+			mrhycjz.setUpdatetime(new Date());
+			
+			yuyueDAO.saveData(mrhycjz);
+			
+			//批量处理时Buffer溢出解决---------人数多时
+			if(i % CommonConstants.BATCH_SIZE == 0) {
+				yuyueDAO.getHibernateTemplate().flush();
+				yuyueDAO.getHibernateTemplate().clear();
+			}
+		}
+		
+		
+	}
+	
+	//------------------- set 周期会议公共数据 -------------------//
+	public void setZqhyCommon() {
+		
+		//结束日期
+		SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd");
+		Date end_date = null;
+		try {
+			end_date = format.parse(yuyueinfo.getEnddate());
+		} catch (ParseException e) {
+			e.printStackTrace();
+		}
+		yuyueinfo.setEnd_date(end_date);
+		
+		zqhyyl = new TabZqhyyl();
+		
+		//周期会议主题
+		zqhyyl.setZqhyzt(yuyueinfo.getHyzt());
+		
+		//会议室ID
+		int hysid = Integer.parseInt(yuyueinfo.getHys());
+		zqhyyl.setHysid(hysid);
+		
+		//会议开始日期
+		zqhyyl.setHyksrq(yuyueinfo.getStart_date());
+		
+		//会议结束日期
+		zqhyyl.setHyjsrq(yuyueinfo.getEnd_date());
+		
+		//会议开始时间
+		zqhyyl.setHykssj(yuyueinfo.getStart_time());
+		
+		//会议结束时间
+		zqhyyl.setHyjssj(yuyueinfo.getEnd_time());
+		
+		//预约人ID
+		zqhyyl.setYyrid(yuyueinfo.getYyrid());
+		
+		//参加者人数
+		zqhyyl.setCjzrs(3);
+		
+		//更新时间
+		zqhyyl.setUpdatetime(new Date());
+		
+	}
+	
+	//------------------- 周期会议保存---每天 -----------------------//
+	public boolean  saveZqhyDay(String zhouqitype) {
+		
+		setZqhyCommon();
+		
+		zqhyyl.setZqlx(CommonConstants.CYCLE_DAY);			//周期会议类型
+		
+		//PK set
+		TabZqhyylPK zqhyylpk = new TabZqhyylPK();
+		
+		int zqhyid = this.getZqhyid();							//周期会议ID
+		zqhyylpk.setZqhyid(++zqhyid);					
+		
+		
+		zqhyylpk.setZqnhyts(CommonConstants.DAY);			//周期内会议天数
+		zqhyyl.setId(zqhyylpk);
+		
+		//冲突检查
+		int hysid = zqhyyl.getHysid();
+		Date start_date = zqhyyl.getHyksrq();
+		Date end_date = zqhyyl.getHyjsrq();
+		Date start_time = zqhyyl.getHykssj();
+		Date end_time = zqhyyl.getHyjssj();
+		
+		boolean insertable = check(hysid, start_date, end_date, start_time, end_time);
+		if(insertable) {
+			yuyueDAO.saveData(zqhyyl);
+		} else {
+			return false;
+		}
+		
+		//save TabZqhcjz
+		saveZqhcjz(zhouqitype, zqhyid);
+		
+		//save TabMrhyyl
+		Calendar cal = Calendar.getInstance();
+		cal.setTime(start_date);
+		
+		int days = (int) ((end_date.getTime() - start_date.getTime()) / (1000 * 60 * 60 * 24)) + 1;//预约天数
+		
+		for(int d=0; d<days; d++) {					//保存每日会议一览明细
+			if(d == 0) {
+				cal.add(Calendar.DAY_OF_MONTH, 0);
+			} else {
+				cal.add(Calendar.DAY_OF_MONTH, 1);	//使日历翻一页
+			}
+			Date sd = cal.getTime();
+			
+			saveMrhy(sd, zqhyid);
+			
+			//批量处理时Buffer溢出解决---------天数多时
+			if(d % CommonConstants.BATCH_SIZE == 0) {
+				yuyueDAO.getHibernateTemplate().flush();
+				yuyueDAO.getHibernateTemplate().clear();
+			}
+		}
+		return true;
+	}
+	
+	//------------------- 周期会议保存---每周 -----------------------//
+	public boolean saveZqhyWeek(String zhouqitype) {
+		
+		//TabZqhcjz save用	每周时保存TabZqhcjz特殊
+		String ids = "200604,200822,200823";	
+		String[] idArray = ids.split(",");
+			
+		String[] weekday = {yuyueinfo.getMon(), yuyueinfo.getTue(), yuyueinfo.getWen(),
+							yuyueinfo.getThu(), yuyueinfo.getFri()};	//{"2", "3", "false", "5", "6"}
+		
+		int zqhyid = getZqhyid();	//周期会议ID在一次每周预约中不变
+		zqhyid = zqhyid + 1;
+		
+		
+		for(int i=0; i<5; i++) {
+			if(!"false".equals(weekday[i])) {
+				setZqhyCommon();
+				zqhyyl.setZqlx(CommonConstants.CYCLE_WEEK);
+				
+				TabZqhyylPK zqhyylpk = new TabZqhyylPK();
+				zqhyylpk.setZqhyid(zqhyid);
+				zqhyylpk.setZqnhyts(weekday[i]);
+				zqhyyl.setId(zqhyylpk);
+				
+				//冲突检查
+				int hysid = zqhyyl.getHysid();
+				Date start_date = zqhyyl.getHyksrq();
+				Date end_date = zqhyyl.getHyjsrq();
+				Date start_time = zqhyyl.getHykssj();
+				Date end_time = zqhyyl.getHyjssj();
+				
+				List<Date> days = getDays(start_date, end_date,weekday[i]);
+				
+				boolean insertable = check(hysid, start_date, end_date, days, start_time, end_time);
+				if(insertable) {
+					yuyueDAO.saveData(zqhyyl);
+				} else {
+					return false;
+				}
+								
+				//TabZqhcjz save用
+				for(int j=0; j<=idArray.length - 1; j++) {
+					
+					TabZqhcjz zqhcjz = new TabZqhcjz();  
+					TabZqhcjzPK zqhcjzpk = new TabZqhcjzPK();	// for内每次得重新 new
+					
+					zqhcjzpk.setZqhyid(zqhyid);	
+					zqhcjzpk.setZqnhyts(weekday[i]);			//!!!
+					zqhcjzpk.setCjzid(idArray[j]);
+					
+					zqhcjz.setId(zqhcjzpk);
+					zqhcjz.setUpdatetime(new Date());
+					
+					yuyueDAO.saveData(zqhcjz);
+					
+					//批量处理时Buffer溢出解决---------人数多时
+					if(j % CommonConstants.BATCH_SIZE == 0) {
+						yuyueDAO.getHibernateTemplate().flush();
+						yuyueDAO.getHibernateTemplate().clear();
+					}
+				}
+				
+				//save TabMrhyyl TabMrhycjz				
+				for(int k=0; k<days.size(); k++) {
+					saveMrhy(days.get(k), zqhyid);
+					
+					//批量处理时Buffer溢出解决---------天数多时
+					if(k % CommonConstants.BATCH_SIZE == 0) {
+						yuyueDAO.getHibernateTemplate().flush();
+						yuyueDAO.getHibernateTemplate().clear();
+					}
+				}
+				
+			}
+			
+		}
+		
+		return true;
+	}
+	
+	//取得一段日期内星期几的所有日期	每周用
+	public List<Date> getDays(Date from, Date to, String weekday) {
+		
+		List<Date> days = new ArrayList<Date> ();
+		
+		Calendar cal_start = Calendar.getInstance();		//set日历
+		Calendar cal_end = Calendar.getInstance();
+		cal_start.setTime(from);
+		cal_end.setTime(to);
+		
+		//取得时间段内第一个所选星期几
+		int day_of_week = cal_start.get(Calendar.DAY_OF_WEEK);
+		int weekday_chosen = Integer.parseInt(weekday);
+		
+		if(day_of_week <= weekday_chosen) {	//开始日期所在的星期几在所选星期几的前面或相等
+			cal_start.add(Calendar.DAY_OF_MONTH, weekday_chosen - day_of_week);
+		} else {
+			cal_start.add(Calendar.DAY_OF_MONTH, weekday_chosen - day_of_week + 7);
+		}
+		
+		//取出日期并save
+		while(!cal_start.after(cal_end)) {
+			Date yuyuedate = cal_start.getTime();
+			days.add(yuyuedate);
+			cal_start.add(Calendar.DAY_OF_MONTH, 7);			
+		}
+		return days;
+	}
+	
+	//取得一段日期内某一号的所有日期	每月用
+	public List<Date> getDays(Date from, Date to, int day) {
+		
+		List<Date> days = new ArrayList<Date>();
+		
+		Calendar cal_start = Calendar.getInstance();		//set日历
+		Calendar cal_end = Calendar.getInstance();
+		cal_start.setTime(from);
+		cal_end.setTime(to);
+		
+		int start_year = cal_start.get(Calendar.YEAR);		//开始年
+		int start_month = cal_start.get(Calendar.MONTH);	//取得页面开始月份
+		int end_year = cal_end.get(Calendar.YEAR);			//结束年
+		int end_month = cal_end.get(Calendar.MONTH);		//取得页面结束月份
+		
+		Calendar cal = Calendar.getInstance();	//带上当前时间!!!
+		
+		cal.setTime(from);						//重置cal的时间为0
+		
+		int sm;		//预约开始月份
+		cal.set(start_year, start_month, day);
+		boolean isBeforeStart = cal.before(cal_start);
+		if(isBeforeStart) {
+			sm = start_month + 1;
+		} else {
+			sm = start_month;
+		}
+		
+		int em;		//预约结束月份
+		cal.set(end_year, end_month, day);
+		boolean isAfterEnd = cal.after(cal_end);
+		if(isAfterEnd) {
+			em = end_month - 1;
+		} else {
+			em = end_month;
+		}
+		
+//		for(int i = sm; i <= em; i++) {						//取得日期
+//			cal.set(start_year, i, day);
+//			
+//			//提前后延处理
+//			int day_of_week = cal.get(Calendar.DAY_OF_WEEK);
+//			if(day_of_week == 1) {	//星期天
+//				if(CommonConstants.SAHEAD.equals(yuyueinfo.getQianhou())) {	//提前
+//					cal.add(Calendar.DAY_OF_MONTH, -2);
+//				}
+//				if(CommonConstants.SDELAY.equals(yuyueinfo.getQianhou())) {	//后延
+//					cal.add(Calendar.DAY_OF_MONTH, 1);
+//				}
+//			}
+//			if(day_of_week == 7) {	//星期六
+//				if(CommonConstants.SAHEAD.equals(yuyueinfo.getQianhou())) {	//提前
+//					cal.add(Calendar.DAY_OF_MONTH, -1);
+//				}
+//				if(CommonConstants.SDELAY.equals(yuyueinfo.getQianhou())) {	//后延
+//					cal.add(Calendar.DAY_OF_MONTH, 2);
+//				}
+//			}
+//			
+//			Date yuyuedate = cal.getTime();
+//			days.add(yuyuedate);
+//		}
+		
+
+		
+		int i = start_year;			//开始年
+		int j = sm;					//开始月
+		
+		while(i <= end_year) {
+			
+			if(j > 11) {			//跨年处理
+				i++;
+				if(i > end_year) {	//当年相等时，j=12时，i++跨过后面年的检查
+					break;
+				}
+				j = j - 12;
+			}
+			
+			if(i == end_year) {		//结束月份临近时处理
+				if(j > em) {
+					break;
+				}
+			}
+			
+			//处理所选日期在实际中不存在的情况
+			cal.set(i, j, 1);
+			int maxDate = cal.getActualMaximum(Calendar.DATE);
+			if(day > maxDate) {
+				if(CommonConstants.SAHEAD.equals(yuyueinfo.getQianhou())) {	//提前
+					cal.set(i, j, maxDate);
+				}
+				if(CommonConstants.SDELAY.equals(yuyueinfo.getQianhou())) {	//后延
+					cal.set(i, j, maxDate);
+					cal.add(Calendar.DAY_OF_MONTH, 1);
+				}
+			} else {
+				cal.set(i, j, day);
+			}
+		
+			//提前后延处理	周末与31号重复，按周末处理
+			int day_of_week = cal.get(Calendar.DAY_OF_WEEK);
+			if(day_of_week == 1) {						//星期天
+				if(CommonConstants.SAHEAD.equals(yuyueinfo.getQianhou())) {	//提前
+					cal.add(Calendar.DAY_OF_MONTH, -2);
+				}
+				if(CommonConstants.SDELAY.equals(yuyueinfo.getQianhou())) {	//后延
+					cal.add(Calendar.DAY_OF_MONTH, 1);
+				}
+			}
+			if(day_of_week == 7) {				//星期六
+				if(CommonConstants.SAHEAD.equals(yuyueinfo.getQianhou())) {	//提前
+					cal.add(Calendar.DAY_OF_MONTH, -1);
+				}
+				if(CommonConstants.SDELAY.equals(yuyueinfo.getQianhou())) {	//后延
+					cal.add(Calendar.DAY_OF_MONTH, 2);
+				}
+			}
+			
+			Date yuyuedate = cal.getTime();
+			days.add(yuyuedate);
+			
+			j++;
+
+		}
+		
+		return days;
+	}
+	
+	//------------------- 周期会议保存---每月 -----------------------//
+	public boolean saveZqhyMonth(String zhouqitype) {
+		
+		setZqhyCommon();
+		
+		zqhyyl.setHybz(Integer.parseInt(yuyueinfo.getQianhou()));	//后延标志
+		zqhyyl.setZqlx(CommonConstants.CYCLE_MONTH);
+		
+		//PK set
+		TabZqhyylPK zqhyylpk = new TabZqhyylPK();
+		
+		int zqhyid = this.getZqhyid();
+		zqhyylpk.setZqhyid(++zqhyid);							//周期会议ID
+		
+		zqhyylpk.setZqnhyts(yuyueinfo.getDay());			//用户预定值
+		zqhyyl.setId(zqhyylpk);
+		
+		int hysid = zqhyyl.getHysid();						//会议室ID
+		Date start_date = zqhyyl.getHyksrq();				//取得开始日期
+		Date end_date = zqhyyl.getHyjsrq();					//取得结束日期
+		Date start_time = zqhyyl.getHykssj();				//开始时间
+		Date end_time = zqhyyl.getHyjssj();					//结束时间
+		int day = Integer.parseInt(yuyueinfo.getDay());		//取得页面预约day
+		
+		List<Date> days = getDays(start_date, end_date,day);
+		
+		boolean insertable = check(hysid, start_date, end_date, days, start_time, end_time);
+		if(insertable) {
+			yuyueDAO.saveData(zqhyyl);
+		} else {
+			return false;
+		}
+		
+		//save to TabZqhcjz
+		saveZqhcjz(zhouqitype, zqhyid);
+		
+		//save TabMrhyyl TabMrhycjz			
+		for(int i=0; i < days.size(); i++) {						//保存每日会议一览明细
+					
+			saveMrhy(days.get(i), zqhyid);
+			
+			//批量处理时Buffer溢出解决---------天数多时
+			if(i % CommonConstants.BATCH_SIZE == 0) {
+				yuyueDAO.getHibernateTemplate().flush();
+				yuyueDAO.getHibernateTemplate().clear();
+			}
+		}
+		
+		return true;
+	}
+	
+	//------------------- save to TabZqhcjz -----------------------//
+	public void saveZqhcjz(String zhouqitype, int zqhyid) {
+		
+		String zqnhyts = "";
+		if(CommonConstants.SCYCLE_DAY.equals(zhouqitype)) {
+			zqnhyts = CommonConstants.DAY;
+		}
+		if(CommonConstants.SCYCLE_MONTH.equals(zhouqitype)) {
+			zqnhyts = yuyueinfo.getDay();
+		}
+		
+		String ids = "200604,200822,200823";
+		String[] idArray = ids.split(",");
+		
+		for(int i=0; i<=idArray.length - 1; i++) {
+			
+			zqhcjz = new TabZqhcjz();  
+			TabZqhcjzPK zqhcjzpk = new TabZqhcjzPK();	// for内每次得重新 new
+			
+			zqhcjzpk.setZqhyid(zqhyid);
+			zqhcjzpk.setZqnhyts(zqnhyts);
+			zqhcjzpk.setCjzid(idArray[i]);
+			
+			zqhcjz.setId(zqhcjzpk);
+			zqhcjz.setUpdatetime(new Date());
+			
+			yuyueDAO.saveData(zqhcjz);
+			
+			//批量处理时Buffer溢出解决---------人数多时
+			if(i % CommonConstants.BATCH_SIZE == 0) {
+				yuyueDAO.getHibernateTemplate().flush();
+				yuyueDAO.getHibernateTemplate().clear();
+			}
+		}
+		
+	}
+	
+	//--------------------冲突预约检查-----------------------//
+//	public boolean check(int hysid, Date start_date, Date start_time, Date end_time) {
+//		
+//		TabMrhyyl tmp = null;
+//		List<TabMrhyyl> mrhyyl_db = yuyueDAO.getMrhyylAll();	//get DB data 
+//		Iterator<TabMrhyyl> iterator = mrhyyl_db.iterator();
+//		boolean insertable = true;	//冲突标志
+//		
+//		for(;iterator.hasNext();)
+//		{
+//			tmp = iterator.next();
+//			int hysid_db = tmp.getId().getHysid();
+//			Date hyrq_db = tmp.getId().getHyrq();
+//			Date hykssj_db = tmp.getId().getHykssj();
+//			Date hyjssj_db = tmp.getHyjssj();
+//		
+//			
+//			boolean hysFlag = false;
+//			boolean dateFlag = false;
+//			boolean timeFlag = false;
+//			
+//			if(hysid == hysid_db) {				//会议室ID是否相等
+//				hysFlag = true;
+//			}
+//			
+//			if(start_date.equals(hyrq_db)) {	//开始日期是否相等
+//				dateFlag = true;
+//			}
+//			
+//			if(start_time.before(hykssj_db) && end_time.after(hykssj_db)	//开始结束时间是否冲突
+//					|| start_time.after(hykssj_db) && start_time.before(hyjssj_db)
+//					|| start_time.equals(hykssj_db)) {
+//				timeFlag = true;
+//			}
+//			
+//			if(hysFlag && dateFlag && timeFlag) {
+//				insertable = false;				
+//			}
+//		}
+//		
+//		SessionManager session = new SessionManager();	//保存冲突标志到session
+//		session.set(CommonConstants.RESERVE_CRASH_FLAG, insertable);
+//		
+//		return insertable;
+//	}
+	
+	//--------------------------当日 check---------------------------//
+	public boolean check(int hysid, Date start_date, Date start_time, Date end_time) {
+		
+		boolean insertable = true;	//冲突标志
+		
+		long number = yuyueDAO.getMrhyylNumber(hysid, start_date, start_time, end_time);
+		if(number != 0) {
+			insertable = false;
+		}
+		
+		SessionManager session = new SessionManager();	//保存冲突标志到session
+		session.set(CommonConstants.RESERVE_CRASH_FLAG, insertable);
+		
+		return insertable;
+	}
+	
+	//--------------------------每日 check---------------------------//
+	public boolean check(int hysid, Date start_date, Date end_date, Date start_time, Date end_time) {
+		
+		boolean insertable = true;	//冲突标志
+		
+		long number = yuyueDAO.getMrhyylNumber(hysid, start_date, end_date, start_time, end_time);
+		if(number != 0) {
+			insertable = false;
+		}
+		
+		SessionManager session = new SessionManager();	//保存冲突标志到session
+		session.set(CommonConstants.RESERVE_CRASH_FLAG, insertable);
+		
+		return insertable;
+	}
+	
+	//--------------------------每周 每月 check---------------------------//
+	public boolean check(int hysid, Date start_date, Date end_date, List<Date> days, Date start_time, Date end_time) {
+		
+		boolean insertable = true;	//冲突标志
+		
+		List<Date> mrhyyl_db = yuyueDAO.getMrhyyl(hysid, start_date, end_date, start_time, end_time);
+		
+		if(null != mrhyyl_db) {
+			boolean isExist = compare(days, mrhyyl_db);
+			
+			if(isExist) {
+				insertable = false;
+			}
+		} 
+		
+		SessionManager session = new SessionManager();	//保存冲突标志到session
+		session.set(CommonConstants.RESERVE_CRASH_FLAG, insertable);
+		
+		return insertable;
+	}
+	
+	//compare two list 
+	public boolean compare(List<Date> days, List<Date> daysdb) {
+		
+		for(int i=0; i<days.size(); i++) {
+			for(int j=0; j<daysdb.size(); j++) {
+				if(daysdb.get(j).equals(days.get(i))) {
+					return true;
+				}
+			}
+		}
+		return false; 
+	}
+	
+//	@SuppressWarnings("unchecked")
+//	public int getZqhyid() {
+//		List<TabZqhyyl> zqhyyl = yuyueDAO.getZqhyylAll();
+//		Iterator<TabZqhyyl> iter = zqhyyl.iterator();
+//		
+//		if(iter.hasNext()) {
+//			List<Integer> maxId = yuyueDAO.getZqhyylMax();
+//			return maxId.get(0);		
+//		}
+//		
+//		return 0;
+//	}
+	
+	//----------------取得周期会议ID--------------//
+	public synchronized int getZqhyid() {
+		
+		Object obj = yuyueDAO.getZqhyylMax();
+		
+		if(null == obj) {
+			return CommonConstants.Zqhyyl_EMPTY;
+		} else {
+			return (Integer)obj;
+		}
+	}
+	
+	//----------------取得所有会议室--------------//
+	@Override
+	public List<TabHysyl> getHysAll() {
+		return yuyueDAO.getHysAll();
+	}
+
+	
+	//----------------修改预约信息--------------//
+	public boolean modifyYuyueData(YuyueInfo yuyueinfo) {
+		
+		this.yuyueinfo = yuyueinfo;
+		
+//与save相同---start		
+    	//--------------- common data 准备 --------------//
+		SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd");	//MM：月份		mm：分
+		SimpleDateFormat format2 = new SimpleDateFormat("HH:mm");		//HH：24小时制	hh：十二小时制
+		
+		//开始日期
+		Date start_date = null;
+		try {
+			start_date = format.parse(yuyueinfo.getStartdate());
+		} catch(ParseException e) {
+			e.printStackTrace();
+		}
+		yuyueinfo.setStart_date(start_date);
+		
+		//开始时间
+		Date start_time = null;
+		String st = yuyueinfo.getStart_hour() + ":" + yuyueinfo.getStart_minute();
+		
+		try {
+			start_time = format2.parse(st);
+		} catch (ParseException e) {
+			e.printStackTrace();
+		}
+		yuyueinfo.setStart_time(start_time);	//saveMrhy()用
+			
+		//结束时间
+		Date end_time = null;
+		String et = yuyueinfo.getEnd_hour() + ":" + yuyueinfo.getEnd_minute();
+
+		try {
+			end_time = format2.parse(et);
+		} catch (ParseException e) {
+			e.printStackTrace();
+		}
+		yuyueinfo.setEnd_time(end_time);		//saveMrhy()用
+		
+		//会议室ID
+		int hysid = Integer.parseInt(yuyueinfo.getHys());
+		yuyueinfo.setHysid(hysid);
+	
+		//预约人ID
+		SessionManager session = new SessionManager();
+		String yyrid = ((UserInfo)session.get(CommonConstants.USERINFO)).getUserID();
+		yuyueinfo.setYyrid(yyrid);    		
+//与save相同---end
+		
+		yuyueinfo.setGgbz(CommonConstants.CHANGE_FLG);	//更改标志变为1
+		
+    	//session取出先前预约信息
+    	TabMrhyyl mrhyyl_old = (TabMrhyyl)session.get(CommonConstants.YUYUEINFO_OLD);    	
+    	
+    	if(mrhyyl_old.getZqhyqf() == CommonConstants.DAY_MEETING) {	//当日修改
+    		
+    		deleteMrhy(mrhyyl_old);
+    		
+    		boolean insertable = check(hysid, start_date, start_time, end_time);	//冲突预约检查
+    		if(insertable) {
+    			saveMrhy(start_date, 0);
+    		}else{
+    			return false;
+    		}
+    		
+    	} else {													//周期修改
+    		
+    		List<TabZqhyyl> zqhyyl_list = this.getZqhyylBy(mrhyyl_old);	//检索TabZqhyyl
+    		Integer zhouqitype = zqhyyl_list.get(0).getZqlx();					//周期类型
+    		
+    		if(CommonConstants.CYCLE_DAY == zhouqitype) {			//每天
+    			deleteZqhyDay(mrhyyl_old);
+    			
+    			saveZqhyDay(zhouqitype.toString());
+    			
+    		} else if(CommonConstants.CYCLE_WEEK == zhouqitype) {	//每周
+    			deleteZqhyWeek(mrhyyl_old);
+    			
+    			
+    		} else if(CommonConstants.CYCLE_MONTH == zhouqitype) {	//每月
+    			deleteZqhyMonth(mrhyyl_old);    			
+    			
+    		}
+    		
+    	}
+		
+		return true;
+	}
+	
+	//----------------取得预约信息--------------//
+	@Override
+	public YuyueInfo getYuyueInfo(String hys, String startdate, String start_hour, String start_minute) {
+		
+		YuyueInfo yuyueinfo = new YuyueInfo();
+		this.yuyueinfo = yuyueinfo;
+		
+		SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+		SimpleDateFormat sdf2 = new SimpleDateFormat("HH:mm");
+		
+		int hysid = Integer.parseInt(hys);
+		
+		Date start_date = null;
+		try {
+			start_date = sdf.parse(startdate);
+		} catch (ParseException e) {
+			e.printStackTrace();
+		}
+		
+		Date start_time = null;
+		String st = start_hour + ":" + start_minute;
+		try {
+			start_time = sdf2.parse(st);
+		} catch (ParseException e) {
+			e.printStackTrace();
+		}
+		
+		//取得一览传过来的一条记录
+		mrhyyl = yuyueDAO.getMrhyyl(hysid, start_date, start_time);
+		
+		if(mrhyyl.getZqhyqf() == CommonConstants.DAY_MEETING) {
+			setYuyueInfoDay(mrhyyl);
+		} else {
+			setYuyueInfoCycle(mrhyyl);
+		}
+		
+    	//session保存预约信息
+    	SessionManager session = new SessionManager();
+    	session.set(CommonConstants.YUYUEINFO_OLD, mrhyyl);
+		
+		return yuyueinfo;
+	}
+	
+	//---------------- from db to yuyueinfo 当日--------------//
+	public void setYuyueInfoDay(TabMrhyyl mrhyyl) {
+		
+		SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+		
+		Date start_date = mrhyyl.getId().getHyrq();				//会议日期
+		String startdate = sdf.format(start_date);
+		yuyueinfo.setStartdate(startdate);
+		
+		setYuyueInfoCommon(mrhyyl);								//common		
+	}
+	
+	//set yuyueinfo common
+	public void setYuyueInfoCommon(TabMrhyyl mrhyyl) {
+		
+		SimpleDateFormat sdf2 = new SimpleDateFormat("HH:mm");
+		
+		Date start_time = mrhyyl.getId().getHykssj();			//开始时间
+		String starttime = sdf2.format(start_time);
+		String start_hour = starttime.substring(0, 2);
+		String start_minute = starttime.substring(3, 5);
+		yuyueinfo.setStart_hour(start_hour);
+		yuyueinfo.setStart_minute(start_minute);
+		
+		Date end_time = mrhyyl.getHyjssj();						//结束时间
+		String endtime = sdf2.format(end_time);
+		String end_hour = endtime.substring(0, 2);
+		String end_minute = endtime.substring(3, 5);
+		yuyueinfo.setEnd_hour(end_hour);
+		yuyueinfo.setEnd_minute(end_minute);
+		
+		String hys = mrhyyl.getId().getHysid().toString();		//会议室ID
+		yuyueinfo.setHys(hys);
+		
+		yuyueinfo.setHyzt(mrhyyl.getHyzt());					//会议主题
+		
+		String yyrid = mrhyyl.getYyrid();						//申请人姓名sqr
+		String sqr = yuyueDAO.getSqrName(yyrid);
+		yuyueinfo.setSqr(sqr);
+		
+		String hyjl = mrhyyl.getHysbg();						//会议记录
+		yuyueinfo.setHyjl(hyjl);
+	}
+	
+	
+	
+	//---------------- from db to yuyueinfo 周期--------------//
+	public void setYuyueInfoCycle(TabMrhyyl mrhyyl) {
+		
+		setYuyueInfoCommon(mrhyyl);									//common
+		SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+		
+		List<TabZqhyyl> zqhyyl_list = this.getZqhyylBy(mrhyyl);	//取得TabZqhyyl list
+		
+		Date start_date = zqhyyl_list.get(0).getHyksrq();		//开始日期
+		String startdate = sdf.format(start_date);
+		yuyueinfo.setStartdate(startdate);
+		
+		
+		Date end_date = zqhyyl_list.get(0).getHyjsrq();			//结束日期
+		String enddate = sdf.format(end_date);
+		yuyueinfo.setEnddate(enddate);
+		
+		String zhouqitype = zqhyyl_list.get(0).getZqlx().toString();
+		yuyueinfo.setZhouqitype(zhouqitype);						//周期类型
+		
+		if(CommonConstants.SCYCLE_WEEK.equals(zhouqitype)) {		//每周
+			
+			for(int i = 0; i < zqhyyl_list.size(); i++) {
+				
+				String zqnhyts = zqhyyl_list.get(i).getId().getZqnhyts();
+				int ts = Integer.parseInt(zqnhyts);
+				
+				switch(ts) {
+					case CommonConstants.MONDAY:  yuyueinfo.setMon(zqnhyts); break;
+					case CommonConstants.TUESDAY: yuyueinfo.setTue(zqnhyts); break;
+					case CommonConstants.WENSDAY: yuyueinfo.setWen(zqnhyts); break;
+					case CommonConstants.THUSDAY: yuyueinfo.setThu(zqnhyts); break;
+					case CommonConstants.FRIDAY:  yuyueinfo.setFri(zqnhyts); break;
+				}
+				
+			}
+		}
+		if(CommonConstants.SCYCLE_MONTH.equals(zhouqitype)) {		//每月
+			String day = zqhyyl_list.get(0).getId().getZqnhyts();
+			yuyueinfo.setDay(day);									//周期内会议天数
+			
+			String hybz = zqhyyl_list.get(0).getHybz().toString();
+			yuyueinfo.setQianhou(hybz);								//后延标志
+		}
+		
+	}
+
+	//---------------- delete mrhyyl, mrhycjz--------------//
+	public void deleteMrhy(TabMrhyyl mrhyyl) {
+		
+		Date start_date = mrhyyl.getId().getHyrq();
+		Date start_time = mrhyyl.getId().getHykssj();
+		int hysid = mrhyyl.getId().getHysid();
+		
+		List<TabMrhycjz> mrhycjz_list = yuyueDAO.getMrhycjzList(start_date, start_time, hysid);
+		
+		yuyueDAO.deleteMrhy(mrhyyl, mrhycjz_list);
+	}
+	
+	//---------------- delete zqhyyl, zqhycjz--------------//
+	public void deleteZqhy(TabMrhyyl mrhyyl) {
+		
+		int zqhyid = mrhyyl.getZqhyid();
+		List<TabZqhyyl> zqhyyl_list = yuyueDAO.getZqhyList(zqhyid);		//检索TabZqhyyl
+		List<TabZqhcjz> zqhycjz_list = yuyueDAO.getZqhycjzList(zqhyid);
+		yuyueDAO.deleteZqhy(zqhyyl_list, zqhycjz_list);		//delete zqhyyl, zqhycjz
+		
+	}
+	
+	//---------------- delete 每天--------------//
+	public void deleteZqhyDay(TabMrhyyl mrhyyl) {
+		
+		int hysid = mrhyyl.getId().getHysid();
+		Date start_time = mrhyyl.getId().getHykssj();
+		
+		List<TabZqhyyl> zqhyyl_list = this.getZqhyylBy(mrhyyl);
+		Date start_date = zqhyyl_list.get(0).getHyksrq();
+		Date end_date = zqhyyl_list.get(0).getHyjsrq();
+		
+		List<TabMrhyyl> mrhyyl_list = yuyueDAO.getMrhyylList(hysid, start_date, end_date, start_time);
+		
+		//delete from zqhyyl, zqhycjz
+		this.deleteZqhy(mrhyyl);
+		
+		//delete from mrhyyl, mrhycjz
+		for(int i = 0; i < mrhyyl_list.size(); i++) {
+			TabMrhyyl mrhy = mrhyyl_list.get(i);
+			
+			//剔除过期数据 ????????????????????????????????????
+			Calendar tmp = Calendar.getInstance();
+			
+			Date hyrq = mrhy.getId().getHyrq();
+			tmp.setTime(hyrq);
+			int year = tmp.get(Calendar.YEAR);
+			int month = tmp.get(Calendar.MONTH);
+			int date = tmp.get(Calendar.DAY_OF_MONTH);
+			
+			Date begin_time = mrhy.getId().getHykssj();
+			tmp.setTime(begin_time);
+			int hourOfDay = tmp.get(Calendar.HOUR_OF_DAY);
+			int minute = tmp.get(Calendar.MINUTE);
+			
+			Calendar cal_hy = Calendar.getInstance();
+			cal_hy.set(year, month, date, hourOfDay, minute);	//会议开始日历
+			Calendar now = Calendar.getInstance();				//当前系统日历
+			
+			if(cal_hy.after(now)) {
+				this.deleteMrhy(mrhy);
+			}
+		}
+		
+	}
+
+	//---------------- delete 每周--------------//
+	public void deleteZqhyWeek(TabMrhyyl mrhyyl) {
+		
+		//delete from zqhyyl, zqhycjz
+		this.deleteZqhy(mrhyyl);
+		
+		//delete from mrhyyl, mrhycjz
+		
+		
+	}
+	
+	//---------------- delete 每月--------------//
+	public void deleteZqhyMonth(TabMrhyyl mrhyyl) {
+
+		int hysid = mrhyyl.getId().getHysid();
+		Date start_time = mrhyyl.getId().getHykssj();
+		
+		List<TabZqhyyl> zqhyyl_list = this.getZqhyylBy(mrhyyl);
+		Date start_date = zqhyyl_list.get(0).getHyksrq();
+		Date end_date = zqhyyl_list.get(0).getHyjsrq();
+		
+		
+		
+		//delete from zqhyyl, zqhycjz
+		this.deleteZqhy(mrhyyl);
+		
+		//delete from mrhyyl, mrhycjz
+		
+	}
+	
+	//---------------- get zqhyyl by mrhyyl --------------//
+	public List<TabZqhyyl> getZqhyylBy(TabMrhyyl mrhyyl) {
+		
+		int zqhyid = mrhyyl.getZqhyid();
+		List<TabZqhyyl> zqhyyl_list = yuyueDAO.getZqhyList(zqhyid);		//检索TabZqhyyl
+		
+		return zqhyyl_list;
+	}
+	
+}

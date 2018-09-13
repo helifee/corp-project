@@ -1,0 +1,313 @@
+package com.jzy.hio.sys.sys.sync.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.jzy.hio.base.datasource.DataSourceContextHolder;
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.tools.data.JacksonUtils;
+import com.jzy.hio.base.utils.MessageResult;
+import com.jzy.hio.base.utils.Page;
+import com.jzy.hio.sys.sys.org.dto.SyncOrgDto;
+import com.jzy.hio.sys.sys.org.dto.SyncUserDto;
+import com.jzy.hio.sys.sys.org.entity.Orgnazation;
+import com.jzy.hio.sys.sys.org.entity.User;
+import com.jzy.hio.sys.sys.org.mapper.OrgnazationDao;
+import com.jzy.hio.sys.sys.org.mapper.UserDao;
+import com.jzy.hio.sys.sys.sync.entity.SyncData;
+import com.jzy.hio.sys.sys.sync.mapper.SyncDataDao;
+import com.jzy.hio.sys.sys.sync.service.SyncDataService;
+import com.jzy.hio.sys.utils.HttpClientUtil;
+
+import net.sf.json.JSONObject;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class SyncDataServiceImpl extends BaseServiceImpl<String, SyncData> implements SyncDataService {
+
+	@Autowired
+	private SyncDataDao syncDataDao;
+
+	@Autowired
+	private UserDao userDao;
+
+	@Autowired
+	private OrgnazationDao orgnazationDao;
+
+	@Override
+	public Page getBeanPage(Map<String, Object> map) throws Exception {
+		Page page = syncDataDao.getBeanPage(map);
+		return page;
+	}
+
+	@Override
+	@Transactional
+	public MessageResult syncData(String id) throws Exception {
+		MessageResult result = new MessageResult();
+		SyncData syncData = syncDataDao.selectByPrimaryKey(id);
+		if (syncData.getStatus()) {
+			if (Objects.equals(syncData.getDataType(), "user")) {// 同步用户
+				Map paraMap = new HashMap();
+				Integer num = userDao.selectCountByExample(null);
+				for (int i = 0; i < num; i = i + syncData.getNum()) {
+					Integer start = i;
+					Integer limit = syncData.getNum();
+					paraMap.clear();
+					paraMap.put("start", i);
+					paraMap.put("limit", limit);
+					Page page = getPage(paraMap);
+					List<User> list = (List<User>) page.getList();
+					List<SyncUserDto> postList = new ArrayList<SyncUserDto>();
+					if (list != null && !list.isEmpty()) {
+						for (User user : list) {
+							SyncUserDto userDto = new SyncUserDto();
+							userDto.setThirdId(user.getId());
+							userDto.setLoginId(user.getLoginName());
+							if (user.getDelflag()) {
+								userDto.setState("-1");
+							} else {
+								if (user.getStatus().equals("1")) {
+									userDto.setState("0");
+								} else {
+									userDto.setState("1");
+								}
+							}
+							userDto.setThirdEnterpriseId(user.getTendId());
+							userDto.setPassword(user.getPassword());
+							userDto.setName(user.getRealName());
+							userDto.setMobile(user.getMobile());
+							userDto.setOrgEmail(user.getEmail());
+							userDto.setEmail(user.getEmail());
+							userDto.setOfficePhone(user.getWorkPhone());
+							if (null == user.getIsMale()) {
+								userDto.setGender(2);
+							} else {
+								userDto.setGender(Integer.parseInt(user.getIsMale()));
+							}
+
+							userDto.setRemark(user.getRemark());
+							userDto.setBirthday(user.getBirthday());
+							userDto.setQq("");
+							userDto.setWechat(user.getWeChat());
+							userDto.setHomeAddress("");
+							userDto.setIdentityCard("");
+							userDto.setJobNumber(user.getJobNumber());
+							userDto.setBelongOrgId(user.getBelongOrgId());
+							postList.add(userDto);
+						}
+					}
+
+					paraMap.clear();
+					paraMap.put("type", syncData.getDataType());
+					paraMap.put("data", JacksonUtils.toJson(postList));
+					String content = syncData.getSystem() + "人员数据同步，接口url：" + syncData.getUrl() + "，批次：第【" + (i + 1)
+							+ "】条至第【" + (i + limit) + "】条";
+					String phone = "13718744546";
+					new HttpClientUtil(syncData.getUrl(), paraMap, "UTF-8", phone, content).doPost();
+					// Thread.sleep(30000);
+				}
+
+			} else if (Objects.equals(syncData.getDataType(), "org")) {// 同步组织机构
+				Map<String,Object> paraMap = new HashMap<>();
+				Integer num = orgnazationDao.selectCountByExample(null);
+				for (int i = 0; i < num; i = i + syncData.getNum()) {
+					Integer start = i;
+					Integer limit = syncData.getNum();
+					paraMap.put("start", i);
+					paraMap.put("limit", limit);
+					List<Object> columnList = new ArrayList<>();
+					columnList.add(new JSONObject().put("sidx", "prefix_id"));
+					paraMap.put("columns", columnList);
+					List<Object> sortList = new ArrayList<>();
+					sortList.add(new JSONObject().put("sord", "asc"));
+					paraMap.put("orderby", sortList); 
+					Page page = getPage(paraMap);
+					List<Orgnazation> list = (List<Orgnazation>) page.getList();
+
+					List<SyncOrgDto> orgList = new ArrayList<SyncOrgDto>();
+					if (list != null && !list.isEmpty()) {
+						for (Orgnazation orgnazation : list) {
+							SyncOrgDto orgDto = new SyncOrgDto();
+							orgDto.setOrgId(orgnazation.getId());
+							orgDto.setTendId(orgnazation.getTendId());
+							orgDto.setOrgName(orgnazation.getName());
+							if (null == orgnazation.getSort()) {
+							} else {
+								orgDto.setOrgOrder(orgnazation.getSort().intValue());
+							}
+							if (orgnazation.getDelflag()) {
+								orgDto.setOrgState(-1);
+							} else {
+								if (orgnazation.getStatus().equals("1")) {
+									orgDto.setOrgState(0);
+								} else {
+									orgDto.setOrgState(1);
+								}
+							}
+							if (null == orgnazation.getParentId() || "".equals(orgnazation.getParentId())) {
+								orgDto.setParentId("-1");
+							} else {
+								orgDto.setParentId(orgnazation.getParentId());
+							}
+
+							if ("company".equals(orgnazation.getType()) || "zb".equals(orgnazation.getType())) {
+								orgDto.setOrgType(0);
+							} else {
+								orgDto.setOrgType(1);
+							}
+
+							orgList.add(orgDto);
+						}
+					}
+
+					paraMap.clear();
+					paraMap.put("type", syncData.getDataType());
+					paraMap.put("data", JacksonUtils.toJson(orgList));
+					String content = syncData.getSystem() + "组织机构数据同步，接口url：" + syncData.getUrl() + "，第【" + i + "】条至第【"
+							+ (i + limit) + "】条";
+					String phone = "13718744546";
+					new HttpClientUtil(syncData.getUrl(), paraMap, "UTF-8", phone, content).doPost();
+				}
+			}
+			result.setSuccess(true);
+			result.setMsg("数据同步开始");
+		} else {
+			result.setSuccess(false);
+			result.setMsg("数据同步未开启！");
+		}
+		return result;
+	}
+
+	@Override
+	public MessageResult syncDataOne(String id, String tendCode) throws Exception {
+		MessageResult result = new MessageResult();
+		Map mapc = new HashMap<>();
+		mapc.put("sidx", "id");
+		mapc.put("sord", "desc");
+		DataSourceContextHolder.clearDataSourceType();
+		DataSourceContextHolder.setDataSourceType(tendCode);
+		List<SyncData> list_app = queryListByExample(mapc);
+		for (SyncData syncData : list_app) {
+			if (syncData.getStatus()) {
+				if (Objects.equals(syncData.getDataType(), "user")) {// 同步用户
+					Map paraMap = new HashMap();
+					User user = userDao.selectByPrimaryKey(id);
+					List<SyncUserDto> postList = new ArrayList<SyncUserDto>();
+					SyncUserDto userDto = new SyncUserDto();
+					userDto.setThirdId(user.getId());
+					userDto.setLoginId(user.getLoginName());
+					if (user.getDelflag()) {
+						userDto.setState("-1");
+					} else {
+						if (user.getStatus().equals("1")) {
+							userDto.setState("0");
+						} else {
+							userDto.setState("1");
+						}
+					}
+					userDto.setThirdEnterpriseId(user.getTendId());
+					userDto.setPassword(user.getPassword());
+					userDto.setName(user.getRealName());
+					userDto.setMobile(user.getMobile());
+					userDto.setOrgEmail(user.getEmail());
+					userDto.setEmail(user.getEmail());
+					userDto.setOfficePhone(user.getWorkPhone());
+					if (null == user.getIsMale()) {
+						userDto.setGender(2);
+					} else {
+						userDto.setGender(Integer.parseInt(user.getIsMale()));
+					}
+					userDto.setRemark(user.getRemark());
+					userDto.setBirthday(user.getBirthday());
+					userDto.setQq("");
+					userDto.setWechat(user.getWeChat());
+					userDto.setHomeAddress("");
+					userDto.setIdentityCard("");
+					userDto.setJobNumber(user.getJobNumber());
+					userDto.setBelongOrgId(user.getBelongOrgId());
+					postList.add(userDto);
+					paraMap.clear();
+					paraMap.put("type", syncData.getDataType());
+					paraMap.put("data", JacksonUtils.toJson(postList));
+					String content = syncData.getSystem() + "人员数据同步，接口url：" + syncData.getUrl() + "，同步用户Id：" + id;
+					String phone = "13718744546";
+					new HttpClientUtil(syncData.getUrl(), paraMap, "UTF-8", phone, content).doPost();
+					result.setSuccess(true);
+					result.setMsg("数据同步开始");
+				}
+			}
+		}
+		return result;
+	}
+
+	@Override
+	public MessageResult syncDataOrgOne(String id, String tendCode) throws Exception {
+		MessageResult result = new MessageResult();
+		Map mapc = new HashMap<>();
+		mapc.put("sidx", "id");
+		mapc.put("sord", "desc");
+		DataSourceContextHolder.clearDataSourceType();
+		DataSourceContextHolder.setDataSourceType(tendCode);
+		List<SyncData> list_app = queryListByExample(mapc);
+		for (SyncData syncData : list_app) {
+			if (syncData.getStatus()) {
+				if (Objects.equals(syncData.getDataType(), "org")) {// 同步用户
+					Map paraMap = new HashMap();
+					Orgnazation orgnazation = orgnazationDao.selectByPrimaryKey(id);
+					List<SyncOrgDto> orgList = new ArrayList<SyncOrgDto>();
+					SyncOrgDto orgDto = new SyncOrgDto();
+					orgDto.setOrgId(orgnazation.getId());
+					orgDto.setTendId(orgnazation.getTendId());
+					orgDto.setOrgName(orgnazation.getName());
+					if (null == orgnazation.getSort()) {
+					} else {
+						orgDto.setOrgOrder(orgnazation.getSort().intValue());
+					}
+					if (orgnazation.getDelflag()) {
+						orgDto.setOrgState(-1);
+					} else {
+						if (orgnazation.getStatus().equals("1")) {
+							orgDto.setOrgState(0);
+						} else {
+							orgDto.setOrgState(1);
+						}
+					}
+					if (null == orgnazation.getParentId() || "".equals(orgnazation.getParentId())) {
+						orgDto.setParentId("-1");
+					} else {
+						orgDto.setParentId(orgnazation.getParentId());
+					}
+
+					if ("company".equals(orgnazation.getType()) || "zb".equals(orgnazation.getType())) {
+						orgDto.setOrgType(0);
+					} else {
+						orgDto.setOrgType(1);
+					}
+					orgList.add(orgDto);
+					paraMap.clear();
+					paraMap.put("type", syncData.getDataType());
+					paraMap.put("data", JacksonUtils.toJson(orgList));
+					String content = syncData.getSystem() + "组织机构数据同步，接口url：" + syncData.getUrl() + "，同步组织机构Id：" + id;
+					String phone = "13718744546";
+					new HttpClientUtil(syncData.getUrl(), paraMap, "UTF-8", phone, content).doPost();
+					result.setSuccess(true);
+					result.setMsg("数据同步开始");
+				}
+			}
+		}
+		return result;
+	}
+
+}

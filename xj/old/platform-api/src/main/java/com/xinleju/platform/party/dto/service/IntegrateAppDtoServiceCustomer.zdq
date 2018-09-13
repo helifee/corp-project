@@ -1,0 +1,26 @@
+package com.xinleju.platform.party.dto.service;
+
+import com.xinleju.platform.base.dto.service.BaseDtoServiceCustomer;
+
+public interface IntegrateAppDtoServiceCustomer extends BaseDtoServiceCustomer{
+
+	/**
+	 * @param userJson
+	 * @param paramaterJson
+	 * @return
+	 */
+	public String getAppTree(String userJson, String paramaterJson);
+
+	/**
+	 * @param userJson
+	 * @param saveJson
+	 * @return
+	 */
+	public String saveIntegrateApp(String userJson, String saveJson);
+
+	/**
+	 * thirdPartyCheck()
+	 */
+	public String thirdPartyCheck(String userInfo,String param)throws Exception;
+
+}

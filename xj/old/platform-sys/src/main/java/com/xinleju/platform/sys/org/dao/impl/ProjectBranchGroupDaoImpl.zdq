@@ -1,0 +1,24 @@
+package com.xinleju.platform.sys.org.dao.impl;
+
+import org.springframework.stereotype.Repository;
+
+import com.xinleju.platform.base.dao.impl.BaseDaoImpl;
+import com.xinleju.platform.sys.org.dao.ProjectBranchGroupDao;
+import com.xinleju.platform.sys.org.entity.ProjectBranchGroup;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Repository
+public class ProjectBranchGroupDaoImpl extends BaseDaoImpl<String,ProjectBranchGroup> implements ProjectBranchGroupDao{
+
+	public ProjectBranchGroupDaoImpl() {
+		super();
+	}
+
+	
+	
+}

@@ -1,0 +1,338 @@
+package com.xinleju.platform.flow.service.impl;
+
+import java.sql.Timestamp;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.flow.dao.InstanceOperateLogDao;
+import com.xinleju.platform.flow.dto.InstanceDto;
+import com.xinleju.platform.flow.entity.InstanceOperateLog;
+import com.xinleju.platform.flow.enumeration.InstanceOperateType;
+import com.xinleju.platform.flow.service.InstanceOperateLogService;
+import com.xinleju.platform.flow.service.SysNoticeMsgService;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class InstanceOperateLogServiceImpl extends  BaseServiceImpl<String,InstanceOperateLog> implements InstanceOperateLogService{
+	
+	private static Logger logger= Logger.getLogger(InstanceOperateLogServiceImpl.class);
+
+	@Autowired
+	private InstanceOperateLogDao instanceOperateLogDao;
+
+	@Autowired
+	private SysNoticeMsgService sysNoticeMsgService;
+	
+	@Override
+	public int deleteDataByParamMap(Map<String, String> paramMap) throws Exception {
+		return instanceOperateLogDao.deleteDataByParamMap(paramMap);
+	}
+
+	@Override
+	public int changeToReadIntoHaveRead(Map<String, String> paramMap) {
+		logger.debug("\n\n 001 -- changeToReadIntoHaveRead() paramMap="+JacksonUtils.toJson(paramMap));
+		//1-先更新对应的待阅数据的日志的delflag和delete_time
+		paramMap.put("operateType", InstanceOperateType.TO_READ.getValue());
+		instanceOperateLogDao.deleteDataByParamMap(paramMap);
+		logger.debug("002-- deleteDataByParamMap() paramMap="+JacksonUtils.toJson(paramMap));
+		//2-插入新的已阅日志
+		String opareteType = InstanceOperateType.HAVE_READ.getValue();
+		int result = saveHaveReadOrDoneLog(paramMap, opareteType);
+		logger.debug("003-- saveHaveReadOrDoneLog() paramMap="+JacksonUtils.toJson(paramMap)+"; result="+result);
+		return result;
+	}
+
+	public int saveHaveReadOrDoneLog(Map<String, String> paramMap, String opareteType) {
+		logger.debug("saveHaveReadOrDoneLog>>> opareteType="+opareteType);
+		
+		InstanceOperateLog log = new InstanceOperateLog();
+		log.setId(IDGenerator.getUUID());
+		log.setOperateType(opareteType);
+		log.setOperateTime(new Timestamp(System.currentTimeMillis()));
+		log.setOperatorIds(paramMap.get("operatorIds"));//当前操作人的userId
+		log.setInstanceId(paramMap.get("instanceId"));
+		
+		//remark  acId  groupId  taskId  operateContent  
+		String remark = paramMap.get("remark");
+		if(remark!=null && !"".equals(remark)  && !"null".equals(remark) &&  remark.length()>=1){
+			log.setRemark(remark);
+		}
+		String acId = paramMap.get("acId");
+		if(acId!=null && !"".equals(acId)  && !"null".equals(acId) &&  acId.length()>=1){
+			log.setAcId(acId);
+		}
+		String groupId = paramMap.get("groupId");
+		if(groupId!=null && !"".equals(groupId)  && !"null".equals(groupId) &&  groupId.length()>=1){
+			log.setGroupId(groupId);
+		}
+		
+		String taskId = paramMap.get("taskId");
+		if(taskId!=null && !"".equals(taskId)  && !"null".equals(taskId) &&  taskId.length()>=1){
+			log.setTaskId(taskId);
+		}
+		String operateContent = paramMap.get("operateContent");
+		if(operateContent!=null && !"".equals(operateContent)  && !"null".equals(operateContent) &&  operateContent.length()>=1){
+			log.setOperateContent(operateContent);
+		}
+		int result = instanceOperateLogDao.save(log);
+		return result;
+	}
+
+	@Override
+	public int changeToDoIntoHaveDone(Map<String, String> paramMap) {
+		//1-先更新对应的待办数据的日志的delflag和delete_time
+		paramMap.put("operateType", InstanceOperateType.TO_DO.getValue());
+		instanceOperateLogDao.deleteDataByParamMap(paramMap);
+		
+		//2-插入新的已办日志
+		String opareteType = InstanceOperateType.HAVE_DONE.getValue();
+		int result = saveHaveReadOrDoneLog(paramMap, opareteType);
+		logger.debug("saveHaveReadOrDoneLog() paramMap="+JacksonUtils.toJson(paramMap)+" opareteType="+opareteType+" result="+result);
+		return result;
+	}
+
+	@Override
+	public int saveLogData(String instanceId, String acId, String groupId, String taskId,
+			String operateType, String operatorIds, String companyId, String deptId,
+			String projectId, String branchId,
+			String operateContent, String remark) throws Exception {
+		InstanceOperateLog log = new InstanceOperateLog();
+		log.setInstanceId(instanceId);
+		log.setAcId(acId);
+		log.setGroupId(groupId);
+		log.setTaskId(taskId);
+		
+		log.setOperateType(operateType);
+		log.setOperatorIds(operatorIds);
+		log.setOperateContent(operateContent);
+		log.setRemark(remark);
+		log.setCompanyId(companyId);
+		log.setDeptId(deptId);
+		log.setProjectId(projectId);
+		log.setBranchId(branchId);
+		
+		log.setId(IDGenerator.getUUID());
+		log.setDelflag(false);
+		log.setOperateTime(new Timestamp(System.currentTimeMillis()));
+		return this.save(log);
+	}
+	
+	@Override
+	public int saveLogData(String instanceId, String acId, String groupId, String taskId,
+			String operateType, String operatorIds, String operateContent, String remark) throws Exception {
+		InstanceOperateLog log = new InstanceOperateLog();
+		log.setInstanceId(instanceId);
+		log.setAcId(acId);
+		log.setGroupId(groupId);
+		log.setTaskId(taskId);
+		
+		log.setOperateType(operateType);
+		log.setOperatorIds(operatorIds);
+		log.setOperateContent(operateContent);
+		log.setRemark(remark);
+		
+		log.setId(IDGenerator.getUUID());
+		log.setDelflag(false);
+		log.setOperateTime(new Timestamp(System.currentTimeMillis()));
+		return this.save(log);
+	}
+
+	@Override
+	public int changeToDoIntoHaveDone(String instanceId, String acId, String groupId, String taskId,
+			String operatorIds, String operateContent, String remark) throws Exception {
+		System.out.println("\n\n 001 changeToDoIntoHaveDone() is called....");
+		Map<String, String> paramMap = new HashMap<String, String>();
+		paramMap.put("instanceId", instanceId);
+		paramMap.put("acId", acId);
+		paramMap.put("groupId", groupId);
+		paramMap.put("taskId", taskId);
+		
+		paramMap.put("operatorIds", operatorIds);
+		paramMap.put("operateContent", operateContent);
+		paramMap.put("remark", remark);
+		//1-先更新对应的待办数据的日志的delflag和delete_time
+		paramMap.put("operateType", InstanceOperateType.TO_DO.getValue());
+		
+		int result = instanceOperateLogDao.deleteDataByParamMap(paramMap);
+		System.out.println("001 ---- deleteDataByParamMap() paramMap="+JacksonUtils.toJson(paramMap)+";  result="+result);
+		
+		//根据查询条件, 对应的操作日志记录,然后取出第一条记录进行拷贝后再设置已办的信息，存入数据库
+		List<InstanceOperateLog> logList = instanceOperateLogDao.queryLogListByParamMap(paramMap);
+		if(logList!= null && logList.size()>0){
+			InstanceOperateLog log = logList.get(0);
+			log.setId(IDGenerator.getUUID());
+			log.setDelflag(false);
+			log.setOperateType(InstanceOperateType.HAVE_DONE.getValue());
+			log.setOperateTime(new Timestamp(System.currentTimeMillis()));
+			int resultSum = instanceOperateLogDao.save(log);
+			System.out.println("002 ---- instanceOperateLogDao.save(log) log="+JacksonUtils.toJson(log)+";  resultSum="+resultSum);
+		}else{
+			System.out.println("002 查不到对应的操作日志数据,无法将对应的操作日志记录改为已办.......");
+		}
+				
+		return result;
+	}
+
+	@Override
+	public int deleteOperateLogBySpecialAction(String instanceId, String acId, String groupId, String taskId,
+			String operatorIds) throws Exception {
+		Map<String, String> paramMap = new HashMap<String, String>();
+		paramMap.put("instanceId", instanceId);
+		paramMap.put("acId", acId);
+		paramMap.put("groupId", groupId);
+		paramMap.put("taskId", taskId);
+		paramMap.put("operatorIds", operatorIds);
+		logger.debug(" deleteOperateLogBySpecialAction() paramMap="+JacksonUtils.toJson(paramMap));
+		return instanceOperateLogDao.deleteOperateLogBySpecialAction(paramMap);
+	}
+
+	@Override
+	public int batchSetOperateLogHaveDone(Map<String, String> paramMap) {
+		//queryType: queryType, selectedIds: selectedIds.join(",")
+		String queryType = paramMap.get("queryType");
+		String selectedIds = paramMap.get("selectedIds");
+		String currentUserId = paramMap.get("currentUserId");
+		// WHERE instance_id = #{instanceId} AND operate_type = #{operateType} 
+		//AND operator_ids LIKE concat('%',#{operatorIds},'%') 
+		String instanceIds[] = selectedIds.split(",");
+		for(String instanceId: instanceIds){
+			Map<String, String> queryParam = new HashMap<String, String>();
+			queryParam.put("instanceId", instanceId);
+			queryParam.put("operateType", queryType);
+			queryParam.put("operatorIds", currentUserId);
+			
+			//1-插入一条新的已办的操作日志
+			List<InstanceOperateLog> logList = instanceOperateLogDao.queryLogListByParamMap(queryParam);
+			if(logList!= null && logList.size()>0){
+				InstanceOperateLog log = logList.get(0);
+				log.setId(IDGenerator.getUUID());
+				log.setDelflag(false);
+				log.setOperateType(InstanceOperateType.HAVE_DONE.getValue());
+				if(queryType.equals(InstanceOperateType.TO_READ.getValue())){
+					log.setOperateType(InstanceOperateType.HAVE_READ.getValue());
+				}
+				log.setOperateTime(new Timestamp(System.currentTimeMillis()));
+				log.setOperateContent("页面批量置为已办");
+				log.setRemark("页面批量置为已办");
+				instanceOperateLogDao.save(log);
+				logger.debug(" 001-instanceOperateLogDao.save(log) ");
+			}
+			
+			//2-逻辑删除对应的待办待阅操作日志
+			//UPDATE pt_flow_instance_operate_log SET delflag = 1, delete_time=now() 
+			//WHERE instance_id = #{instanceId} AND operate_type = #{operateType} 
+			// AND operator_ids LIKE concat('%',#{operatorIds},'%') 
+			instanceOperateLogDao.deleteDataByParamMap(queryParam);
+			logger.debug(" 002-instanceOperateLogDao.deleteDataByParamMap() is done....");
+			//3-修改对应的待办或待阅的消息的状态
+			//URL 中instanceId=1daae17b96c74fc0a3c9f2112b460df7&
+			//SET op_type = #{newStatus}, deal_date = now() 
+			//WHERE  delflag = 0 and op_type = #{oldStatus}
+            // newStatus  旧的状态 YB—已办  YY—已阅  此参数是必填字段
+			// oldStatus   新的状态 DB—待办 DY—待阅  此参数是必填字段
+
+			Map<String, Object> noticeMsgParam = new HashMap<String, Object>();
+			noticeMsgParam.put("instanceIdText", "instanceId="+instanceId);
+			if(queryType.equals(InstanceOperateType.TO_READ.getValue())){
+				noticeMsgParam.put("newStatus", "YY");
+				noticeMsgParam.put("oldStatus", "DY");
+			}else{
+				noticeMsgParam.put("newStatus", "YB");
+				noticeMsgParam.put("oldStatus", "DB");
+			}
+			// <if test="userId != null and userId != '' and userId != '-1'">
+			//AND user_id = #{userId}  </if>
+			noticeMsgParam.put("userId", currentUserId);
+			sysNoticeMsgService.updateStatusOfNoticeMsgByCurrentUser(noticeMsgParam);
+			logger.debug("003-sysNoticeMsgService.updateStatusOfNoticeMsgByCurrentUser() is done....");
+		}
+		return instanceIds.length;
+	}
+
+	@Override
+	public int batchDeleteOperateLog(Map<String, String> paramMap) {
+		//queryType: queryType, selectedIds: selectedIds.join(",")
+		String queryType = paramMap.get("queryType");
+		String selectedIds = paramMap.get("selectedIds");
+		String currentUserId = paramMap.get("currentUserId");
+		// WHERE instance_id = #{instanceId} AND operate_type = #{operateType} 
+		//AND operator_ids LIKE concat('%',#{operatorIds},'%') 
+		String instanceIds[] = selectedIds.split(",");
+		for(String instanceId: instanceIds){
+			Map<String, String> queryParam = new HashMap<String, String>();
+			queryParam.put("instanceId", instanceId);
+			queryParam.put("operateType", queryType);
+			queryParam.put("operatorIds", currentUserId);
+			
+			//1-逻辑删除对应的已办待阅操作日志
+			//UPDATE pt_flow_instance_operate_log SET delflag = 1, delete_time=now() 
+			//WHERE instance_id = #{instanceId} AND operate_type = #{operateType} 
+			// AND operator_ids LIKE concat('%',#{operatorIds},'%') 
+			instanceOperateLogDao.deleteDataByParamMap(queryParam);
+			logger.debug("002-instanceOperateLogDao.deleteDataByParamMap() is done....");
+			//3-修改对应的待办或待阅的消息的状态
+			//URL 中instanceId=1daae17b96c74fc0a3c9f2112b460df7&
+			//UPDATE PT_FLOW_SYS_NOTICE_MSG SET delflag = 1, deal_date = now(), update_date=now() WHERE delflag = 0  
+			// <if test="opType != null and opType != '' and opType != '-1'"> and op_type = #{opType} </if>
+
+			Map<String, Object> noticeMsgParam = new HashMap<String, Object>();
+			noticeMsgParam.put("instanceIdText", "instanceId="+instanceId);
+			
+			if(queryType.equals(InstanceOperateType.HAVE_READ.getValue())){
+				String composeOpTypes[] = {"YY","DY"};
+				noticeMsgParam.put("composeOpTypes", composeOpTypes);
+			}else{
+				String composeOpTypes[] = {"DB","YB"};
+				noticeMsgParam.put("composeOpTypes", composeOpTypes);
+			}
+			
+			String composeOpTypes[] = {"YY","DY", "DB","YB"};
+			noticeMsgParam.put("composeOpTypes", composeOpTypes);
+			
+			//<if test="currentUserId != null and currentUserId != '' and currentUserId != '-1'">
+		    //AND user_id = #{currentUserId}   </if>
+			noticeMsgParam.put("currentUserId", currentUserId);
+			sysNoticeMsgService.deleteOpTypeDataByParamMap(noticeMsgParam);
+			logger.debug("003-sysNoticeMsgService.updateStatusOfNoticeMsgByCurrentUser() is done....");
+		}
+		return instanceIds.length;
+	}
+
+	/*@Override
+	public List<InstanceDto> queryRelatedInstanceListByKeyword(Map<String, String> paramMap) {
+		String keyword = (String)paramMap.get("keyword");
+		return instanceOperateLogDao.queryRelatedInstanceListByKeyword(paramMap);
+	}*/
+
+	@Override
+	public Page queryRelatedInstancePageByKeyword(Map<String, Object> map) {
+		Integer start = (Integer) map.get("start");
+		Integer limit = (Integer) map.get("limit");
+		map.remove("start");
+		map.remove("limit");
+		map.put("start", start);
+		map.put("limit", limit);
+		List<InstanceDto>  list = instanceOperateLogDao.queryRelatedInstanceListByKeyword(map);
+		Integer total = instanceOperateLogDao.queryRelatedInstanceCountByKeyword(map);
+		Page page = new Page();
+		page.setList(list);
+		page.setTotal(total);
+		page.setStart(start);
+		page.setLimit(limit);
+		return page;
+	}
+}

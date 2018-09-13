@@ -1,0 +1,33 @@
+package com.xinleju.platform.flow.enumeration;
+
+public enum FlowChangeType {
+
+	PROXY("代理", "proxy"), 
+	ADDLABEL("加签", "addlabel"), 
+	REPALCEAPPROVER("替换审批人", "replace"),
+	WITHDRAW("撤回", "withdraw");
+
+	private String name;
+	private String value;
+
+	private FlowChangeType(String name, String value) {
+		this.name = name;
+		this.value = value;
+	}
+
+	public String getName() {
+		return name;
+	}
+
+	public void setName(String name) {
+		this.name = name;
+	}
+
+	public String getValue() {
+		return value;
+	}
+
+	public void setValue(String value) {
+		this.value = value;
+	}
+}

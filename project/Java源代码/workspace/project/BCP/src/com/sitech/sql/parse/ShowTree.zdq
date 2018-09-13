@@ -1,0 +1,514 @@
+package com.sitech.sql.parse;
+
+import java.io.ByteArrayOutputStream;
+import java.util.Iterator;
+
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
+import javax.xml.transform.OutputKeys;
+import javax.xml.transform.Source;
+import javax.xml.transform.Transformer;
+import javax.xml.transform.TransformerFactory;
+import javax.xml.transform.dom.DOMSource;
+import javax.xml.transform.stream.StreamResult;
+
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+
+import com.sitech.sql.parse.node.Between;
+import com.sitech.sql.parse.node.BooleanExp;
+import com.sitech.sql.parse.node.CaseExp;
+import com.sitech.sql.parse.node.Check;
+import com.sitech.sql.parse.node.Column;
+import com.sitech.sql.parse.node.ColumnExp;
+import com.sitech.sql.parse.node.ColumnRef;
+import com.sitech.sql.parse.node.Columns;
+import com.sitech.sql.parse.node.Delete;
+import com.sitech.sql.parse.node.ElseExp;
+import com.sitech.sql.parse.node.ExpTable;
+import com.sitech.sql.parse.node.FunctionCall;
+import com.sitech.sql.parse.node.Insert;
+import com.sitech.sql.parse.node.InsertColumn;
+import com.sitech.sql.parse.node.Node;
+import com.sitech.sql.parse.node.NodeList;
+import com.sitech.sql.parse.node.NodeToken;
+import com.sitech.sql.parse.node.Opop;
+import com.sitech.sql.parse.node.Param;
+import com.sitech.sql.parse.node.ParamList;
+import com.sitech.sql.parse.node.Relation;
+import com.sitech.sql.parse.node.ScalarExp;
+import com.sitech.sql.parse.node.Select;
+import com.sitech.sql.parse.node.SinSelect;
+import com.sitech.sql.parse.node.Sql;
+import com.sitech.sql.parse.node.TableColumns;
+import com.sitech.sql.parse.node.TableExp;
+import com.sitech.sql.parse.node.TableID;
+import com.sitech.sql.parse.node.TableRef;
+import com.sitech.sql.parse.node.Update;
+import com.sitech.sql.parse.node.UpdateColumn;
+import com.sitech.sql.parse.node.Values;
+import com.sitech.sql.parse.node.Var;
+import com.sitech.sql.parse.node.Visitor;
+import com.sitech.sql.parse.node.WhenThenExp;
+import com.sitech.sql.parse.node.WhereColumns;
+import com.sitech.sql.parse.node.WhereExp;
+
+public class ShowTree extends Visitor {
+	private static final int NORMAL=0;
+	private static final int COL=1;
+	private static final int FUNCALL=2;
+	private static final int TABNAME=3;
+	private static final int OP=6;
+	private static final int RELATION=7;
+	private static final int CHECK=8;
+	private static final int VAR=9;
+	private static final int OTHERNAME=10;
+	private static final int OTHERNAMEATTR=11;
+	private int flag=NORMAL;
+	private Element currElement;
+	private Document doc;
+	public ShowTree(){
+		try {
+			doc=DocumentBuilderFactory.newInstance().newDocumentBuilder().newDocument();
+		} catch (ParserConfigurationException e) {
+			e.printStackTrace();
+			
+		}
+	}
+	public void visitSql(Sql s){
+		Element oldEl=currElement;
+		currElement=doc.createElement("root");
+		super.visitSql(s);
+		if(oldEl!=null){
+			oldEl.appendChild(currElement);
+			currElement=oldEl;
+		}
+		
+	}
+	public void visitNodeToken(NodeToken token){
+		Element temp=null;
+		switch(flag){
+		case COL:
+			temp=doc.createElement("col");
+			temp.setAttribute("label", token.tokenString);
+			currElement.appendChild(temp);
+
+			break;
+		case FUNCALL://函数调用
+			currElement.setAttribute("label", token.tokenString);
+			break;
+		case TABNAME://表
+			temp=doc.createElement("tabName");
+			temp.setAttribute("label", token.tokenString);
+			currElement.appendChild(temp);
+			break;
+		case OP://符号
+			temp=doc.createElement("op");
+			temp.setAttribute("label", token.tokenString);
+			currElement.appendChild(temp);
+			break;
+		case RELATION://关系 and or
+			temp=doc.createElement("relation");
+			temp.setAttribute("label", token.tokenString);
+			currElement.appendChild(temp);
+			break;
+		case CHECK://布尔运算符
+			temp=doc.createElement("check");
+			temp.setAttribute("label", token.tokenString);
+			currElement.appendChild(temp);
+			break;
+		case VAR://变量
+			temp=doc.createElement("var");
+			temp.setAttribute("label", token.tokenString);
+			currElement.appendChild(temp);
+			break;
+		case OTHERNAME://别名
+			temp=doc.createElement("otherName");
+			temp.setAttribute("label", token.tokenString);
+			currElement.appendChild(temp);
+			break;
+		case OTHERNAMEATTR://别名放在属性里
+			currElement.setAttribute("othername", token.tokenString);
+			break;
+		
+		}
+	}
+	public void visitNodeList(NodeList n){
+		for (Iterator it = n.elements(); it.hasNext();) {
+			((Node) it.next()).accept(this);
+		}
+	}
+
+	public void visitSinSelect(SinSelect s){
+		Element oldEl=currElement;
+		currElement=doc.createElement("select");
+		s.columns.accept(this);
+		s.expTable.accept(this);
+		if(s.whereExp!=null){
+			s.whereExp.accept(this);
+		}
+		if(oldEl!=null){
+			oldEl.appendChild(currElement);
+			currElement=oldEl;
+		}
+	}
+
+	public void visitSelect(Select s){
+
+		s.selectList.accept(this);
+		
+	}
+	public void visitColumn(Column c){
+		Element oldEl=currElement;
+		currElement=doc.createElement("column");
+		c.columnExp.accept(this);
+		if(c.otherName!=null){
+			int oldFlag=flag;
+			flag=OTHERNAMEATTR;
+			c.otherName.accept(this);
+			flag=oldFlag;
+		}
+		oldEl.appendChild(currElement);
+		currElement=oldEl;
+		
+	}
+	
+	public void visitColumns(Columns c){
+		
+		c.columnList.accept(this);
+		
+	}
+
+	public void visitColumnExp(ColumnExp c){
+		for(int i=0;i<c.scalaList.size();i+=1){
+			ScalarExp e=(ScalarExp)c.scalaList.getChild(i);
+			e.accept(this);
+			
+			if(c.opopList.size()-1>=i){
+				Opop op=(Opop)c.opopList.getChild(i);
+				op.accept(this);
+			}
+		}
+
+		
+		
+	}
+	public void visitScalarExp(ScalarExp s){
+		if(s.columnExp!=null){
+			s.columnExp.accept(this);
+		}
+		if(s.columnRef!=null){
+			flag=COL;
+			s.columnRef.accept(this);
+			flag=NORMAL;
+		}
+		if(s.funCall!=null){
+			flag=FUNCALL;
+			Element oldEl=currElement;
+			currElement=doc.createElement("fun");
+			s.funCall.accept(this);
+			oldEl.appendChild(currElement);
+			currElement=oldEl;
+			flag=NORMAL;
+		}
+		if(s.number!=null){
+			flag=COL;
+			s.number.accept(this);
+			flag=NORMAL;
+		}
+		if(s.seelct!=null){
+			s.seelct.accept(this);
+		}
+		if(s.string!=null){
+			flag=COL;
+			s.string.accept(this);
+			flag=NORMAL;
+		}
+		if(s.var!=null){
+			flag=VAR;
+			s.var.accept(this);
+			flag=NORMAL;
+		}
+		if(s.caseExp!=null){
+			s.caseExp.accept(this);
+		}
+		
+	}
+	public void visitColumnRef(ColumnRef c){
+		
+		if(c.tableName!=null){
+			String tabName=c.tableName.tokenString+".";
+			c.columnName.tokenString=tabName+c.columnName.tokenString;
+		}
+		c.columnName.accept(this);
+	}
+	public void visitFunctionCall(FunctionCall f){
+		f.funName.accept(this);
+		f.paramList.accept(this);
+	}
+	public void visitParamList(ParamList p){
+		
+		p.paramList.accept(this);
+		
+	}
+	public void visitParam(Param p){
+		Element oldEl=currElement;
+		currElement=doc.createElement("param");
+		p.columnExp.accept(this);
+		oldEl.appendChild(currElement);
+		currElement=oldEl;
+	}
+	public void visitOpop(Opop o){
+		flag=OP;
+		o.op.accept(this);
+		flag=NORMAL;
+	}
+	public void visitVar(Var v){
+		v.id.accept(this);
+	}
+	//-------------表----------------
+	public void visitExpTable(ExpTable t){
+		Element oldEl=currElement;
+		currElement=doc.createElement("table");
+		t.tableColumns.accept(this);
+		oldEl.appendChild(currElement);
+		currElement=oldEl;
+		
+	}
+	public void visitTableColumns(TableColumns t){
+		t.tableRefList.accept(this);
+		
+	}
+	public void visitTableRef(TableRef t){
+		Element oldEl=currElement;
+		currElement=doc.createElement("tab");
+		if(t.otherName!=null){
+			int oldflag=flag;
+			flag=OTHERNAMEATTR;
+			t.otherName.accept(this);
+			flag=oldflag;
+		}
+		t.tableExp.accept(this);
+		oldEl.appendChild(currElement);
+		currElement=oldEl;
+		
+	}
+	public void visitTableExp(TableExp t){
+		if(t.tableExp!=null){
+			t.tableExp.accept(this);
+		}else if(t.select!=null){
+			t.select.accept(this);
+		}else if(t.tableid!=null){
+			flag=TABNAME;
+			t.tableid.accept(this);
+			flag=NORMAL;
+		}
+	}
+	public void visitTableid(TableID id){
+		id.tableName.accept(this);
+	}
+	public String toString(){
+		Transformer trans=null;
+		StreamResult strOut=null;
+		try {
+			doc.appendChild(currElement);
+			trans = TransformerFactory.newInstance().newTransformer();
+	        trans.setOutputProperty(OutputKeys.ENCODING, "gb2312"); // 处理汉字编码
+	        ByteArrayOutputStream byteOut = new ByteArrayOutputStream();
+	        strOut = new StreamResult(byteOut);
+	        Source xmlSource = new DOMSource(doc);
+	        trans.transform(xmlSource, strOut);
+
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+        return strOut.getOutputStream().toString();
+	}
+	//-----条件-----------
+	public void visitWhereExp(WhereExp w){
+		Element oldEl=currElement;
+		currElement=doc.createElement("where");
+		w.whereColumns.accept(this);
+		oldEl.appendChild(currElement);
+		currElement=oldEl;
+		
+	}
+	public void visitWhereColumns(WhereColumns w){
+		for(int i=0;i<w.booleanExpList.size();i+=1){
+			BooleanExp b=(BooleanExp)w.booleanExpList.getChild(i);
+			Element oldEl=currElement;
+			currElement=doc.createElement("condition");
+			b.accept(this);
+			oldEl.appendChild(currElement);
+			currElement=oldEl;
+
+			if(w.relationList.size()-1>=i){
+				Relation c=(Relation)w.relationList.getChild(i);
+				c.accept(this);
+			}
+		}
+	}
+	public void visitBooleanExp(BooleanExp b){
+		if(b.check!=null){
+			b.columnExp1.accept(this);
+			b.check.accept(this);
+			b.columnExp2.accept(this);
+		}
+		if(b.in!=null){
+			b.columnExp1.accept(this);
+			
+			Element oldEl=currElement;
+			currElement=doc.createElement("in");
+			currElement.setAttribute("label", b.in.tokenString);
+			if(b.select!=null){
+				b.select.accept(this);
+			}else{
+				b.paramList.accept(this);
+			}
+			oldEl.appendChild(currElement);
+			currElement=oldEl;
+		}
+		
+		if(b.between!=null){
+			b.columnExp1.accept(this);
+			b.between.accept(this);
+		}
+		if(b.whereColumns!=null){
+			b.whereColumns.accept(this);
+		}
+	}
+	public void visitRelation(Relation c){
+		flag=RELATION;
+		c.token.accept(this);
+		flag=NORMAL;
+	}
+	public void visitBetween(Between b){
+		Element oldEl=currElement;
+		currElement=doc.createElement("between");
+
+		b.exp1.accept(this);
+		b.exp2.accept(this);
+		oldEl.appendChild(currElement);
+		currElement=oldEl;
+	}
+	public void visitCheck(Check c){
+		flag=CHECK;
+		c.token.accept(this);
+		flag=NORMAL;
+	}
+	//------insert-----
+	public void visitInsert(Insert i){
+		Element oldEl=currElement;
+		currElement=doc.createElement("insert");
+		flag=TABNAME;
+		i.tableNameToken.accept(this);
+		flag=NORMAL;
+		if(i.insertColumn!=null){
+			i.insertColumn.accept(this);
+		}
+		i.values.accept(this);
+		if(oldEl!=null){
+			oldEl.appendChild(currElement);
+			currElement=oldEl;
+		}
+	}
+	
+	public void visitInsertColumns(InsertColumn i){
+		Element oldEl=currElement;
+		currElement=doc.createElement("insertColumn");
+		i.paramList.accept(this);
+		oldEl.appendChild(currElement);
+		currElement=oldEl;
+	}
+	
+	public void visitValues(Values i){
+		if(i.paramList!=null){
+			Element oldEl=currElement;
+			currElement=doc.createElement("values");
+			i.paramList.accept(this);
+			oldEl.appendChild(currElement);
+			currElement=oldEl;
+		}else if(i.select!=null){
+			i.select.accept(this);
+		}
+	}
+	//-------------update-----------
+	public void visitUpdate(Update u){
+		Element oldEl1=currElement;
+		currElement=doc.createElement("update");
+		flag=TABNAME;
+		u.tableNameToken.accept(this);
+		flag=NORMAL;
+		Element oldEl=currElement;
+		currElement=doc.createElement("updateColumn");
+		u.updateColumn.accept(this);
+		oldEl.appendChild(currElement);
+		currElement=oldEl;
+		if(u.whereExp!=null){
+			u.whereExp.accept(this);
+		}
+		oldEl1.appendChild(currElement);
+		currElement=oldEl1;
+	}
+	public void visitUpdateColumn(UpdateColumn u){
+		for(int i=0;i<u.booleanExpList.size();i+=1){
+			BooleanExp b=(BooleanExp)u.booleanExpList.getChild(i);
+			Element oldEl=currElement;
+			currElement=doc.createElement("setCol");
+			b.accept(this);
+			oldEl.appendChild(currElement);
+			currElement=oldEl;
+		}
+	}
+	//---------delete-----------
+	public void visitDelete(Delete d){
+		Element oldEl=currElement;
+		currElement=doc.createElement("delete");
+		flag=TABNAME;
+		d.tableNameToken.accept(this);
+		flag=NORMAL;
+		if(d.whereExp!=null){
+			d.whereExp.accept(this);
+		}
+		oldEl.appendChild(currElement);
+		currElement=oldEl;
+	}
+	
+	
+	//--------case when-------
+	public void visitCaseExp(CaseExp c){
+		Element oldEl=currElement;
+		currElement=doc.createElement("case");
+		c.whenThenExpList.accept(this);
+		if(c.elseExp!=null){
+			c.elseExp.accept(this);
+		}
+		oldEl.appendChild(currElement);
+		currElement=oldEl;
+	}
+	public void visitWhenThenExp(WhenThenExp w){
+		Element oldEl=currElement;
+		currElement=doc.createElement("when");
+		w.whereColumns.accept(this);
+		oldEl.appendChild(currElement);
+		currElement=oldEl;
+		
+		oldEl=currElement;
+		currElement=doc.createElement("then");
+		w.columnExp.accept(this);
+		oldEl.appendChild(currElement);
+		currElement=oldEl;
+		
+		
+	}
+	public void visitElseExp(ElseExp e){
+		Element oldEl=currElement;
+		currElement=doc.createElement("else");
+		e.scalarExp.accept(this);
+		oldEl.appendChild(currElement);
+		currElement=oldEl;
+	}
+	
+	
+
+}

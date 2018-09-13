@@ -1,0 +1,228 @@
+package com.creditease.b2bsettle.basedata.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import javax.persistence.criteria.CriteriaBuilder;
+import javax.persistence.criteria.CriteriaQuery;
+import javax.persistence.criteria.Predicate;
+import javax.persistence.criteria.Root;
+
+import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.stereotype.Service;
+import org.springframework.util.CollectionUtils;
+
+import com.creditease.b2bsettle.basedata.controller.param.SettleCenterParam;
+import com.creditease.b2bsettle.basedata.controller.param.SettleTree;
+import com.creditease.b2bsettle.basedata.model.EsEnterpriseInfo;
+import com.creditease.b2bsettle.basedata.model.SettleCenter;
+import com.creditease.b2bsettle.basedata.model.SettleCenterAudit;
+import com.creditease.b2bsettle.basedata.model.SettleCorp;
+import com.creditease.b2bsettle.basedata.repository.SettleCenterAuditRepository;
+import com.creditease.b2bsettle.basedata.repository.SettleCenterRepository;
+import com.creditease.b2bsettle.basedata.repository.SettleCenterRepositoryImpl;
+import com.creditease.b2bsettle.basedata.repository.SettleCorpRepository;
+import com.creditease.b2bsettle.basedata.service.SettleCenterService;
+
+@Service
+public class SettleCenterServiceImpl implements SettleCenterService {
+	
+	private static final Logger logger = LoggerFactory
+			.getLogger(SettleCenterServiceImpl.class);
+	
+	@Autowired
+	private SettleCenterRepository settleCenterRepository;
+	
+	@Autowired
+	private SettleCenterRepositoryImpl settleCenterRepositoryImpl;
+	
+	@Autowired
+	private SettleCorpRepository settleCorpRepository;
+	
+	@Autowired
+	private SettleCenterAuditRepository settleCenterAuditRepository;
+
+	@Override
+	public List<SettleCenter> findAllEnableSettle() {
+		return settleCenterRepository.findByDeletedOrderByParentIdAsc(false);
+	}
+
+	@Override
+	public Page<SettleCenterAudit> findAllDisableSettle(SettleCenterParam scp, Pageable pageable) {
+		Specification<SettleCenterAudit> spec = getWhereClause(scp);
+		Page<SettleCenterAudit> disablePage = settleCenterAuditRepository.findAll(spec, pageable);
+		return disablePage;
+	}
+	
+	 private Specification<SettleCenterAudit> getWhereClause(final SettleCenterParam settleCenterParam) {
+	        return new Specification<SettleCenterAudit>(){
+
+				@Override
+				public Predicate toPredicate(Root<SettleCenterAudit> root,
+						CriteriaQuery<?> query, CriteriaBuilder cb) {
+					List<Predicate> predicates = new ArrayList<Predicate>();
+                    if(!StringUtils.isEmpty(settleCenterParam.getText())){
+                    	predicates.add(cb.like(root.get("text").as(String.class) , "%" + settleCenterParam.getText()+ "%"));
+                    }
+                    if(!StringUtils.isEmpty(settleCenterParam.getText())){
+                    	predicates.add(cb.like(root.get("centerCorpName").as(String.class) , "%" + settleCenterParam.getCenterCorpName()+ "%"));
+                    }
+                    if(!StringUtils.isEmpty(settleCenterParam.getText())){
+                    	predicates.add(cb.equal(root.get("status").as(Integer.class) , settleCenterParam.getStatus()));
+                    }
+    				Predicate[] pres = new Predicate[predicates.size()];
+    				return query.where(predicates.toArray(pres)).getRestriction();
+				}
+	        };
+	    }
+
+	@Override
+	public long newSettle(SettleCenter settle) {
+		SettleCenter settleCenter = settleCenterRepository.save(settle);
+		return settleCenter.getId();
+	}
+
+	@Override
+	public boolean updateSettle(SettleCenter settle) {
+		SettleCenter settleCenter = settleCenterRepository.save(settle);
+		return settleCenter != null;
+	}
+
+	@Override
+	public boolean deleteSettle(long settleId) {
+		
+		//检查是有被使用到 TODO
+		
+		settleCenterRepository.deleteById(settleId);
+		settleCorpRepository.delBySettleId(settleId);
+		return true;
+	}
+
+	@Override
+	public boolean save(List<SettleCorp> scList) {
+		settleCorpRepository.save(scList);
+		return true;
+	}
+
+	@Override
+	public boolean delCorpNotInAuditNo(long settleId, long auditNo) {
+		int count = settleCorpRepository.delNotInAuditNo(settleId, auditNo);
+		return count != 0;
+	}
+
+	@Override
+	public boolean delCorpByAuditNo(long auditNo) {
+		int count = settleCorpRepository.delByAuditNo(auditNo);
+		return count != 0;
+	}
+
+	@Override
+	public boolean enableSettleCorpByAuditNo(long auditNo) {
+		int count = settleCorpRepository.enableByAuditNo(auditNo);
+		return count != 0;
+	}
+
+	@Override
+	public List<SettleCenter> findSettleBy(List<String> corpIdList) {
+		if(CollectionUtils.isEmpty(corpIdList)) {
+			return null;
+		}
+		return settleCenterRepositoryImpl.findBy(corpIdList);
+	}
+
+	@Override
+	public List<EsEnterpriseInfo> findCorpOfSettle(long settleId) {
+		return settleCenterRepository.findCorpOfSettle(settleId);
+	}
+
+	@Override
+	public List<SettleTree> findSettleTree() {
+		List<SettleCenter> allEnableSettle = this.findAllEnableSettle();
+		
+		if(allEnableSettle == null) {
+			return null;
+		}
+		
+		Map<Long, SettleTree> map = new HashMap<Long, SettleTree>();
+		SettleTree root = null;
+		for(SettleCenter sc : allEnableSettle) {
+			long parentId = sc.getParentId();
+			SettleTree node = generate(sc);
+			if(parentId == 0) {
+				map.put(sc.getId(), node);
+				root = node;
+			} else {
+				SettleTree parent = map.get(parentId);
+				if(parent == null) {
+					logger.error("not found the parent node " + parentId);
+					return null;
+				}
+				if(parent.getChildren() == null) {
+					List<SettleTree> children = new ArrayList<SettleTree>();
+					parent.setChildren(children);
+				}
+				parent.getChildren().add(node);
+				
+			}
+		}
+		List<SettleTree> list = new ArrayList<SettleTree>();
+		list.add(root);
+		return list;
+	}
+	
+	private SettleTree generate(SettleCenter sc ) {
+		SettleTree node = new SettleTree();
+		node.setId(sc.getId());
+		node.setText(sc.getName());
+		node.setCenterCorpName(sc.getCenterCorpName());
+		node.setStatus(sc.isCanOperate() ? "0" : "1");
+		return node;
+	}
+
+	@Override
+	public Page<EsEnterpriseInfo> findCorpOfSettle(long settleId,
+			Pageable pageable) {
+		Page<EsEnterpriseInfo> page = settleCenterRepository.findBySettleId(settleId, pageable);
+		return page;
+	}
+
+	@Override
+	public boolean save(SettleCenter sc) {
+		
+		// TODO 未走审核
+		settleCenterRepository.save(sc);
+		return true;
+	}
+
+	@Override
+	public boolean checkDuplicate(String centerName, String corpNo) {
+		SettleCenter sc = settleCenterRepository.findByNameAndCenterCorpNo(centerName, corpNo);
+		return sc == null;
+	}
+
+	@Override
+	public SettleCenter findById(long settleId) {
+		return settleCenterRepository.findOne(settleId);
+	}
+
+	@Override
+	public boolean setStatus(long settleId, int status) {
+		int count = settleCenterRepository.setStatus(settleId, status);
+		return count != 0;
+	}
+
+	@Override
+	public List<SettleCorp> saveMembers(List<SettleCorp> members) {
+		List<SettleCorp> save = settleCorpRepository.save(members);
+		return save;
+	}
+
+}

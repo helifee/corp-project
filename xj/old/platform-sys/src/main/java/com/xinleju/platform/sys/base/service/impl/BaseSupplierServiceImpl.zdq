@@ -1,0 +1,417 @@
+package com.xinleju.platform.sys.base.service.impl;
+
+import java.sql.Timestamp;
+import java.util.*;
+import java.util.stream.Collectors;
+
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.base.utils.ErrorInfoCode;
+import com.xinleju.platform.sys.org.dto.OrgnazationDto;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.finance.utils.Jaxb2Util;
+import com.xinleju.platform.sys.base.dao.BaseSupplierAccontDao;
+import com.xinleju.platform.sys.base.dao.BaseSupplierCompanyDao;
+import com.xinleju.platform.sys.base.dao.BaseSupplierDao;
+import com.xinleju.platform.sys.base.dto.BaseSupplierAccontDto;
+import com.xinleju.platform.sys.base.dto.BaseSupplierDto;
+import com.xinleju.platform.sys.base.entity.BaseSupplier;
+import com.xinleju.platform.sys.base.entity.BaseSupplierAccont;
+import com.xinleju.platform.sys.base.entity.BaseSupplierCompany;
+import com.xinleju.platform.sys.base.service.BaseSupplierAccontService;
+import com.xinleju.platform.sys.base.service.BaseSupplierCompanyService;
+import com.xinleju.platform.sys.base.service.BaseSupplierService;
+import com.xinleju.platform.sys.base.utils.Basdoc;
+import com.xinleju.platform.sys.base.utils.BasdocHead;
+import com.xinleju.platform.sys.base.utils.StatusType;
+import com.xinleju.platform.sys.base.utils.Ufinterface;
+import com.xinleju.platform.sys.org.service.OrgnazationService;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class BaseSupplierServiceImpl extends  BaseServiceImpl<String,BaseSupplier> implements BaseSupplierService{
+	
+
+	@Autowired
+	private BaseSupplierDao baseSupplierDao;
+	@Autowired BaseSupplierAccontService baseSupplierAccontService;
+	@Autowired BaseSupplierAccontDao baseSupplierAccontDao;
+	@Autowired BaseSupplierCompanyDao baseSupplierCompanyDao;
+	@Autowired BaseSupplierCompanyService baseSupplierCompanyService;
+	@Autowired OrgnazationService orgnazationService;
+	/**
+	 * author:liuf
+	 * describe: 级联保存 主子表
+	 * param:baseSupplierDto
+	 */
+	@Override
+	@Transactional
+	public String saveSupplierAndAccont(BaseSupplierDto baseSupplierDto) throws Exception{
+		DubboServiceResultInfo resultInfo = new DubboServiceResultInfo ();
+		resultInfo = this.checkUnique (baseSupplierDto.getName (),"name",baseSupplierDto.getId ());
+        if(!resultInfo.isSucess ()){
+        	return JacksonUtils.toJson (resultInfo);
+		}
+		resultInfo = this.checkUnique (baseSupplierDto.getCode (),"code",baseSupplierDto.getId ());
+		if(!resultInfo.isSucess ()){
+			return JacksonUtils.toJson (resultInfo);
+		}
+		  List<BaseSupplierAccontDto> list = baseSupplierDto.getList();
+		  if(list!=null&&list.size()>0){
+			  List<BaseSupplierAccont> baseSupplierAccontlist=new ArrayList<>();
+			  // 循环dto对象 拿到list子表 把子表dto转化为实体对象 然后封装到list集合里面
+			  for (BaseSupplierAccontDto baseSupplierAccontDto : list) {
+				  BaseSupplierAccont baseSupplierAccont=new BaseSupplierAccont();
+				  BeanUtils.copyProperties(baseSupplierAccontDto, baseSupplierAccont);
+				  baseSupplierAccontlist.add(baseSupplierAccont);
+			  }
+			  //批量保存
+//			  try {
+				  int number1 = baseSupplierAccontDao.saveBatch(baseSupplierAccontlist);
+//			} catch (Exception e) {
+//				throw new Exception("字段超长保存失败");
+//			}
+			  
+		  }
+		  //转化主dto 为实体对象  保存主表
+		  BaseSupplier baseSupplier=new BaseSupplier();
+		  BeanUtils.copyProperties(baseSupplierDto, baseSupplier);
+		  String companyIds = baseSupplier.getCompanyId();
+		  String[] companyList = companyIds.split(",");
+		  if(companyList.length>0){
+			  for (String companyId : companyList) {
+				  BaseSupplierCompany baseSupplierCompany=new BaseSupplierCompany();
+				  baseSupplierCompany.setCompanyId(companyId);
+				  baseSupplierCompany.setId(IDGenerator.getUUID());
+				  baseSupplierCompany.setSupperId(baseSupplier.getId());
+				  baseSupplierCompany.setDelflag(false);
+				  baseSupplierCompanyDao.save(baseSupplierCompany);
+			  }
+		  }
+		  int number2 = baseSupplierDao.save(baseSupplier);
+		  resultInfo.setSucess (true);
+		  resultInfo.setMsg ("保存对象成功！");
+		  return JacksonUtils.toJson (resultInfo);
+	}
+	/**
+	 * author:liuf
+	 * describe: 通过id获取主子表
+	 * param:id
+	 */
+	@Override
+	public BaseSupplierDto getSupplierAndAccontById(String id) throws Exception{
+		//通过主表id获取主子表数据 封装到dto里面 供修改页面时 回显使用
+		//查询主表
+		String companyId="";
+		String companyName="";
+		List<BaseSupplierDto> singleObject = baseSupplierDao.getSingleObject(id);
+		List<String> companyIdsList = baseSupplierCompanyService.getObjectBySupplierId(id);
+		  if(companyIdsList!=null&&companyIdsList.size()>0){
+				for (String companyIds : companyIdsList) {
+					companyId+=companyIds+",";
+					companyName+=orgnazationService.getObjectById(companyIds).getName()+",";
+				}
+		  }
+		BaseSupplierDto baseSupplierDto= singleObject.get(0);
+		baseSupplierDto.setCompanyId(companyId);
+		baseSupplierDto.setCompanyName(companyName);
+		//查询子表实体对象
+		List<BaseSupplierAccont> supplierAccontList=baseSupplierAccontService.getSupplierAccontBySupplierId(id);
+		//把子表实体对象 封装到子表dto里面
+		List<BaseSupplierAccontDto> supplierAccontDtoList=new ArrayList<BaseSupplierAccontDto>();
+		if(supplierAccontList!=null&&supplierAccontList.size()>0){
+			for (BaseSupplierAccont baseSupplierAccont : supplierAccontList) {
+				BaseSupplierAccontDto baseSupplierAccontDto=new BaseSupplierAccontDto();
+				BeanUtils.copyProperties(baseSupplierAccont, baseSupplierAccontDto);
+				supplierAccontDtoList.add(baseSupplierAccontDto);
+			}
+		}
+		baseSupplierDto.setList(supplierAccontDtoList);
+		//  返回dto对象
+    	return baseSupplierDto;
+	}
+	/**
+	 * author:liuf
+	 * describe: 修改对象
+	 * param:baseSupplierDto
+	 */
+	@Override
+	public String updateSupplierAndAccont(BaseSupplierDto baseSupplierDto) throws Exception{
+		DubboServiceResultInfo resultInfo = new DubboServiceResultInfo ();
+		resultInfo = this.checkUnique (baseSupplierDto.getName (),"name",baseSupplierDto.getId ());
+		if(!resultInfo.isSucess ()){
+			return JacksonUtils.toJson (resultInfo);
+		}
+		resultInfo = this.checkUnique (baseSupplierDto.getCode (),"code",baseSupplierDto.getId ());
+		if(!resultInfo.isSucess ()){
+			return JacksonUtils.toJson (resultInfo);
+		}
+		//获取修改页面传递过来的子表dto
+		List<BaseSupplierAccontDto> list = baseSupplierDto.getList();
+		List<BaseSupplierAccont> savebaseSupplierAccont=new ArrayList<>();
+		List<BaseSupplierAccont> updatebaseSupplierAccont=new ArrayList<>();
+		if(list!=null&&list.size()>0){
+			
+			for(BaseSupplierAccontDto baseSupplierAccontDto:list){
+				BaseSupplierAccont newBaseSupplierAccont= new BaseSupplierAccont();
+				//循环遍历 把dto对象转化为实体对象
+				BeanUtils.copyProperties(baseSupplierAccontDto, newBaseSupplierAccont);
+				//查询新的实体对象在数据库中是否存在
+				BaseSupplierAccont oldbaseSupplierAccont = baseSupplierAccontService.getObjectById(newBaseSupplierAccont.getId());
+				//如果没有添加的新增的list里面
+				if(oldbaseSupplierAccont==null){
+					savebaseSupplierAccont.add(newBaseSupplierAccont);
+				}else{
+					//如果有添加到修改的list里面
+					updatebaseSupplierAccont.add(newBaseSupplierAccont);
+				}
+			}
+		}
+		//批量新增
+		baseSupplierAccontService.saveBatch(savebaseSupplierAccont);
+		//批量修改
+		baseSupplierAccontService.updateBatch(updatebaseSupplierAccont);
+		BaseSupplier baseSupplier=new BaseSupplier();
+		BeanUtils.copyProperties(baseSupplierDto, baseSupplier);
+		//修改主表
+		List<String> ids=baseSupplierCompanyService.getIdsBySupplierId(baseSupplier.getId());
+		if(ids!=null&&ids.size()>0){
+			baseSupplierCompanyService.deleteAllObjectByIds(ids);
+		}
+		  String companyIds = baseSupplier.getCompanyId();
+		  String[] companyList = companyIds.split(",");
+		  if(companyList.length>0){
+			  for (String companyId : companyList) {
+				  BaseSupplierCompany baseSupplierCompany=new BaseSupplierCompany();
+				  baseSupplierCompany.setCompanyId(companyId);
+				  baseSupplierCompany.setId(IDGenerator.getUUID());
+				  baseSupplierCompany.setSupperId(baseSupplier.getId());
+				  baseSupplierCompany.setDelflag(false);
+				  baseSupplierCompanyService.save(baseSupplierCompany);
+			  }
+		  }
+		int result = baseSupplierDao.update(baseSupplier);
+		return JacksonUtils.toJson (resultInfo);
+	}
+	/**
+	 * author:liuf
+	 * describe: 删除主子表  单个删除
+	 * param:id
+	 */
+	@Override
+	public int deleteSupplierAndAccont(String id) throws Exception {
+		//删除主子表  单个删除
+		BaseSupplierDto baseSupplierDto = this.getSupplierAndAccontById(id);
+		List<BaseSupplierAccontDto> list = baseSupplierDto.getList();
+		List<String>ids=new ArrayList<>();
+		//查询到子表dto并转化为实体对象 批量删除
+		for (BaseSupplierAccontDto baseSupplierAccontDto : list) {
+			 BaseSupplierAccont baseSupplierAccont=new BaseSupplierAccont();
+			 BeanUtils.copyProperties(baseSupplierAccontDto, baseSupplierAccont);
+			 ids.add(baseSupplierAccont.getId());
+		}
+		baseSupplierAccontService.deletePseudoAllObjectByIds(ids);
+		BaseSupplier baseSupplier=new BaseSupplier();
+		BeanUtils.copyProperties(baseSupplierDto, baseSupplier);
+		//删除主表对象
+		int i = baseSupplierDao.deletePseudoObjectById(id);
+		return i;
+	}
+	/**
+	 * author:liuf
+	 * describe: 修改对象的状态
+	 * param:baseSupplierDto
+	 */
+	@Override
+	public int updateStatus(BaseSupplierDto baseSupplierDto) throws Exception {
+		//获得当前对象的状态 如果是启用 转化为禁用  如果是禁用 转化为启用
+		BaseSupplier baseSupplier=new BaseSupplier();
+		BeanUtils.copyProperties(baseSupplierDto, baseSupplier);
+		int i=0;
+		String status = baseSupplierDto.getStatus();
+		if(StatusType.StatusOpen.getCode().equals(status)){//启用状态改为禁用
+			baseSupplier.setStatus(StatusType.StatusClosed.getCode());
+			baseSupplier.setDisabledId("");
+			baseSupplier.setDisabledDate(new Timestamp(System.currentTimeMillis()));
+			 i = baseSupplierDao.update(baseSupplier);
+		}else if(StatusType.StatusClosed.getCode().equals(status)){//禁用状态改为启用
+			baseSupplier.setStatus(StatusType.StatusOpen.getCode());
+			i=baseSupplierDao.update(baseSupplier);
+		}
+
+		return i;
+	}
+	/**
+	 * author:liuf
+	 * describe: 删除主子表  多个个删除
+	 * param:ids
+	 */
+	@Override
+	public int deleteAllByIds(String ids) throws Exception{
+		//删除主子表  多个个删除
+		String[] split = ids.split(",");
+		List<String> newAcountIds=new ArrayList<>();
+		List<String> SupplierIds=new ArrayList<>();
+		//把所有的子表id拼接在一个数组里  执行批量删除方法
+		for (int i = 0; i < split.length; i++) {
+			BaseSupplierDto baseSupplierDto = this.getSupplierAndAccontById(split[i]);
+			List<BaseSupplierAccontDto> list = baseSupplierDto.getList();
+			if(list!=null&&list.size()>0){
+				for (BaseSupplierAccontDto baseSupplierAccontDto : list) {
+					BaseSupplierAccont baseSupplierAccont=new BaseSupplierAccont();
+					BeanUtils.copyProperties(baseSupplierAccontDto, baseSupplierAccont);
+					newAcountIds.add(baseSupplierAccont.getId());
+				}
+			}
+			//把所有的主表id拼接在一个数组里  执行批量删除方法
+			SupplierIds.add(split[i]);
+		}
+		baseSupplierAccontService.deletePseudoAllObjectByIds(newAcountIds);
+		
+		int i = baseSupplierDao.deletePseudoAllObjectByIds(SupplierIds);
+		return i;
+	}
+	/**
+	 * author:liuf
+	 * describe:分页查询
+	 * param:map
+	 */
+	@Override
+	public Page getSupplierDataByPage(Map map) throws Exception {
+		// 分页显示
+		Page page=new Page();
+		// 获取分页list 数据
+		 List<Map<String,Object>> list = baseSupplierDao.getSupplierData(map);
+		;
+		list.stream ().forEach (m->{
+			try {
+				String companyIds = String.valueOf (m.get ("companyId"));
+				Map reqMap = new HashMap();
+				reqMap.put ("ids",Arrays.asList (companyIds.split (",")));
+				List<OrgnazationDto> orgnazationDtos = orgnazationService.getAllOrgList (reqMap);
+				m.put ("companyName",orgnazationDtos.stream ().map (OrgnazationDto::getName).collect (Collectors.joining (",")));
+			}catch (Exception e){
+				e.printStackTrace ();
+			}
+		});
+		 // 获取条件的总数据量
+		Integer count = baseSupplierDao.getSupplierDataCount(map);
+		 page.setLimit((Integer) map.get("limit") );
+		  page.setList(list);
+		  page.setStart((Integer) map.get("start"));
+		  page.setTotal(count);
+		  //封装成page对象 传到前台
+		  return page;
+	}
+	/**
+	 * 根据公司Id获取供方档案
+	 * @param param
+	 * @return
+	 */
+	@Override
+	public List<Map<String, Object>> getSupplierByCompanyId(Map<String, Object> param) throws Exception {
+		return baseSupplierDao.getSupplierByCompanyId(param);
+	}
+	
+	/**
+	 * 生成NC系统能识别的同步xml
+	 * 
+	 * @param createJson
+	 * @param sendUser
+	 * @return
+	 */
+	@Override
+	public String createSyncXml2NC(String createJson,String sendUser){
+		BaseSupplierDto dto = JacksonUtils.fromJson(createJson,BaseSupplierDto.class);
+		Ufinterface ufi = new Ufinterface();
+		ufi.setSubbilltype("");
+		ufi.setSender(sendUser);
+		ufi.setRoottag("");
+		ufi.setReplace("Y");
+		ufi.setReceiver("0001");//集团公司编码
+		ufi.setProc("add");
+		ufi.setIsexchange("Y");
+		ufi.setFilename("");
+		ufi.setBilltype("bscubas");
+		ufi.setAccount("");//集团公司账套
+		
+		// 没有分类
+/*		List<SupplierCategory> cateList = getDao().findAll(SupplierCategory.class);
+		Map<Long,String> cateMap = new HashMap<Long,String>();
+		for(SupplierCategory dtoc : cateList){
+			cateMap.put(dtoc.getId(), dtoc.getCode());
+		}
+*/		List<Basdoc> enlist = new ArrayList<Basdoc>();
+		BasdocHead basdochead = new BasdocHead();
+		basdochead.setPkcorp("0001");
+//		basdochead.setPkareacl(cateMap.get(dto.getCategoryId())!=null ? cateMap.get(dto.getCategoryId()) : "");
+		basdochead.setPkareacl("QT");
+		basdochead.setCustcode(dto.getCode());
+		basdochead.setCustname(dto.getName());
+		basdochead.setCustshortname(dto.getName());// 没有shortname
+		basdochead.setCusttype("1");
+		basdochead.setCustprop("0");
+		basdochead.setLinkman1(dto.getRelationPerson());
+		basdochead.setFax1(""); // 没有传真
+		basdochead.setMobilephone1(dto.getPhone());
+		basdochead.setRegisterfund(""); // 没有注册资本
+		
+		Basdoc basdocxml = new Basdoc();
+		basdocxml.setId(dto.getCode());
+		basdocxml.setBasdochead(basdochead);
+        enlist.add(basdocxml);
+		ufi.setBasdoc(enlist);
+		
+		String xml = "";
+		try {
+			xml = Jaxb2Util.objContextXml(ufi);
+			System.out.println("生成NC的XML===="+xml);
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		return xml;
+	}
+
+	/**
+	 *
+	 * @return
+     */
+	private DubboServiceResultInfo checkUnique(String param,String type,String id){
+		DubboServiceResultInfo info = new DubboServiceResultInfo ();
+		Map<String,Object> paramMap = new HashMap<String,Object> ();
+		String msg = "";
+		switch (type){
+			case "code":
+                paramMap.put ("code",param);
+				msg ="编码已被使用！";
+				break ;
+			case "name":
+				paramMap.put ("name",param);
+				msg ="名称已被使用！";
+				break ;
+		}
+		paramMap.put("id", id);
+		List<BaseSupplier> baseSupplier = baseSupplierDao.selectBeanByOption(paramMap);
+		if(baseSupplier!=null&&!baseSupplier.isEmpty ()){
+			info.setSucess (false);
+			info.setCode(ErrorInfoCode.UNIQUE_ERROR.getValue());
+			info.setMsg(msg);
+		}else{
+			info.setSucess (true);
+			info.setMsg("输入参数可以使用！");
+		}
+		return info;
+	}
+}

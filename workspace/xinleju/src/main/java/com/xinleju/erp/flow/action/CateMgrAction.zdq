@@ -1,0 +1,329 @@
+package com.xinleju.erp.flow.action;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.collections.map.LinkedMap;
+import org.apache.commons.lang3.StringUtils;
+import org.hibernate.FetchMode;
+import org.hibernate.criterion.Criterion;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.Order;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.jdbc.core.JdbcTemplate;
+
+import com.xinleju.erp.base.app.action.BaseAction;
+import com.xinleju.erp.base.app.config.App;
+import com.xinleju.erp.flow.models.Cate;
+import com.xinleju.erp.flow.models.CateVal;
+import com.xinleju.erp.flow.service.extend.dto.CateMgrDto;
+import com.xinleju.erp.flow.service.extend.dto.FiOpDto;
+
+/**
+ * 版权：(C) 版权所有 2000-2014 上海天好电子商务有限公司苏州分公司
+ * <工作流条件配置管理>
+ * @author   hongbin
+ * @version  $Id$
+ * @since
+ * @see
+ */
+public class CateMgrAction extends BaseAction {
+    
+    /**
+     * 判定条目目录
+     */
+    private Cate cate;
+    
+    private CateMgrDto cateMgrDto;
+    
+    /**
+     * 判定條件值
+     */
+    private CateVal cateVal;
+    
+    
+    /**
+     * 
+     * 〈工作流条件配置管理首页〉
+     * 
+     * @author hongbin
+     * @return page
+     */
+    @SuppressWarnings("unchecked")
+    public String index() {
+        Map<String, String> statusMap = new LinkedMap();
+        statusMap.put(CateMgrDto.IS_DISABLED_N, "启用");
+//        statusMap.put(CateMgrDto.IS_DISABLED_Y, "禁用");
+        request.setAttribute("statusMap", statusMap);
+        Map<String, String> valStatusMap = new LinkedMap();
+        valStatusMap.put(CateMgrDto.IS_DISABLED_N, "启用");
+        valStatusMap.put(CateMgrDto.IS_DISABLED_Y, "禁用");
+        request.setAttribute("valStatusMap", valStatusMap);
+        if(null != cateMgrDto && StringUtils.isNotBlank(cateMgrDto.getCtId())){
+            String selectPath = "/Cate_0/" + this.getCateIdPath(Long.valueOf(cateMgrDto.getCtId().trim()));
+            if (StringUtils.isNotBlank(selectPath) && selectPath.endsWith("/")){
+                selectPath = selectPath.substring(0, selectPath.lastIndexOf("/"));
+            }
+            request.setAttribute("selectPath", selectPath);
+            if (StringUtils.isNotBlank(cateMgrDto.getStatus()) && FiOpDto.IS_DISABLED_N.equals(cateMgrDto.getStatus())){
+                Long ctId = getCommonService().findLong("select id from Cate where id = ? and (isDisabled is null or isDisabled = 0)", Long.valueOf(cateMgrDto.getCtId().trim()));
+                cateMgrDto.setCtId(null != ctId ? ctId.toString() : "");
+            }
+        } else {
+            request.setAttribute("selectPath", "/Cate_0");
+        }
+        this.getCateValList();
+        return "index";
+    }
+    
+    
+    /**
+     * 
+     * 判定条目树首页
+     * @author hongbin
+     * @return page
+     */
+    public String tree() {
+        return "tree";
+    }
+    
+    /**
+     * 
+     * 〈获得工作流条件配置目录树〉 
+     * 
+     * @author hongbin
+     */
+    public void getCateTree() {
+        Integer parentId = getParameterInt("parentId");
+        String isdisabled = getParameter("isdisabled");
+        String disabledSql = "";
+        if (StringUtils.isNotBlank(isdisabled) && FiOpDto.IS_DISABLED_N.equals(isdisabled.trim())){
+            disabledSql = " and (isDisabled is null or isDisabled = 0) ";
+        }
+        List<Map<String, Object>> resultList = new ArrayList<Map<String, Object>>();
+        List<Cate> cateList = new ArrayList<Cate>();
+        if (parentId == null || parentId.intValue() == 0) {
+            cateList = getCommonService().findAll(Cate.class, "parentId is null" + disabledSql, new Object[] {}, "position asc,id asc");
+        } else {
+            cateList = getCommonService().findAll(Cate.class, "parentId = ? " + disabledSql, new Object[] { parentId }, "position asc,id asc");
+        }
+        for (Cate c : cateList) {
+            boolean IsDisabled = c.getIsDisabled() != null && c.getIsDisabled().intValue() == 1;
+            Map<String, Object> tree = new HashMap<String, Object>();
+            tree.put("id", "Cate_" + c.getId());
+            tree.put("targetId", c.getId());
+            tree.put("leaf", c.getSubCount() == 0);
+            tree.put("isDisabled", IsDisabled);
+            if (IsDisabled) {
+                tree.put("text", "<font style=\"color:red\">" + c.getName() + "</font>");
+            } else {
+                tree.put("text", c.getName());
+            }
+            resultList.add(tree);
+        }
+        super.renderJson(resultList);
+    }
+    public String getCateIdPath(Long parentCtId){
+        String ctIdPath = "";
+        if (null != parentCtId && parentCtId > 0){
+            ctIdPath = "Cate_" + parentCtId + "/";
+            String sql = "select parent_id from sm_cate where id = ?";
+            Long pId = App.getBean(JdbcTemplate.class).queryForLong(sql, parentCtId);
+            if (null != pId && pId > 0){
+                ctIdPath = this.getCateIdPath(pId) + ctIdPath;
+            }
+        }
+        return ctIdPath;
+    }
+    /**
+     * 
+     * 〈工作流条件值列表〉 
+     * 
+     * @author hongbin
+     * @return page
+     */
+    public String cateValList() {
+        this.getCateValList();
+        return "cateValList";
+    }
+    public void getCateValList(){
+        String isDisabled = "";
+        Long cateId = -1L;
+        String nameOrCode = "";
+        DetachedCriteria dc = DetachedCriteria.forClass(CateVal.class);
+        dc.setFetchMode("cate", FetchMode.JOIN);
+        if (null != cateMgrDto){
+            if (StringUtils.isNotBlank(cateMgrDto.getValStatus())){
+                isDisabled = cateMgrDto.getValStatus();
+            }
+            if (StringUtils.isNotBlank(cateMgrDto.getCtId())){
+                cateId = Long.valueOf(cateMgrDto.getCtId());
+            }
+            if (StringUtils.isNotBlank(cateMgrDto.getKeyword())){
+                nameOrCode = cateMgrDto.getKeyword();
+            }
+        }
+        if (StringUtils.isNotEmpty(nameOrCode)) {
+            dc.add(Restrictions.ilike("name", "%" + nameOrCode + "%"));
+        }
+        if (cateId != null && cateId > 0) {
+            cate = getCommonService().getById(Cate.class, cateId);
+            dc.add(Restrictions.eq("cateId", cateId));
+        } else {
+            dc.add(Restrictions.eq("cateId", -1L));
+        }
+
+        if (FiOpDto.IS_DISABLED_Y.equals(isDisabled)) {
+            dc.add(Restrictions.eq("isDisabled", 1));
+        } else if (FiOpDto.IS_DISABLED_N.equals(isDisabled)) {
+            dc.add(Restrictions.or(new Criterion[] { Restrictions.eq("isDisabled", 0), Restrictions.isNull("isDisabled") }));
+        }
+
+        dc.addOrder(Order.asc("position"));
+        page = getCommonService().findPage(dc, start, limit);
+    }
+  
+    /**
+     * 
+     * 編輯工作流條件值
+     * @author hongbin
+     * @return page
+     */
+    public String editCateVal() {
+        cateVal = super.edit(CateVal.class);
+        if (cateVal == null) {
+            cateVal = new CateVal();
+        }
+        Long cateId = getParameterLong("cateId");
+        if (cateId != null && cateId > 0L) {
+            cateVal.setCateId(cateId);
+        }
+
+        return "editCateVal";
+    }
+    
+    
+    /**
+     * 保存工作流条件判定值 
+     * @author hongbin
+     */
+    public void saveCateVal() {
+        getCommonService().saveOrUpdate(cateVal);
+        super.renderJson(cateVal);
+    }
+    
+    
+    /**
+     * 编辑工作流判定条目
+     * @author hongbin
+     * @return page
+     */
+    public String editCate() {
+        cate = super.edit(Cate.class);
+        cate = (cate == null ? new Cate() : cate);
+        Integer parentId = getParameterInt("parentId");
+        if(parentId !=null && parentId > 0){
+            cate.setParentId(parentId);
+        }
+        return "editCate";
+    }
+    
+    
+    /**
+     * 保存工作流判定条目
+     * @author hongbin
+     */
+    public void saveCate() {
+        getCommonService().saveOrUpdate(cate);
+        super.renderJson(cate);
+    }
+    
+    public void updateCate(){
+        Map<String,Object> result = new HashMap<String,Object>();
+        try{
+            String ids = getParameter("ids");
+            Integer isdisabled = getParameterInt("isdisabled");
+            if (null == isdisabled){
+                isdisabled = 0;
+            }
+            if(StringUtils.isNotBlank(ids)) {
+                String[] idAry = ids.split(";");
+                for(String id : idAry) {
+                    getCommonService().execute("update Cate set isDisabled = ? where id = ?", isdisabled, Long.valueOf(id));
+                }
+            }
+            result.put("success", true);
+        }catch(Exception e){
+            result.put("success", false);
+            result.put("msg", e.getMessage());
+        }
+        renderJson(result);
+    }
+    
+    public void updateCateVal(){
+        Map<String,Object> result = new HashMap<String,Object>();
+        try{
+            String ids = getParameter("ids");
+            Integer isdisabled = getParameterInt("isdisabled");
+            if (null == isdisabled){
+                isdisabled = 0;
+            }
+            if(StringUtils.isNotBlank(ids)) {
+                String[] idAry = ids.split(";");
+                for(String id : idAry) {
+                    getCommonService().execute("update CateVal set isDisabled = ? where id = ?", isdisabled, Long.valueOf(id));
+                }
+            }
+            result.put("success", true);
+        }catch(Exception e){
+            result.put("success", false);
+            result.put("msg", e.getMessage());
+        }
+        renderJson(result);
+    }
+
+    /**
+     * @return Returns the cate.
+     */
+    public Cate getCate() {
+        return cate;
+    }
+
+
+    /**
+     * @param cate The cate to set.
+     */
+    public void setCate(Cate cate) {
+        this.cate = cate;
+    }
+
+
+    /**
+     * @return Returns the cateVal.
+     */
+    public CateVal getCateVal() {
+        return cateVal;
+    }
+
+
+    /**
+     * @param cateVal The cateVal to set.
+     */
+    public void setCateVal(CateVal cateVal) {
+        this.cateVal = cateVal;
+    }
+
+
+    public CateMgrDto getCateMgrDto() {
+        return cateMgrDto;
+    }
+
+
+    public void setCateMgrDto(CateMgrDto cateMgrDto) {
+        this.cateMgrDto = cateMgrDto;
+    }
+    
+    
+}

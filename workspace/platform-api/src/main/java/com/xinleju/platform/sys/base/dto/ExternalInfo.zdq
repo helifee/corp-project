@@ -1,0 +1,185 @@
+/**   
+*
+* @version V1.0   
+*/
+package com.xinleju.platform.sys.base.dto;
+
+import javax.xml.bind.annotation.XmlRootElement;
+
+/**
+ * @author jack
+ *
+ */
+@XmlRootElement
+public class ExternalInfo {
+	
+	//id
+	private String billcode;
+	//接收状态
+	private String receivestatus;
+	//错误信息
+	private String errormsg;
+	
+	//资金系统唯一标识
+	private String payformid;
+	//处理状态
+	private String status;
+	//指令处理时间
+	private String enddate;
+	//金额
+	private Double amount;
+	//支付方式
+	private String paymenttype;
+	
+	//waylonglong 2016.12.21 资金平台同步属性
+    /** 付款单位编号 */
+    private String payorgcode;
+    /** 付款单位名称 */
+    public String payorgname;
+    /** 付款银行账号 */
+    public String payaccountcode;
+    /** 付款账户名称 */
+    public String payaccountname;
+    /** 付款银行 */
+    public String paybankname;
+    
+	/**
+	 * 123
+	 */
+	public String getBillcode() {
+		return billcode;
+	}
+	/**
+	 * @param billcode the billcode to set
+	 */
+	public void setBillcode(String billcode) {
+		this.billcode = billcode;
+	}
+	/**
+	 * 123
+	 */
+	public String getReceivestatus() {
+		return receivestatus;
+	}
+	/**
+	 * @param receivestatus the receivestatus to set
+	 */
+	public void setReceivestatus(String receivestatus) {
+		this.receivestatus = receivestatus;
+	}
+	/**
+	 * 123
+	 */
+	public String getErrormsg() {
+		return errormsg;
+	}
+	/**
+	 * @param errormsg the errormsg to set
+	 */
+	public void setErrormsg(String errormsg) {
+		this.errormsg = errormsg;
+	}
+	/**
+	 * 123
+	 */
+	public String getPayformid() {
+		return payformid;
+	}
+	/**
+	 * @param payformid the payformid to set
+	 */
+	public void setPayformid(String payformid) {
+		this.payformid = payformid;
+	}
+	/**
+	 * 123
+	 */
+	public String getStatus() {
+		return status;
+	}
+	/**
+	 * @param status the status to set
+	 */
+	public void setStatus(String status) {
+		this.status = status;
+	}
+	/**
+	 * 123
+	 */
+	public String getEnddate() {
+		return enddate;
+	}
+	/**
+	 * @param enddate the enddate to set
+	 */
+	public void setEnddate(String enddate) {
+		this.enddate = enddate;
+	}
+	/**
+	 * 123
+	 */
+	public Double getAmount() {
+		return amount;
+	}
+	/**
+	 * @param amount the amount to set
+	 */
+	public void setAmount(Double amount) {
+		this.amount = amount;
+	}
+	/**
+	 * 123
+	 */
+	public String getPaymenttype() {
+		return paymenttype;
+	}
+	/**
+	 * @param paymenttype the paymenttype to set
+	 */
+	public void setPaymenttype(String paymenttype) {
+		this.paymenttype = paymenttype;
+	}
+	/* (non-Javadoc)
+	 * @see java.lang.Object#toString()
+	 */
+	@Override
+	public String toString() {
+		return "ExternalInfo [billcode=" + billcode + ", receivestatus="
+				+ receivestatus + ", errormsg=" + errormsg + ", payformid="
+				+ payformid + ", status=" + status + ", enddate=" + enddate
+				+ ", amount=" + amount + ", paymenttype=" + paymenttype 
+				+ ", payorgcode=" + payorgcode + ", payorgname=" + payorgname + ", payaccountcode=" + payaccountcode + ", payaccountname=" + payaccountname + ", paybankname=" + paybankname + "]";
+	}
+	public String getPayorgcode() {
+		return payorgcode;
+	}
+	public String getPayorgname() {
+		return payorgname;
+	}
+	public String getPayaccountcode() {
+		return payaccountcode;
+	}
+	public String getPayaccountname() {
+		return payaccountname;
+	}
+	public String getPaybankname() {
+		return paybankname;
+	}
+	public void setPayorgcode(String payorgcode) {
+		this.payorgcode = payorgcode;
+	}
+	public void setPayorgname(String payorgname) {
+		this.payorgname = payorgname;
+	}
+	public void setPayaccountcode(String payaccountcode) {
+		this.payaccountcode = payaccountcode;
+	}
+	public void setPayaccountname(String payaccountname) {
+		this.payaccountname = payaccountname;
+	}
+	public void setPaybankname(String paybankname) {
+		this.paybankname = paybankname;
+	}
+	
+	
+}

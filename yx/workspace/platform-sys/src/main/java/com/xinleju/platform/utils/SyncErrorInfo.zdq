@@ -1,0 +1,44 @@
+package com.xinleju.platform.utils;
+
+import java.util.Objects;
+
+/**
+ * Created by luoro on 2017/6/11.
+ */
+public enum SyncErrorInfo {
+    OK("20000","数据同步成功！"),PARTIAL_FIAL("20001","部分数据同步失败！"),AUTH_FAIL("30001","TOKEN验证失败!"),
+    PARA_ERROR("40001","同步数据参数错误！"),SYSTEM_ERROR("50001","系统内部错误！");
+    private String code;
+    private String msg;
+
+    SyncErrorInfo(String code, String msg) {
+        this.code = code;
+        this.msg = msg;
+    }
+    public static SyncErrorInfo getVal(String code)throws Exception{
+
+            for(SyncErrorInfo val:SyncErrorInfo.values()){
+                if(Objects.equals(val.getCode(),code)){
+                    return val;
+                }else{
+                    throw new Exception("SyncErrorInfo not exist code:"+code);
+                }
+            }
+        return null;
+    }
+    public String getCode() {
+        return code;
+    }
+
+    public void setCode(String code) {
+        this.code = code;
+    }
+
+    public String getMsg() {
+        return msg;
+    }
+
+    public void setMsg(String msg) {
+        this.msg = msg;
+    }
+}

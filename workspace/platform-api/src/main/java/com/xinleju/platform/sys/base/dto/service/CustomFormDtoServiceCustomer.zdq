@@ -1,0 +1,110 @@
+package com.xinleju.platform.sys.base.dto.service;
+
+import java.util.Map;
+
+import com.xinleju.platform.base.dto.service.BaseDtoServiceCustomer;
+
+public interface CustomFormDtoServiceCustomer extends BaseDtoServiceCustomer{
+
+	/**
+	  * @Description:校验是否重复
+	  * @author:zhangfangzhi
+	  * @date 2017年3月13日 上午9:51:19
+	  * @version V1.0
+	 * @param valType 
+	 */
+	String validateIsExist(String userInfo, String saveJson);
+
+	/**
+	  * @Description:表单保存并且校验
+	  * @author:zhangfangzhi
+	  * @date 2017年3月23日 下午4:57:25
+	  * @version V1.0
+	 */
+	String validateBeforeSave(String userInfo, String saveJson);
+
+	/**
+	  * @Description:表单更新并且校验
+	  * @author:zhangfangzhi
+	  * @date 2017年3月23日 下午5:06:42
+	  * @version V1.0
+	 */
+	String validateBeforeUpdate(String userInfo, String updateJson);
+
+	/**
+	  * @Description:获取流程模板列表
+	  * @author:zhangfangzhi
+	  * @date 2017年3月25日 上午10:47:23
+	  * @version V1.0
+	 */
+	String getTemplateTree(String userInfo, String paramaterJson);
+
+	/**
+	  * @Description:表单复制并且校验
+	  * @author:zhangfangzhi
+	  * @date 2017年4月19日 下午4:33:12
+	  * @version V1.0
+	 */
+	String validateBeforeCopy(String userInfo, String saveJson);
+
+	/**
+	  * @Description:获取模板并且判断是否有实例生成
+	  * @author:zhangfangzhi
+	  * @date 2017年4月26日 上午10:48:55
+	  * @version V1.0
+	 */
+	String getTemplateById(String userInfo, String idJson);
+
+	/**
+	  * @Description:表单数据生成
+	  * @author:zhangfangzhi
+	  * @date 2017年6月14日 下午7:52:24
+	  * @version V1.0
+	 */
+	String saveGenerateData(String userInfo, String saveJson);
+
+	/**
+	  * @Description:获取单据编号
+	  * @author:zhangfangzhi
+	  * @date 2017年6月16日 上午10:35:01
+	  * @version V1.0
+	 */
+	String getFormNumber(String userInfo, String string);
+
+	/**
+	  * @Description:快速入口查询接口
+	  * @author:zhangfangzhi
+	  * @date 2017年7月13日 下午7:40:00
+	  * @version V1.0
+	 */
+	String queryListForQuickEntry(String json, String paramaterJson);
+
+	/**
+	  * @Description:上移下移
+	  * @author:zhangfangzhi
+	  * @date 2017年7月14日 上午11:33:19
+	  * @version V1.0
+	 */
+	String updateSort(String userJson, String string, Map<String, Object> map);
+
+	/**
+	  * @Description:修改前查询
+	  * @author:zhangfangzhi
+	  * @date 2017年7月22日 下午2:47:25
+	  * @version V1.0
+	 */
+	String getObjectByIdForUpdate(String userJson, String paramaterJson);
+
+	/**
+	  * @Description:表单设计发布
+	  * @author:zhangfangzhi
+	  * @date 2017年11月22日 下午4:02:40
+	  * @version V1.0
+	 */
+	String updateForPublish(String json, String updateJson);
+
+	String saveGenerateDataEx(String json, String saveJson);
+
+	String saveGenerateDataExInstance(String json, String saveJson);
+
+}

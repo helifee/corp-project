@@ -1,0 +1,74 @@
+package com.xinleju.platform.flow.service.impl;
+
+import java.util.HashMap;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.flow.dao.CalendarBasicDao;
+import com.xinleju.platform.flow.dao.CalendarDetailDao;
+import com.xinleju.platform.flow.entity.CalendarBasic;
+import com.xinleju.platform.flow.service.CalendarBasicService;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class CalendarBasicServiceImpl extends  BaseServiceImpl<String,CalendarBasic> implements CalendarBasicService{
+	
+
+	@Autowired
+	private CalendarBasicDao calendarBasicDao;
+
+	@Autowired
+	private CalendarDetailDao calendarDetailDao;
+	
+	/*@Override
+	public void deleteAndsave(CalendarBasic calendarBasic) {
+		calendarBasicDao.deleteByParamMap(calendarBasic);
+		calendarBasic.setId(IDGenerator.getUUID());
+		calendarBasic.setDelflag(false);
+		calendarBasicDao.save(calendarBasic);
+	}*/
+
+	@Override
+	public void deleteDataForInitAction(Map<String, Integer> map) {
+		calendarBasicDao.deleteDataForInitAction(map);
+	}
+
+	@Override
+	public void saveAndUpdateWorkDay(CalendarBasic calendarBasic) {
+		Map<String, Object> map = new HashMap<String, Object>();
+		map.put("year", calendarBasic.getYear());
+		map.put("startTime", calendarBasic.getStartTime());
+		map.put("endTime", calendarBasic.getEndTime());
+		map.put("workDay", calendarBasic.getWorkDay());
+		calendarBasicDao.upateBasicInfoByParamMap(map);
+		System.out.println("\n\n 001------ calendarBasicDao.upateBasicInfoByParamMap(map);---------------");
+		
+		Map<String, Object> detailMap = new HashMap<String, Object>();
+		detailMap.put("year", calendarBasic.getYear());
+		String workDay = calendarBasic.getWorkDay();
+		if(workDay!=null && !"-1".equals(workDay) && !"".equals(workDay)){
+			System.out.println("\n workDay="+workDay);
+			String[] itemIds = workDay.split(",");
+			detailMap.put("workDay", itemIds);
+		}
+		//先将改年全部设置为节假日
+		calendarDetailDao.setYearAsHolidayByParamMap(detailMap);
+		System.out.println("\n\n 002------ calendarDetailDao.setYearAsHolidayByParamMap(map);---------------");
+		
+		//再根据选定的工作日将部分设置为节假日
+		calendarDetailDao.updateWorkDayByParamMap(detailMap);
+		System.out.println("\n\n 003------ calendarDetailDao.updateWorkDayByParamMap(map);---------------");
+		
+	}
+	
+
+}

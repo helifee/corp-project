@@ -1,0 +1,234 @@
+package com.xinleju.platform.flow.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+/**
+ * 模板环节
+ * 
+ * @author admin
+ */
+@Table(value = "PT_FLOW_AC", desc = "流程模板环节")
+public class Ac extends BaseEntity {
+
+	@Column(value = "code", desc = "编号")
+	private String code;
+
+	@Column(value = "is_add_label", desc = "手工选择审批人")
+	private Boolean isAddLabel;
+
+	@Column(value = "is_start", desc = "手工选择审批人为空是否发起")
+	private Boolean isStart;
+
+	@Column(value = "approve_strategy", desc = "多岗策略: 1:抢占,2:串行,3:竞争")
+	private String approveStrategy;
+
+	@Column(value = "post_multi_person", desc = "同岗多人策略: 1:抢占,2:串行,3:竞争")
+	private String postMultiPerson;
+
+	@Column(value = "remark", desc = "备注")
+	private String remark;
+
+	@Column(value = "name", desc = "环节名称")
+	private String name;
+
+	@Column(value = "fl_id", desc = "流程模板Id")
+	private String flId;
+
+	@Column(value = "ac_type", desc = "节点类型: 1:开始,2:普通,3:结束,4:聚合网关，5:并发网关")
+	private String acType;
+
+	@Column(value = "approve_type_id", desc = "审批类型id")
+	private String approveTypeId;
+
+	@Column(value = "x", desc = "x坐标")
+	private Long x;
+
+	@Column(value = "y", desc = "y坐标")
+	private Long y;
+
+	@Column(value = "width", desc = "宽")
+	private Long width;
+
+	@Column(value = "height", desc = "高")
+	private Long height;
+
+	@Column(value = "node_id", desc = "流程设计图中环节ID")
+	private String nodeId;
+
+	@Column(value = "overdue_time", desc = "环节逾期时间")
+	private Integer overdueTime;
+
+	@Column(value = "overdue_handle", desc = "逾期处理方式")
+	private String overdueHandle;
+
+	@Column(value = "person_repeat_is_skipped", desc = "环节内人员重复是否跳过 1-跳过 0-不跳过")
+	private String personRepeatIsSkipped;// 环节内人员重复是否跳过 1-跳过 0-不跳过
+	
+	@Column(value="post_is_null",desc="岗位为空策略")
+	private String postIsNull;
+	
+	@Column(value="approval_person_is_null",desc="审批人为空策略")
+	private String approvalPersonIsNull;
+
+	public String getCode() {
+		return code;
+	}
+
+	public void setCode(String code) {
+		this.code = code;
+	}
+
+	public Boolean getIsAddLabel() {
+		return isAddLabel;
+	}
+
+	public void setIsAddLabel(Boolean isAddLabel) {
+		this.isAddLabel = isAddLabel;
+	}
+
+	public Boolean getIsStart() {
+		return isStart;
+	}
+
+	public void setIsStart(Boolean isStart) {
+		this.isStart = isStart;
+	}
+
+	public String getApproveStrategy() {
+		return approveStrategy;
+	}
+
+	public void setApproveStrategy(String approveStrategy) {
+		this.approveStrategy = approveStrategy;
+	}
+
+	public String getPostMultiPerson() {
+		return postMultiPerson;
+	}
+
+	public void setPostMultiPerson(String postMultiPerson) {
+		this.postMultiPerson = postMultiPerson;
+	}
+
+	public String getRemark() {
+		return remark;
+	}
+
+	public void setRemark(String remark) {
+		this.remark = remark;
+	}
+
+	public String getName() {
+		return name;
+	}
+
+	public void setName(String name) {
+		this.name = name;
+	}
+
+	public String getFlId() {
+		return flId;
+	}
+
+	public void setFlId(String flId) {
+		this.flId = flId;
+	}
+
+	public String getAcType() {
+		return acType;
+	}
+
+	public void setAcType(String acType) {
+		this.acType = acType;
+	}
+
+	public String getApproveTypeId() {
+		return approveTypeId;
+	}
+
+	public void setApproveTypeId(String approveTypeId) {
+		this.approveTypeId = approveTypeId;
+	}
+
+	public Long getX() {
+		return x;
+	}
+
+	public void setX(Long x) {
+		this.x = x;
+	}
+
+	public Long getY() {
+		return y;
+	}
+
+	public void setY(Long y) {
+		this.y = y;
+	}
+
+	public Long getWidth() {
+		return width;
+	}
+
+	public void setWidth(Long width) {
+		this.width = width;
+	}
+
+	public Long getHeight() {
+		return height;
+	}
+
+	public void setHeight(Long height) {
+		this.height = height;
+	}
+
+	public String getNodeId() {
+		return nodeId;
+	}
+
+	public void setNodeId(String nodeId) {
+		this.nodeId = nodeId;
+	}
+
+	public Integer getOverdueTime() {
+		return overdueTime;
+	}
+
+	public void setOverdueTime(Integer overdueTime) {
+		this.overdueTime = overdueTime;
+	}
+
+	public String getOverdueHandle() {
+		return overdueHandle;
+	}
+
+	public void setOverdueHandle(String overdueHandle) {
+		this.overdueHandle = overdueHandle;
+	}
+
+	public String getPersonRepeatIsSkipped() {
+		return personRepeatIsSkipped;
+	}
+
+	public void setPersonRepeatIsSkipped(String personRepeatIsSkipped) {
+		this.personRepeatIsSkipped = personRepeatIsSkipped;
+	}
+
+	public String getPostIsNull() {
+		return postIsNull;
+	}
+
+	public void setPostIsNull(String postIsNull) {
+		this.postIsNull = postIsNull;
+	}
+
+	public String getApprovalPersonIsNull() {
+		return approvalPersonIsNull;
+	}
+
+	public void setApprovalPersonIsNull(String approvalPersonIsNull) {
+		this.approvalPersonIsNull = approvalPersonIsNull;
+	}
+}

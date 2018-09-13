@@ -1,0 +1,112 @@
+package com.xinleju.platform.univ.mq.dto;
+
+import com.xinleju.platform.base.dto.BaseDto;
+
+import java.io.Serializable;
+import java.util.Date;
+
+/**
+ * @author xubaoyong
+ * 
+ *
+ */
+public class TopicDto extends BaseDto implements Serializable {
+
+
+	private static final long serialVersionUID = -5062496709920859842L;
+	//消息的主题
+	private String topic;
+
+	//被回调的bean的name
+	private String rollBackBeanName;
+
+	//验证数据是否被执行成功的beanName
+	private String validateBeanName;
+
+	/**
+	 * 调用测试验证的时间
+	 */
+	private Date testValidateTime;
+
+	/**
+	 * 测试调用回滚bean的时间
+	 */
+	private Date testRollbackTime;
+
+	/**
+	 * 调用测试验证的结果
+	 */
+	private Boolean testValidateRestlt;
+	/**
+	 * 测试调用回滚bean的结果
+	 */
+	private Boolean testRollbackBeanRestlt;
+
+	private String consumerBeanName;
+    
+  		
+		
+	public String getTopic() {
+		return topic;
+	}
+	public void setTopic(String topic) {
+		this.topic = topic;
+	}
+
+	public String getRollBackBeanName() {
+		return rollBackBeanName;
+	}
+
+	public void setRollBackBeanName(String rollBackBeanName) {
+		this.rollBackBeanName = rollBackBeanName;
+	}
+
+
+	public String getValidateBeanName() {
+		return validateBeanName;
+	}
+
+	public void setValidateBeanName(String validateBeanName) {
+		this.validateBeanName = validateBeanName;
+	}
+
+	public Date getTestValidateTime() {
+		return testValidateTime;
+	}
+
+	public void setTestValidateTime(Date testValidateTime) {
+		this.testValidateTime = testValidateTime;
+	}
+
+	public Date getTestRollbackTime() {
+		return testRollbackTime;
+	}
+
+	public void setTestRollbackTime(Date testRollbackTime) {
+		this.testRollbackTime = testRollbackTime;
+	}
+
+	public Boolean getTestValidateRestlt() {
+		return testValidateRestlt;
+	}
+
+	public void setTestValidateRestlt(Boolean testValidateRestlt) {
+		this.testValidateRestlt = testValidateRestlt;
+	}
+
+	public Boolean getTestRollbackBeanRestlt() {
+		return testRollbackBeanRestlt;
+	}
+
+	public void setTestRollbackBeanRestlt(Boolean testRollbackBeanRestlt) {
+		this.testRollbackBeanRestlt = testRollbackBeanRestlt;
+	}
+
+	public String getConsumerBeanName() {
+		return consumerBeanName;
+	}
+
+	public void setConsumerBeanName(String consumerBeanName) {
+		this.consumerBeanName = consumerBeanName;
+	}
+}

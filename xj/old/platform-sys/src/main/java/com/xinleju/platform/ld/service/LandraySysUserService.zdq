@@ -1,0 +1,15 @@
+package com.xinleju.platform.ld.service;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.ld.entity.LandraySysUser;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface LandraySysUserService extends  BaseService <String,LandraySysUser>{
+
+	
+}

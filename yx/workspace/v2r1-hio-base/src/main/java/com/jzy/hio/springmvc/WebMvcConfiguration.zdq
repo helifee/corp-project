@@ -1,0 +1,213 @@
+package com.jzy.hio.springmvc;
+
+import java.io.IOException;
+import java.lang.reflect.Method;
+import java.math.BigDecimal;
+import java.nio.charset.Charset;
+import java.text.SimpleDateFormat;
+import java.util.List;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.http.converter.HttpMessageConverter;
+import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.web.method.support.HandlerMethodReturnValueHandler;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurationSupport;
+import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter;
+import org.springframework.web.servlet.mvc.method.annotation.ServletInvocableHandlerMethod;
+
+import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.core.JsonParser.Feature;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.BeanProperty;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JavaType;
+import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.databind.JsonSerializer;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationConfig;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.SerializerProvider;
+import com.fasterxml.jackson.databind.module.SimpleModule;
+import com.fasterxml.jackson.databind.ser.DefaultSerializerProvider;
+import com.fasterxml.jackson.databind.ser.SerializerFactory;
+import com.jzy.hio.cloud.core.CoreHeaderInterceptor;
+import com.jzy.hio.config.YmlConfig;
+
+/**
+ * 
+ * @author wt.coffee<br/>
+ *         2018年3月5日下午2:47:49
+ */
+@Configuration
+public class WebMvcConfiguration extends WebMvcConfigurationSupport {
+
+	@Autowired
+	private YmlConfig config;
+
+	@Override
+	protected void addInterceptors(InterceptorRegistry registry) {
+		registry.addInterceptor(new LogInterceptor());
+		registry.addInterceptor(new CoreHeaderInterceptor());
+		super.addInterceptors(registry);
+	}
+
+	///
+	private static class NullArrayJsonSerializer extends JsonSerializer<Object> {
+		static NullArrayJsonSerializer instance = new NullArrayJsonSerializer();
+
+		@Override
+		public void serialize(Object value, JsonGenerator gen, SerializerProvider serializers) throws IOException, JsonProcessingException {
+			gen.writeStartArray();
+			gen.writeEndArray();
+		}
+	}
+
+	/**
+	 * 处理bigdecimal、保持精度两位小数<br>
+	 * 1.00返回给前端显示1
+	 * 1.01返回给前端显示1.01
+	 * 所以一律按照字符串返回
+	 * @author wt.coffee
+	 * @date 2018年6月29日下午4:13:12
+	 */
+	public class BigdecimalSerializer extends JsonSerializer<BigDecimal> {
+		@Override
+		public void serialize(BigDecimal value, JsonGenerator jgen, SerializerProvider provider) throws IOException, JsonProcessingException {
+			jgen.writeString(value.setScale(2, BigDecimal.ROUND_HALF_UP).toString());
+			// jgen.writeNumber(value.setScale(2, BigDecimal.ROUND_HALF_UP));
+		}
+	}
+
+	private static class CustomSerializerProvider extends DefaultSerializerProvider {
+
+		/**
+		 * 
+		 */
+		private static final long serialVersionUID = 7726768842223294998L;
+
+		public CustomSerializerProvider() {
+			super();
+		}
+
+		public CustomSerializerProvider(SerializerProvider src, SerializationConfig config, SerializerFactory f) {
+			super(src, config, f);
+		}
+
+		@Override
+		public DefaultSerializerProvider createInstance(SerializationConfig config, SerializerFactory jsf) {
+			return new CustomSerializerProvider(this, config, jsf);
+		}
+
+		@Override
+		public JsonSerializer<Object> findNullValueSerializer(BeanProperty property) throws JsonMappingException {
+			JavaType type = property.getType();
+			if (type.isArrayType()) {
+				return NullArrayJsonSerializer.instance;
+			}
+			return super.findNullValueSerializer(property);
+		}
+	}
+
+	/**
+	 * 改变ReturnValueHandlers的顺序<br>
+	 * 加入自定义RequestResponseBodyMethodProcessorExt
+	 * {@link ServletInvocableHandlerMethod#invokeAndHandle(org.springframework.web.context.request.ServletWebRequest, org.springframework.web.method.support.ModelAndViewContainer, Object...)
+	 * 
+	 * @link HandlerMethodReturnValueHandlerComposite#getReturnValueHandler(MethodParameter)}
+	 */
+	@SuppressWarnings("unchecked")
+	@Override
+	public RequestMappingHandlerAdapter requestMappingHandlerAdapter() {
+		RequestMappingHandlerAdapter handlerAdapter = super.requestMappingHandlerAdapter();
+		List<HttpMessageConverter<?>> messageConverters = handlerAdapter.getMessageConverters();
+		// 优化MappingJackson2HttpMessageConverter配置
+		for (HttpMessageConverter<?> messageConverter : messageConverters) {
+			if (messageConverter instanceof MappingJackson2HttpMessageConverter) {
+				MappingJackson2HttpMessageConverter jacksonConverter = (MappingJackson2HttpMessageConverter) messageConverter;
+				jacksonConverter.setDefaultCharset(Charset.forName("UTF-8"));
+				ObjectMapper mapper = new ObjectMapper();
+				mapper.configure(Feature.ALLOW_UNQUOTED_CONTROL_CHARS, false);
+
+				SimpleModule module = new SimpleModule();
+				module.addSerializer(BigDecimal.class, new BigdecimalSerializer());
+				mapper.registerModule(module);
+				// mapper.configure(SerializationFeature.WRITE_BIGDECIMAL_AS_PLAIN,true);
+				// mapper.enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
+				// mapper.enable(SerializationFeature.WRITE_BIGDECIMAL_AS_PLAIN);
+
+				// null值不返回
+				// mapper.setSerializationInclusion(Include.NON_NULL);
+				// 空的 ArrayList() 之类的对象也不返回
+				// mapper.setSerializationInclusion(Include.NON_EMPTY);
+				// 设置输入时忽略在JSON字符串中存在但Java对象实际没有的属性
+				mapper.configure(SerializationFeature.FAIL_ON_EMPTY_BEANS, false);
+				mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+				mapper.setDateFormat(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss"));
+				// 设置定义的序列化提供器
+				mapper.setSerializerProvider(new CustomSerializerProvider());
+				jacksonConverter.setObjectMapper(mapper);
+			}
+		}
+		// List<HttpMessageConverter<?>> messageConverters = new ArrayList<>();
+		// StringHttpMessageConverter strConverter = new StringHttpMessageConverter(Charset.forName("UTF-8"));
+		// MappingJackson2HttpMessageConverter jacksonConverter = new MappingJackson2HttpMessageConverter();
+		// jacksonConverter.setDefaultCharset(Charset.forName("UTF-8"));
+		// ObjectMapper objectMapper = new ObjectMapper();
+		// objectMapper.setSerializationInclusion(Include.NON_NULL);
+		// // 设置输入时忽略在JSON字符串中存在但Java对象实际没有的属性
+		// objectMapper.configure(SerializationFeature.FAIL_ON_EMPTY_BEANS, false);
+		// objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+		// objectMapper.configure(DeserializationFeature.READ_DATE_TIMESTAMPS_AS_NANOSECONDS, true);
+		// objectMapper.setDateFormat(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss"));
+		// jacksonConverter.setObjectMapper(objectMapper);
+		// // requestMapping返回自定义对象
+		//// messageConverters.add(new ObjectToStringHttpMessageConverter(new ConversionService() {
+		////
+		//// @Override
+		//// public Object convert(Object source, TypeDescriptor sourceType, TypeDescriptor targetType) {
+		//// return null;
+		//// }
+		////
+		//// /**
+		//// * 两个参数值 类型 ResponseData、String
+		//// */
+		//// @Override
+		//// public <T> T convert(Object source, Class<T> targetType) {
+		//// String result = JacksonUtils.toJson(source);
+		//// return (T) result;
+		//// }
+		////
+		//// @Override
+		//// public boolean canConvert(TypeDescriptor sourceType, TypeDescriptor targetType) {
+		//// return false;
+		//// }
+		////
+		//// /**
+		//// * 如果requestMapping的方法返回HIOException, sourceType参数值为HIOException targetType是String
+		//// */
+		//// @Override
+		//// public boolean canConvert(Class<?> sourceType, Class<?> targetType) {
+		//// return true;
+		//// }
+		//// }, Charset.forName("UTF-8")));
+		// messageConverters.add(strConverter);
+		// messageConverters.add(jacksonConverter);
+		// 需要传入参数HttpMessageConverter列表
+		RequestResponseBodyMethodProcessorExt processor = new RequestResponseBodyMethodProcessorExt(handlerAdapter.getMessageConverters());
+		try {
+			processor.setConfig(config);
+			//
+			Method getDefaultReturnValueHandlers = handlerAdapter.getClass().getDeclaredMethod("getDefaultReturnValueHandlers");
+			getDefaultReturnValueHandlers.setAccessible(true);
+			List<HandlerMethodReturnValueHandler> defaultReturnValueHandlers = (List<HandlerMethodReturnValueHandler>) getDefaultReturnValueHandlers.invoke(handlerAdapter);
+			defaultReturnValueHandlers.add(0, processor);
+			handlerAdapter.setReturnValueHandlers(defaultReturnValueHandlers);
+			// handlerAdapter.getReturnValueHandlers().add(0, processor);
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		return handlerAdapter;
+	}
+}

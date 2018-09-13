@@ -1,0 +1,252 @@
+package com.xinleju.erp.flow.service;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.commons.lang3.StringUtils;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.Order;
+import org.hibernate.criterion.Restrictions;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.erp.base.app.service.impl.BaseService;
+import com.xinleju.erp.flow.dao.impl.AiDAO;
+import com.xinleju.erp.flow.dao.impl.GvDAO;
+import com.xinleju.erp.flow.dao.impl.TrDAO;
+import com.xinleju.erp.flow.dao.impl.WpDAO;
+import com.xinleju.erp.flow.flowutils.utils.WsConstant;
+import com.xinleju.erp.flow.models.Ai;
+import com.xinleju.erp.flow.models.Wp;
+import com.xinleju.erp.flow.service.api.DoAfterService;
+
+/**
+ * 
+ * 
+ * <p>
+ * </p>
+ * <p>
+ * </p>
+ * 
+ * @author 孙朝辉
+ * @version $Id: AiService.java 2315 2015-01-19 05:25:13Z zhongjun $
+ * @since
+ * 
+ */
+@Service
+public class AiService extends BaseService {
+    /**
+     * 流程触发事件Service
+     */
+    @Autowired
+    private DoAfterService doAfterService;
+    
+    /**
+     * 工作组DAO
+     */
+    @Autowired
+    private WpDAO wpDAO;
+
+    /**
+     * 活动实例DAO
+     */
+    @Autowired
+    private AiDAO aiDAO;
+
+    /**
+     * 全局变量DAO
+     */
+    @Autowired
+    private GvDAO gvDAO;
+
+    /**
+     * 流转DAO
+     */
+    @Autowired
+    private TrDAO trDAO;
+
+    /**
+     * 获取流程中标记为【开始节点】的Ai
+     * 
+     * @param fiId
+     *            流程实例ID
+     * @return 首节点
+     */
+    public Ai getStartAi(Long fiId) {
+        Ai ai = aiDAO.getStartAi(fiId);
+        return ai;
+    }
+
+    /**
+     * 获取指定outCode的Ai
+     * 
+     * @param fiId
+     *            流程实例ID
+     * @param outCode
+     *            外部编码
+     * @return 活动实例
+     */
+    public Ai getAi(Long fiId, String outCode) {
+        Ai ai = aiDAO.getAi(fiId, outCode);
+        return ai;
+    }
+
+    /**
+     * 标记 前序/后续状态
+     * 
+     * @author chaohui
+     */
+    public static enum FromOrNext {
+
+        /**
+         * 前置、后置
+         */
+        FROM(1), NEXT(2);
+
+        /**
+         * 标记字段
+         */
+        private Integer flag;
+
+        private FromOrNext(Integer flag) {
+            this.flag = flag;
+        }
+
+        public Integer getFlag() {
+            return flag;
+        }
+
+        public void setFlag(Integer flag) {
+            this.flag = flag;
+        }
+    }
+
+    /**
+     * <p>
+     * 设定Ai的px值到指定的Wp
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param wp
+     *            指定的Wp
+     */
+    public void pointToWp(Wp wp) {
+        Ai ai = wp.getAi();
+        ai.setPx(wp.getPx());
+        wp.setAi(ai);
+        getDao().update(ai);
+    }
+
+    /**
+     * 
+     * <p>
+     * 重置活动实例PX值
+     * </p>
+     * <p>
+     * 将Ai.px重置,指向最小px值的工作组
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param ai
+     *            环节实例
+     */
+    public void resetPxOfAi(Ai ai) {
+        int minpx = wpDAO.getMinPx(ai.getId());
+        ai.setPx(minpx);
+        getDao().update(ai);
+    }
+
+    /**
+     * <p>
+     * 指定Ai的px值
+     * </p>
+     * <p>
+     * </p>
+     * 
+     * @author 孙朝辉
+     * @param ai
+     *            Ai
+     * @param px
+     *            px
+     */
+    public void pointToPx(Ai ai, int px) {
+        ai.setPx(px);
+        getDao().update(ai);
+
+    }
+    /**
+     * 过期ai
+     * @author jun
+     * @param ai 哎
+     */
+    public void completeAi(Ai ai){
+        if (null != ai && null != ai.getId()){
+            ai.setStatus(Ai.STATUS_COMPLETE);
+            getDao().update(ai);
+            doAfterService.doAfterAiComplete(ai);
+        }
+    }
+    /**
+     * 获取指定的分支上的所有ai集合
+     * @param branch
+     * @return
+     */
+    public List<Ai> getBranchAiList(Long fiId, String branch){
+    	List<Ai> branchAiList = new ArrayList<Ai>();
+    	if (StringUtils.isNotBlank(branch)){
+    		Ai ai = getDao().findFirst(Ai.class, " fiId = ? and ac.endTag = ? and (status = ? or status = ?)", new Object[]{fiId, branch.trim(), WsConstant.STATUS_CREATED, WsConstant.STATUS_RUNNING}, " ac.tp asc ");
+    		if (null != ai){
+    			if (null != ai.getAc() && StringUtils.isNotBlank(ai.getAc().getFrom_a())){
+        			DetachedCriteria dc = DetachedCriteria.forClass(Ai.class);
+        			dc.createCriteria("ac", "ac");
+        			dc.add(Restrictions.eq("fiId", ai.getFiId()));
+        			dc.add(Restrictions.in("ac.nodeId", ai.getAc().getFrom_a().trim().split("-")));
+        			dc.add(Restrictions.or(Restrictions.eq("status", WsConstant.STATUS_CREATED),Restrictions.eq("status", WsConstant.STATUS_RUNNING)));
+        			dc.addOrder(Order.asc("ac.tp"));
+        			dc.addOrder(Order.asc("id"));
+        			branchAiList = getDao().findByCriteria(dc);
+    			}
+    			if (null == branchAiList){
+    				branchAiList = new ArrayList<Ai>();
+    			}
+    			branchAiList.add(ai);
+    		}
+    	}
+    	return branchAiList;
+    }
+    /**
+     * 获取节点列表
+     * @author jun
+     * @param fiId
+     * @return
+     */
+    public List<Ai> getAiListByFiId(Long fiId){
+        List<Ai> aiList = null;
+        if (null != fiId){
+            aiList = getDao().findAll(Ai.class, " fiId = ? and (status = ? or status = ? or status = ?)", new Object[]{fiId, WsConstant.STATUS_CREATED, WsConstant.STATUS_RUNNING , WsConstant.STATUS_COMPLETE}, " ac.tp asc ");
+        }
+        if (null == aiList){
+            aiList = new ArrayList<Ai>();
+        }
+        return aiList;
+    }
+    /**
+     * 获取getGoodNodeIdsByFiId
+     * @author jun
+     * @param fiId
+     * @return
+     */
+    public String getGoodNodeIdsByFiId(Long fiId){
+        String goodNodeIds = "";
+        List<Ai> aiList = this.getAiListByFiId(fiId);
+        for (Ai ai : aiList){
+            goodNodeIds += ai.getAc().getNodeId() + "-";
+        }
+        if (goodNodeIds.endsWith("-")) {
+            goodNodeIds = goodNodeIds.substring(0, goodNodeIds.length() - 1);
+        }
+        return goodNodeIds;
+    }
+}

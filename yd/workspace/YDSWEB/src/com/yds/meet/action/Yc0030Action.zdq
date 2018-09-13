@@ -1,0 +1,1813 @@
+/*
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 会议室管理
+ */
+
+package com.yds.meet.action;
+
+import java.text.ParseException;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import net.sf.json.JSONArray;
+
+import org.springframework.beans.factory.config.BeanDefinition;
+import org.springframework.context.annotation.Scope;
+import org.springframework.stereotype.Controller;
+
+import com.opensymphony.xwork2.Preparable;
+import com.yds.base.action.AbstractBaseAction;
+import com.yds.common.bean.ComCodeInfo;
+import com.yds.common.bean.EmpTeamInfo;
+import com.yds.common.bean.UserInfo;
+import com.yds.common.service.ComCodeInfoService;
+import com.yds.common.service.EmpTeamInfoService;
+import com.yds.common.service.SessionConstants;
+import com.yds.common.service.SessionService;
+import com.yds.common.service.UserService;
+import com.yds.common.service.CommonConstants.NameSpaceEnum;
+import com.yds.meet.bean.MetRoomInfo;
+import com.yds.meet.bean.Yc0030MetInfo;
+import com.yds.meet.service.MeetConstants;
+import com.yds.meet.service.Yc0030Service;
+import com.yds.meet.service.MeetConstants.BACK_SIGN;
+import com.yds.meet.service.MeetConstants.CYCLE_FLG;
+import com.yds.meet.service.MeetConstants.DELAY_FLG;
+import com.yds.meet.service.MeetConstants.MEET_MINUTES;
+import com.yds.meet.service.MeetConstants.RESERVE_FLG;
+import com.yds.meet.service.MeetConstants.USER_PERMISSION;
+import com.yds.meet.service.MeetConstants.VIEW_MODE;
+import com.yds.meet.service.MeetConstants.WORK_DAY;
+import com.yds.meet.service.MeetConstants.WORK_DAY_FLG;
+import com.yds.util.service.DateUtil;
+import com.yds.util.service.StringUtil;
+
+
+/**
+ * 会议室预约详细
+ * 
+ * @author chenyuer,bixiuqing
+ * @version 1.00 2010/07/22
+ */
+@Scope(BeanDefinition.SCOPE_PROTOTYPE)
+@Controller("yc0030Action")
+public class Yc0030Action extends AbstractBaseAction implements Preparable{
+
+	private static final long serialVersionUID = -477952538351547338L;
+	
+	private Yc0030Service yc0030Service;
+	private Yc0030MetInfo yc0030MetInfo;
+	private ComCodeInfoService comCodeInfoService;
+	
+	/**会议室预约模式（新建或修改）*/
+	private String viewMode;
+	/**会议室操作返回值*/
+	private String backFlg;
+	/**调用画面的ID*/
+	private String fromIdH;
+	/**会议室信息*/
+	private List<MetRoomInfo> metRoomInfoLst;
+	/**周期中星期信息*/
+	private Map<Integer,String> workDayLst;
+	/**会议室容纳人数*/
+	private String metRoomSize ;
+	/**会议信息json*/
+	private String jsonYc0030MetInfo;
+	/**单日，周期单选按钮Map*/
+	private Map<Integer, String> reserveTypeMap;
+	/**开始小时下拉列表Map*/
+	private Map<String,String> startHourMap;
+	/**结束小时下拉列表Map*/
+	private Map<String,String> endHourMap;
+	/**分钟下拉列表Map*/
+	private Map<String,String> minuteMap;
+	/** 下拉组 */
+	private List<EmpTeamInfo> teamList;
+	/** 组成员 */
+	private String  strUsers;
+	/** 组ID*/
+	private String teamId;
+	/** 组service*/
+	private EmpTeamInfoService empTeamInfoService;	
+	/** userService*/
+	private UserService userService;
+	/** 组信息 */
+	private EmpTeamInfo empTeamInfo;
+	/** 属性一览 */
+	private List<ComCodeInfo> teamTypeList;
+	/** 组信息一览 */
+	private String teamInfo;
+
+	@Override
+	public void prepare() throws Exception {
+		//设置预约类型radioButton
+		initReserveTypeLst();
+		//设置每周工作日CheckboxList
+		initWorkDayLst();	
+		//设置预约时间下拉框
+		initTimeLst();
+		
+		// 取得组信息
+		this.teamList= empTeamInfoService.getTeamList(SessionService.getLoginUserId(), "");
+		
+		// 取得组类别信息
+		this.teamTypeList = comCodeInfoService.getComCodeInfo("EMP", "TEAM_TYPE");
+		// 设置会议室下拉列表
+		this.setMetRoomInfoLst(yc0030Service.getMetRoomInfoLst());
+
+	}
+
+	/**
+	 * 会议室预约画面初期显示
+	 * 
+	 * @return SUCCESS 成功 NONE 没有权限
+	 */
+	public String initMetInfo() throws Exception {
+		
+		Date minDate = this.getDay();
+		// 周期中的最小日期值设置
+		if (minDate.after(yc0030MetInfo.getStartDate())) {
+			minDate = yc0030MetInfo.getStartDate();
+		}
+		yc0030MetInfo.setMinDateS(DateUtil.setDateFormat(minDate, "yyyy-MM-dd"));
+		// 初始值设置
+		backFlg = BACK_SIGN.INIT.value().toString();
+		// 在Session里保存迁移元画面ID
+		SessionService.set(SessionConstants.FROM_ID, super.getFromId());
+		this.setFromIdH(super.getFromId());
+		this.yc0030MetInfo.setReserveType(RESERVE_FLG.DAILY.value());
+		// 会议室预约修改模式
+		if(VIEW_MODE.MODIFY.value().equals(viewMode)){	
+			this.yc0030MetInfo = yc0030Service.getYc0030MetInfo(yc0030MetInfo);
+			if (yc0030MetInfo == null) {
+				backFlg = BACK_SIGN.NOTEXIT.value().toString();
+				return SUCCESS;
+			}
+			boolean hasPermit = hasPermit(NameSpaceEnum.MEET.toString(),  "yc0010Init");
+			// 登录者是会议管理员的时候有周期行会议则可以查看周期
+			if (hasPermit 
+					&& Integer.parseInt(RESERVE_FLG.CYCLE.value()) == yc0030MetInfo.getCycleMetKb()){
+				yc0030MetInfo.setCanGetCycleInfo(RESERVE_FLG.CYCLE.value());
+			}
+			// 没有权限且不是管理员
+			if(USER_PERMISSION.NOT_READ.value().equals(yc0030MetInfo.getUserPermission()) 
+				&& !hasPermit){
+				
+				return NONE;
+			}
+		// 会议室预约新建模式	
+		}else{
+			UserInfo userInfo = (UserInfo)SessionService.get(SessionConstants.USERINFO);
+			this.yc0030MetInfo.setReserverNm(userInfo.getUserName());
+			this.yc0030MetInfo.setReserverId(userInfo.getUserId());
+			this.yc0030MetInfo.setUserPermission(USER_PERMISSION.WRITE.value());
+			this.yc0030MetInfo.setContactUser("1");
+		}
+
+
+		// 设置会议室容纳人数
+		this.metRoomSize = yc0030Service.getMetRoomSize();
+		return SUCCESS;
+	}
+
+	/**
+	 * 检索会议预约信息并保存到JSON中
+	 * 
+	 * @return SUCCESS 成功 NONE 没有权限
+	 */
+	public String findMetInfo() throws Exception {
+
+		//会议室预约修改模式
+		if(VIEW_MODE.MODIFY.value().equals(viewMode)){	
+			this.yc0030MetInfo = yc0030Service.getYc0030MetInfo(yc0030MetInfo);
+			if (yc0030MetInfo == null) {
+				backFlg = BACK_SIGN.NOTEXIT.value().toString();
+				return SUCCESS;
+			}
+			Date minDate = this.getDay();
+			// 周期中的最小日期值设置
+			if (minDate.after(yc0030MetInfo.getStartDate())) {
+				minDate = yc0030MetInfo.getStartDate();
+			}
+			yc0030MetInfo.setMinDateS(DateUtil.setDateFormat(minDate, "yyyy-MM-dd"));
+			// 没有权限
+			boolean hasPermit = hasPermit(NameSpaceEnum.MEET.toString(),  "yc0010Init");
+			if(USER_PERMISSION.NOT_READ.value().equals(yc0030MetInfo.getUserPermission()) 
+					&& !hasPermit){
+				return NONE;
+			}
+
+			JSONArray jsonMetInfo = JSONArray.fromObject(yc0030MetInfo);
+			setJsonYc0030MetInfo(jsonMetInfo.toString());
+		}
+
+		return SUCCESS;
+	}
+	
+	
+	/**
+	 * 取得组内人员列表
+	 * 
+	 * @return SUCCESS
+	 */
+	public String findTeamUser() throws Exception {
+
+		List<UserInfo> teamUser = userService.getTeamUserList(teamId);
+		JSONArray jo = JSONArray.fromObject(teamUser);
+		this.strUsers = jo.toString();
+		return SUCCESS;
+	}
+	
+	/**
+	 * 创建组
+	 * 
+	 * @return SUCCESS
+	 */
+	public String insertTeam() throws Exception {
+		// 添加组
+		String teamId = empTeamInfoService.insertTeam(empTeamInfo);
+
+		this.teamInfo = teamId + ',' + empTeamInfo.getTeamNm();
+		return SUCCESS;
+	}
+	
+	/**
+	 * 保存预约信息.
+	 * 
+	 * @return SUCCESS 保存预约成功
+	 */
+	public String saveMetInfo() throws Exception{
+
+		// 保存 预约信息 
+		yc0030Service.saveReserveData(yc0030MetInfo);
+		// 会议预约成功
+		putOpTip(propMgr.getMessage("yds.met.info.0008"));
+
+		// 根据迁移元画面ID返回到迁移元画面
+//		String fromId = (String)SessionService.get(SessionConstants.FROM_ID);
+//		if(MeetConstants.FROM_YC0020.equals(fromId) ){
+//			return MeetConstants.FROM_YC0020;
+//		}else{
+//			return MeetConstants.FROM_YC0040;
+//		}
+
+		return SUCCESS;
+	}
+	
+	/**
+	 * 修改预约信息.
+	 * 
+	 * @return SUCCESS 修改预约成功 NONE 没有权限
+	 */
+	public String modifyMetInfo() throws Exception{
+		// 没有权限
+		if(!USER_PERMISSION.WRITE.value().equals(yc0030MetInfo.getUserPermission())){
+			return NONE;
+		}
+		// 修改预约信息
+		yc0030Service.updateReserveData(yc0030MetInfo);
+		// 会议修改成功，spark通知成功
+		putOpTip(propMgr.getMessage("yds.met.info.0009"));
+			
+		// 根据迁移元画面ID返回到迁移元画面
+//		String fromId = (String)SessionService.get(SessionConstants.FROM_ID);
+//		if(MeetConstants.FROM_YC0020.equals(fromId) ){
+//			return MeetConstants.FROM_YC0020;
+//		}else{
+//			return MeetConstants.FROM_YC0040;
+//		}
+
+		return SUCCESS;
+	}
+	
+	/**
+	 * 删除预约信息.
+	 * 
+	 * @return SUCCESS 删除预约成功 NONE 没有权限
+	 */
+	public String deleteMetInfo() throws Exception{
+		// 没有权限
+		if(!USER_PERMISSION.WRITE.value().equals(yc0030MetInfo.getUserPermission())){
+			return NONE;
+		}
+		// 删除预约信息
+		yc0030Service.deleteReserveData(yc0030MetInfo);
+		// 会议删除成功
+		putOpTip(propMgr.getMessage("yds.met.info.0010"));
+		
+		// 根据迁移元画面ID返回到迁移元画面
+//		String fromId = (String)SessionService.get(SessionConstants.FROM_ID);
+//		if(MeetConstants.FROM_YC0020.equals(fromId) ){
+//			return MeetConstants.FROM_YC0020;
+//		}else{
+//			return MeetConstants.FROM_YC0040;
+//		}
+
+		return SUCCESS;
+	}
+	
+	/**
+	 * 会议室预约小时分钟下拉框
+	 */
+	private void initTimeLst(){
+		startHourMap = new LinkedHashMap<String, String>();
+		endHourMap = new LinkedHashMap<String, String>();
+		minuteMap = new LinkedHashMap<String, String>();
+		for(int i=MeetConstants.MEET_START_HOUR;i<= MeetConstants.MEET_END_HOUR_EN;i++){
+			endHourMap.put(StringUtil.addZero(i, 2), String.valueOf(i));
+			if(i <= MeetConstants.MEET_END_HOUR_ST){
+				startHourMap.put(StringUtil.addZero(i, 2), String.valueOf(i));
+			}
+		}
+		minuteMap.put(MEET_MINUTES.M_00.value(), MEET_MINUTES.M_00.value());
+		minuteMap.put(MEET_MINUTES.M_30.value(), MEET_MINUTES.M_30.value());
+	}
+	
+	/**
+	 * 会议室预约情况radioButton属性名
+	 */
+	private void initReserveTypeLst(){
+		reserveTypeMap = new LinkedHashMap<Integer, String>();
+		// 单日 
+		reserveTypeMap.put(MeetConstants.RADIO_SINGLE,
+				MeetConstants.RADIO_SINGLENM);
+		// 周期
+		reserveTypeMap.put(MeetConstants.RADIO_WEEK,
+				MeetConstants.RADIO_WEEK_NM);
+
+
+	}
+	
+	/**
+	 * 设置每周工作日CheckboxList
+	 */
+	private void initWorkDayLst(){
+		
+		workDayLst = new HashMap<Integer,String>();
+		workDayLst.put(WORK_DAY_FLG.MON.value(), WORK_DAY.MON.value());
+		workDayLst.put(WORK_DAY_FLG.TUE.value(), WORK_DAY.TUE.value());
+		workDayLst.put(WORK_DAY_FLG.WEN.value(), WORK_DAY.WEN.value());
+		workDayLst.put(WORK_DAY_FLG.THU.value(), WORK_DAY.THU.value());
+		workDayLst.put(WORK_DAY_FLG.FRI.value(), WORK_DAY.FRI.value());		
+
+	}
+	
+	/**
+	 * 删除预约输入校验
+	 * @throws Exception 
+	 */
+	public void validateDeleteMetInfo() throws Exception {
+		
+		// 开始时间结束时间
+		yc0030MetInfo.setStartTime(yc0030MetInfo.getStartHour() 
+				+ ":" + yc0030MetInfo.getStartMinute() + ":00");
+		yc0030MetInfo.setEndTime(yc0030MetInfo.getEndHour() 
+				+ ":" + yc0030MetInfo.getEndMinute() + ":00");
+
+		// 删除标志
+		int deleteSign = BACK_SIGN.DELETEOK.value();
+		// session取出先前预约信息
+		Yc0030MetInfo yc0030MetInfoOld = (Yc0030MetInfo) SessionService.get(SessionConstants.YC0030METINFO);
+		// 修改前会议日期
+		Date metStartDateOld = yc0030MetInfoOld.getStartDate();
+		// 修改前会议日期
+		Date metEndDateOld = yc0030MetInfoOld.getEndDate();
+		// 修改前会议时间
+		yc0030MetInfoOld.setEndTime(yc0030MetInfoOld.getEndHour() 
+				+ ":" + yc0030MetInfoOld.getEndMinute() + ":00");
+		Date endTimeOld = DateUtil.parse(yc0030MetInfoOld.getEndTime());
+		// 单日预约
+		if (RESERVE_FLG.DAILY.value().equals(yc0030MetInfo.getReserveType())){
+
+			Boolean editable = this.overTimeCheck(metStartDateOld, endTimeOld);
+			
+			// 判断所修改的预约是否过期
+			if (!editable) {
+				
+				// 修改的预约已经过时！不能修改
+				deleteSign = BACK_SIGN.DELETE_TIME_OVER.value();
+			}
+		} else {
+			
+			// 判断周期是否可以修改
+			Boolean editable_cycle = this.overTimeCheck(metEndDateOld, endTimeOld);
+
+			if (!editable_cycle) {
+				deleteSign = BACK_SIGN.DELETE_TIME_OVER.value();
+				
+			}
+		}
+
+		// 删除预约已过期
+		if (deleteSign == BACK_SIGN.DELETE_TIME_OVER.value()) {
+			// 预约类型为周期
+			if(RESERVE_FLG.CYCLE.value().equals(yc0030MetInfo.getReserveType())){
+				this.addFieldError("yc0030MetInfo.endDate", propMgr
+						.getMessage("yds.met.warning.0008"));
+			}
+			this.addFieldError("yc0030MetInfo.startDate", propMgr
+					.getMessage("yds.met.warning.0008"));
+			this.addFieldError("yc0030MetInfo.startHour", propMgr
+					.getMessage("yds.met.warning.0008"));
+			this.addFieldError("yc0030MetInfo.startMinute", propMgr
+					.getMessage("yds.met.warning.0008"));
+			this.addFieldError("yc0030MetInfo.endHour", propMgr
+					.getMessage("yds.met.warning.0008"));
+			this.addFieldError("yc0030MetInfo.endMinute", propMgr
+					.getMessage("yds.met.warning.0008"));
+		} else {
+			backFlg = BACK_SIGN.DELETEOK.value().toString();
+		}
+
+	}
+	
+	/**
+	 * 修改预约输入校验
+	 * @throws ParseException 
+	 */
+	public void validateModifyMetInfo() throws Exception {
+		// 返回标志初期化
+		backFlg = BACK_SIGN.INIT.value().toString();
+		// 开始时间结束时间
+		yc0030MetInfo.setStartTime(yc0030MetInfo.getStartHour() 
+				+ ":" + yc0030MetInfo.getStartMinute() + ":00");
+		yc0030MetInfo.setEndTime(yc0030MetInfo.getEndHour() 
+				+ ":" + yc0030MetInfo.getEndMinute() + ":00");
+		int modifySign = BACK_SIGN.MODIFYOK.value();
+		// session取出先前预约信息
+		Yc0030MetInfo yc0030MetInfoOld = (Yc0030MetInfo) SessionService.get(SessionConstants.YC0030METINFO);
+		// 修改前会议日期
+		Date metStartDateOld = yc0030MetInfoOld.getStartDate();
+		// 修改前会议日期
+		Date metEndDateOld = yc0030MetInfoOld.getEndDate();
+		// 修改前会议时间
+		yc0030MetInfoOld.setEndTime(yc0030MetInfoOld.getEndHour() 
+				+ ":" + yc0030MetInfoOld.getEndMinute() + ":00");
+		Date endTimeOld = DateUtil.parse(yc0030MetInfoOld.getEndTime());
+		// 单日预约
+		if (RESERVE_FLG.DAILY.value().equals(yc0030MetInfo.getReserveType())){
+
+			Boolean editable = this.overTimeCheck(metStartDateOld, endTimeOld);
+			
+			// 判断所修改的预约是否过期
+			if (!editable) {
+				
+				// 修改的预约已经过时！不能修改
+				modifySign = BACK_SIGN.DELETE_TIME_OVER.value();
+			} else {
+
+				// 修改检查 检查时间是否合理，是否冲突
+				modifySign = checkModifyDaymetInfo(yc0030MetInfoOld);
+			}
+
+		} else {
+			
+			// 判断周期是否可以修改
+			Boolean editable_cycle = this.overTimeCheck(metEndDateOld, endTimeOld);
+
+			if (!editable_cycle) {
+				modifySign = BACK_SIGN.DELETE_TIME_OVER.value();
+				
+			} else {
+				int cycleMetType = Integer.parseInt(yc0030MetInfo.getCycleType());
+				if (!oneYearCheck()){
+					modifySign = BACK_SIGN.OVERONEYEAR.value();
+				} else {
+					// 每日周期修改时
+					if (CYCLE_FLG.DAILY.value() == cycleMetType){
+						// 每日修改check
+						modifySign = checkModifyDailyCycleMet(yc0030MetInfoOld);
+					}
+					// 每周周期修改时
+					if (CYCLE_FLG.WEEKLY.value() == cycleMetType){
+
+						// 计算days
+						List<String> weekday = yc0030MetInfo.getWorkDay();
+						List<Date> days = new ArrayList<Date>();
+						for (int i = 0; i < weekday.size(); i++) { 
+							Integer tempDay = Integer.parseInt(weekday.get(i)) + 1;
+							days = connectDays(days,this.getDays(tempDay.toString()));
+						}
+						
+						modifySign = this.checkModifyMonthlyWeeklyCycleMet(yc0030MetInfoOld, days);
+						if (modifySign == BACK_SIGN.DATE_NOT_EXIST.value()) {
+							modifySign = BACK_SIGN.WEEKNOTEXIST.value();
+						}
+					}
+					if (CYCLE_FLG.MONTHLY.value() == cycleMetType) {
+						List<Date> days = getDays(Integer.parseInt(yc0030MetInfo.getDay()));
+
+						modifySign = this.checkModifyMonthlyWeeklyCycleMet(yc0030MetInfoOld, days);
+					}
+				}
+				
+			}
+		}
+		
+		// 不可以预约时的状态判断
+		if (modifySign != BACK_SIGN.MODIFYOK.value()) {
+
+			// 预约时间已过
+			if (modifySign == BACK_SIGN.INSERTOVERTIME.value()) {
+
+				// 预约类型为周期
+				if(RESERVE_FLG.CYCLE.value().equals(yc0030MetInfo.getReserveType())){
+					this.addFieldError("yc0030MetInfo.endDate", propMgr
+							.getMessage("yds.met.warning.0004"));
+				}
+				this.addFieldError("yc0030MetInfo.startDate", propMgr
+						.getMessage("yds.met.warning.0004"));
+				this.addFieldError("yc0030MetInfo.startHour", propMgr
+						.getMessage("yds.met.warning.0004"));
+				this.addFieldError("yc0030MetInfo.startMinute", propMgr
+						.getMessage("yds.met.warning.0004"));
+				this.addFieldError("yc0030MetInfo.endHour", propMgr
+						.getMessage("yds.met.warning.0004"));
+				this.addFieldError("yc0030MetInfo.endMinute", propMgr
+						.getMessage("yds.met.warning.0004"));
+				// 周期大于一年
+			} else if (modifySign == BACK_SIGN.OVERONEYEAR.value()) {
+				this.addFieldError("yc0030MetInfo.startDate", propMgr
+						.getMessage("yds.met.warning.0021"));
+				this.addFieldError("yc0030MetInfo.endDate", propMgr
+						.getMessage("yds.met.warning.0021"));
+				// 时间错误
+			} else if (modifySign == BACK_SIGN.TIMEERROR.value()) {
+
+				this.addFieldError("yc0030MetInfo.startMinute", propMgr
+						.getMessage("yds.met.warning.0005"));
+				this.addFieldError("yc0030MetInfo.startHour", propMgr
+						.getMessage("yds.met.warning.0005"));
+				
+				// 已有人预约
+			} else if (modifySign == BACK_SIGN.INSERTCRASH.value()) {
+
+				// 预约类型为周期
+				if(RESERVE_FLG.CYCLE.value().equals(yc0030MetInfo.getReserveType())){
+					this.addFieldError("yc0030MetInfo.endDate", propMgr
+							.getMessage("yds.met.warning.0009"));
+				}
+				this.addFieldError("yc0030MetInfo.startDate", propMgr
+						.getMessage("yds.met.warning.0009"));
+				this.addFieldError("yc0030MetInfo.startHour", propMgr
+						.getMessage("yds.met.warning.0009"));
+				this.addFieldError("yc0030MetInfo.startMinute", propMgr
+						.getMessage("yds.met.warning.0009"));
+				this.addFieldError("yc0030MetInfo.endHour", propMgr
+						.getMessage("yds.met.warning.0009"));
+				this.addFieldError("yc0030MetInfo.endMinute", propMgr
+						.getMessage("yds.met.warning.0009"));
+				this.addFieldError("yc0030MetInfo.metId", propMgr
+						.getMessage("yds.met.warning.0009"));
+				
+				
+				// 预约的星期不存在
+			} else if (modifySign == BACK_SIGN.WEEKNOTEXIST.value()) {
+				this.addFieldError("yc0030MetInfo.workDay", propMgr
+						.getMessage("yds.met.warning.0006"));
+				this.addFieldError("yc0030MetInfo.startDate", propMgr
+						.getMessage("yds.met.warning.0006"));
+				this.addFieldError("yc0030MetInfo.endDate", propMgr
+						.getMessage("yds.met.warning.0006"));
+				
+				// 每月选择的预约日期不存在
+			} else if (modifySign == BACK_SIGN.DATE_NOT_EXIST.value()) {
+				this.addFieldError("yc0030MetInfo.day", propMgr
+						.getMessage("yds.met.warning.0007"));
+				this.addFieldError("yc0030MetInfo.startDate", propMgr
+						.getMessage("yds.met.warning.0007"));
+				this.addFieldError("yc0030MetInfo.endDate", propMgr
+						.getMessage("yds.met.warning.0007"));
+				
+				// 修改预约已过期
+			} else if (modifySign == BACK_SIGN.DELETE_TIME_OVER.value()) {
+
+				// 预约类型为周期
+				if(RESERVE_FLG.CYCLE.value().equals(yc0030MetInfo.getReserveType())){
+					this.addFieldError("yc0030MetInfo.endDate", propMgr
+							.getMessage("yds.met.warning.0008"));
+				}
+				this.addFieldError("yc0030MetInfo.startDate", propMgr
+						.getMessage("yds.met.warning.0008"));
+				this.addFieldError("yc0030MetInfo.startHour", propMgr
+						.getMessage("yds.met.warning.0008"));
+				this.addFieldError("yc0030MetInfo.startMinute", propMgr
+						.getMessage("yds.met.warning.0008"));
+				this.addFieldError("yc0030MetInfo.endHour", propMgr
+						.getMessage("yds.met.warning.0008"));
+				this.addFieldError("yc0030MetInfo.endMinute", propMgr
+						.getMessage("yds.met.warning.0008"));
+			}
+		} else {
+
+
+			if (!isModify()) {
+				this.addActionError("NOMODIFY");
+				backFlg = BACK_SIGN.NOMODIFY.value().toString();
+				
+			} else {
+
+				backFlg = BACK_SIGN.MODIFYOK.value().toString();
+			}
+
+		}
+
+	}
+
+	/**
+	 * 保存预约输入校验
+	 * @throws Exception 
+	 */
+	public void validateSaveMetInfo() throws Exception {
+		
+		// 开始时间结束时间
+		yc0030MetInfo.setStartTime(yc0030MetInfo.getStartHour() 
+				+ ":" + yc0030MetInfo.getStartMinute() + ":00");
+		yc0030MetInfo.setEndTime(yc0030MetInfo.getEndHour() 
+				+ ":" + yc0030MetInfo.getEndMinute() + ":00");
+		int insertSign = BACK_SIGN.INSERTOK.value();
+		// 单日预约
+		if (RESERVE_FLG.DAILY.value().equals(yc0030MetInfo.getReserveType())){
+			// 预约检查
+			insertSign = checkInsertDaymetInfo();
+			
+		} else {
+			int cycleMetType = Integer.parseInt(yc0030MetInfo.getCycleType());
+			if (!oneYearCheck()){
+				insertSign = BACK_SIGN.OVERONEYEAR.value();
+			} else {
+				if (CYCLE_FLG.DAILY.value() == cycleMetType){
+					// 预约检查
+					insertSign = checkInsertDailyCycleMet();
+				}
+				
+				if (CYCLE_FLG.WEEKLY.value() == cycleMetType){
+					// 取得画面端选择的星期List
+					List<String> workDay = yc0030MetInfo.getWorkDay();
+					List<Date> days = new ArrayList<Date>();
+					for (int i = 0; i < workDay.size(); i++) { 
+						Integer tempDay = Integer.parseInt(workDay.get(i)) + 1;
+						days = connectDays(days,this.getDays(tempDay.toString()));
+					}
+					
+					insertSign = this.checkInsertMonthlyWeeklyCycleMet(days);
+					if (insertSign == BACK_SIGN.DATE_NOT_EXIST.value()) {
+						insertSign = BACK_SIGN.WEEKNOTEXIST.value();
+					}
+				}
+				if (CYCLE_FLG.MONTHLY.value() == cycleMetType) {
+					// 取得需要保存的会议信息里日期的list
+					List<Date> days = getDays(Integer.parseInt(yc0030MetInfo.getDay()));
+					// 预约检查
+					insertSign = checkInsertMonthlyWeeklyCycleMet(days);
+
+				}
+			}
+			
+		}
+		
+		// 不可以预约时的状态判断
+		if (insertSign != BACK_SIGN.INSERTOK.value()) {
+
+			// 预约时间已过
+			if (insertSign == BACK_SIGN.INSERTOVERTIME.value()) {
+				//
+				// 预约类型为周期
+				if(RESERVE_FLG.CYCLE.value().equals(yc0030MetInfo.getReserveType())){
+					this.addFieldError("yc0030MetInfo.endDate", propMgr
+							.getMessage("yds.met.warning.0004"));
+				}
+				this.addFieldError("yc0030MetInfo.startDate", propMgr
+						.getMessage("yds.met.warning.0004"));
+				this.addFieldError("yc0030MetInfo.startHour", propMgr
+						.getMessage("yds.met.warning.0004"));
+				this.addFieldError("yc0030MetInfo.startMinute", propMgr
+						.getMessage("yds.met.warning.0004"));
+				this.addFieldError("yc0030MetInfo.endHour", propMgr
+						.getMessage("yds.met.warning.0004"));
+				this.addFieldError("yc0030MetInfo.endMinute", propMgr
+						.getMessage("yds.met.warning.0004"));
+				// 周期大于一年
+			} else if (insertSign == BACK_SIGN.OVERONEYEAR.value()) {
+				this.addFieldError("yc0030MetInfo.startDate", propMgr
+						.getMessage("yds.met.warning.0021"));
+				this.addFieldError("yc0030MetInfo.endDate", propMgr
+						.getMessage("yds.met.warning.0021"));
+				// 预约时间错误
+			} else if (insertSign == BACK_SIGN.TIMEERROR.value()) {
+
+				this.addFieldError("yc0030MetInfo.startMinute", propMgr
+						.getMessage("yds.met.warning.0005"));
+				this.addFieldError("yc0030MetInfo.startHour", propMgr
+						.getMessage("yds.met.warning.0005"));
+				// 已有人预约
+			} else if (insertSign == BACK_SIGN.INSERTCRASH.value()) {
+				// 预约类型为周期
+				if(RESERVE_FLG.CYCLE.value().equals(yc0030MetInfo.getReserveType())){
+					this.addFieldError("yc0030MetInfo.endDate", propMgr
+							.getMessage("yds.met.warning.0009"));
+				}
+				this.addFieldError("yc0030MetInfo.startDate", propMgr
+						.getMessage("yds.met.warning.0009"));
+				this.addFieldError("yc0030MetInfo.startHour", propMgr
+						.getMessage("yds.met.warning.0009"));
+				this.addFieldError("yc0030MetInfo.startMinute", propMgr
+						.getMessage("yds.met.warning.0009"));
+				this.addFieldError("yc0030MetInfo.endHour", propMgr
+						.getMessage("yds.met.warning.0009"));
+				this.addFieldError("yc0030MetInfo.endMinute", propMgr
+						.getMessage("yds.met.warning.0009"));
+				
+				
+				// 预约的星期不存在
+			} else if (insertSign == BACK_SIGN.WEEKNOTEXIST.value()) {
+				this.addFieldError("yc0030MetInfo.workDay", propMgr
+						.getMessage("yds.met.warning.0006"));
+				this.addFieldError("yc0030MetInfo.startDate", propMgr
+						.getMessage("yds.met.warning.0006"));
+				this.addFieldError("yc0030MetInfo.endDate", propMgr
+						.getMessage("yds.met.warning.0006"));
+				
+				// 每月选择的预约日期不存在
+			} else if (insertSign == BACK_SIGN.DATE_NOT_EXIST.value()) {
+				this.addFieldError("yc0030MetInfo.day", propMgr
+						.getMessage("yds.met.warning.0007"));
+				this.addFieldError("yc0030MetInfo.startDate", propMgr
+						.getMessage("yds.met.warning.0007"));
+				this.addFieldError("yc0030MetInfo.endDate", propMgr
+						.getMessage("yds.met.warning.0007"));
+			}
+		} else {
+			backFlg = BACK_SIGN.INSERTOK.value().toString();
+		}
+	}
+
+	/**
+	 * 单日预约检查
+	 * 
+	 * @param yc0030MetInfo
+	 *            会议室预约信息
+	 * @return int 返回检查标志
+	 * @throws ParseException 
+	 */
+	private int checkInsertDaymetInfo() throws ParseException{
+
+		// 公共信息检查
+		int insertSign = checkInsertCommon(yc0030MetInfo.getStartDate());
+		
+		// 冲突检查
+		if (insertSign == BACK_SIGN.INSERTOK.value()) {
+
+			// 取得该会议室对应时间段内的会议数量
+			Integer number = yc0030Service.getMetDayNum(yc0030MetInfo);
+			// 有人已经预约
+			if (number != 0) { 
+				insertSign = BACK_SIGN.INSERTCRASH.value();
+			}
+		}
+		
+		return insertSign;
+	}
+	
+	/**
+	 * 取得年月日表示的当前Date
+	 * 
+	 * @return Date
+	 */
+	private Date getDay() {
+
+		// 取得当前日历
+		Calendar cal = Calendar.getInstance();
+
+		// clear
+		cal.clear(Calendar.HOUR);
+		cal.clear(Calendar.HOUR_OF_DAY); 
+		cal.clear(Calendar.MINUTE);
+		cal.clear(Calendar.SECOND);
+		cal.clear(Calendar.MILLISECOND);
+		cal.set(Calendar.HOUR_OF_DAY, 0);
+
+		// 取得年月日的Date
+		Date now = cal.getTime();
+
+		return now;
+	}
+	
+	/**
+	 * 取得当前时间 忽略年月日
+	 * 
+	 * @return 返回当前时间
+	 */
+	private Date getTime() {
+
+		Calendar cal = Calendar.getInstance();
+		cal.set(1970, 0, 1);
+
+		return cal.getTime();
+	}
+
+	/**
+	 * 预约信息共通检查
+	 * 
+	 * @param  startDate  有效的会议开始日期
+	 * @return int         返回检查标志
+	 * @throws ParseException 
+	 */
+	private int checkInsertCommon(Date startDate) throws ParseException{
+		
+		// 插入标志
+		int insertSign = BACK_SIGN.INSERTOK.value();
+		
+		Date startTime = DateUtil.parse(yc0030MetInfo.getStartTime());
+		Date endTime = DateUtil.parse(yc0030MetInfo.getEndTime());
+
+		// 取得当前日期与时间
+		Date now = this.getDay();
+		Date time = this.getTime();
+
+		// 开始时间与当前系统时间间隔
+		int length = (int) ((time.getTime() - startTime.getTime()) / (1000 * 60));
+
+		// 开始日期小于当前日期
+		if (startDate.before(now)) {
+			insertSign = BACK_SIGN.INSERTOVERTIME.value();
+
+			// 开始日期等于当前日期
+		} else if (startDate.equals(now)) {
+
+			// 系统时间 - 开始时间 >= 30
+			if (length >= MeetConstants.OUTTIME_LENGTH) {
+				insertSign = BACK_SIGN.TIMEERROR.value();
+			} else {
+
+				//结束时间-开始时间<=30
+				int metTimeLength = (int) ((endTime.getTime() - startTime.getTime()) / (1000 * 60));
+				if(metTimeLength < MeetConstants.MET_TIME_LENGTH){
+					insertSign =BACK_SIGN.TIMEERROR.value();
+				}
+
+			}
+		}
+
+		return insertSign;
+	}
+	
+	/**
+	 * 每日周期会议数据检查.
+	 * 
+	 * @return int 返回检查标志
+	 * @throws ParseException 
+	 */
+	private int checkInsertDailyCycleMet() throws ParseException{
+
+		// 公共信息检查
+		int insertSign = checkInsertCommon(yc0030MetInfo.getStartDate());
+		// 冲突检查
+		if(insertSign == BACK_SIGN.INSERTOK.value()){
+			yc0030MetInfo.setStartDateReal(yc0030MetInfo.getStartDate());
+			yc0030MetInfo.setEndDateReal(yc0030MetInfo.getEndDate());
+			Integer number = yc0030Service.getMetDaysNum(yc0030MetInfo);
+			if (number != 0) {
+				insertSign = BACK_SIGN.INSERTCRASH.value();
+			}
+		}
+		
+		return insertSign;
+	}
+	
+	/**
+	 * 取得一段日期内星期几的所有日期 每周用
+	 * @param weekday
+	 *            所选星期
+	 * 
+	 * @return List<String>
+	 */
+	private List<Date> getDays(String weekday) {
+
+		List<Date> days = new ArrayList<Date>();
+		Date from = yc0030MetInfo.getStartDate();
+		Date to = yc0030MetInfo.getEndDate();
+		
+		// set日历
+		Calendar cal_start = Calendar.getInstance();
+		Calendar cal_end = Calendar.getInstance();
+		cal_start.setTime(from);
+		cal_end.setTime(to);
+
+		// 取得时间段内第一个所选星期几
+		int day_of_week = cal_start.get(Calendar.DAY_OF_WEEK);
+		int weekday_chosen = 0;
+		if (null != weekday) {
+			weekday_chosen = Integer.parseInt(weekday);
+		}
+
+		// 开始日期所在的星期几在所选星期几的前面或相等
+		if (day_of_week <= weekday_chosen) {
+			cal_start.add(Calendar.DAY_OF_MONTH, weekday_chosen - day_of_week);
+		} else {
+			cal_start.add(Calendar.DAY_OF_MONTH, weekday_chosen - day_of_week
+					+ 7);
+		}
+
+		// 取出日期并save
+		while (!cal_start.after(cal_end)) {
+			days.add(cal_start.getTime());
+			cal_start.add(Calendar.DAY_OF_MONTH, 7);
+		}
+		return days;
+	}
+	
+	/**
+	 * 每周 每月预约时公共检查
+	 * 
+	 * @param days
+	 * 			   实际要预约会议的日期list
+	 * @return int 返回检查标志
+	 * @throws ParseException 
+	 */
+	private int checkInsertMonthlyWeeklyCycleMet(List<Date> days) throws ParseException{
+		// 插入标志
+		int insertSign = BACK_SIGN.INSERTOK.value(); 
+		
+		// 如果days为空，则返回选择星期或日期不存在
+		if ((null == days) || (days.isEmpty())) {
+			insertSign = BACK_SIGN.DATE_NOT_EXIST.value();
+			return insertSign;
+		} 
+			// 预约公共检查(开始日期为可选择的第一个日期)
+			Date date = days.get(0);
+
+			// 公共信息核查
+			insertSign = checkInsertCommon(date);
+			// 每月的时候，有提前延后flg实际日期可能和指定的不同
+			if (CYCLE_FLG.MONTHLY.value() == Integer.parseInt(yc0030MetInfo.getCycleType())){
+				if (days.get(0).before(yc0030MetInfo.getStartDate())) {
+					yc0030MetInfo.setStartDateReal(days.get(0));
+				} else {
+					yc0030MetInfo.setStartDateReal(yc0030MetInfo.getStartDate());
+				}
+				if (days.get(days.size() - 1).after(yc0030MetInfo.getEndDate())) {
+					yc0030MetInfo.setEndDateReal(days.get(days.size() - 1));
+				} else {
+					yc0030MetInfo.setEndDateReal(yc0030MetInfo.getEndDate());
+				}
+			} else {
+				yc0030MetInfo.setStartDateReal(yc0030MetInfo.getStartDate());
+				yc0030MetInfo.setEndDateReal(yc0030MetInfo.getEndDate());
+			}
+			// 冲突检查
+			if (insertSign == BACK_SIGN.INSERTOK.value()){
+				// 取得DB中在对应时间段里有会议的日期数据集
+				List<Date> checkDateDB = yc0030Service.getMetDaysDate(yc0030MetInfo);
+				
+				if (null != checkDateDB) {
+					// 比较DB与计算的预约日期中是否有相同日期
+					boolean isExist = compare(days, checkDateDB);
+
+					if (isExist) {
+						insertSign = BACK_SIGN.INSERTCRASH.value();
+					}
+				}	
+			}
+		
+		return insertSign;
+	}
+	
+	/**
+	 * 判断两个List<Date>中是否有相同的日期
+	 * 
+	 * @param days
+	 *            从页面计算的List
+	 * @param daysdb
+	 *            DB中的List
+	 * 
+	 * @return boolean
+	 */
+	private boolean compare(List<Date> days, List<Date> daysdb) {
+
+		for (int i = 0; i < days.size(); i++) {
+			for (int j = 0; j < daysdb.size(); j++) {
+				if (daysdb.get(j).equals(days.get(i))) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+	
+	/**
+	 * 判断一个时刻是否过期，与系统日期时间比较
+	 * 
+	 * @param checkDate
+	 *            待比较的日期
+	 * @param checkTime
+	 *            待比较的时间
+	 * 
+	 * @return boolean: true--未过期；false--过期
+	 */
+	private boolean overTimeCheck(Date checkDate, Date checkTime) {
+		boolean editable = true;
+
+		Date now = this.getDay();
+		Date time = this.getTime();
+
+		if (now.after(checkDate)) {
+			editable = false;
+
+		} else if (now.equals(checkDate)) {
+
+			if (time.after(checkTime)) {
+				editable = false;
+			}
+		}
+
+		return editable;
+	}
+
+	/**
+	 * 取得一段日期内某一号的所有日期 每月用
+	 * 
+	 * @param day
+	 *            所选日期
+	 * @return List<Date>
+	 */
+	private List<Date> getDays(int day) {
+
+		List<Date> days = new ArrayList<Date>();
+		Date from = yc0030MetInfo.getStartDate();
+		Date to = yc0030MetInfo.getEndDate();
+		String delayFlg = yc0030MetInfo.getDelayedFlg();
+		// set日历
+		Calendar cal_start = Calendar.getInstance();
+		Calendar cal_end = Calendar.getInstance();
+		cal_start.setTime(from);
+		cal_end.setTime(to);
+		// 开始年
+		int start_year = cal_start.get(Calendar.YEAR);
+		// 取得页面开始月份
+		int start_month = cal_start.get(Calendar.MONTH);
+		// 结束年
+		int end_year = cal_end.get(Calendar.YEAR); 
+		// 取得页面结束月份
+		int end_month = cal_end.get(Calendar.MONTH); 
+		// 带上当前时间
+		Calendar cal = Calendar.getInstance(); 
+		// 重置cal的时间为0
+		cal.setTime(from); 
+		// 预约开始月份
+		int sm; 
+		cal.set(start_year, start_month, day);
+		boolean isBeforeStart = cal.before(cal_start);
+		if (isBeforeStart) {
+			sm = start_month + 1;
+		} else {
+			sm = start_month;
+		}
+		// 预约结束月份
+		int em; 
+		cal.set(end_year, end_month, day);
+		boolean isAfterEnd = cal.after(cal_end);
+		if (isAfterEnd) {
+			em = end_month - 1;
+		} else {
+			em = end_month;
+		}
+		// 开始年
+		int i = start_year; 
+		// 开始月
+		int j = sm; 
+
+		while (i <= end_year) {
+			// 跨年处理
+			if (j > 11) { 
+				i++;
+				// 当年相等时，j=12时，i++跨过后面年的检查
+				if (i > end_year) { 
+					break;
+				}
+				j = j - 12;
+			}
+			// 结束月份临近时处理
+			if (i == end_year) { 
+				if (j > em) {
+					break;
+				}
+			}
+
+			// 处理所选日期在实际中不存在的情况
+			cal.set(i, j, 1);
+			int maxDate = cal.getActualMaximum(Calendar.DATE);
+			if (day > maxDate) {
+				// 提前
+				if (DELAY_FLG.BEFORE.value().equals(delayFlg)) { 
+					cal.set(i, j, maxDate);
+				}
+				// 后延
+				if (DELAY_FLG.AFTER.value().equals(delayFlg)) { 
+					cal.set(i, j, maxDate);
+					cal.add(Calendar.DAY_OF_MONTH, 1);
+				}
+			} else {
+				cal.set(i, j, day);
+			}
+
+			// 提前后延处理 周末与31号重复，按周末处理
+			int day_of_week = cal.get(Calendar.DAY_OF_WEEK);
+			// 星期天
+			if (day_of_week == 1) { 
+				// 提前
+				if (DELAY_FLG.BEFORE.value().equals(delayFlg)) { 
+					cal.add(Calendar.DAY_OF_MONTH, -2);
+				}
+				// 后延
+				if (DELAY_FLG.AFTER.value().equals(delayFlg)) { 
+					cal.add(Calendar.DAY_OF_MONTH, 1);
+				}
+			}
+			// 星期六
+			if (day_of_week == 7) { 
+				// 提前
+				if (DELAY_FLG.BEFORE.value().equals(delayFlg)) { 
+					cal.add(Calendar.DAY_OF_MONTH, -1);
+				}
+				// 后延
+				if (DELAY_FLG.AFTER.value().equals(delayFlg)) { 
+					cal.add(Calendar.DAY_OF_MONTH, 2);
+				}
+			}
+
+			days.add(cal.getTime());
+
+			j++;
+
+		}
+
+		return days;
+	}
+	
+	/**
+	 * 单日修改 检查.
+	 * 
+	 * @param yc0030MetInfoOld
+	 *            旧会议室预约信息
+	 * @return int 返回检查标志
+	 * @throws ParseException 
+	 */
+	private int checkModifyDaymetInfo(Yc0030MetInfo yc0030MetInfoOld) {
+
+		// 会议开始日期
+		Date metStartDate = yc0030MetInfo.getStartDate();
+		// 会议开始时间
+		String startTime = yc0030MetInfo.getStartTime();
+		// 会议结束时间
+		String endTime = yc0030MetInfo.getEndTime();
+		
+		// 不冲突
+		int modifySign = BACK_SIGN.MODIFYOK.value(); 
+
+		// 判断开始时间是否合理
+		Date now = this.getDay();
+		Date time = this.getTime();
+		Date start_Time = DateUtil.parse(startTime);
+		Date end_Time = DateUtil.parse(endTime);
+		int length = (int) ((time.getTime() - start_Time.getTime()) / (1000 * 60));
+
+		// 取得原来的开始日期
+		Date startDateOld = yc0030MetInfoOld.getStartDate();
+
+		// 取得原来的开始时间
+		String start_time_old = yc0030MetInfoOld.getStartTime();
+		Date startTimeOld = DateUtil.parse(start_time_old);
+
+		// 开始日期小于当前日期
+		if (metStartDate.before(now)) {
+			modifySign = BACK_SIGN.INSERTOVERTIME.value();
+			return modifySign;
+
+		} else if (metStartDate.equals(now)) {
+
+			// 判断开始时间和开始日期是否修改过
+			if (!start_Time.equals(startTimeOld)
+					|| !metStartDate.equals(startDateOld)) {
+
+				// 系统时间 - 开始时间 >= 30
+				if (length >= MeetConstants.OUTTIME_LENGTH) {
+
+					modifySign = BACK_SIGN.TIMEERROR.value();
+					return modifySign;
+				}
+			}
+
+			// 判断结束时间
+			if (end_Time.before(time)) {
+
+				modifySign = BACK_SIGN.TIMEERROR.value();
+				return modifySign;
+			}
+		}
+
+		// 判断冲突与否
+		Integer number = yc0030Service.getMetDayNum(yc0030MetInfo, yc0030MetInfoOld);
+
+		if (number != 0) {
+			modifySign = BACK_SIGN.INSERTCRASH.value();
+		}
+
+		return modifySign;
+	}
+
+	/**
+	 * 每日修改 检查.
+	 * 
+	 * @param yc0030MetInfoOld
+	 *            旧会议室预约信息
+	 *            
+	 * @return int 返回保存后的处理标志
+	 */
+	private int checkModifyDailyCycleMet(Yc0030MetInfo yc0030MetInfoOld) {
+
+		// common check
+		int modifySign = this.checkModifyCycleCommon(yc0030MetInfoOld, yc0030MetInfo.getEndDate());
+
+		if (modifySign == BACK_SIGN.MODIFYOK.value()){
+			yc0030MetInfo.setStartDateReal(yc0030MetInfo.getStartDate());
+			yc0030MetInfo.setEndDateReal(yc0030MetInfo.getEndDate());
+			// 判断冲突与否
+			//取得该会议室对应时间段内的会议数量
+			Integer number = yc0030Service.getMetDaysNum(yc0030MetInfo, yc0030MetInfoOld);
+
+			if (number != 0) {
+				modifySign = BACK_SIGN.INSERTCRASH.value();
+			}
+
+		}
+
+		return modifySign;
+	}
+
+	/**
+	 * 周期修改公共 check.
+	 * 
+	 * @param yc0030MetInfoOld
+	 *            旧会议室预约信息
+	 * @param  metEndDate  有效的会议结束日期
+	 * 
+	 * @return int 返回保存后的处理标志
+	 */
+	private int checkModifyCycleCommon(Yc0030MetInfo yc0030MetInfoOld, Date metEndDate) {
+
+		int modifySign = BACK_SIGN.MODIFYOK.value();
+
+		// 判断开始日期
+		Date now = this.getDay();
+		Date time = this.getTime();
+
+		// 会议开始日期
+		Date metStartDate = yc0030MetInfo.getStartDate();
+
+		// 会议开始时间
+		Date startTime = DateUtil.parse(yc0030MetInfo.getStartTime());
+		// 会议结束时间
+		Date endTime = DateUtil.parse(yc0030MetInfo.getEndTime());
+		int length = (int) ((time.getTime() - startTime.getTime()) / (1000 * 60));
+
+		// 取得原来的周期开始日期和开始时间
+		Date startDateOld = yc0030MetInfoOld.getStartDate();
+		Date startTimeOld = DateUtil.parse(yc0030MetInfoOld.getStartTime());
+
+		// 开始日期修改过
+		if (!metStartDate.equals(startDateOld)) {
+
+			// 开始日期小于当前日期
+			if (metStartDate.before(now)) {
+
+				modifySign = BACK_SIGN.INSERTOVERTIME.value();
+				return modifySign;
+
+				// 开始日期等于当前日期
+			} else if (metStartDate.equals(now)) {
+
+				// 开始时间大于系统时间30min
+				if (length >= MeetConstants.OUTTIME_LENGTH) {
+					modifySign = BACK_SIGN.TIMEERROR.value();
+					return modifySign;
+				}
+
+				// 结束时间小于系统时间
+				if (endTime.before(time)) {
+					modifySign = BACK_SIGN.TIMEERROR.value();
+					return modifySign;
+				}
+			}
+		}
+
+		// 判断结束日期
+		// 结束日期小于系统日期
+		if (metEndDate.before(now)) { 
+			modifySign = BACK_SIGN.INSERTOVERTIME.value();
+			return modifySign;
+
+			// 结束日期等于系统日期
+		} else if (metEndDate.equals(now)) {
+
+			// 开始时间修改过
+			if (!startTime.equals(startTimeOld)) {
+
+				// 开始时间大于系统时间30min
+				if (length >= MeetConstants.OUTTIME_LENGTH) {
+					modifySign = BACK_SIGN.TIMEERROR.value();
+					return modifySign;
+				}
+			}
+
+			// 结束时间小于系统时间
+			if (endTime.before(time)) {
+				modifySign = BACK_SIGN.INSERTOVERTIME.value();
+				return modifySign;
+			}
+		}
+		return modifySign;
+	}
+
+	/**
+	 * 每周, 每月修改 check.
+	 * 
+	 * @param yc0030MetInfoOld
+	 *            旧会议室预约信息
+	 * @param days
+	 *            冲突所包含的日期        
+	 *            
+	 * @return int 返回保存后的处理标志
+	 */
+	private int checkModifyMonthlyWeeklyCycleMet(Yc0030MetInfo yc0030MetInfoOld, List<Date> days) {
+		
+		int modifySign = BACK_SIGN.MODIFYOK.value();
+		
+		if ((null == days) || (days.isEmpty())) {
+			modifySign = BACK_SIGN.DATE_NOT_EXIST.value();
+			return modifySign;
+		}
+		
+		// common check
+		modifySign = this.checkModifyCycleCommon(yc0030MetInfoOld, days.get(days.size() - 1));
+		if (modifySign == BACK_SIGN.MODIFYOK.value()) {
+			// 每月的时候，有提前延后flg实际日期可能和指定的不同
+			if (CYCLE_FLG.MONTHLY.value() == Integer.parseInt(yc0030MetInfo.getCycleType())){
+				if (days.get(0).before(yc0030MetInfo.getStartDate())) {
+					yc0030MetInfo.setStartDateReal(days.get(0));
+				}
+				if (days.get(days.size() - 1).after(yc0030MetInfo.getEndDate())) {
+					yc0030MetInfo.setEndDateReal(days.get(days.size() - 1));
+				}
+			} else {
+				yc0030MetInfo.setStartDateReal(yc0030MetInfo.getStartDate());
+				yc0030MetInfo.setEndDateReal(yc0030MetInfo.getEndDate());
+			}
+			// 判断冲突与否
+			// 取得该会议室对应时间段内的会议数量
+			List<Date> dateList = yc0030Service.getMetDaysDate(yc0030MetInfo, yc0030MetInfoOld);
+
+			if (null != dateList) {
+				boolean isExist = compare(days, dateList);
+
+				if (isExist) {
+					modifySign = BACK_SIGN.INSERTCRASH.value();
+				}
+			}
+		}
+
+		return modifySign;
+	}
+	/**
+	 * 修改时，判断内容是否修改过
+	 * 
+	 * @return Boolean 是否修改过，true 改过 false 没改过
+	 */
+	private Boolean isModify() {
+		
+		// session取出先前预约信息
+		Yc0030MetInfo yc0030MetInfoOld = (Yc0030MetInfo) SessionService.get(SessionConstants.YC0030METINFO);
+		// 开始日期
+		if (!yc0030MetInfo.getStartDate().equals(yc0030MetInfoOld.getStartDate())) {
+			return true;
+		}
+		// 会议室
+		if (yc0030MetInfo.getMetId().compareTo(yc0030MetInfoOld.getMetId()) != 0) {
+			return true;
+		}
+		// 会议主题
+		if (!yc0030MetInfo.getMetTopic().equals(yc0030MetInfoOld.getMetTopic())) {
+			return true;
+		}
+		// 公开标识
+		if ("true".equals(yc0030MetInfo.getPublicFlg()) || "1".equals(yc0030MetInfo.getPublicFlg())) {
+			if ("0".equals(yc0030MetInfoOld.getPublicFlg())) {
+				return true;
+			} 
+		} else {
+			if ("1".equals(yc0030MetInfoOld.getPublicFlg())) {
+				return true;
+			} 
+		}
+		// 开始小时
+		if (!yc0030MetInfo.getStartHour().equals(yc0030MetInfoOld.getStartHour())) {
+			return true;
+		}
+		// 开始分钟
+		if (!yc0030MetInfo.getStartMinute().equals(yc0030MetInfoOld.getStartMinute())) {
+			return true;
+		}
+		// 结束小时
+		if (!yc0030MetInfo.getEndHour().equals(yc0030MetInfoOld.getEndHour())) {
+			return true;
+		}
+		// 结束分钟
+		if (!yc0030MetInfo.getEndMinute().equals(yc0030MetInfoOld.getEndMinute())) {
+			return true;
+		}
+		// 会议参加者
+		if (!yc0030MetInfo.getMetUserId().equals(yc0030MetInfoOld.getMetUserId())) {
+			return true;
+		}
+		// 参加者人数
+		if (!yc0030MetInfo.getMetUserCnt().equals(yc0030MetInfoOld.getMetUserCnt())) {
+			return true;
+		}
+		// 会议备注
+		if (!yc0030MetInfo.getMetNotes().equals(yc0030MetInfoOld.getMetNotes())) {
+			return true;
+		}
+		// 通知参加者
+		if ("1".equals(yc0030MetInfo.getContactUser())) {
+			if ("0".equals(yc0030MetInfoOld.getContactUser())) {
+				return true;
+			} 
+		} else {
+			if ("1".equals(yc0030MetInfoOld.getContactUser())) {
+				return true;
+			} 
+		}
+		// 当周期会议的时候
+		if (RESERVE_FLG.CYCLE.value().equals(yc0030MetInfo.getReserveType())) {
+			// 结束日期
+			if (!yc0030MetInfo.getEndDate().equals(yc0030MetInfoOld.getEndDate())) {
+				return true;
+			}
+			if (CYCLE_FLG.WEEKLY.value() == Integer.parseInt(yc0030MetInfo.getCycleType())) {
+				// 选中哪几周
+				if (!yc0030MetInfo.getWorkDay().equals(yc0030MetInfoOld.getWorkDay())) {
+					return true;
+				}
+			}
+			if (CYCLE_FLG.MONTHLY.value() == Integer.parseInt(yc0030MetInfo.getCycleType())) {
+				// 填写哪天 
+				if (!yc0030MetInfo.getDay().equals(yc0030MetInfoOld.getDay())) {
+					return true;
+				}
+				// 提前延后标志
+				if (!yc0030MetInfo.getDelayedFlg().equals(yc0030MetInfoOld.getDelayedFlg())) {
+					return true;
+				}
+				
+			}
+			// 如果单日会议发生改变时
+			if (1 == yc0030MetInfo.getUpdateFlg()) {
+				return true;
+			}
+		}
+		return false;
+	}
+	
+	/**
+	 * 每个星期的数组拼接在一起第一个最小.
+	 * @param days
+	 *            某个星期几的日期数组
+	 * @param nextDays
+	 *            下个星期几的日期数组
+	 * @return List<Date> 拼接后的日期数组
+	 */
+	private List<Date> connectDays(List<Date> days, List<Date> nextDays) {
+
+		if (nextDays == null || nextDays.isEmpty() ) {
+			return days;
+		} else {
+			if (days == null || days.isEmpty() ) {
+				return nextDays;
+			} else {
+				if (days.get(days.size() - 1).before(nextDays.get(nextDays.size() - 1))) {
+					days.addAll(nextDays);
+					return days;
+				} else {
+					nextDays.addAll(days);
+					return nextDays;
+				}				
+			}
+		}
+	}
+	
+	/**
+	 * 判断开始日期和结束日期是不是超过一年.
+	 * 
+	 * @return boolean 开始日期和结束日期是不是超过一年
+	 */
+	private boolean oneYearCheck() {
+		
+		Date startDate = yc0030MetInfo.getStartDate();
+		Date endDate = yc0030MetInfo.getEndDate();
+		int days = (int) ((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+		if (days > 365) {
+			return false;
+		}
+		return true;
+	}
+	
+	/**
+	 * @param yc0030Service the yc0030Service to set
+	 */
+	public void setYc0030Service(Yc0030Service yc0030Service) {
+		this.yc0030Service = yc0030Service;
+	}
+	
+	/**
+	 * @return the yc0030Service
+	 */
+	public Yc0030Service getYc0030Service() {
+		return yc0030Service;
+	}
+
+	/**
+	 * @param viewMode the viewMode to set
+	 */
+	public void setViewMode(String viewMode) {
+		this.viewMode = viewMode;
+	}
+
+	/**
+	 * @return the viewMode
+	 */
+	public String getViewMode() {
+		return viewMode;
+	}
+
+	/**
+	 * @param metRoomInfoLst the metRoomInfoLst to set
+	 */
+	public void setMetRoomInfoLst(List<MetRoomInfo> metRoomInfoLst) {
+		this.metRoomInfoLst = metRoomInfoLst;
+	}
+
+	/**
+	 * @return the metRoomInfoLst
+	 */
+	public List<MetRoomInfo> getMetRoomInfoLst() {
+		return metRoomInfoLst;
+	}
+
+	/**
+	 * @return the yc0030MetInfo
+	 */
+	public Yc0030MetInfo getYc0030MetInfo() {
+		return yc0030MetInfo;
+	}
+
+	/**
+	 * @param yc0030MetInfo the yc0030MetInfo to set
+	 */
+	public void setYc0030MetInfo(Yc0030MetInfo yc0030MetInfo) {
+		this.yc0030MetInfo = yc0030MetInfo;
+	}
+
+	/**
+	 * @return the workDayLst
+	 */
+	public Map<Integer, String> getWorkDayLst() {
+		return workDayLst;
+	}
+
+	/**
+	 * @param workDayLst the workDayLst to set
+	 */
+	public void setWorkDayLst(Map<Integer, String> workDayLst) {
+		this.workDayLst = workDayLst;
+	}
+
+	/**
+	 * @param metRoomSize the metRoomSize to set
+	 */
+	public void setMetRoomSize(String metRoomSize) {
+		this.metRoomSize = metRoomSize;
+	}
+
+	/**
+	 * @return the metRoomSize
+	 */
+	public String getMetRoomSize() {
+		return metRoomSize;
+	}
+
+	/**
+	 * @param jsonYc0030MetInfo the jsonYc0030MetInfo to set
+	 */
+	public void setJsonYc0030MetInfo(String jsonYc0030MetInfo) {
+		this.jsonYc0030MetInfo = jsonYc0030MetInfo;
+	}
+
+	/**
+	 * @return the jsonYc0030MetInfo
+	 */
+	public String getJsonYc0030MetInfo() {
+		return jsonYc0030MetInfo;
+	}
+	/**
+	 * @return the reserveTypeMap
+	 */
+	public Map<Integer, String> getReserveTypeMap() {
+		return reserveTypeMap;
+	}
+
+	/**
+	 * @param reserveTypeMap the reserveTypeMap to set
+	 */
+	public void setReserveTypeMap(Map<Integer, String> reserveTypeMap) {
+		this.reserveTypeMap = reserveTypeMap;
+	}
+
+	/**
+	 * @return the startHourMap
+	 */
+	public Map<String, String> getStartHourMap() {
+		return startHourMap;
+	}
+
+	/**
+	 * @param startHourMap the startHourMap to set
+	 */
+	public void setStartHourMap(Map<String, String> startHourMap) {
+		this.startHourMap = startHourMap;
+	}
+
+	/**
+	 * @return the endHourMap
+	 */
+	public Map<String, String> getEndHourMap() {
+		return endHourMap;
+	}
+
+	/**
+	 * @param endHourMap the endHourMap to set
+	 */
+	public void setEndHourMap(Map<String, String> endHourMap) {
+		this.endHourMap = endHourMap;
+	}
+
+	/**
+	 * @return the minuteMap
+	 */
+	public Map<String, String> getMinuteMap() {
+		return minuteMap;
+	}
+
+	/**
+	 * @param minuteMap the minuteMap to set
+	 */
+	public void setMinuteMap(Map<String, String> minuteMap) {
+		this.minuteMap = minuteMap;
+	}
+
+	/**
+	 * @return the fromIdH
+	 */
+	public String getFromIdH() {
+		return fromIdH;
+	}
+
+	/**
+	 * @param fromIdH the fromIdH to set
+	 */
+	public void setFromIdH(String fromIdH) {
+		this.fromIdH = fromIdH;
+	}
+
+	/**
+	 * @return the backFlg
+	 */
+	public String getBackFlg() {
+		return backFlg;
+	}
+
+	/**
+	 * @param backFlg the backFlg to set
+	 */
+	public void setBackFlg(String backFlg) {
+		this.backFlg = backFlg;
+	}
+	
+	/**
+	 * @return the teamList
+	 */
+	public List<EmpTeamInfo> getTeamList() {
+		return teamList;
+	}
+
+	/**
+	 * @param teamList the teamList to set
+	 */
+	public void setTeamList(List<EmpTeamInfo> teamList) {
+		this.teamList = teamList;
+	}
+
+	public void setEmpTeamInfoService(EmpTeamInfoService empTeamInfoService) {
+		this.empTeamInfoService = empTeamInfoService;
+	}
+	
+	/**
+	 * @param serService the serService to set
+	 */
+	public void setUserService(UserService userService) {
+		this.userService = userService;
+	}
+	
+	/**
+	 * @return the teamId
+	 */
+	public String getTeamId() {
+		return teamId;
+	}
+
+	/**
+	 * @param teamId the teamId to set
+	 */
+	public void setTeamId(String teamId) {
+		this.teamId = teamId;
+	}
+
+	/**
+	 * @return the strUsers
+	 */
+	public String getStrUsers() {
+		return strUsers;
+	}
+
+	/**
+	 * @param strUsers the strUsers to set
+	 */
+	public void setStrUsers(String strUsers) {
+		this.strUsers = strUsers;
+	}
+
+	/**
+	 * @return the empTeamInfo
+	 */
+	public EmpTeamInfo getEmpTeamInfo() {
+		return empTeamInfo;
+	}
+
+	/**
+	 * @param empTeamInfo the empTeamInfo to set
+	 */
+	public void setEmpTeamInfo(EmpTeamInfo empTeamInfo) {
+		this.empTeamInfo = empTeamInfo;
+	}
+
+	/**
+	 * @param comCodeInfoService the comCodeInfoService to set
+	 */
+	public void setComCodeInfoService(ComCodeInfoService comCodeInfoService) {
+		this.comCodeInfoService = comCodeInfoService;
+	}
+
+	/**
+	 * @return the teamTypeList
+	 */
+	public List<ComCodeInfo> getTeamTypeList() {
+		return teamTypeList;
+	}
+
+	/**
+	 * @param teamTypeList the teamTypeList to set
+	 */
+	public void setTeamTypeList(List<ComCodeInfo> teamTypeList) {
+		this.teamTypeList = teamTypeList;
+	}
+
+	/**
+	 * @return the teamInfo
+	 */
+	public String getTeamInfo() {
+		return teamInfo;
+	}
+
+	/**
+	 * @param teamInfo the teamInfo to set
+	 */
+	public void setTeamInfo(String teamInfo) {
+		this.teamInfo = teamInfo;
+	}
+}

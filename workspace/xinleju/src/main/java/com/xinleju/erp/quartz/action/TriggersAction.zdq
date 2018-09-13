@@ -1,0 +1,339 @@
+package com.xinleju.erp.quartz.action;
+
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.MatchMode;
+import org.hibernate.criterion.Restrictions;
+import org.quartz.Scheduler;
+import org.quartz.Trigger;
+import org.quartz.TriggerKey;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+
+import com.xinleju.erp.base.app.action.BaseAction;
+import com.xinleju.erp.flow.service.api.SmObjectService;
+import com.xinleju.erp.frame.dao.AppDao;
+import com.xinleju.erp.frame.models.App;
+import com.xinleju.erp.quartz.dto.TriggersDto;
+import com.xinleju.erp.quartz.model.CronTriggers;
+import com.xinleju.erp.quartz.model.Triggers;
+import com.xinleju.erp.quartz.service.ISchedulerService;
+import com.xinleju.erp.quartz.util.CronExpressionEx;
+
+/**
+ * 任务管理
+ * @author chenhb
+ *
+ */
+public class TriggersAction extends BaseAction{
+	
+	
+	private TriggersDto triggersDto;
+	
+	private String act;
+	
+	private Logger log = LoggerFactory.getLogger(getClass());
+    
+    @Autowired
+    private ISchedulerService schedulerService;
+    
+    @Autowired
+	@Qualifier("quartzScheduler")
+	private Scheduler scheduler;
+    
+    @Autowired
+    private AppDao appDao;
+    
+    
+    /**
+     * 编辑页面
+     * @return
+     */
+    public String edit() throws Exception{
+    	String tempSelStrs=getParameter("id");
+    	//String id = getParameter("id");
+    	triggersDto = new TriggersDto();
+    	if(StringUtils.isNotBlank(tempSelStrs)) {
+        	String id=java.net.URLDecoder.decode(tempSelStrs,"UTF-8");
+    		Trigger trigger = scheduler.getTrigger(new  TriggerKey(StringUtils.substringBefore(id, "_"), StringUtils.substringAfter(id, "_")));
+    		triggersDto.setName(trigger.getJobDataMap().getString("name"));
+    		triggersDto.setCode(trigger.getJobDataMap().getString("code"));
+            triggersDto.setServiceId(trigger.getJobDataMap().getString("serviceId"));
+    		triggersDto.setRemark(trigger.getJobDataMap().getString("remark"));
+    		triggersDto.setModuleCode(trigger.getJobDataMap().getString("moduleCode"));
+    		triggersDto.setTriggerName(trigger.getKey().getName());
+    		triggersDto.setGroup(trigger.getKey().getGroup());
+    		triggersDto.setJobName(trigger.getJobKey().getName());
+    		triggersDto.setCronExpression(this.getCronExpression(scheduler.getSchedulerName(), trigger.getKey().getName(), trigger.getKey().getGroup()));
+    	}
+    	Map<String,App> appMap = appDao.getAppMap();
+		request.setAttribute("appMap", appMap);
+        request.setAttribute("interfaceMap", SmObjectService.getInterfaceMap(SmObjectService.INTERFACE_CODE_TASK));
+        return "edit";
+    }
+    
+    
+    public void save() throws Exception{
+    	Map<String,Object> result = new HashMap<String,Object>();
+    	if(StringUtils.isBlank(triggersDto.getName())) {
+    		result.put("success", false);
+    		result.put("msg", "名称不能为空");
+    		renderJson(result);
+    		return;
+    	}
+    	
+    	
+    	if(StringUtils.isBlank(triggersDto.getCode())) {
+    		result.put("success", false);
+    		result.put("msg", "编码不能为空");
+    		renderJson(result);
+    		return;
+    	}
+    	if(StringUtils.isBlank(triggersDto.getServiceId())) {
+            result.put("success", false);
+            result.put("msg", "接口id不能为空");
+            renderJson(result);
+            return;
+        }
+    	if(StringUtils.isBlank(triggersDto.getModuleCode())) {
+    		result.put("success", false);
+    		result.put("msg", "所属应用不能为空");
+    		renderJson(result);
+    		return;
+    	}
+    	
+    	if(!CronExpressionEx.isValidExpression(triggersDto.getCronExpression())){
+    		result.put("success", false);
+    		result.put("msg", "不是有效的时间表达式");
+    		renderJson(result);
+    		return;
+		}
+    	try{
+    		Map<String,Object> triggerMap = new HashMap<String, Object>();
+    		triggerMap.put("name", triggersDto.getName());
+    		triggerMap.put("code", triggersDto.getCode());
+            triggerMap.put("serviceId", triggersDto.getServiceId());
+    		triggerMap.put("remark", triggersDto.getRemark());
+    		triggerMap.put("moduleCode", triggersDto.getModuleCode());
+    		String triggerName = triggersDto.getModuleCode() + triggersDto.getName() + triggersDto.getCode() + triggersDto.getServiceId();
+        	if("create".equals(act)) {
+        		schedulerService.schedule(triggersDto.getJobName(), triggerName, triggersDto.getCronExpression(),triggerMap);
+        	}else {
+        		Triggers t =  getCommonService().findFirstByHQL(Triggers.class, "from Triggers t where t.id.schedName = ? and t.id.triggerName = ? and t.id.triggerGroup = ?", scheduler.getSchedulerName(), triggersDto.getTriggerName(), triggersDto.getGroup());
+        		TriggerKey oldKey = new TriggerKey(triggersDto.getTriggerName(),triggersDto.getGroup());
+        		scheduler.rescheduleJob(oldKey,schedulerService.buildCronTrigger(triggersDto.getJobName(), triggerName, triggersDto.getCronExpression(), triggerMap) );
+        		if(t != null){
+        			if(Triggers.STATUS_PAUSED.equals(t.getTriggerState())){
+        				scheduler.pauseTrigger(new TriggerKey(triggerName,triggersDto.getGroup()));
+        			}
+        		}
+        	}
+        	result.put("success", true);
+    		
+    	}catch(Exception e) {
+    		result.put("success", false);
+    		result.put("msg", "系统异常！");
+    	}
+    	
+    	renderJson(result);
+    }
+    
+    
+    /**
+     * 列表页面
+     * @return
+     */
+    public String list(){
+    	String keyword = getParameter("keyword");
+    	String moduleCode = getParameter("moduleCode");
+    	DetachedCriteria dc = DetachedCriteria.forClass(Triggers.class);
+    	if(StringUtils.isNotBlank(keyword)) {
+    		dc.add(Restrictions.like("id.triggerName", "%"+keyword+"%"));
+    	}
+    	if(StringUtils.isNotBlank(moduleCode)) {
+    		dc.add(Restrictions.like("id.triggerName", "%"+moduleCode+"%"));
+    	}
+    	try{
+
+        	page = getCommonService().findPage(dc, start, limit);
+    	}catch(Exception e){
+    		e.printStackTrace();
+    	}
+    	
+    	Map<String,App> appMap = appDao.getAppMap();
+		request.setAttribute("appMap", appMap);
+		
+		request.setAttribute("statusMap", Triggers.getStatusMap());
+        return "list";
+    }
+    
+    
+    /**
+     * 暂停
+     */
+    public void pause(){
+    	Map<String,Object> result = new HashMap<String,Object>();
+    	try{
+    		String ids = getParameter("ids");
+    		if(StringUtils.isNotBlank(ids)) {
+    			String[] idAry = ids.split(";");
+    			for(String id : idAry) {
+    				schedulerService.pauseTrigger(StringUtils.substringBefore(id, "_"), StringUtils.substringAfter(id, "_"));
+    			}
+    		}
+    		result.put("success", true);
+    	}catch(Exception e){
+    		result.put("success", false);
+    		result.put("msg", e.getMessage());
+    	}
+    	renderJson(result);
+    }
+    
+    
+    /**
+     * 立即执行
+     */
+    public void startNow(){
+    	Map<String,Object> result = new HashMap<String,Object>();
+    	try{
+    		String ids = getParameter("ids");
+    		if(StringUtils.isNotBlank(ids)) {
+    			String[] idAry = ids.split(";");
+    			for(String id : idAry) {
+    				Trigger trigger = scheduler.getTrigger(new  TriggerKey(StringUtils.substringBefore(id, "_"), StringUtils.substringAfter(id, "_")));
+    				Map<String,Object> triggerMap = new HashMap<String, Object>();
+    				String name = trigger.getJobDataMap().getString("name");
+    				String code = trigger.getJobDataMap().getString("code");
+                    String serviceId = trigger.getJobDataMap().getString("serviceId");
+    				String moduleCode = trigger.getJobDataMap().getString("moduleCode");
+    				String triggerName = moduleCode + name + code + serviceId;
+    				triggerMap.put("name", name);
+    				triggerMap.put("code", code);
+                    triggerMap.put("serviceId", serviceId);
+    				triggerMap.put("moduleCode", moduleCode);
+    				schedulerService.schedule(trigger.getJobKey().getName(), triggerName+1, new Date(), null, triggerMap);
+    			}
+    		}
+    		result.put("success", true);
+    	}catch(Exception e){
+    		result.put("success", false);
+    		result.put("msg", e.getMessage());
+    	}
+    	renderJson(result);
+    }
+    
+    
+    /**
+     * 恢复
+     */
+    public void resume(){
+    	Map<String,Object> result = new HashMap<String,Object>();
+    	try{
+    		String ids = getParameter("ids");
+    		if(StringUtils.isNotBlank(ids)) {
+    			String[] idAry = ids.split(";");
+    			for(String id : idAry) {
+    				schedulerService.resumeTrigger(StringUtils.substringBefore(id, "_"), StringUtils.substringAfter(id, "_"));
+    			}
+    		}
+    		result.put("success", true);
+    	}catch(Exception e){
+    		result.put("success", false);
+    		result.put("msg", e.getMessage());
+    	}
+    	renderJson(result);
+    }
+    
+    /**
+     * 移除
+     */
+    public void remove(){
+    	Map<String,Object> result = new HashMap<String,Object>();
+    	try{
+    		String ids = getParameter("ids");
+    		if(StringUtils.isNotBlank(ids)) {
+    			String[] idAry = ids.split(";");
+    			for(String id : idAry) {
+    				schedulerService.removeTrigdger(StringUtils.substringBefore(id, "_"), StringUtils.substringAfter(id, "_"));
+    			}
+    		}
+    		result.put("success", true);
+    	}catch(Exception e){
+    		result.put("success", false);
+    		result.put("msg", e.getMessage());
+    	}
+    	renderJson(result);
+    }
+    
+    /**
+     * 获得triggermap中的值
+     * @return
+     */
+    public String getValue(String triggerName, String triggerGroup,String key) {
+    	try{
+    		Trigger trigger = scheduler.getTrigger(new TriggerKey(triggerName, triggerGroup));
+    		return (String)trigger.getJobDataMap().get(key);
+    	}catch(Exception e) {
+    		log.error("获取"+key+"异常", e);
+    	}
+    	return null;
+    }
+    
+    
+    /**
+     * 获得名称
+     * @return
+     */
+    public String getModuleName(String triggerName, String triggerGroup){
+    	try{
+    		String moduleCode =  this.getValue(triggerName, triggerGroup, "moduleCode");
+    		if(StringUtils.isNotBlank(moduleCode)) {
+    			Map<String,App> appMap = appDao.getAppMap();
+    			return appMap.get(moduleCode).getName();
+    		}
+    	}catch(Exception e) {
+    		log.error("获取模块编码异常", e);
+    	}
+    	return null;
+    }
+    
+    /**
+     * 获得表达式
+     * @param triggerName
+     * @param triggerGroup
+     * @return
+     */
+    public String getCronExpression(String schedName,String triggerName,String triggerGroup){
+		CronTriggers t =  getCommonService().findFirstByHQL(CronTriggers.class, "from CronTriggers t where t.id.schedName = ? and t.id.triggerName = ? and t.id.triggerGroup = ?", schedName, triggerName, triggerGroup);
+		return t == null ? "" : t.getCronExpression();
+    }
+
+
+	public TriggersDto getTriggersDto() {
+		return triggersDto;
+	}
+
+
+	public void setTriggersDto(TriggersDto triggersDto) {
+		this.triggersDto = triggersDto;
+	}
+
+
+	public String getAct() {
+		return act;
+	}
+
+
+	public void setAct(String act) {
+		this.act = act;
+	}
+    
+	
+    
+}

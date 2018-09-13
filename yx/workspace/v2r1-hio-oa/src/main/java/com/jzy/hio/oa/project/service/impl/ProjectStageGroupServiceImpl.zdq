@@ -1,0 +1,313 @@
+
+package com.jzy.hio.oa.project.service.impl;
+
+import java.util.*;
+import java.util.stream.Collectors;
+
+import com.jzy.hio.entity.ProjectStageGroup;
+import com.jzy.hio.entity.ProjectStageTaskInfo;
+import com.jzy.hio.exception.HioMybatisInsertException;
+import com.jzy.hio.exception.HioMybatisQueryException;
+import com.jzy.hio.exception.HioMybatisUpdateException;
+import com.jzy.hio.oa.OaConstant;
+import com.jzy.hio.oa.project.dto.ProjectStageGroupDto;
+import com.jzy.hio.oa.project.dto.ProjectStageGroupParam;
+import com.jzy.hio.oa.project.dto.ProjectStageTaskInfoDto;
+import com.jzy.hio.oa.project.dto.ProjectStageTaskInfoParam;
+import com.jzy.hio.oa.project.mapper.ProjectStageGroupMapper;
+import com.jzy.hio.oa.project.mapper.ProjectStageTaskInfoMapper;
+import com.jzy.hio.oa.project.service.ProjectInfoService;
+import com.jzy.hio.oa.project.service.ProjectStageGroupService;
+
+import com.jzy.hio.redis.JedisUtil;
+import com.jzy.hio.utils.JacksonUtils;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+
+/**
+ * 项目阶段分组
+ * 
+ * @author yangning
+ */
+@Service("projectStageGroupService")
+public class ProjectStageGroupServiceImpl extends BaseServiceImpl<ProjectStageGroup> implements ProjectStageGroupService {
+
+	@Autowired
+	ProjectStageGroupMapper projectStageGroupMapper;
+
+	@Autowired
+	ProjectStageTaskInfoMapper projectStageTaskInfoMapper;
+
+	@Autowired
+	ProjectInfoService projectInfoService;
+
+	/**
+	 * 保存项目阶段分组
+	 * 
+	 * @param projectStageGroupDto
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public int saveProjectStageGroup(ProjectStageGroupDto projectStageGroupDto) throws HioMybatisInsertException {
+
+		int count = 0;
+		String permission = projectInfoService.queryProjectPermission(projectStageGroupDto.getProjectId(), OaConstant.PROJECTINPERSON, getLoginUser());
+
+		if (OaConstant.PROJECTADMIN.equals(permission) || OaConstant.PROJECTCREATEPERSON.equals(permission) || OaConstant.PROJECTRESPONSIBLEPERSON.equals(permission)
+				|| OaConstant.PROJECTPARTICIPANTPERSON.equals(permission)) {
+
+			ProjectStageGroup projectStageGroup = new ProjectStageGroup();
+			BeanUtils.copyProperties(projectStageGroupDto, projectStageGroup);
+			List<ProjectStageGroup> projectStageGroupList = projectStageGroupMapper.queryProjectStageGroupListByStageId(projectStageGroupDto.getStageId());
+			int projectStageCount = projectStageGroupList.size();
+			if (projectStageCount >= OaConstant.PROJECTSTAGEMAXCOUNT) {
+				throw new HioMybatisInsertException("分组最多能创建50个");
+			}
+			double order = projectStageGroupList.get(0).getStageGroupOrder();
+			projectStageGroup.setStageGroupOrder(order / 2);
+			count = save(projectStageGroup);
+			updateRedisData(projectStageGroupDto.getStageId());
+		} else {
+			logger.error("无创建分组权限!");
+			throw new HioMybatisQueryException("无创建分组权限!");
+		}
+
+		return count;
+
+	}
+
+	/**
+	 * 更新项目分组
+	 * 
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public int updateProjectStageGroup(ProjectStageGroupDto projectStageGroupDto) throws HioMybatisUpdateException {
+		String permission = projectInfoService.queryProjectPermission(projectStageGroupDto.getProjectId(), OaConstant.PROJECTINPERSON, getLoginUser());
+		int count = 0;
+
+		if (OaConstant.PROJECTADMIN.equals(permission) || OaConstant.PROJECTCREATEPERSON.equals(permission) || OaConstant.PROJECTRESPONSIBLEPERSON.equals(permission)
+				|| OaConstant.PROJECTPARTICIPANTPERSON.equals(permission)) {
+			ProjectStageGroup projectStageGroup = new ProjectStageGroup();
+			BeanUtils.copyProperties(projectStageGroupDto, projectStageGroup);
+			count = update(projectStageGroup);
+			updateRedisData(projectStageGroupDto.getStageId());
+		} else {
+			logger.error("无更新分组权限!");
+			throw new HioMybatisQueryException("无更新分组权限!");
+		}
+		return count;
+	}
+
+	@Override
+	public int deleteProjectStageGroup(ProjectStageGroupDto projectStageGroupDto) throws HioMybatisUpdateException {
+		int deleteCount = 0;
+		String permission = projectInfoService.queryProjectPermission(projectStageGroupDto.getProjectId(), OaConstant.PROJECTINPERSON, getLoginUser());
+
+		if (OaConstant.PROJECTADMIN.equals(permission) || OaConstant.PROJECTCREATEPERSON.equals(permission) || OaConstant.PROJECTRESPONSIBLEPERSON.equals(permission)
+				|| OaConstant.PROJECTPARTICIPANTPERSON.equals(permission)) {
+			List<ProjectStageGroup> projectStageGroupList =  projectStageGroupMapper.queryProjectStageGroupListByStageId(projectStageGroupDto.getStageId());
+			if(projectStageGroupList.size() <= 1){
+				logger.error("您需要保留一个分组，该分组不能删除!");
+				throw new HioMybatisQueryException("您需要保留一个分组，该分组不能删除!");
+			}
+			ProjectStageTaskInfoParam projectStageTaskInfoParam = new ProjectStageTaskInfoParam();
+			projectStageTaskInfoParam.setProjectStageGroupId(projectStageGroupDto.getId());
+			List<ProjectStageTaskInfo> projectStageTaskInfoList = projectStageTaskInfoMapper.queryTaskInfoList(projectStageTaskInfoParam);
+			if (isNotEmpty(projectStageTaskInfoList)){
+				logger.error("该分组下存在任务，不能删除!");
+				throw new HioMybatisQueryException("该分组下存在任务，不能删除!");
+			}
+			deleteCount = projectStageGroupMapper.deleteProjectStageGroupById(projectStageGroupDto.getId());
+			updateRedisData(projectStageGroupDto.getStageId());
+		} else {
+			logger.error("无删除分组权限!");
+			throw new HioMybatisQueryException("无删除分组权限!");
+		}
+		return deleteCount;
+	}
+
+	@Override
+	public int copyProjectStageGroup(ProjectStageGroupParam projectStageGroupParam) throws HioMybatisUpdateException {
+
+		String permission = projectInfoService.queryProjectPermission(projectStageGroupParam.getProjectId(), OaConstant.PROJECTINPERSON, getLoginUser());
+		int result = 0;
+
+		if (OaConstant.PROJECTADMIN.equals(permission) || OaConstant.PROJECTCREATEPERSON.equals(permission) || OaConstant.PROJECTRESPONSIBLEPERSON.equals(permission)
+				|| OaConstant.PROJECTPARTICIPANTPERSON.equals(permission)) {
+
+			String firstSort = projectStageGroupParam.getFirstSort();
+			String afterSort = projectStageGroupParam.getAfterSort();
+			String projectStageGroupId = projectStageGroupParam.getProjectStageGroupId();
+			String projectStageId = projectStageGroupParam.getProjectStageId();
+
+			int projectStageCount = projectStageGroupMapper.queryProjectStageGroupListByStageId(projectStageId).size();
+			if (projectStageCount >= OaConstant.PROJECTSTAGEMAXCOUNT) {
+				throw new HioMybatisInsertException("分组最多能创建50个");
+			}
+			if (!"".equals(firstSort) && !"".equals(afterSort)) {
+				ProjectStageGroup projectStageGroup = getObjectById(projectStageGroupId.toString());
+				double first = Double.parseDouble(firstSort);
+				double second = Double.parseDouble(afterSort);
+				ProjectStageGroup copy = new ProjectStageGroup();
+				copy.setStageGroupName(projectStageGroup.getStageGroupName());
+				copy.setStageId(projectStageGroup.getStageId());
+				copy.setStageGroupOrder((second - first) / 2 + first);
+				result = save(copy);
+			}
+			if ("".equals(firstSort)) {
+				ProjectStageGroup projectStageGroup = getObjectById(projectStageGroupId.toString());
+				double first = 0;
+				double second = Double.parseDouble(afterSort);
+
+				ProjectStageGroup copy = new ProjectStageGroup();
+				copy.setStageGroupName(projectStageGroup.getStageGroupName());
+				copy.setStageId(projectStageGroup.getStageId());
+				copy.setStageGroupOrder((second - first) / 2 + first);
+				result = save(copy);
+
+			}
+			if ("".equals(afterSort)) {
+				ProjectStageGroup projectStageGroup = getObjectById(projectStageGroupId.toString());
+				double first = Double.parseDouble(firstSort);
+
+				ProjectStageGroup copy = new ProjectStageGroup();
+				copy.setStageGroupName(projectStageGroup.getStageGroupName());
+				copy.setStageId(projectStageGroup.getStageId());
+				copy.setStageGroupOrder(first + 1);
+				result = save(copy);
+
+			}
+			updateRedisData(projectStageGroupParam.getProjectStageId());
+		} else {
+			logger.error("无复制分组权限!");
+			throw new HioMybatisQueryException("无复制分组权限!");
+		}
+		return result;
+	}
+
+	/**
+	 * 拖拽排序
+	 * 
+	 * @param drapProjectStageGroupParam
+	 * @return
+	 */
+	@Override
+	public Object dragProjectStageGroup(ProjectStageGroupParam drapProjectStageGroupParam) throws HioMybatisUpdateException {
+		String permission = projectInfoService.queryProjectPermission(drapProjectStageGroupParam.getProjectId(), OaConstant.PROJECTINPERSON, getLoginUser());
+		int result = 0;
+
+		if (OaConstant.PROJECTADMIN.equals(permission) || OaConstant.PROJECTCREATEPERSON.equals(permission) || OaConstant.PROJECTRESPONSIBLEPERSON.equals(permission)
+				|| OaConstant.PROJECTPARTICIPANTPERSON.equals(permission)) {
+
+			String firstSort = drapProjectStageGroupParam.getFirstSort();
+			String afterSort = drapProjectStageGroupParam.getAfterSort();
+			String projectStageId = drapProjectStageGroupParam.getProjectStageId();
+			String projectStageGroupId = drapProjectStageGroupParam.getProjectStageGroupId();
+
+			if (!"".equals(firstSort) && !"".equals(afterSort)) {
+				ProjectStageGroup projectStageGroup = getObjectById(projectStageGroupId.toString());
+				double first = Double.parseDouble(firstSort);
+				double second = Double.parseDouble(afterSort);
+				projectStageGroup.setStageGroupOrder((second - first) / 2 + first);
+				result = update(projectStageGroup);
+			}
+			if ("".equals(firstSort)) {
+				ProjectStageGroup projectStageGroup = getObjectById(projectStageGroupId.toString());
+				double first = 0;
+				double second = Double.parseDouble(afterSort);
+				projectStageGroup.setStageGroupOrder((second - first) / 2 + first);
+				result = update(projectStageGroup);
+			}
+			if ("".equals(afterSort)) {
+				ProjectStageGroup projectStageGroup = getObjectById(projectStageGroupId.toString());
+				double first = Double.parseDouble(firstSort);
+				projectStageGroup.setStageGroupOrder(first + 1);
+				result = update(projectStageGroup);
+			}
+
+			updateRedisData(projectStageId);
+		} else {
+			logger.error("无复制分组权限!");
+			throw new HioMybatisQueryException("无复制分组权限!");
+		}
+		return result;
+	}
+
+	/**
+	 * 根据阶段ID获取分组信息
+	 * 
+	 * @return
+	 * @throws Exception
+	 */
+	@Override
+	public List<ProjectStageGroupDto> queryProjectStageGroupListByStageId(ProjectStageGroupParam projectStageGroupParam) throws HioMybatisQueryException {
+
+		List<ProjectStageGroupDto> projectStageGroupDtoList = null;
+		String projectStageId = projectStageGroupParam.getProjectStageId();
+		String projectStageVersion = projectStageGroupParam.getProjectStageVersion();
+		logger.info("*****************************redis取阶段数据开始*************************************");
+		Map<String, String> projectStageJson = JedisUtil.fetchRelationRow(OaConstant.PROJECTSTAGEREDIS + projectStageId);
+		Map<String, String> projectStageVersionInRedis = JedisUtil.fetchRelationRow(OaConstant.PROJECTSTAGEREDISVERSION + projectStageId);
+		if (isNotEmpty(projectStageVersion)) {
+			String versionInredis = null;
+			for (String key : projectStageVersionInRedis.keySet()) {
+				logger.info("*****************************redis取阶段版本号 开始*************************************");
+				versionInredis = projectStageVersionInRedis.get(key);
+				logger.info("*****************************redis取阶段版本号 结束*************************************");
+			}
+
+			if (isNotEquals(versionInredis, projectStageGroupParam.getProjectStageVersion())) {
+				for (String key : projectStageJson.keySet()) {
+					// if (!"table_name".equals(key)) {
+					logger.info("*****************************redis取阶段数据json2obj 开始*************************************");
+					projectStageGroupDtoList = JacksonUtils.fromJson(projectStageJson.get(key), ArrayList.class, ProjectStageGroupDto.class);
+					logger.info("*****************************redis取阶段数据json2obj 结束*************************************");
+					// }
+				}
+
+			}
+		} else {
+			projectStageGroupDtoList = updateRedisData(projectStageId);
+		}
+
+		return projectStageGroupDtoList;
+
+	}
+
+	@Override
+	public List<ProjectStageGroupDto> updateRedisData(String stageId) throws HioMybatisQueryException {
+		List<ProjectStageGroup> list = projectStageGroupMapper.queryProjectStageGroupListByStageId(stageId);
+		List<ProjectStageGroupDto> projectStageGroupDtoList = list.stream().map(projectStageGroup -> {
+			return changeObject(projectStageGroup);
+		}).collect(Collectors.toList());
+		logger.info("*****************************redis取阶段数据开始*************************************");
+		JedisUtil.addRelationRow(OaConstant.PROJECTSTAGEREDIS + stageId, obj2map(projectStageGroupDtoList));
+		Map projectStageVersion = new HashMap();
+		projectStageVersion.put("projectStageVersion", System.currentTimeMillis() + "");
+		JedisUtil.addRelationRow(OaConstant.PROJECTSTAGEREDISVERSION + stageId, projectStageVersion);
+		return projectStageGroupDtoList;
+	}
+
+	private ProjectStageGroupDto changeObject(ProjectStageGroup projectStageGroup) {
+		ProjectStageGroupDto projectStageGroupDto = new ProjectStageGroupDto();
+		BeanUtils.copyProperties(projectStageGroup, projectStageGroupDto);
+		ProjectStageTaskInfoParam projectStageTaskInfoParam = new ProjectStageTaskInfoParam();
+		projectStageTaskInfoParam.setProjectStageGroupId(projectStageGroup.getId());
+		List<ProjectStageTaskInfo> taskInfoList = projectStageTaskInfoMapper.queryTaskInfoList(projectStageTaskInfoParam);
+		projectStageGroupDto.setProjectStageTaskInfoList(taskInfoList);
+		projectStageGroupDto.setStageVersion(System.currentTimeMillis() + "");
+		return projectStageGroupDto;
+
+	}
+
+	public static void main(String [] args) {
+
+	}
+
+}

@@ -1,0 +1,74 @@
+package com.jzy.hio.platform.friendinfo.service;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.amqp.core.Message;
+import org.springframework.amqp.rabbit.annotation.RabbitHandler;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.RedisKeyConstant;
+import com.jzy.hio.entity.FriendInfo;
+import com.jzy.hio.platform.constant.UserOrFriendConstant;
+import com.jzy.hio.platform.friendinfo.dto.FriendInfoDto;
+import com.jzy.hio.redis.JedisUtil;
+import com.rabbitmq.client.Channel;
+
+/**
+ * 创建消息消费者
+ */
+@Component
+public class FriendReceiver  extends Base{
+	protected Logger logger = LoggerFactory.getLogger(this.getClass());
+	@Autowired
+	private FriendInfoService friendInfoService;
+	
+    /**
+     * 消费操作为输出消息的字符串内容
+     * @param hello
+     */
+	@RabbitListener(queues = "${queue.imFriendInfoQueue}", containerFactory="rabbitListenerContainerFactory")
+    @RabbitHandler
+    public void process(Message message, Channel channel) {
+    	try {
+	        System.out.println("Receiver : " + message.getBody());
+	        logger.info("mq保存好友关系：" + message.getBody());
+	        FriendInfo friendInfo = json2obj(new String(message.getBody(),"utf-8"), FriendInfo.class);
+	        Map<String,Object> map = new HashMap<String,Object>();
+	        map.put("uid", friendInfo.getUid());
+	        map.put("fid", friendInfo.getFid());
+	        List<FriendInfoDto> list = friendInfoService.getMyFriendList(map);
+	        if(null != list && list.size() > 0) {
+	        	friendInfo.setId(list.get(0).getId());
+	        	if(null !=friendInfo.getDelType() && 0 != friendInfo.getDelType())
+	        		friendInfo.setDelflag(friendInfo.getDelType());
+	        	friendInfo.setCreatePersonId(friendInfo.getUid());
+	        	friendInfo.setUpdatePersonId("");
+	        	friendInfo.setCreatePersonName("");
+	        	friendInfo.setUpdatePersonName("");
+	        	friendInfoService.update(friendInfo);
+	        	JedisUtil.addRow(friendInfo);
+	        	
+	        	/*Map<String,Object> fFriendMap = obj2map(friendInfo);
+	        	fFriendMap.put("id", friendInfo.getFid());
+	        	JedisUtil.addListRow(RedisKeyConstant.myfriendPrefix + friendInfo.getUid(), fFriendMap);*/
+	        }else {
+	        	friendInfo.setCreatePersonId(friendInfo.getUid());
+	        	friendInfo.setUpdatePersonId("");
+	        	friendInfo.setCreatePersonName("");
+	        	friendInfo.setUpdatePersonName("");
+	        	friendInfoService.save(friendInfo);
+	        }
+	        channel.basicAck(message.getMessageProperties().getDeliveryTag(), true);
+    	}catch(Exception e) {
+    		e.printStackTrace();
+    		logger.error("mq保存好友关系失败：{}" , e.getMessage());
+    	}
+    }
+}

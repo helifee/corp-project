@@ -1,0 +1,403 @@
+package com.xinleju.platform.flow.service.impl;
+
+import java.text.DecimalFormat;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.flow.dao.InstanceStatDao;
+import com.xinleju.platform.flow.dto.InstanceDto;
+import com.xinleju.platform.flow.dto.InstanceStatDto;
+import com.xinleju.platform.flow.entity.InstanceStat;
+import com.xinleju.platform.flow.service.InstanceStatService;
+import com.xinleju.platform.flow.utils.DateHourUtils;
+import com.xinleju.platform.tools.data.JacksonUtils;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class InstanceStatServiceImpl extends  BaseServiceImpl<String,InstanceStat> implements InstanceStatService{
+	
+
+	@Autowired
+	private InstanceStatDao instanceStatDao;
+
+	@Override
+	public List<InstanceStatDto> statUseTimes(Map<String, Object> map) {
+		map = processBusiObjectId(map);
+		return instanceStatDao.statUseTimes(map);
+	}
+
+	private Map<String, Object> processBusiObjectId(Map<String, Object> map) {
+		String busiObjectId = (String)map.get("busiObjectId"); 
+		if(busiObjectId!=null && !"-1".equals(busiObjectId) && !"".equals(busiObjectId)){
+			System.out.println("\n\nbusiObjectId="+busiObjectId);
+			String[] itemIds = busiObjectId.split(",");
+			map.put("busiObjectId", itemIds);
+		}else{
+			map.remove("busiObjectId");
+		}
+		return map;
+	}
+
+	@Override
+	public List<InstanceStatDto> statInstanceEffiency(Map<String, Object> map) {
+		map = processBusiObjectId(map);
+		List<InstanceStatDto> tempList = instanceStatDao.statInstanceEffiency(map);
+		List<InstanceStatDto> dataList = new ArrayList<InstanceStatDto>();
+		System.out.println("\n\n 001 statInstanceEffiency() ---tempList.size="+tempList.size());
+		if(tempList!=null && tempList.size()>0){//对数据进行汇总和统计
+			Map<String, InstanceStatDto> dataMap = new HashMap<String, InstanceStatDto>();
+			Map<String, String> nameMap = new HashMap<String, String>();
+			//第一步: 开始进行数据的处理统计,汇总到dataMap
+			for(int idx=0; idx<tempList.size(); idx++){
+				InstanceStatDto statDto = tempList.get(idx);
+				String statWay = statDto.getStatWay();//COM / DEPT / PERSON
+				String statWayId = statDto.getStatWayId();
+				
+				//根据statDto统计任务所花的实际工时的小时数据
+				long hourSum = calculteHourSumsByStatDto(statDto);
+				//增加任务时长的比较条件
+				boolean addResultFlag = addCompareTypeCondition(map, hourSum);
+				System.out.println("004---- addResultFlag="+addResultFlag);
+				if(addResultFlag){//如果是符合加入结果集的条件 ,则加入结果集
+					String keyText = statWay+"-"+statWayId;
+					InstanceStatDto newDto = dataMap.get(keyText);
+					
+					String nameValue = nameMap.get(keyText);
+					if(nameValue==null || "".equals(nameValue)  || "null".equals(nameValue)){
+						nameValue = statDto.getStatWayName();
+						nameMap.put(keyText, nameValue);
+					}
+					
+					if(newDto == null){//如果是第一次存入的
+						newDto = new InstanceStatDto();//statWay,statWayId
+						newDto.setStatWay(statWay);
+						newDto.setStatWayId(statWayId);
+						newDto.setStatWayName(statDto.getStatWayName());
+						newDto.setTaskSum("0");
+						newDto.setTotalSum("0");
+						newDto.setAvgSum("0");
+						newDto.setMaxSum("0");
+						newDto.setMinSum(Float.toString(hourSum));
+					}
+					int taskSum = Integer.parseInt(newDto.getTaskSum());
+					float totalSum = Float.parseFloat(newDto.getTotalSum());
+					float maxSum = Float.parseFloat(newDto.getMaxSum());
+					float minSum = Float.parseFloat(newDto.getMinSum());
+					taskSum = taskSum+1;
+					totalSum = totalSum+hourSum;
+					if(hourSum>maxSum){
+						maxSum=hourSum;
+					}
+					
+					if(hourSum<minSum){
+						minSum=hourSum;
+					}
+					newDto.setTaskSum(Integer.toString(taskSum));
+					newDto.setTotalSum(Float.toString(totalSum));
+					newDto.setMaxSum(Float.toString(maxSum));
+					newDto.setMinSum(Float.toString(minSum));
+					newDto.setStatWayName(nameValue);
+					dataMap.put(keyText, newDto);
+				}
+			}//end for loop
+			
+			//第二步: 从dataMap读取数据,转为List的数据
+			DecimalFormat decimalFormat=new DecimalFormat("0.00");
+			System.out.println(" 005 dataMap.values().size="+dataMap.values().size());
+			for(InstanceStatDto resultDto : dataMap.values()){
+				//此处还需增加将statWayId转换为statWayName的逻辑
+				//可以考虑批量地获取statWayId对应的值
+				System.out.println("----->>> statWayId="+resultDto.getStatWayId()+"; statWay="+resultDto.getStatWay());
+				
+				int taskSum = Integer.parseInt(resultDto.getTaskSum());
+				float totalSum = Float.parseFloat(resultDto.getTotalSum());
+				float avgSum = totalSum/taskSum;
+				resultDto.setAvgSum(decimalFormat.format(avgSum));
+				dataList.add(resultDto);
+			}
+			System.out.println(" 006 dataList.size="+dataList.size());
+		}
+		return dataList;
+	}
+
+	@Override
+	public List<InstanceStatDto> statOperateTimes(Map<String, Object> map) {
+		map = processBusiObjectId(map);
+		
+		return instanceStatDao.statOperateTimes(map);
+	}
+
+	//备份的数据
+	public List<InstanceStatDto> statTaskLengthOld(Map<String, Object> map) {
+		map = processBusiObjectId(map);
+		return instanceStatDao.statTaskLength(map);
+	}
+	
+	
+	@Override
+	public List<InstanceStatDto> statTaskLength(Map<String, Object> map) {
+		map = processBusiObjectId(map);
+		List<InstanceStatDto> tempList = instanceStatDao.statTaskLength(map);
+		List<InstanceStatDto> dataList = new ArrayList<InstanceStatDto>();
+		System.out.println("\n\n 001 statTaskLength() ---tempList.size="+tempList.size());
+		if(tempList!=null && tempList.size()>0){//对数据进行汇总和统计
+			Map<String, InstanceStatDto> dataMap = new HashMap<String, InstanceStatDto>();
+			//第一步: 开始进行数据的处理统计,汇总到dataMap
+			for(int idx=0; idx<tempList.size(); idx++){
+				InstanceStatDto statDto = tempList.get(idx);
+				String statWay = statDto.getStatWay();//COM / DEPT / PERSON
+				String statWayId = statDto.getStatWayId();
+				//根据statDto统计任务所花的实际工时的小时数据
+				long hourSum = calculteHourSumsByStatDto(statDto);
+				//增加任务时长的比较条件
+				boolean addResultFlag = addCompareTypeCondition(map, hourSum);
+				System.out.println("004---- addResultFlag="+addResultFlag);
+				if(addResultFlag){//如果是符合加入结果集的条件 ,则加入结果集
+					String keyText = statWay+"-"+statWayId;
+					InstanceStatDto newDto = dataMap.get(keyText);
+					if(newDto == null){//如果是第一次存入的
+						newDto = new InstanceStatDto();//statWay,statWayId
+						newDto.setStatWay(statWay);
+						newDto.setStatWayId(statWayId);
+						newDto.setStatWayName(statDto.getStatWayName());
+						newDto.setTaskSum("0");
+						newDto.setTotalSum("0");
+						newDto.setAvgSum("0");
+						newDto.setMaxSum("0");
+						newDto.setMinSum(Float.toString(hourSum));
+					}
+					int taskSum = Integer.parseInt(newDto.getTaskSum());
+					float totalSum = Float.parseFloat(newDto.getTotalSum());
+					float maxSum = Float.parseFloat(newDto.getMaxSum());
+					float minSum = Float.parseFloat(newDto.getMinSum());
+					taskSum = taskSum+1;
+					totalSum = totalSum+hourSum;
+					if(hourSum>maxSum){
+						maxSum=hourSum;
+					}
+					
+					if(hourSum<minSum){
+						minSum=hourSum;
+					}
+					newDto.setTaskSum(Integer.toString(taskSum));
+					newDto.setTotalSum(Float.toString(totalSum));
+					newDto.setMaxSum(Float.toString(maxSum));
+					newDto.setMinSum(Float.toString(minSum));
+					dataMap.put(keyText, newDto);
+				}
+				
+			}//end for loop
+			
+			//第二步: 从dataMap读取数据,转为List的数据
+			DecimalFormat decimalFormat=new DecimalFormat("0.00");
+			System.out.println(" 005 dataMap.values().size="+dataMap.values().size());
+			for(InstanceStatDto resultDto : dataMap.values()){
+				//此处还需增加将statWayId转换为statWayName的逻辑
+				//可以考虑批量地获取statWayId对应的值
+				System.out.println("----->>> statWayId="+resultDto.getStatWayId()+"; statWay="+resultDto.getStatWay());
+				
+				int taskSum = Integer.parseInt(resultDto.getTaskSum());
+				float totalSum = Float.parseFloat(resultDto.getTotalSum());
+				float avgSum = totalSum/taskSum;
+				resultDto.setAvgSum(decimalFormat.format(avgSum));
+				dataList.add(resultDto);
+			}
+			System.out.println(" 006 dataList.size="+dataList.size());
+		}
+		return dataList;
+	}
+
+	private long calculteHourSumsByStatDto(InstanceStatDto statDto) {
+		String startDate = statDto.getStartDate().substring(0, 10);
+		String endDate = statDto.getEndDate().substring(0, 10);
+		long totalSecondSum = Long.parseLong(statDto.getHourSum());//先得到总的秒数
+		InstanceStatDto statDayDto = instanceStatDao.queryHolidaySumAndMinMAxDate(startDate, endDate);
+		int holidayDaySum = Integer.parseInt(statDayDto.getHourSum());
+		String minDate = statDayDto.getStartDate();
+		String maxDate = statDayDto.getEndDate();
+		if(holidayDaySum>0){
+			//对几种情况进行特殊处理
+			//case 1: 开始和结束是同一天,且都是节假日
+			if(startDate.equals(minDate) && minDate.equals(maxDate) && endDate.equals(maxDate)){
+				holidayDaySum = 0;
+				totalSecondSum = 0;
+				System.out.println("case 1: 开始和结束是同一天,且都是节假日  totalSecondSum="+totalSecondSum);
+			} else {
+				
+				if(startDate.equals(minDate)){//如果开始时间是节假日
+					long secondSum = DateHourUtils.secondsBetween(statDto.getStartDate(), startDate+" 23:59:59");
+					totalSecondSum = totalSecondSum -secondSum;
+				}
+				System.out.println("case 2 001: startDate="+startDate+"; minDate="+minDate+"; totalSecondSum="+totalSecondSum);
+				if(endDate.equals(maxDate)){//如果结束时间是节假日
+					long secondSum = DateHourUtils.secondsBetween(endDate+" 00:00:00", statDto.getEndDate());
+					totalSecondSum = totalSecondSum -secondSum;
+				}
+				System.out.println("case 2 002: endDate="+endDate+"; maxDate="+maxDate+"; totalSecondSum="+totalSecondSum);
+				
+				if(totalSecondSum<0){
+					totalSecondSum = 0;
+				}
+				
+				if(totalSecondSum>0){
+					int tempSum = 0;
+					if(startDate.equals(minDate)){
+						tempSum++;
+					}
+					if(endDate.equals(maxDate)){
+						tempSum++;
+					}
+					System.out.println("case 2 003: totalSecondSum="+totalSecondSum);
+					totalSecondSum = totalSecondSum - (holidayDaySum-tempSum)*24*3600;//先扣中间(不含两头的)的节假日
+					System.out.println("case 2 003: holidayDaySum="+holidayDaySum+"; tempSum="+tempSum+"; totalSecondSum="+totalSecondSum);
+				}
+			}
+			System.out.println("total=>> totalSecondSum="+totalSecondSum);
+			if(totalSecondSum<0){
+				totalSecondSum = 0;
+			}
+		}
+		
+		long hourSum = totalSecondSum/3600;
+		System.out.println("statWayId="+statDto.getStatWayId()+"; StartDate="+statDto.getStartDate()+"; EndDate="+statDto.getEndDate()+"; hourSum="+hourSum);
+		return hourSum;
+	}
+
+	private boolean addCompareTypeCondition(Map<String, Object> map, float hourSum) {
+		//开始处理任务时长的查询条件 ----默认是可以加入结果集的
+		boolean addResultFlag = true;
+		//compareType ==greaterEqual|lessEqual|equal|between>>startSum endSum
+		String compareType = (String)map.get("compareType");
+		//compareType不为空的情况
+		if(compareType!=null && !"".equals(compareType)  && !"null".equals(compareType)&& !"-1".equals(compareType)){
+			addResultFlag = false;//compareType不为空的时候,则初步设置为不加入结果集
+			String startSumText = (String)map.get("startSum");
+			String endSumText = (String)map.get("endSum");
+			float startSum = 0, endSum=0;
+			if(startSumText!=null && !"".equals(startSumText) && !"null".equals(startSumText)){
+				startSum = Float.parseFloat(startSumText);
+			}
+			if(endSumText!=null && !"".equals(endSumText) && !"null".equals(endSumText)){
+				endSum = Float.parseFloat(endSumText);
+			}
+			
+			//只有满足条件了,才能加入结果集
+			if( "greaterEqual".equals(compareType) ){
+				if(hourSum>=startSum){
+					addResultFlag = true;
+				}
+			}
+			if( "lessEqual".equals(compareType) ){
+				if(hourSum<=startSum){
+					addResultFlag = true;
+				}
+			}
+			if( "equal".equals(compareType) ){
+				if(hourSum==startSum){
+					addResultFlag = true;
+				}
+			}
+			if( "between".equals(compareType) ){
+				if(hourSum>=startSum && hourSum<=endSum){
+					addResultFlag = true;
+				}
+			}
+		}
+		return addResultFlag;
+	}
+
+	@Override
+	public List<InstanceStatDto> detailTaskLengthList(Map map) {
+		map = processBusiObjectId(map);
+		List<InstanceStatDto> tempList = instanceStatDao.detailTaskLengthList(map);
+		List<InstanceStatDto> dataList = new ArrayList<InstanceStatDto>();
+		
+		if(tempList!=null && tempList.size()>0){//对数据进行汇总和统计
+			for(int idx=0; idx<tempList.size(); idx++){
+				InstanceStatDto statDto = tempList.get(idx);
+				//根据statDto统计任务所花的实际工时的小时数据
+				long hourSum = calculteHourSumsByStatDto(statDto);
+				
+				statDto.setHourSum(hourSum+"");
+				statDto.setDayType("1");//默认是工作日处理
+				String finishFlag = statDto.getFinishFlag();
+				
+				//增加任务时长的比较条件
+				boolean addResultFlag = addCompareTypeCondition(map, hourSum);
+				if(addResultFlag){
+					if("0".equals(finishFlag)){ //未完成的情况
+						statDto.setDayType("未完成");
+						statDto.setApproveType("");
+						statDto.setOperationType("");
+						statDto.setEndDate("");
+					}else{
+						String operateContent = statDto.getOperateContent();//approveType:XXX,operationType:xxxx,
+						if(operateContent!=null && operateContent.length()>10){
+							String contentItems[] = operateContent.split(",");
+							String approveType = contentItems[0].replaceAll("approveType:", "");
+							String operationType = contentItems[0].replaceAll("operationType:", "");
+							statDto.setApproveType(approveType);//此处需转换为对应的名称
+							statDto.setOperationType(operationType);//此处需转换为对应的名称
+						}else{
+							statDto.setApproveType("暂无");//此处需转换为对应的名称
+							statDto.setOperationType("暂无");//此处需转换为对应的名称
+						}
+						String dayType = statDto.getDayType();
+						if("1".equals(dayType)){
+							statDto.setDayType("是");
+						}else{
+							statDto.setDayType("否");
+						}
+						String endDate = statDto.getEndDate();
+						statDto.setEndDate(endDate.substring(0, 19)); 
+					}
+					System.out.println("--->>> idx="+idx+"; "+JacksonUtils.toJson(statDto));
+					dataList.add(statDto);
+				}
+			}
+		}
+		return dataList;
+	}
+
+	@Override
+	public List<InstanceDto> detailOperateTimesList(Map map) {
+		map = processBusiObjectId(map);
+		return instanceStatDao.detailOperateTimesList(map);
+	}
+
+	@Override
+	public List<InstanceStatDto> detailInstanceEfficiencyList(Map map) {
+		map = processBusiObjectId(map);
+		List<InstanceStatDto> tempList = instanceStatDao.detailInstanceEfficiencyList(map);
+		List<InstanceStatDto> dataList = new ArrayList<InstanceStatDto>();
+		if(tempList!=null && tempList.size()>0){//对数据进行汇总和统计
+			for(int idx=0; idx<tempList.size(); idx++){
+				InstanceStatDto statDto = tempList.get(idx);
+				//根据statDto统计任务所花的实际工时的小时数据
+				long hourSum = calculteHourSumsByStatDto(statDto);
+				statDto.setHourSum(hourSum+"");
+				String startDate = statDto.getStartDate();
+				statDto.setStartDate(startDate.substring(0, 19));
+				dataList.add(statDto);
+			}
+		}
+		return dataList;
+	}
+
+	public static void main(String args[]){
+		DecimalFormat decimalFormat=new DecimalFormat("0.00");
+		System.out.println(" 005 dataMap.values().size="+decimalFormat.format(0.50));
+		
+	}
+}

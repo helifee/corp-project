@@ -1,0 +1,77 @@
+package com.xinleju.platform.finance.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Table(value="PT_FI_SYS_BIZ_ITEM",desc="会计科目对照项注册")
+public class SysBizItem extends BaseEntity{
+	
+		
+	@Column(value="code",desc="编码")
+	private String code;
+    
+  		
+	@Column(value="name",desc="名称")
+	private String name;
+    
+  		
+	@Column(value="app_code",desc="所属系统")
+	private String appCode;
+    
+  		
+	@Column(value="url",desc="地址接口")
+	private String url;
+    
+	@Column(value="method",desc="方法名")
+	private String method;
+	
+  		
+		
+	public String getCode() {
+		return code;
+	}
+	public void setCode(String code) {
+		this.code = code;
+	}
+    
+  		
+	public String getName() {
+		return name;
+	}
+	public void setName(String name) {
+		this.name = name;
+	}
+    
+  		
+	public String getAppCode() {
+		return appCode;
+	}
+	public void setAppCode(String appCode) {
+		this.appCode = appCode;
+	}
+    
+  		
+	public String getUrl() {
+		return url;
+	}
+	public void setUrl(String url) {
+		this.url = url;
+	}
+	public String getMethod() {
+		return method;
+	}
+	public void setMethod(String method) {
+		this.method = method;
+	}
+    
+  		
+	
+}

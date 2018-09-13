@@ -1,0 +1,52 @@
+package com.xinleju.platform.sys.org.service;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.sys.org.dto.RoleUserDto;
+import com.xinleju.platform.sys.org.entity.RoleUser;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface RoleUserService extends  BaseService <String,RoleUser>{
+
+	/**
+	 * 根据roleid删除
+	 * @param parentId
+	 * @return
+	 */
+	public Integer deleteByRoleId(Map<String, Object> paramater)  throws Exception;
+	/**
+	 * 批量保存
+	 * @param parentId
+	 * @return
+	 */
+	public Integer insertRoleUserBatch(Map<String, Object> paramater)  throws Exception;
+	
+	/**
+	 * 获取通用角色引用对象列表
+	 * @return
+	 */
+	public List<RoleUserDto> queryRoleRefListByRoleId(Map<String, Object> paramater)  throws Exception;
+	/**
+	 * 查询用户岗位组织树
+	 * @return
+	 */
+	public List<Map<String, Object>> selectUserPostTree(Map<String, Object> paramater)  throws Exception;
+	/**
+	 * 查询用户组织树
+	 * @return
+	 */
+	public List<Map<String, Object>> selectUserOrgTree(Map<String, Object> paramater)  throws Exception;
+	/**
+	 *批量保存roleuserPost
+	 * @return
+	 */
+	public Integer saveBatchRoleUserPost(Map<String, Object> paramater)  throws Exception;
+
+}

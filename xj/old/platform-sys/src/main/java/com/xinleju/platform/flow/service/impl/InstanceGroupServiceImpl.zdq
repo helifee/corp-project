@@ -1,0 +1,354 @@
+package com.xinleju.platform.flow.service.impl;
+
+import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
+import java.sql.Timestamp;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
+import java.util.*;
+import java.util.concurrent.ExecutorService;
+
+import com.xinleju.platform.base.datasource.DataSourceContextHolder;
+import com.xinleju.platform.base.utils.LoginUtils;
+import com.xinleju.platform.base.utils.SecurityUserBeanInfo;
+import com.xinleju.platform.base.utils.ThreadPoolUtil;
+import com.xinleju.platform.flow.dao.*;
+import com.xinleju.platform.flow.dto.SysNoticeMsgDto;
+import com.xinleju.platform.flow.entity.*;
+import com.xinleju.platform.flow.utils.ConfigurationUtil;
+import com.xinleju.platform.flow.utils.FlowLogUtil;
+import com.xinleju.platform.tools.data.JacksonUtils;
+import net.sf.json.JSONObject;
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang.StringUtils;
+import org.apache.http.HttpResponse;
+import org.apache.http.HttpStatus;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.entity.StringEntity;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClientBuilder;
+import org.apache.http.message.BasicHeader;
+import org.apache.http.protocol.HTTP;
+import org.apache.http.util.EntityUtils;
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.base.utils.IDGenerator;
+import com.xinleju.platform.flow.enumeration.ApproverStatus;
+import com.xinleju.platform.flow.service.InstanceGroupService;
+import com.xinleju.platform.sys.org.entity.User;
+import com.xinleju.platform.sys.org.service.UserService;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class InstanceGroupServiceImpl extends  BaseServiceImpl<String,InstanceGroup> implements InstanceGroupService{
+	
+	private static Logger log = Logger.getLogger("flowLogger");
+	private ExecutorService threadPool = ThreadPoolUtil.getInstance() ;
+	private static final String APPCODE_LLOA = "LLOA";
+	private static final String APPLICATION_JSON = "application/json";
+	private static final String CONTENT_TYPE_TEXT_JSON = "text/json";
+	@Autowired
+	private InstanceGroupDao instanceGroupDao;
+	
+	@Autowired
+	private InstancePostDao instancePostDao;
+	
+	@Autowired
+	private InstanceTaskDao instanceTaskDao;
+	
+	@Autowired
+	private InstanceDao instanceDao;
+	
+	@Autowired
+	private SysNoticeMsgDao sysNoticeMsgDao;
+	
+	@Autowired
+	private InstanceAcDao instanceAcDao;
+
+	@Autowired
+	private UserService userService;
+
+	@Autowired
+	private SysNoticeMsgTempDao sysNoticeMsgTempDao;
+
+	@Override
+	@Transactional(readOnly = false, propagation = Propagation.REQUIRED)
+	public void replaceInstanceGroup(String userJson,List<InstanceGroup> groupList) throws Exception {
+		if(groupList==null || groupList.size()==0){
+			return;
+		}
+		for(InstanceGroup group : groupList){
+			System.out.println("\n approver.Id="+group.getId() );
+			InstanceGroup newGroup = this.getObjectById(group.getId());
+			
+			//处理实例的当前人信息
+			this.updateCurrentApprover(newGroup, group);
+			
+			newGroup.setParticipantId(group.getParticipantId());
+			newGroup.setParticipantName(group.getParticipantName());
+			
+			//处理当前审批人的消息
+			String loginName = null;
+			User user = userService.getObjectById(group.getParticipantId());
+			if(user != null) {
+				loginName = user.getLoginName();
+			}
+			int updateCnt = this.updateMsg(newGroup, loginName,userJson);
+			log.info("替换当前审批时修改对应消息：" + updateCnt);
+			
+			int personCnt = queryPersonCntUnder(newGroup.getAcPostId());
+			if(personCnt == 1) {
+				//还需要更新InstancePost的postName
+				String acPostId = newGroup.getAcPostId();
+				InstancePost instancePost = instancePostDao.getObjectById(acPostId);
+				instancePost.setPostName(group.getPostName());
+				instancePost.setPostId(group.getPostId());
+				instancePostDao.update(instancePost);
+				
+			} else {
+				
+				if(!group.getPostId().equals(newGroup.getPostId())) {
+					//
+					InstancePost instancePost = instancePostDao.getObjectById(newGroup.getAcPostId());
+					instancePost.setLeftPerson(instancePost.getLeftPerson() - 1);
+					int cnt = instancePostDao.update(instancePost);
+					
+					InstancePost post = new InstancePost();
+					post.setId(IDGenerator.getUUID());
+					post.setAcId(newGroup.getAcId());
+					post.setPostId(group.getPostId());
+					post.setPostName(group.getPostName());
+					post.setStatus(group.getStatus());
+					newGroup.setAcPostId(post.getId());
+					instancePostDao.save(post);
+					
+					InstanceAc instanceAc = instanceAcDao.getObjectById(newGroup.getAcId());
+					instanceAc.setLeftPost(instanceAc.getLeftPost() + 1);
+					int icnt = instanceAcDao.update(instanceAc);
+				}
+			}
+			
+			newGroup.setPostId(group.getPostId());
+			newGroup.setPostName(group.getPostName());
+			int result = this.update(newGroup);
+			
+			//处理任务表中的审批人
+			Map<String, Object> params = new HashMap<String, Object>();
+			params.put("groupId", newGroup.getId());
+			List<InstanceTask> taskList = instanceTaskDao.queryList(params);
+			if(CollectionUtils.isNotEmpty(taskList)) {
+				for(InstanceTask task : taskList) {
+					task.setApproverId(newGroup.getParticipantId());
+					task.setApproverName(newGroup.getParticipantName());
+				}
+			}
+			instanceTaskDao.updateBatch(taskList);
+			
+			System.out.println("\n ---- this.update(newGroup) result ="+result);
+		}
+	}
+
+	private void updateCurrentApprover(InstanceGroup newGroup, InstanceGroup group) {
+		if(ApproverStatus.RUNNING.getValue().equals(group.getStatus())) {
+			String instanceId = group.getSource();	//source传过来的是instanceId
+			Instance instance = instanceDao.getObjectById(instanceId);
+			String currentApproverIds = instance.getCurrentApproverIds();
+			log.info("currentApproverIds=" + currentApproverIds);
+			currentApproverIds = currentApproverIds.replaceFirst(newGroup.getParticipantId(), group.getParticipantId());
+			log.info("currentApproverIds=" + currentApproverIds + ", newGroup.getParticipantId()=" 
+					+newGroup.getParticipantId() + ", group.getParticipantId()=" + group.getParticipantId());
+			String currentApprovers = instance.getCurrentApprovers();
+			log.info("currentApprovers=" + currentApprovers);
+			currentApprovers = currentApprovers.replace(newGroup.getParticipantName(), group.getParticipantName());
+			log.info("currentApprovers=" + currentApprovers + ", newGroup.getParticipantName()=" 
+					+newGroup.getParticipantName() + ", group.getParticipantName()=" + group.getParticipantName());
+			instance.setCurrentApproverIds(currentApproverIds);
+			instance.setCurrentApprovers(currentApprovers);
+			Map<String, Object> params = new HashMap<String, Object>();
+			params.put("instanceId", instance.getId());
+			params.put("currentApproverIds", currentApproverIds);
+			params.put("currentApprovers", currentApprovers);
+			params.put("status", instance.getStatus());
+			int updateCnt = instanceDao.update(Instance.class.getName() + ".sync", params);
+			log.info("替换审批人过程中修改流程中当前审批人信息：params=" + params + ", updateCnt=" + updateCnt);
+		}
+	}
+
+	private int queryPersonCntUnder(String acPostId) throws Exception {
+		Map<String, Object> params = new HashMap<String, Object>();
+		params.put("acPostId", acPostId);
+		params.put("delflag", 0);
+		List<InstanceGroup> list = this.queryList(params);
+		return list.size();
+	}
+
+	private int updateMsg(InstanceGroup newGroup, String loginName,String userJson) {
+		Map<String, Object> params = new HashMap<String, Object>();
+		params.put("groupId", newGroup.getId());
+		params.put("loginName", loginName);
+		params.put("userId", newGroup.getParticipantId());
+		params.put("userName", newGroup.getParticipantName());
+		params.put("sendDate", new Timestamp(System.currentTimeMillis()));
+		SysNoticeMsg msg = sysNoticeMsgDao.getMsgByGroupId(params);
+		int result = sysNoticeMsgDao.updateMsg(params);
+		if(result>0){
+			//同步CC 撤销代办
+			msg.setFirstType("REVOCATION");	//代表撤回
+			try {
+				httpPostWithJSON("撤回ID消息", msg.getLoginName(), generateMsgToIm(msg),userJson);
+			}catch (Exception e){
+				e.printStackTrace();
+			}
+		}
+		return result;
+	}
+
+	@Override
+	public int update(String id, Map<String, Object> params) {
+		return instanceGroupDao.update(id, params);
+	}
+	
+	@Override
+	public List<Map<String,Object>> queryListByInstanceId(Map<String, Object> paramMap) {
+		return this.instanceGroupDao.queryListByInstanceId(paramMap);
+	}
+	/**
+	 * 发送IM消息
+	 *
+	 * @param json
+	 * @return
+	 * @throws Exception
+	 */
+	public JSONObject httpPostWithJSON(String operate, String receiver, String json, String userInfoJson) throws Exception {
+		threadPool.execute(new Runnable() {
+
+			@Override
+			public void run() {
+				String sendUrl = ConfigurationUtil.getValue("imServer.sendMessage");
+				CloseableHttpClient httpClient = HttpClientBuilder.create().build();
+				HttpPost httpPost = new HttpPost(sendUrl);
+				httpPost.addHeader(HTTP.CONTENT_TYPE, APPLICATION_JSON);
+				log.info("im推送消息---json="+json);
+				String result = null;
+				try {
+					StringEntity se = new StringEntity(json);
+					se.setContentType(CONTENT_TYPE_TEXT_JSON);
+					se.setContentEncoding(new BasicHeader(HTTP.CONTENT_TYPE, APPLICATION_JSON));
+					httpPost.setEntity(se);
+					HttpResponse res = httpClient.execute(httpPost);
+					if(res.getStatusLine().getStatusCode() == HttpStatus.SC_OK){
+						result = EntityUtils.toString(res.getEntity()); // 返回json格式字符串
+						log.debug("result>>> result="+result);
+					}else{
+						//TODO 消息推送失败记录重发
+						//postUrl:sendUrl,webService,webServiceMethod,postParam:json,userInfoJson,postType:httpClient
+						saveFailMsg(sendUrl,json,"","","httpClient",userInfoJson,"","");
+
+					}
+					log.info("im推送消息---result>>> StatusCode="+res.getStatusLine().getStatusCode());
+				} catch(Exception e) {
+					result = "发送IM消息失败";
+					//TODO 消息推送失败记录重发
+					//postUrl:sendUrl,webService,webServiceMethod,postParam:json,userInfoJson,postType:httpClient
+					saveFailMsg(sendUrl,json,"","","httpClient",userInfoJson,"","");
+				}
+
+				FlowLogUtil.logSyncMsg("平台", "IM", operate, receiver, json, result);
+			}
+
+		});
+		return null;
+	}
+
+	private String generateMsgToIm(SysNoticeMsg msg) throws UnsupportedEncodingException {
+		SecurityUserBeanInfo loginUser= LoginUtils.getSecurityUserBeanInfo();
+		log.info("推送im前请求JSON："+ JacksonUtils.toJson(msg));
+		Timestamp sendDate = msg.getSendDate();
+		String sendTimeText = "";
+		DateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+		try {
+			sendTimeText = sdf.format(sendDate);
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+
+		String content = URLEncoder.encode(msg.getTitle(), "UTF-8");
+		String msgInfo = msg.getExtendInfo();
+		String urlText ="platform-app/"+msg.getMobibleUrl();
+		String pcUrl="platform-app/"+msg.getUrl();
+		if(urlText!=null && urlText.indexOf("msgId")<0){
+			if(urlText.indexOf("?")>0){
+				urlText = urlText+"&msgId="+msg.getId()+"&users=&isback=N&opCode=NA&tabIdx=0";
+			}else{
+				urlText = urlText+"?msgId="+msg.getId()+"&users=&isback=N&opCode=NA&tabIdx=0";
+			}
+		}
+		if(urlText.indexOf("UserId")>=0||(Objects.equals (msg.getAppCode (),"OA")&&!Objects.equals(msg.getSource(),"flow"))){//兰陵或老平台不拼参数
+			urlText=msg.getMobibleUrl();
+			pcUrl=msg.getUrl();
+		}
+		if(StringUtils.isNotBlank(msg.getMobibleUrl())&&(msg.getMobibleUrl().toLowerCase().indexOf("http://")==0||msg.getMobibleUrl().toLowerCase().indexOf("https://")==0)){
+			urlText=msg.getMobibleUrl();
+		}
+		if(StringUtils.isNotBlank(msg.getUrl())&&(msg.getUrl().toString().indexOf("http://")==0|| msg.getUrl().toLowerCase().indexOf("https://")==0)){
+			pcUrl = msg.getUrl();
+		}
+		//处理hr考勤提醒是url为空
+		if(StringUtils.isBlank(msg.getUrl())){
+			pcUrl =msg.getUrl();
+		}
+		//处理hr考勤提醒是mobileUrl为空
+		if(StringUtils.isBlank(msg.getMobibleUrl())){
+			urlText = msg.getMobibleUrl();
+		}
+		String tendId=loginUser.getTendId();
+		if(StringUtils.isBlank(tendId)){
+			//tendId为空时，通过userId获取tendId
+			try {
+				User tempUser = userService.getObjectById(msg.getUserId());
+				tendId = tempUser.getTendId();
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+		}
+		String msgStr = "{\"sendTime\":\"" + sendTimeText + "\", \"msgId\":\"" + msg.getId()
+				+ "\", \"fromUser\":\"system\",\"firstType\":\"" + msg.getFirstType()
+				+ "\",\"secondType\":\"" + msg.getSecondType() + "\",\"thirdType\":\"" + msg.getThirdType()
+				+ "\"," + " \"msgContent\":\"" + content + "\"," + " \"msgInfo\":\"" + msgInfo + "\","+ "\"mobileMsgUrl\":\"" + urlText
+				+ "\",\"pcMsgUrl\":\"" + pcUrl + " \",\"tendId\":\"" + tendId+ "\",\"toUser\":[\"" + msg.getUserId() + "\"],\"token\":\"xyre\"}";
+		log.info("推送im前请求JSON："+msgStr);
+		return msgStr;
+	}
+
+	private void saveFailMsg(String postUrl,String postParam,String webService,String webServiceMethod,String postType,String userInfoJson,String opType,String loginName){
+		SysNoticeMsgTemp temp = new SysNoticeMsgTemp ();
+		temp.setPostParam (postParam);
+		temp.setPostUrl (postUrl);
+		temp.setWebService (webService);
+		temp.setWebServiceMethod (webServiceMethod);
+		temp.setPostType (postType);
+		temp.setSuccess (false);
+		temp.setId (IDGenerator.getUUID ());
+		temp.setUserInfoJson (userInfoJson);
+		temp.setOpType (opType);
+		temp.setLoginName(loginName);
+		SecurityUserBeanInfo securityUserBeanInfo = JacksonUtils.fromJson (userInfoJson,SecurityUserBeanInfo.class);
+		changeDateSource (securityUserBeanInfo.getTendCode ());
+		sysNoticeMsgTempDao.save (temp);
+	}
+	private void changeDateSource(String tendCode){
+		DataSourceContextHolder.clearDataSourceType ();
+		DataSourceContextHolder.setDataSourceType (tendCode);
+		DataSourceContextHolder.getDataSourceType ();
+	}
+}

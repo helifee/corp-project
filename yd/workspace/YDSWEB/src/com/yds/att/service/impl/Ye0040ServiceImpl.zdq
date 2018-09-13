@@ -1,0 +1,193 @@
+/*
+ * @(#)Ye0040ServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 共通系统
+ */
+package com.yds.att.service.impl;
+
+import java.util.Calendar;
+import java.util.Date;
+import java.util.List;
+
+import org.springframework.stereotype.Service;
+
+import com.yds.att.bean.AttExamin;
+import com.yds.att.bean.AttInfo;
+import com.yds.att.bean.AttRestApp;
+import com.yds.att.bean.Ye0040CondA;
+import com.yds.att.common.dao.AttInfoDao;
+import com.yds.att.common.service.AttInfoService;
+import com.yds.att.common.service.DateRelationService;
+import com.yds.att.dao.Ye0040Dao;
+import com.yds.att.service.Ye0040Service;
+import com.yds.att.service.AttConstants.AppResult;
+import com.yds.att.service.AttConstants.AppStatus;
+import com.yds.att.service.AttConstants.DateTypeEnum;
+import com.yds.att.service.AttConstants.VacationType;
+import com.yds.base.service.AbstractBaseService;
+import com.yds.common.service.SessionService;
+import com.yds.util.service.DateUtil;
+
+/**
+ * @see com.yds.att.service.Ye0040Service
+ */
+@Service("ye0040Service")
+public class Ye0040ServiceImpl extends AbstractBaseService implements Ye0040Service{
+
+	/** 注入Dao. */
+	private Ye0040Dao ye0040Dao;
+	private AttInfoDao attInfoDao;
+	private DateRelationService dateRelationService;
+	private AttInfoService attInfoService;
+
+
+	/** 
+	 *  {@inheritDoc}
+	 */
+	@Override
+	public List<AttRestApp> getAttRestAppList(Ye0040CondA attRestApp) {
+
+		return ye0040Dao.getAttRestAppList(attRestApp);
+	}
+
+	@Override
+	public void updateAttPend(String appId, boolean agree, String exaSuggestion) throws Exception {
+		// 取得用户ID
+		String userId = SessionService.getLoginUserId();
+		// 取该条请假信息
+		AttRestApp ara = ye0040Dao.getAttRestAppByPk(appId);
+		// 取得该条请假信息的审批过程
+		List<AttExamin> aeList = ye0040Dao.getAttExamin(appId, userId);
+		// 审批状态
+		String appStatus = "";
+		// 审批结果
+		String exaResult = "";
+		// 休假类型
+		String restType = ara.getRestType();
+		// 请假者ID
+		String empId = ara.getRestPerId();
+		// 该用户的审批顺序
+		int myOrder = 0;
+		
+		// 取得默认
+		for (AttExamin ae : aeList) {
+			myOrder = ae.getExaAppOrder();
+			if (ae.getExaAppOrder() < ae.getExaAppEnd()) {
+				appStatus = AppStatus.APP_ING.value();
+			} else {
+				appStatus = AppStatus.APPROVED.value();
+			}
+			break;
+		}
+		
+		if (agree) {
+			exaResult = AppResult.AGREE.value();
+		} else {
+			appStatus = AppStatus.REJECTED.value();
+			exaResult = AppResult.DISAGREE.value();
+		}
+
+		AttRestApp attRestApp = new AttRestApp();
+		attRestApp.setAppId(appId);
+		attRestApp.setAppStatus(appStatus);
+		attRestApp.setUpdateUser(userId);
+		// 更新休假请假表
+		ye0040Dao.updateAttRestApp(attRestApp);
+		
+		// 更新考勤信息表
+		AttInfo attInfo = new AttInfo();
+		Date sDate = ara.getRestStartDate();
+		Date eDate = ara.getRestEndDate();
+
+		for (Date d = sDate; d.compareTo(eDate) <= 0;d = DateUtil.dateAdd(d, Calendar.DATE, 1)) {
+			
+			if (DateTypeEnum.WORK == dateRelationService.getDateType(d)) {
+				String year = String.valueOf(DateUtil.getYear(d));
+				String month = String.valueOf(DateUtil.getMonth(d));
+				String day = String.valueOf(DateUtil.getDay(d));
+				//处理月日两位
+				if(month.length() < 2) {
+					month = "0" + month;
+				}
+				if(day.length() < 2) {
+					day = "0" + day;
+				}
+				
+				attInfo.setEmpId(empId);
+				attInfo.setYear(year);
+				attInfo.setMonth(month);
+				attInfo.setDay(day);
+				
+				//取得考勤信息
+				AttInfo ai = attInfoDao.getAttInfo(empId, year, month, day);
+				// 判断休假类型
+				if (null == ai) {
+					
+				} else {
+					if (restType.equals(ai.getRestType())) {
+						attInfo.setAppStatus(appStatus);
+						attInfo.setAppStatusAddi(ai.getAppStatusAddi());
+					} else if (restType.equals(ai.getRestTypeAddi())) {
+						attInfo.setAppStatus(ai.getAppStatus());
+						attInfo.setAppStatusAddi(appStatus);
+					} else {
+						attInfo.setAppStatus(appStatus);
+						attInfo.setAppStatusAddi(ai.getAppStatusAddi());
+					}
+					// 更新考勤信息表
+					ye0040Dao.updateAttInfo(attInfo);
+				}
+			}
+		}
+	
+		// 更新审批过程表
+		AttExamin attExamin = new AttExamin();
+		attExamin.setAppId(appId);
+		attExamin.setExaId(userId);
+		attExamin.setExaResult(exaResult);
+		attExamin.setExaSuggestion(exaSuggestion);
+		
+		for (AttExamin ae : aeList) {
+			if (ae.getExaAppOrder() == myOrder && (null == ae.getExaResult() || "".equals(ae.getExaResult()))) {
+				attExamin.setExaAppOrder(ae.getExaAppOrder());
+				ye0040Dao.updateAttExamin(attExamin);
+				break;
+			}
+		}
+		
+		// 更新换休明细表
+		if (restType.substring(0, 1).equals(VacationType.FOR_HUGH.value()) && AppStatus.APPROVED.value().equals(appStatus)) {
+			attInfoService.insertExrestInfo(empId, sDate, eDate, restType, appId);
+		}
+	}
+
+	@Override
+	public List<AttExamin> getAttExamin(String appId, String userId) {
+
+		return ye0040Dao.getAttExamin(appId, userId);
+	}
+	
+	/**
+	 * @param ye0040Dao
+	 *            the ye0040Dao to set
+	 */
+	public void setYe0040Dao(Ye0040Dao dao) {
+		this.ye0040Dao = dao;
+	}
+
+
+	public void setDateRelationService(DateRelationService dateRelationService) {
+		this.dateRelationService = dateRelationService;
+	}
+
+	public void setAttInfoService(AttInfoService attInfoService) {
+		this.attInfoService = attInfoService;
+	}
+
+	public void setAttInfoDao(AttInfoDao attInfoDao) {
+		this.attInfoDao = attInfoDao;
+	}
+
+}

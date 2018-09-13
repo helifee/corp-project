@@ -1,0 +1,56 @@
+package com.xinleju.platform.sys.org.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Table(value="PT_SYS_ORG_ROLE_USER_POST_SCOPE",desc="通用角色引用对象作用域")
+public class RoleUserPostScope extends BaseEntity{
+	
+		
+	@Column(value="type",desc="管辖类型")
+	private String type;
+    
+  		
+	@Column(value="ref_id",desc="管辖id")
+	private String refId;
+    
+  		
+	@Column(value="role_user_id",desc="引用对象关系id")
+	private String roleUserId;
+    
+  		
+		
+	public String getType() {
+		return type;
+	}
+	public void setType(String type) {
+		this.type = type;
+	}
+    
+  		
+	public String getRefId() {
+		return refId;
+	}
+	public void setRefId(String refId) {
+		this.refId = refId;
+	}
+    
+  		
+	public String getRoleUserId() {
+		return roleUserId;
+	}
+	public void setRoleUserId(String roleUserId) {
+		this.roleUserId = roleUserId;
+	}
+    
+  		
+	
+}

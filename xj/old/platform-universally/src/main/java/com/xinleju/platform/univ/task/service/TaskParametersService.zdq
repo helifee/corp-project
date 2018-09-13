@@ -1,0 +1,15 @@
+package com.xinleju.platform.univ.task.service;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.univ.task.entity.TaskParameters;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface TaskParametersService extends  BaseService <String,TaskParameters>{
+
+	
+}

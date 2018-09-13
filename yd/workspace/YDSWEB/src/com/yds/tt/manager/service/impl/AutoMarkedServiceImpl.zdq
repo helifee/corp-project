@@ -1,0 +1,312 @@
+/*
+ * @(#)AutoMarkedServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 远东公司内部网
+ *    SubSystem: 共通系统
+ */
+package com.yds.tt.manager.service.impl;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Service;
+
+import com.yds.base.service.AbstractBaseService;
+import com.yds.tt.manager.dao.AutoMarkedDao;
+import com.yds.tt.manager.service.AutoMarkedService;
+import com.yds.tt.manager.service.TtConstants;
+import com.yds.tt.testing.bean.ExamEmployeeInfo;
+import com.yds.tt.testing.bean.K060031ExamPaperInfo;
+import com.yds.tt.testing.bean.K060031ExamQuestionInfo;
+import com.yds.tt.testing.bean.K060031SearchInfo;
+import com.yds.tt.testing.bean.K060031SingleQuesInfo;
+import com.yds.tt.testing.bean.TestEmployeeAnswerInfo;
+
+/**
+ * @see AutoMarkedService
+ */
+@Service("autoMarkedService")
+public class AutoMarkedServiceImpl extends AbstractBaseService implements
+		AutoMarkedService {
+
+	private AutoMarkedDao autoMarkedDao;
+
+	/**
+	 * @return the autoMarkedDao
+	 */
+	public AutoMarkedDao getAutoMarkedDao() {
+		return autoMarkedDao;
+	}
+
+	/**
+	 * @param autoMarkedDao
+	 *            the autoMarkedDao to set
+	 */
+	public void setAutoMarkedDao(AutoMarkedDao autoMarkedDao) {
+		this.autoMarkedDao = autoMarkedDao;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public K060031ExamPaperInfo obtainUserAnswerInfo(Integer markedCode,
+			K060031ExamPaperInfo answerInfo, String examId, String emplyeesId,
+			Integer examJoinTimes) {
+
+		int exFlg = 0; // 参数检查出错Flg
+		// 评分对象区分不能为空,只能是1,2,3
+		if (markedCode != null) {
+			if (markedCode <= TtConstants.C39.C39_3.value()) {
+				// 评分对象区分=<普通考试评分>
+				if (markedCode == TtConstants.C39.C39_1.value()) {
+					if (examId != null) {
+						exFlg = 1;
+					}
+				} else if (markedCode == TtConstants.C39.C39_2.value()) {
+					// 评分对象区分=<随时考试评分>
+					if (examId != null && emplyeesId != null
+							|| examJoinTimes != null) {
+						exFlg = 1;
+					}
+				} else {
+					// 评分对象区分=<练习评分>
+					if (answerInfo != null) {
+						exFlg = 1;
+					}
+				}
+			}
+		}
+
+		// 参数检查出错，抛异常
+		if (exFlg == 0) {
+			try {
+				throw new Exception();
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+		}
+
+		// 评分对象区分=<普通考试评分>
+		if (markedCode != null) {
+			if (markedCode == TtConstants.C39.C39_1.value()) {
+				// 普通考试处理
+				normolExamine(examId);
+
+			} else if (markedCode == TtConstants.C39.C39_2.value()) {
+				// 评分对象区分=<随时考试评分>
+				// 随时考试处理
+				anyMonentExamine(examId, emplyeesId,examJoinTimes);
+			} else {
+				// 评分对象区分=<练习评分>
+				List<K060031ExamQuestionInfo> k631examQuestionInfo = answerInfo
+						.getExamQuestions();
+
+				List<K060031ExamQuestionInfo> newparQuestionInfo = new ArrayList<K060031ExamQuestionInfo>();
+
+				// 取得答案及分数
+				int i = 0;
+				for (K060031ExamQuestionInfo examQuestionInfo : k631examQuestionInfo) {
+
+					// 组合题单题信息（参数传来的）
+					List<K060031SingleQuesInfo> sigleQuestions = k631examQuestionInfo
+							.get(i).getSingleQuestions();
+
+					K060031SearchInfo k631SearchInfo = new K060031SearchInfo();
+
+					// 试卷Id
+					k631SearchInfo.setPaperId(answerInfo.getPaperId());
+					// 试卷版本号
+					k631SearchInfo.setPaperVersionNo(answerInfo
+							.getPaperVersionNo());
+					// 大题编号
+					k631SearchInfo.setBigquestionSerialNo(examQuestionInfo
+							.getBigquestionSerialNo());
+					// 试题ID
+					k631SearchInfo.setQuestionId(examQuestionInfo
+							.getQuestionId());
+					// 试题版本号
+					k631SearchInfo.setQuestionVersionNo(examQuestionInfo
+							.getQuestionVersionNo());
+
+					// 取得组合题单题信息
+					List<K060031SingleQuesInfo> sigleInfo = autoMarkedDao
+							.getSingleQuesInfo(k631SearchInfo);
+
+					// 存放组合题单题信息
+					List<K060031SingleQuesInfo> newparSingleInfo = new ArrayList<K060031SingleQuesInfo>();
+
+					for (K060031SingleQuesInfo parSgInfo : sigleQuestions) {
+						for (K060031SingleQuesInfo dbSgInfo : sigleInfo) {
+
+							// 对答案编号相等的单题处理
+							if (parSgInfo.getAnswerSerialNo() != null
+									&& parSgInfo.getAnswerSerialNo().equals(
+											dbSgInfo.getAnswerSerialNo())) {
+								// 标准答案=答案内容
+								parSgInfo.setStandardAnswer(dbSgInfo
+										.getAnswerContent());
+								// 答案分数
+								parSgInfo.setAnswerScore(dbSgInfo
+										.getAnswerScore());
+
+								// 考生答案内容 = 答案表.答案内容
+								if (parSgInfo.getAnswerContent() != null
+										&& parSgInfo.getAnswerContent().equals(
+												dbSgInfo.getAnswerContent())) {
+									// 得分 = 答案分数
+									parSgInfo.setQuestionPoint(dbSgInfo
+											.getAnswerScore());
+								} else {
+									parSgInfo.setQuestionPoint(0);
+								}
+							}
+						}
+
+						newparSingleInfo.add(parSgInfo);
+					}
+
+					// 取得题库试题分数
+					Integer itemBankScore = autoMarkedDao
+							.getItemBankScore(k631SearchInfo);
+					examQuestionInfo.setQuestionScore(itemBankScore);
+
+					// 取得试卷固定大题试题分数
+					Integer fixedScore = autoMarkedDao
+							.getFixedScore(k631SearchInfo);
+					examQuestionInfo.setPaperQuestionScore(fixedScore);
+					examQuestionInfo.setSingleQuestions(newparSingleInfo);
+					newparQuestionInfo.add(examQuestionInfo);
+
+					i++;
+				}
+				answerInfo.setExamQuestions(newparQuestionInfo);
+
+			}
+		}
+
+		return answerInfo;
+	}
+	
+	/**
+	 * 普通考试处理
+	 * @param examId 考试ID
+	 */
+	private void normolExamine(String examId){
+		ExamEmployeeInfo examEmployeeInfo = new ExamEmployeeInfo();
+		examEmployeeInfo.setExamineId(examId);
+		List<TestEmployeeAnswerInfo> exEmeeAnswerInfoList = autoMarkedDao
+				.getexEmeeAnswerInfo(examEmployeeInfo);
+		long count = 0;
+		String answerContent = null;
+		for (TestEmployeeAnswerInfo teAmswInfo : exEmeeAnswerInfoList) {
+
+			// 根据KEY检索出考试员工答卷条数和考生答案内容
+			Map<String, Object> map = autoMarkedDao
+					.getCountContentByKey(teAmswInfo);
+
+			// 条数
+			if (map.get("count") instanceof Long) {
+				count = (Long) map.get("count");
+			}
+
+			// 考生答案内容
+			if (map.get("answerContent") instanceof String) {
+				answerContent = (String) map.get("answerContent");
+			}
+
+			// 考试员工答卷信息存在
+			if (count > 0) {
+				// 考试员工答卷表.考生答案内容 != 答案表.答案内容
+				if (answerContent == null
+						|| teAmswInfo.getAnswerContent() == null
+						|| (!answerContent.equals(teAmswInfo
+								.getAnswerContent()))) {
+					teAmswInfo.setQuestionPoint(0);
+				}
+
+				// 更新考试员工答卷信息
+				autoMarkedDao.updateExamineAnswer(teAmswInfo);
+
+			} else {
+				// 题库.试题数 = 1时，试题区分为非组合题
+				if (teAmswInfo.getQuestionNumber() == 1) {
+					teAmswInfo.setQuestionFlg(TtConstants.C17.C17_1
+							.value());
+				} else if (teAmswInfo.getQuestionNumber() > 1) {
+					// 题库.试题数 > 1时，试题区分为组合题小题
+					teAmswInfo.setQuestionFlg(TtConstants.C17.C17_3
+							.value());
+				}
+				teAmswInfo.setQuestionPoint(0);
+				// 添加考试员工答卷信息
+				autoMarkedDao.insertExamineAnswer(teAmswInfo);
+			}
+		}
+	}
+	
+	/**
+	 * 随时考试处理
+	 * @param examId 考试ID
+	 * @param emplyeesId 员工ID
+	 * @param examJoinTimes 考试次数
+	 */
+	private void anyMonentExamine(String examId, String emplyeesId,
+			Integer examJoinTimes){
+			ExamEmployeeInfo examEmployeeInfo = new ExamEmployeeInfo();
+		examEmployeeInfo.setExamineId(examId);
+		examEmployeeInfo.setEmployeesId(emplyeesId);
+		List<TestEmployeeAnswerInfo> exEmeeAnswerInfoList = autoMarkedDao
+				.getexEmeeAnswerInfo(examEmployeeInfo);
+		long count = 0;
+		String answerContent = null;
+		for (TestEmployeeAnswerInfo teAmswInfo : exEmeeAnswerInfoList) {
+	
+			teAmswInfo.setExamineJoinTimes(examJoinTimes);
+	
+			// 根据KEY检索出考试员工答卷条数和考生答案内容
+			Map<String, Object> map = autoMarkedDao
+					.getCountContentByKey(teAmswInfo);
+	
+			// 条数
+			if (map.get("count") instanceof Long) {
+				count = (Long) map.get("count");
+			}
+	
+			// 考生答案内容
+			if (map.get("answerContent") instanceof String) {
+				answerContent = (String) map.get("answerContent");
+			}
+	
+			// 考试员工答卷信息存在
+			if (count > 0) {
+				// 考试员工答卷表.考生答案内容 != 答案表.答案内容
+				if (answerContent == null
+						|| teAmswInfo.getAnswerContent() == null
+						|| (!answerContent.equals(teAmswInfo
+								.getAnswerContent()))) {
+					teAmswInfo.setQuestionPoint(0);
+				}
+	
+				// 更新考试员工答卷信息
+				autoMarkedDao.updateExamineAnswer(teAmswInfo);
+	
+			} else {
+				// 题库.试题数 = 1时，试题区分为非组合题
+				if (teAmswInfo.getQuestionNumber() == 1) {
+					teAmswInfo.setQuestionFlg(TtConstants.C17.C17_1
+							.value());
+				} else if (teAmswInfo.getQuestionNumber() > 1) {
+					// 题库.试题数 > 1时，试题区分为组合题小题
+					teAmswInfo.setQuestionFlg(TtConstants.C17.C17_3
+							.value());
+				}
+	
+				// 添加考试员工答卷信息
+				autoMarkedDao.insertExamineAnswer(teAmswInfo);
+			}
+		}
+	}
+}

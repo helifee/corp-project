@@ -1,0 +1,54 @@
+package com.xinleju.platform.flow.dto;
+
+import com.xinleju.platform.base.dto.BaseDto;
+
+
+
+
+
+/**
+ * @author admin
+ * 
+ *
+ */
+public class OverdueFlDto extends BaseDto{
+
+		
+	//流程模板id
+	private String flId;
+    
+  		
+	//流程模板名称
+	private String flName;
+    
+  		
+	//流程逾期id
+	private String overdueId;
+    
+  		
+		
+	public String getFlId() {
+		return flId;
+	}
+	public void setFlId(String flId) {
+		this.flId = flId;
+	}
+    
+  		
+	public String getFlName() {
+		return flName;
+	}
+	public void setFlName(String flName) {
+		this.flName = flName;
+	}
+    
+  		
+	public String getOverdueId() {
+		return overdueId;
+	}
+	public void setOverdueId(String overdueId) {
+		this.overdueId = overdueId;
+	}
+    
+  		
+}

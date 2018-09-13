@@ -1,0 +1,66 @@
+package com.xinleju.platform.univ.search.entity;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.entity.BaseEntity;
+
+
+/**
+ * @author haoqp
+ * 
+ * 
+ */
+
+@Table(value="PT_UNIV_SEARCH_INDEX",desc="索引表")
+public class SearchIndex extends BaseEntity{
+	
+	@Column(value="content",desc="索引值")
+	private String content;
+
+	// 添加elasticsearch时，作为_index
+	@Column(value="es_doc_index",desc="elasticsearch索引")
+	private String esDocIndex;
+    
+	// 关联SearchCategory中的code
+	// 添加elasticsearch时，作为_type
+	@Column(value="es_doc_type",desc="索引分类code")
+	private String esDocType;
+	
+	// 添加elasticsearch时，作为_id
+	@Column(value="es_doc_id",desc="elasticsearch索引内容ID")
+	private String esDocId;
+
+	public String getContent() {
+		return content;
+	}
+
+	public void setContent(String content) {
+		this.content = content;
+	}
+
+	public String getEsDocIndex() {
+		return esDocIndex;
+	}
+
+	public void setEsDocIndex(String esDocIndex) {
+		this.esDocIndex = esDocIndex;
+	}
+
+	public String getEsDocType() {
+		return esDocType;
+	}
+
+	public void setEsDocType(String esDocType) {
+		this.esDocType = esDocType;
+	}
+
+	public String getEsDocId() {
+		return esDocId;
+	}
+
+	public void setEsDocId(String esDocId) {
+		this.esDocId = esDocId;
+	}
+  		
+	
+}

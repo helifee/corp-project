@@ -1,0 +1,23 @@
+package com.xinleju.platform.sys.num.service;
+
+import java.util.Map;
+
+import com.xinleju.platform.base.service.BaseService;
+import com.xinleju.platform.sys.num.entity.RulerSub;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+public interface RulerSubService extends  BaseService <String,RulerSub>{
+
+	public String getBeanIdByBillId(Map<String,Object> rulerSubMap) throws Exception;
+
+	public StringBuffer saveAndRulerData(Map<String,Object> rulerSubMap) throws Exception;
+
+	public String saveBillNumberAndgetBillNumber(Map<String, Object> map)throws Exception;
+
+	
+}

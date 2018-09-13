@@ -1,0 +1,492 @@
+package com.jzy.hio.crm.controller;
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+
+import javax.annotation.Resource;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.poi.hssf.usermodel.HSSFCellStyle;
+import org.apache.poi.hssf.usermodel.HSSFWorkbook;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.xssf.usermodel.XSSFCell;
+import org.apache.poi.xssf.usermodel.XSSFCellStyle;
+import org.apache.poi.xssf.usermodel.XSSFRow;
+import org.apache.poi.xssf.usermodel.XSSFSheet;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.jzy.hio.base.Base;
+import com.jzy.hio.base.controller.BaseController;
+import com.jzy.hio.constant.CrmConstant;
+import com.jzy.hio.constant.CrmProductStatusEnum;
+import com.jzy.hio.crm.dto.CrmImportResultDto;
+import com.jzy.hio.crm.dto.CrmProductCurrentInfoDto;
+import com.jzy.hio.crm.dto.CrmProductDto;
+import com.jzy.hio.crm.dto.CrmProductImportDto;
+import com.jzy.hio.crm.param.CrmProductSearchParam;
+import com.jzy.hio.crm.param.CrmProductValInfoParam;
+import com.jzy.hio.crm.param.CrmValNameParam;
+import com.jzy.hio.crm.param.FileImportParam;
+import com.jzy.hio.crm.service.CrmProductCategoryService;
+import com.jzy.hio.crm.service.CrmProductService;
+import com.jzy.hio.crm.utils.PageResult;
+import com.jzy.hio.entity.CrmProduct;
+import com.jzy.hio.entity.CrmProductCategory;
+import com.jzy.hio.exception.HioMybatisInsertException;
+import com.jzy.hio.springmvc.ApiResponse;
+import com.jzy.hio.utils.ExcelUtils;
+
+/**
+ * 产品
+ * @author 
+ *
+ */
+@RestController
+@RequestMapping("/product")
+public class CrmProductController extends BaseController {
+
+	private static final Logger logger = LoggerFactory.getLogger(CrmProductController.class);
+	
+    @Resource
+    private ExcelUtils excelUtils;
+	@Autowired
+	private CrmProductService crmProductService;
+	@Autowired
+	private CrmProductCategoryService crmProductCategoryService;
+	
+    /**
+     * 验证产品名称是否可用
+     * @param param
+     * @return
+     */
+    @PostMapping("/valName")
+	public ApiResponse<Boolean> valName(@RequestBody CrmValNameParam param) {
+		ApiResponse<Boolean> res = new ApiResponse<>(200, "可以使用");
+		String id = param.getSid();
+		String name = param.getName();
+		boolean canUse = crmProductService.queryProNameCanUse(id, name);
+		if (!canUse) {
+			res.setStatus(101);
+			res.setMessage("已被使用");
+		}
+		res.setResult(canUse);
+		return res;
+	}
+	
+	/**
+	 * 新增和修改产品
+	 * @param product
+	 * @return
+	 */
+	@PostMapping("/save")
+	public ApiResponse<Void> save(@RequestBody CrmProduct product) {
+		ApiResponse<Void> res = new ApiResponse<>(200, "保存成功");
+		
+		String uid = getUserIdOA();
+		String id = product.getId();
+		
+		// 同一级类别，产品名称不允许重复
+		String name = product.getName().trim();
+		product.setName(name);
+		
+		boolean canUse = crmProductService.queryProNameCanUse(id, name);
+		if (!canUse) {
+			res.setMessage("产品名称重复，请修改");
+			res.setStatus(101);
+			return res;
+		}
+		
+		Date date = new Date();
+		if(StringUtils.isNotBlank(id)) {
+			CrmProduct productFind = crmProductService.getObjectById(id);
+			if (productFind == null || productFind.getDelflag().equals(CrmConstant.DEL_TRUE)) {
+				res.setMessage("产品不存在或已删除");
+				res.setStatus(101);
+				return res;
+			}
+			
+			// 没有传递一级类别去数据库查询
+			if (StringUtils.isBlank(product.getCategoryBaseId())) {
+				CrmProductCategory productCategory = crmProductCategoryService.getObjectById(product.getCategoryId());
+				if (productCategory != null) {
+					// 设置一级类别
+					product.setCategoryBaseId(productCategory.getParentId());
+				}
+			}
+			product.setUpdatePersonId(uid);
+			product.setUpdateDate(date);
+			// 修改产品
+			crmProductService.update(product);
+		} else {
+			id = Base.generatePk(product.getClass());
+			product.setId(id);
+			product.setDelflag(CrmConstant.DEL_FALSE);
+			product.setUpdateDate(date);
+			product.setCreateDate(date);
+			product.setCreatePersonId(uid);
+			product.setUpdatePersonId(uid);
+			// 保存产品
+			crmProductService.save(product);
+		}
+		
+		return res;
+	}
+	
+	/**
+	 * 查询产品
+	 * @param id
+	 * @return
+	 */
+	@PostMapping("/get/{id}")
+	public ApiResponse<CrmProductDto> get(@PathVariable("id") String id) {
+		ApiResponse<CrmProductDto> res = new ApiResponse<>(200, "查询成功");
+		// 查询产品
+		CrmProduct product = crmProductService.getObjectById(id);
+		if (product == null) {
+			res.setMessage("产品不存在或已删除");
+			res.setStatus(101);
+			return res;
+		}
+		
+		String categoryName = null;
+		String categoryBaseName = null;
+		CrmProductCategory procateBase = crmProductCategoryService.getObjectById(product.getCategoryBaseId());
+		if (procateBase == null) {
+			res.setMessage("一级产品类别未找到");
+			res.setStatus(101);
+			return res;
+		} else {
+			categoryBaseName = procateBase.getName();
+		}
+		
+		String categoryId = product.getCategoryId();
+		if (StringUtils.isNotBlank(categoryId)) {
+			CrmProductCategory procate = crmProductCategoryService.getObjectById(categoryId);
+			if (procate == null) {
+				res.setMessage("二级产品类别未找到");
+				res.setStatus(101);
+				return res;
+			} else {
+				categoryName = procate.getName();
+			}
+		}
+		
+		CrmProductDto dto = new CrmProductDto();
+		BeanUtils.copyProperties(product, dto);
+		dto.setCategoryName(categoryName);
+		dto.setCategoryBaseName(categoryBaseName);
+		res.setResult(dto);
+		
+		return res;
+	}
+	
+	/**
+	 * 删除产品
+	 * @param id
+	 * @return
+	 */
+	@PostMapping("/delete/{id}")
+	public ApiResponse<Void> delete(@PathVariable("id") String id) {
+		ApiResponse<Void> res = new ApiResponse<>(200, "删除成功");
+		
+		String uid = getUserIdOA();
+		
+		CrmProduct product = new CrmProduct();
+		product.setId(id);
+		product.setDelflag(CrmConstant.DEL_TRUE);
+		product.setUpdateDate(new Date());
+		product.setUpdatePersonId(uid);
+		// 删除产品
+		crmProductService.update(product);
+		
+		return res;
+	}
+	
+	/**
+	 * 商机和订单选择产品分页
+	 * @param productSearchParam
+	 * @return
+	 */
+	@PostMapping("/pageToSelect")
+	public ApiResponse<PageResult> pageToSelect(@RequestBody CrmProductSearchParam productSearchParam) {
+		ApiResponse<PageResult> res = new ApiResponse<>(200, "查询成功");
+		PageResult page = crmProductService.getPageToSelect(productSearchParam);
+		res.setResult(page);
+		return res;
+	}
+	
+	/**
+	 * 产品分页
+	 * @param productSearchParam
+	 * @return
+	 */
+	@PostMapping("/page")
+	public ApiResponse<PageResult> page(@RequestBody CrmProductSearchParam productSearchParam) {
+		ApiResponse<PageResult> res = new ApiResponse<>(200, "查询成功");
+		PageResult page = crmProductService.getPageProducts(productSearchParam);
+		res.setResult(page);
+		return res;
+	}
+	
+    /**
+     * 下载邀请客户模板
+     *
+     * @param response
+     * @param request
+     */
+    @GetMapping("/download/template")
+    public void downloadTemplate(HttpServletResponse response, HttpServletRequest request) {
+        excelUtils.downLoadResource(response, request, CrmConstant.PRODUCT_IMPORT_TEMPLATE_NAME, CrmConstant.PRODUCT_IMPORT_TEMPLATE_PATH);
+    }
+	
+    /**
+     * 联系人导入预览
+     * @param file
+     * @return
+     */
+    @PostMapping("/excel/preview")
+    public List<CrmProductImportDto> previewExcel(FileImportParam file) {
+        Workbook wb = null;
+        List<CrmProductImportDto> custList = new ArrayList<>();
+        try {
+            if (excelUtils.isExcel2007(file.getResource().getOriginalFilename())) {
+                wb = new XSSFWorkbook(file.getResource().getInputStream());
+            } else {
+                wb = new HSSFWorkbook(file.getResource().getInputStream());
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+
+            return null;
+        }
+        // 获取第一张表
+        Sheet sheet = wb.getSheetAt(0);
+        
+        String[] excelHeader = {"一级类别", "二级类别","产品名称", "产品单位","产品单价", "产品状态"};
+        int[] titlesIndex = {-1,-1,-1,-1,-1,-1};
+        Row rowTitle = sheet.getRow(0);
+		if (rowTitle == null) {
+			throw new HioMybatisInsertException("没有发现导入的标题");
+		}
+
+		boolean notfind = true;
+        for (int i = 0; i < excelHeader.length; i++) {
+        	for (int j = 0; j < excelHeader.length; j++) {
+        		if (excelHeader[i].equals(excelUtils.getCellValue(rowTitle, j))) {
+        			titlesIndex[i] = j;
+					notfind = false;
+        			break;
+				}
+        	}
+        	
+        }
+		if (notfind) {
+			throw new HioMybatisInsertException("请使用正确的模板导入数据");
+		}
+        
+        // 得到总行数编号（从0开始）
+        int rows = sheet.getLastRowNum();
+        int realColumn = 0;
+        for (int i = 1; i <= rows; i++) {
+            // 获取索引为i的行，以0开始
+            Row row = sheet.getRow(i);
+            if (row == null) {
+				continue;
+			}
+            String cateleveOneName = excelUtils.getCellValue(sheet, i, titlesIndex[0]);
+            String cateLeveTwoName = excelUtils.getCellValue(sheet, i, titlesIndex[1]);
+            String name = excelUtils.getCellValue(sheet, i, titlesIndex[2]);
+            String unit = excelUtils.getCellValue(sheet, i, titlesIndex[3]);
+            String price = excelUtils.getCellValue(sheet, i, titlesIndex[4]);
+            String productStatusName = excelUtils.getCellValue(sheet, i, titlesIndex[5]);
+            
+            if (StringUtils.isBlank(cateleveOneName) 
+            		&& StringUtils.isBlank(cateLeveTwoName)
+            		&& StringUtils.isBlank(name)
+            		&& StringUtils.isBlank(unit)
+            		&& StringUtils.isBlank(price)
+            		&& StringUtils.isBlank(productStatusName)) {
+                continue;
+            }
+            realColumn ++;
+            if (realColumn > 500) {
+                throw new HioMybatisInsertException("当前数据已超过500条，请导入小于等于500条数据");
+            }
+            
+            CrmProductImportDto importDto = new CrmProductImportDto();
+            importDto.setCateleveOneName(cateleveOneName);
+            importDto.setCateLeveTwoName(cateLeveTwoName);
+            importDto.setName(name);
+            importDto.setUnit(unit);
+            importDto.setPrice(price);
+            importDto.setProductStatusName(productStatusName);
+            custList.add(importDto);
+          
+        }
+        
+        if (realColumn < 1) {
+            throw new HioMybatisInsertException("请导入大于1条数据");
+        }
+        
+        return custList;
+    }
+    
+    /**
+     * 保存导入信息
+     * @param custList
+     */
+    @PostMapping("/saveImportData")
+    public CrmImportResultDto saveImportData(@RequestBody List<CrmProductImportDto> custList) {
+    	List<CrmProductImportDto> sucessDataList = new ArrayList<>();
+    	List<CrmProductImportDto> failedDataList = new ArrayList<>();
+    	for (CrmProductImportDto customerImportDto : custList) {
+			try {
+				
+				boolean saveOk = crmProductService.saveImportProduct(customerImportDto);
+				if (saveOk) {
+					sucessDataList.add(customerImportDto);
+				} else {
+					failedDataList.add(customerImportDto);
+				}
+			} catch (Exception e) {
+				logger.error("导入数据出错:{}", e);
+				failedDataList.add(customerImportDto);
+			}
+		}
+    	
+    	int sucssSize = sucessDataList.size();
+    	int failSize = failedDataList.size();
+    	CrmImportResultDto importResult = new CrmImportResultDto();
+    	int size = custList.size();
+    	if (sucssSize == size) {
+    		importResult.setImportStatus(CrmConstant.IMPORT_SUCCESS);
+		} else if (failSize == size) {
+			importResult.setImportStatus(CrmConstant.IMPORT_FAIL);
+		} else {
+			importResult.setImportStatus(CrmConstant.IMPORT_PART);
+		}
+    	importResult.setTotalCnt(size);
+    	importResult.setSuccessCnt(sucssSize);
+    	importResult.setFailCnt(failSize);
+    	importResult.setFailDataList(failedDataList);
+    	return importResult;
+    }
+    
+    /**
+     * 下载错误数据
+     * @param response
+     * @param request
+     * @param failData
+     */
+    @PostMapping("/download/errorData")
+    public void downLoadErrorData(HttpServletResponse response, HttpServletRequest request, @RequestParam("failData") String failData) {
+
+        try {
+        	List<CrmProductImportDto> custList = json2list(failData, CrmProductImportDto.class);
+            String[] excelHeader = {"一级类别", "二级类别","产品名称", "产品单位","产品单价", "产品状态", "失败原因"};
+            XSSFWorkbook wb = new XSSFWorkbook();
+            XSSFSheet sheet = wb.createSheet();
+            XSSFRow row = sheet.createRow(0);
+            XSSFCellStyle style = wb.createCellStyle();
+            style.setAlignment(HSSFCellStyle.ALIGN_CENTER);
+
+            for (int i = 0; i < excelHeader.length; i++) {
+                XSSFCell cell = row.createCell(i);
+                cell.setCellValue(excelHeader[i]);
+                cell.setCellStyle(style);
+                sheet.autoSizeColumn(i);
+                sheet.setColumnWidth(i, 28 * 256);
+            }
+            CrmProductImportDto importDto = null;
+            for (int i = 0; i < custList.size(); i++) {
+            	importDto = custList.get(i);
+                row = sheet.createRow(i + 1);
+                row.createCell(0).setCellValue(importDto.getCateleveOneName() == null ? "" : importDto.getCateleveOneName());
+                row.createCell(1).setCellValue(importDto.getCateLeveTwoName() == null ? "" : importDto.getCateLeveTwoName());
+                row.createCell(2).setCellValue(importDto.getName() == null ? "" : importDto.getName());
+                row.createCell(3).setCellValue(importDto.getUnit() == null ? "" : importDto.getUnit());
+                row.createCell(4).setCellValue(importDto.getPrice() == null ? "" : importDto.getPrice().toString());
+                row.createCell(5).setCellValue(importDto.getProductStatusName() == null ? "" : importDto.getProductStatusName());
+                row.createCell(6).setCellValue(importDto.getErrMsg());
+            }
+            excelUtils.downLoadExcel(request, response, wb);
+        } catch (Exception e) {
+        	logger.error("产品导入下载错误数据出错:{}", e);
+        }
+    }
+    
+    /**
+     * 检验产品信息是否做了修改
+     * @return
+     */
+    @PostMapping("/valProductInfo")
+    public ApiResponse<Boolean> valProductInfo(@RequestBody List<CrmProductValInfoParam> productValInfoParamList){
+    	ApiResponse<Boolean> res = new ApiResponse<>(200, "产品信息暂无修改");
+    	res.setResult(false);
+    	if (productValInfoParamList == null || productValInfoParamList.size() == 0) {
+    		res.setMessage("未传入产品信息");
+			res.setStatus(101);
+			return res;
+		}
+    	
+    	List<String> productIdList = new ArrayList<>();
+    	productValInfoParamList.forEach(obj -> productIdList.add(obj.getProductId()));
+    	if (productIdList.size() == 0) {
+    		res.setMessage("未发现产品");
+			res.setStatus(101);
+			return res;
+		}
+    	List<CrmProductCurrentInfoDto> productInfoList = crmProductService.queryCurrentInfo(productIdList);
+    	
+    	boolean isFind;
+    	String msg = null;
+    	for (CrmProductValInfoParam valInfoParam : productValInfoParamList) {
+    		isFind = false;
+    		for (CrmProductCurrentInfoDto currentInfoDto : productInfoList) {
+				if (valInfoParam.getProductId().equals(currentInfoDto.getProductId())) {
+					isFind  = true;
+					if (currentInfoDto.getDelflag().equals(CrmConstant.DEL_TRUE)) {
+						msg = "产品（" + valInfoParam.getName() + "）已被删除 ";
+					} else if (currentInfoDto.getProductStatus().equals(CrmProductStatusEnum.NOTSELL.getStatus())) {
+						msg = "产品（" + valInfoParam.getName() + "）已被停售";
+					} else if(!currentInfoDto.getName().equals(valInfoParam.getName())
+							|| currentInfoDto.getPrice().compareTo(valInfoParam.getPrice()) != 0
+							|| !currentInfoDto.getUnit().equals(valInfoParam.getUnit())) {
+						msg = "产品（" + valInfoParam.getName() + "）信息已变更";
+					}
+					
+				}
+			}
+    		
+    		if (!isFind) {
+    			msg = "产品（" + valInfoParam.getName() + "）不存在";
+    		}
+    		if (StringUtils.isNotBlank(msg)) {
+        		res.setMessage(msg);
+    			res.setStatus(102);
+    			return res;
+    		}
+    		
+		}
+    	
+    	res.setResult(true);
+    	return res;
+    }
+}

@@ -1,0 +1,493 @@
+package com.jzy.hio.oa.meeting.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jzy.hio.base.service.impl.BaseServiceImpl;
+import com.jzy.hio.oa.content.dto.ContentChildTreeData;
+import com.jzy.hio.oa.meeting.dto.MeetingTypeDto;
+import com.jzy.hio.oa.meeting.entity.MeetingType;
+import com.jzy.hio.oa.meeting.mapper.MeetingTypeDao;
+import com.jzy.hio.oa.meeting.service.MeetingTypeService;
+import com.jzy.hio.oa.sys.utils.StatusType;
+import com.jzy.tools.data.JacksonUtils;
+
+/**
+ * @author wangw
+ * 
+ * 
+ */
+
+@Service
+public class MeetingTypeServiceImpl extends  BaseServiceImpl<String,MeetingType> implements MeetingTypeService{
+	
+	private StringBuffer ba = new StringBuffer();
+	@Autowired
+	private MeetingTypeDao meetingTypeDao;
+
+	@Override
+	public List<MeetingTypeDto> queryMeetingType(String status)
+			throws Exception {
+		   List<MeetingTypeDto> list=new ArrayList<MeetingTypeDto>();
+		   Map<String,Object> map=new HashMap<>();
+		   map.put("status", status);
+		   List<MeetingType> meetingTypeList = meetingTypeDao.getMeetingTypeListToView(map);
+		    
+		   List parentIds= meetingTypeDao.getMeetingTypeParentIdList();
+		    
+		   if(meetingTypeList!=null&&meetingTypeList.size()>0){
+			   for (MeetingType meetingType : meetingTypeList) {
+				   MeetingTypeDto meetingTypeDto=new MeetingTypeDto();
+				   String sort = meetingType.getSort();
+				   String[] split = sort.split("-");
+				   Long i=(long) split.length;
+		    		BeanUtils.copyProperties(meetingType, meetingTypeDto);
+		    		meetingTypeDto.setLevel(i);
+		    	/*	if(i==1){
+		    			meetingTypeDto.setExpanded(true);
+		    			meetingTypeDto.setState("closed");
+		    		}else{
+		    			meetingTypeDto.setExpanded(false);
+		    		}*/
+		    		if("".equals(meetingTypeDto.getParentId())){
+		    			meetingTypeDto.setExpanded(false);
+		    		}else{
+		    			meetingTypeDto.setExpanded(false);
+		    			
+		    		}
+		    		meetingTypeDto.setLoaded(true);
+		    		String id = meetingTypeDto.getId();
+		    		 if(parentIds.contains(id)){
+		    			 meetingTypeDto.setIsLeaf(false);
+		    		 }else{
+		    			 meetingTypeDto.setIsLeaf(true); 
+		    		 };
+		    		list.add(meetingTypeDto);
+			   }
+		   }
+		
+		   return list;
+	}
+
+	@Override
+	public int deletePseudoMeetingTypeById(String id) throws Exception {
+		Map<String,Object> param=new HashMap<>();
+		MeetingType meetingType = meetingTypeDao.selectByPrimaryKey(id);
+		String prefixId = meetingType.getPrefixId();
+		param.put("prefixId", prefixId);
+		List<String> ids = meetingTypeDao.getDeleteMeetingTypeList(param);
+		return deletePseudoAllObjectByIds(ids);
+	}
+
+	@Override
+	public int updateStatus(MeetingType object) throws Exception {
+		String status = object.getStatus();
+		 if(status.equals(StatusType.StatusOpen.getCode())){
+			//对子集全部启用禁用 
+			this.updateChirdStatus(object);
+			 object.setStatus(StatusType.StatusClosed.getCode());
+			 meetingTypeDao.updateByPrimaryKeySelective(object);
+		 }else if(status.equals(StatusType.StatusClosed.getCode())){
+			 //对父集全部启用启用
+			 this.updateParentStatus(object);
+			 object.setStatus(StatusType.StatusOpen.getCode());
+			 meetingTypeDao.updateByPrimaryKeySelective(object);
+		 }
+		return 1;
+	}
+	
+	
+	@Override
+	public int updateChildStatusByParentIdNew(MeetingType object) throws Exception {
+		// TODO Auto-generated method stub
+		String status = object.getStatus();
+		if(status.equals(StatusType.StatusClosed.getCode())){
+			 //对父集全部启用启用
+			 this.updateParentStatus(object);
+			 //对子级全部启用
+			 this.updateChildStatusByParentIdNewTem(object);
+			 object.setStatus(StatusType.StatusOpen.getCode());
+			 meetingTypeDao.updateByPrimaryKeySelective(object);
+		 }
+		return 1;
+	}
+	
+	
+	/**
+	 * author:wangw
+	 * describe: 修改子节点所有状态
+	 * param:object
+	 */
+	public void updateChildStatusByParentIdNewTem(MeetingType object){
+		 Map<String,Object> param=new HashMap<>();
+		 param.put("parentId", object.getId());
+		 List<MeetingType> meetingTypeList = meetingTypeDao.getMeetingTypeList(param);
+		 if(meetingTypeList!=null&&meetingTypeList.size()>0){
+			 for (MeetingType meetingType : meetingTypeList) {
+				 updateChildStatusByParentIdNewTem(meetingType);
+				 meetingType.setStatus(StatusType.StatusOpen.getCode());
+				 meetingTypeDao.updateByPrimaryKeySelective(meetingType);
+			 }
+		 }
+	}
+	
+	
+	/**
+	 * author:wangw
+	 * describe: 修改父节点状态
+	 * param:object
+	 */
+	public void  updateParentStatus(MeetingType object){
+		 String parentId = object.getParentId();
+		 MeetingType meetingType = meetingTypeDao.selectByPrimaryKey(parentId);
+	
+		 if(meetingType!=null){
+			 	 updateParentStatus(meetingType);
+			 	meetingType.setStatus(StatusType.StatusOpen.getCode());
+				 meetingTypeDao.updateByPrimaryKeySelective(meetingType);
+		 }
+	}
+	
+	
+	
+	/**
+	 * author:wangw
+	 * describe: 修改子节点所有状态
+	 * param:object
+	 */
+	public void updateChirdStatus(MeetingType object){
+		 Map<String,Object> param=new HashMap<>();
+		 param.put("parentId", object.getId());
+		 List<MeetingType> meetingTypeList = meetingTypeDao.getMeetingTypeList(param);
+		 if(meetingTypeList!=null&&meetingTypeList.size()>0){
+			 for (MeetingType meetingType : meetingTypeList) {
+				 updateChirdStatus(meetingType);
+				 meetingType.setStatus(StatusType.StatusClosed.getCode());
+				 meetingTypeDao.updateByPrimaryKeySelective(meetingType);
+			 }
+		 }
+	}
+
+	@Override
+	public int saveMeetingType(MeetingType meetingType) throws Exception {
+		int j=0;
+		String parentId = meetingType.getParentId();
+		Map<String,Object> param=new HashMap<>();
+		param.put("parentId", parentId);
+		MeetingType parentMeetingType = meetingTypeDao.selectByPrimaryKey(parentId);
+		List<MeetingType> meetingTypeList = meetingTypeDao.getMeetingTypeList(param);
+
+		if(meetingTypeList!=null&&meetingTypeList.size()>0){
+			String sort = meetingTypeList.get(meetingTypeList.size()-1).getSort();
+			if(parentId==null || "".equals(parentId)){
+				String[] s =sort.split("\\$");
+				 int oldNumber =Integer.parseInt(s[1]);
+				 int newNumber=(oldNumber+1);
+				 String newSort= "$"+String.format("%04d", newNumber); 
+				 meetingType.setSort(newSort);
+			}else{
+			 int i=sort.lastIndexOf("-");
+			 String parentSort = sort.substring(0,i);
+			 String oldSort = sort.substring(i+1,sort.length());
+			 int oldNumber =Integer.parseInt(oldSort);
+			 int newNumber=(oldNumber+1);
+			 String newSort=parentSort+"-"+ String.format("%04d", newNumber); 
+			 meetingType.setSort(newSort);
+			}
+		}else{
+			if(parentId==null || "".equals(parentId)){
+				meetingType.setSort("$0001");
+			}else{
+				
+				String parentSort =parentMeetingType.getSort();
+				 String newSort=parentSort+"-"+"0001";
+				 meetingType.setSort(newSort);
+			}
+		}
+		if(parentId!=null && !"".equals(parentId)){
+			meetingType.setPrefixId(parentMeetingType.getPrefixId()+"-"+meetingType.getId());
+		}else{
+			meetingType.setPrefixId(meetingType.getId());
+		}
+//
+		j = meetingTypeDao.insertSelective(meetingType);
+		return j;
+	}
+	
+	public   List<MeetingType> getRepeatObject(MeetingType meetingType){
+		String name = meetingType.getName();
+		String code = meetingType.getCode();
+		Map<String,Object> map=new HashMap<>();
+		map.put("name", name);
+		map.put("code", code);
+		map.put("parentId", meetingType.getParentId());
+		 List<MeetingType> resultProjectTypeList=meetingTypeDao.getRepeatObject(map);
+		 return resultProjectTypeList;
+	}
+
+	@Override
+	public List<ContentChildTreeData> getMeetingTypeTree(String parm)
+			throws Exception {
+		/*try{
+			   Map map=JacksonUtils.fromJson(parm, HashMap.class);
+			   String ids = (String)map.get("id");
+			   if("null".equals(ids)){
+				   map = new HashMap();
+			   }
+			   List<MeetingType> meetingTypeList = meetingTypeDao.getParentMeetingTypeList(map);
+			   List<ContentChildTreeData> contentResultList = new ArrayList<ContentChildTreeData>();
+			   //如果二级栏目表中没有数据，要查询一级大类的数据返回
+			   //List<ContentType> contentTypeList = 
+			 //组装二级结构
+			   //如果二级目录没有数据，直接查询大类表，返回大类数据
+			   if(meetingTypeList.size() > 0){
+				   for (MeetingType meetingType : meetingTypeList) {
+					   
+					   //查询出来父类后，查询该父类下面的子类
+					   map.put("parentId", meetingType.getId());
+					   List<MeetingType> childMeetingType = meetingTypeDao.queryList(map);
+					   
+					   ContentChildTreeData contentChildTreeData = new ContentChildTreeData();
+					   contentChildTreeData.setId(contentType.getId());
+					   contentChildTreeData.setName(contentType.getName());
+					   contentChildTreeData.setParentName(contentType.getName());
+					   contentChildTreeData.setParentId(contentType.getId());
+					   contentChildTreeData.setpId("0");
+					   contentChildTreeData.setContentChildId(null);
+					   contentChildTreeData.setContentChildName(null);
+					   contentChildTreeData.setContentTypeId(contentType.getId());
+					   contentChildTreeData.setContentTypeName(contentType.getName());
+					   contentChildTreeData.setContentTypeCode(contentType.getCode());
+					   contentChildTreeData.setApprovalProcess(contentType.getApprovalProcess());
+					   contentResultList.add(contentChildTreeData);
+					   List<ContentChildTreeData> contentChildList = contentChildService.getContentList(contentType.getId());
+					   if(contentChildList.size() > 0){
+						   contentChildTreeData.setSureParent(true);
+						   for (ContentChildTreeData contentChildTree : contentChildList) {
+							   contentChildTree.setpId(contentChildTree.getParentId());
+							   contentChildTree.setContentTypeCode(contentType.getCode());
+							   contentChildTree.setSureParent(false);
+
+						}
+						   contentResultList.addAll(contentChildList);
+					   }
+				   }
+				}
+			   info.setResult(JacksonUtils.toJson(contentResultList));
+			   info.setSucess(true);
+			   info.setMsg("获取知识目录结构树成功!");
+		   }catch(Exception e){
+			   log.error("获取知识目录结构树失败!"+e.getMessage());
+			   info.setSucess(false);
+			   info.setMsg("获取知识目录结构树失败!");
+			   info.setExceptionMsg(e.getMessage());
+		   }*/
+		return null;
+	}
+
+	@Override
+	public int updateMeetingType(MeetingType object)throws Exception {
+		MeetingType oldMeetingType = meetingTypeDao.selectByPrimaryKey(object.getId());
+		String status = object.getStatus();
+		if(!status.equals(oldMeetingType.getStatus())){
+			 if(status.equals(StatusType.StatusOpen.getCode())){
+				 this.updateParentStatus(object);
+				 object.setStatus(StatusType.StatusOpen.getCode());
+				 meetingTypeDao.updateByPrimaryKeySelective(object);
+				//对子集全部启用禁用 
+			 }else if(status.equals(StatusType.StatusClosed.getCode())){
+				 this.updateChirdStatus(object);
+				 object.setStatus(StatusType.StatusClosed.getCode());
+				 meetingTypeDao.updateByPrimaryKeySelective(object);
+				 //对父集全部启用启用
+			 }
+		}
+		
+		//如果在修改的过程中更新父类级别，则要进行以下操作
+		String parentId = object.getParentId();
+		Map<String,Object> param=new HashMap<>();
+		param.put("parentId", parentId);
+		MeetingType parentMeetingType = meetingTypeDao.selectByPrimaryKey(parentId);
+		List<MeetingType> meetingTypeList = meetingTypeDao.getMeetingTypeList(param);
+
+		if(meetingTypeList!=null&&meetingTypeList.size()>0){
+			String sort = meetingTypeList.get(meetingTypeList.size()-1).getSort();
+			if(parentId==null || "".equals(parentId)){
+				String[] s =sort.split("\\$");
+				 int oldNumber =Integer.parseInt(s[1]);
+				 int newNumber=(oldNumber+1);
+				 String newSort= "$"+String.format("%04d", newNumber); 
+				 object.setSort(newSort);
+			}else{
+			 int i=sort.lastIndexOf("-");
+			 if(i == -1){
+				 String parentSort =parentMeetingType.getSort();
+				 String newSort=parentSort+"-"+"0001";
+				 object.setSort(newSort);
+			 }else{
+				 String parentSort = sort.substring(0,i);
+				 String oldSort = sort.substring(i+1,sort.length());
+				 int oldNumber =Integer.parseInt(oldSort);
+				 int newNumber=(oldNumber+1);
+				 String newSort=parentSort+"-"+ String.format("%04d", newNumber); 
+				 object.setSort(newSort);
+			 }
+			}
+		}else{
+			if(parentId==null || "".equals(parentId)){
+				object.setSort("$0001");
+			}else{
+				
+				String parentSort =parentMeetingType.getSort();
+				 String newSort=parentSort+"-"+"0001";
+				 object.setSort(newSort);
+			}
+		}
+		if(parentId!=null && !"".equals(parentId)){
+			object.setPrefixId(parentMeetingType.getPrefixId()+"-"+object.getId());
+		}else{
+			object.setPrefixId(object.getId());
+		}
+		int j=0;
+//		 List<MeetingType> repeatObject = this.getRepeatObject(object);
+//		 if(repeatObject!=null&&repeatObject.size()>1){
+//			  j=5;
+//		 }else{
+//			j = meetingTypeDao.update(object);
+//		 }
+		j = meetingTypeDao.updateByPrimaryKeySelective(object);
+		 //如果本身下面有子级，也需要对子级的序号进行更新
+		 updateChirdMeetingTypeStatus(object);
+		return j;
+	}
+	
+	//如果会议类型本身修改之后，会议类型下面还有子类型，则要递归修改子类型的排序
+	public void updateChirdMeetingTypeStatus(MeetingType object){
+		 Map<String,Object> param=new HashMap<>();
+		 param.put("parentId", object.getId());
+		 List<MeetingType> meetingTypeList = meetingTypeDao.getMeetingTypeList(param);
+		 if(meetingTypeList!=null&&meetingTypeList.size()>0){
+			 for (int i = 0; i < meetingTypeList.size(); i++) {
+				 MeetingType meetingType = meetingTypeList.get(i);
+				 /* int s=sort.lastIndexOf("-");
+				 if(s == -1){
+					 String parentSort =object.getSort();
+					 String newSort=parentSort+"-"+"000"+i;
+					 object.setSort(newSort);
+				 }else{
+					 String parentSort = sort.substring(0,s);
+					 String oldSort = sort.substring(s+1,sort.length());
+					 int oldNumber =Integer.parseInt(oldSort);
+					 int newNumber=(oldNumber+i);
+					 String newSort=parentSort+"-"+ String.format("%04d", newNumber); 
+					 object.setSort(newSort);
+				 }*/
+				 String parentSort =object.getSort();
+				 String newSort=parentSort+"-"+"000"+(i+1);
+				 meetingType.setSort(newSort);
+				 meetingTypeDao.updateByPrimaryKeySelective(meetingType);
+				 updateChirdMeetingTypeStatus(meetingType);
+			 }
+		 }
+	}
+
+
+	//递归判断所选择的id是否是自己的子id
+	public synchronized void judgeChildIdByTargetIdNew(String target,String childId){
+		//根据指定id获取下面所属的子id
+		MeetingType meetingTypeParent = meetingTypeDao.selectByPrimaryKey(childId);
+		if(meetingTypeParent != null && meetingTypeParent.getParentId() != null && meetingTypeParent.getParentId().equals(target)){
+			 ba.append("1");
+		}
+		if(!ba.toString().equals("1")){
+			if(meetingTypeParent != null && meetingTypeParent.getParentId() != null && !"".equals(meetingTypeParent.getParentId())){
+				judgeChildIdByTargetIdNew(target,meetingTypeParent.getParentId());
+			}
+		}
+	}
+
+	@Override
+	public int judgeChildIdByTargetId(Map map) throws Exception {
+		// TODO Auto-generated method stub
+		if(map.get("parentId") != null && !"".equals(map.get("parentId")) && map.get("childId") != null && !"".equals(map.get("childId"))){
+			if(ba.toString().equals("1")){
+				ba.setLength(0);
+			}
+			this.judgeChildIdByTargetIdNew(map.get("parentId").toString(),map.get("childId").toString());
+		}
+		if(ba.toString().equals("1")){
+			return 1;
+		}else{
+			return 0;
+		}
+		
+	}
+	
+	
+	@Override
+	public int deleteAllObjectByIds(List<String> ids){
+		int count = 0;
+		for (String id : ids) {
+			deleteChildMeetingType(id);
+			count += meetingTypeDao.deleteByPrimaryKey(id);
+		}
+		return count;
+	}
+	
+	/**
+	 * author:wangw
+	 * describe: 根据父节点删除子节点数据
+	 * param:object
+	 */
+	public void  deleteChildMeetingType(String id){
+		Map<String,Object> param=new HashMap<>();
+		 param.put("parentId", id);
+		 List<MeetingType> meetingTypeList = meetingTypeDao.getMeetingTypeList(param);
+		 if(meetingTypeList!=null&&meetingTypeList.size()>0){
+			 for (MeetingType meetingType : meetingTypeList) {
+				 deleteChildMeetingType(meetingType.getId());
+				 meetingTypeDao.deleteByPrimaryKey(meetingType.getId());
+			 }
+		 }
+	}
+
+	@Override
+	public int judgeRepeatObject(MeetingType object) throws Exception {
+		int result = 0;
+		String name = object.getName();
+		String code = object.getCode();
+		Map<String,Object> map=new HashMap<>();
+		map.put("name", name);
+		map.put("code", code);
+		map.put("parentId", object.getParentId());
+		 List<MeetingType> resultProjectTypeList=meetingTypeDao.getRepeatObject(map);
+		 if(resultProjectTypeList.size() > 0){
+			 result = resultProjectTypeList.size();
+		 }
+		 return result;
+	}
+
+	@Override
+	public Integer updateBatchFlow(Map map) throws Exception {
+		// TODO Auto-generated method stub
+		return meetingTypeDao.updateBatchFlow(map);
+	}
+
+	@Override
+	public List<MeetingTypeDto> getTypetree(String parm) throws Exception {
+		 List<MeetingTypeDto> list=new ArrayList<MeetingTypeDto>();
+	     Map<String,Object> map = JacksonUtils.fromJson(parm, HashMap.class);
+	     String status = (String) map.get("status");
+		return this.queryMeetingType(status);
+	}
+	
+	
+
+	
+}

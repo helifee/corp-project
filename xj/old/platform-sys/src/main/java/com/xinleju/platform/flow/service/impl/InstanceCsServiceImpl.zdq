@@ -1,0 +1,28 @@
+package com.xinleju.platform.flow.service.impl;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.xinleju.platform.base.service.impl.BaseServiceImpl;
+import com.xinleju.platform.flow.dao.InstanceCsDao;
+import com.xinleju.platform.flow.entity.InstanceCs;
+import com.xinleju.platform.flow.service.InstanceCsService;
+
+/**
+ * @author admin
+ * 
+ * 
+ */
+
+@Service
+public class InstanceCsServiceImpl extends  BaseServiceImpl<String,InstanceCs> implements InstanceCsService{
+	
+
+	@Autowired
+	private InstanceCsDao instanceCsDao;
+	
+	@Override
+	public int updateAcId(String oldAcId, String newAcId) {
+		return instanceCsDao.updateAcId(oldAcId, newAcId);
+	}
+}

@@ -1,0 +1,618 @@
+package com.xinleju.platform.base.utils;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.Socket;
+import java.nio.charset.Charset;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.log4j.Logger;
+import org.csource.common.MyException;
+import org.csource.common.NameValuePair;
+import org.csource.fastdfs.ClientGlobal;
+import org.csource.fastdfs.FileInfo;
+import org.csource.fastdfs.ProtoCommon;
+import org.csource.fastdfs.StorageClient;
+import org.csource.fastdfs.StorageClient1;
+import org.csource.fastdfs.StorageServer;
+import org.csource.fastdfs.TrackerClient;
+import org.csource.fastdfs.TrackerServer;
+
+
+/**
+ * FastDFS 文件操作类
+ * 
+ * @author haoqipeng
+ *
+ */
+public class FastDFSClient {
+	private static Logger log = Logger.getLogger(FastDFSClient.class);
+	
+	
+	
+	/**
+	 * 上传文件
+	 * 
+	 * @param bytes file content/buff
+	 * @param extName file ext name, do not include dot(.)
+	 * @param metaList meta info array
+	 * @return 3 elements string array if success:<br>
+	 *           <ul>
+	 *           <li>results[0]: the group name to store the file</li>
+	 *           <li>results[1]: the new created filename</li>
+	 *           <li>results[2]: the IP of storage server</li>
+	 *           </ul>
+	 *         return null if fail
+	 * @throws Exception
+	 */
+	public String[] upload(byte[] bytes, String extName, NameValuePair[] metaList) throws Exception {
+		TrackerServer trackerServer = null;
+		StorageServer storageServer = null;
+		try {
+			String confPath = getFdsfClientConfPath();
+			ClientGlobal.init(confPath);
+
+			// 建立连接
+			TrackerClient trackerClient = new TrackerClient();
+			trackerServer = trackerClient.getConnection();
+			storageServer = trackerClient.getStoreStorage(trackerServer);
+			StorageClient storageClient = new StorageClient(trackerServer, storageServer);
+			String storageIP = storageServer.getInetSocketAddress().getAddress().getHostAddress();
+			String[] result = storageClient.upload_file(bytes, extName, metaList);
+			System.out.println("upload result:" + storageIP + " " + result[0] + " " + result[1]);
+			return new String[]{result[0],result[1],storageIP};
+			
+		} catch (Exception e) {
+			log.error(e.getMessage(), e);
+			throw e;
+		} finally {
+
+			try {
+				if (trackerServer != null) {
+					trackerServer.close();
+					trackerServer = null;
+				}
+			} catch (IOException e) {
+				log.error(e.getMessage(), e);
+			}
+			
+			try {
+				if (storageServer != null) {
+					storageServer.close();
+					storageServer = null;
+				}
+			} catch (IOException e) {
+				log.error(e.getMessage(), e);
+			}
+		}
+	}
+	
+	public String[] upload(String localFileName, String extName, NameValuePair[] metaList) throws Exception {
+		TrackerServer trackerServer = null;
+		StorageServer storageServer = null;
+		try {
+			String confPath = getFdsfClientConfPath();
+			ClientGlobal.init(confPath);
+
+			// 建立连接
+			TrackerClient trackerClient = new TrackerClient();
+			trackerServer = trackerClient.getConnection();
+			storageServer = trackerClient.getStoreStorage(trackerServer);
+			StorageClient storageClient = new StorageClient(trackerServer, storageServer);
+			String storageIP = storageServer.getInetSocketAddress().getAddress().getHostAddress();
+			String[] result = storageClient.upload_file(localFileName, extName, metaList);
+			System.out.println("upload result:" + storageIP + " " + result[0] + " " + result[1]);
+			return new String[]{result[0],result[1],storageIP};
+			
+		} catch (Exception e) {
+			log.error(e.getMessage(), e);
+			throw e;
+		} finally {
+
+			try {
+				if (trackerServer != null) {
+					trackerServer.close();
+					trackerServer = null;
+				}
+			} catch (IOException e) {
+				log.error(e.getMessage(), e);
+			}
+			
+			try {
+				if (storageServer != null) {
+					storageServer.close();
+					storageServer = null;
+				}
+			} catch (IOException e) {
+				log.error(e.getMessage(), e);
+			}
+		}
+	}
+	
+	/**
+	 * 从存储服务器上删除文件
+	 * 
+	 * @param groupName the group name of storage server
+	 * @param fileStorageName filename on storage server
+	 * @return 0 for success, none zero for fail (error code)
+	 * @throws Exception
+	 */
+	public int delete(String groupName, String fileStorageName) throws Exception {
+		TrackerServer trackerServer = null;
+		try {
+			String confPath = getFdsfClientConfPath();
+			ClientGlobal.init(confPath);
+
+			// 建立连接
+			TrackerClient trackerClient = new TrackerClient();
+			trackerServer = trackerClient.getConnection();
+			StorageClient storageClient = new StorageClient(trackerServer, null);
+			return storageClient.delete_file(groupName, fileStorageName);
+			
+		} catch (Exception e) {
+			log.error(e.getMessage(), e);
+			throw e;
+		} finally {
+
+			try {
+				if (trackerServer != null) {
+					trackerServer.close();
+					trackerServer = null;
+				}
+			} catch (IOException e) {
+				log.error(e.getMessage(), e);
+			}
+		}
+	}
+	
+	/**
+	 * 从存储服务器上删除文件
+	 * 
+	 * @param groupName the group name of storage server
+	 * @param fileStorageName filename on storage server
+	 * @return 0 for success, none zero for fail (error code)
+	 * @throws Exception
+	 */
+	public int delete1(String fileId) throws Exception {
+		TrackerServer trackerServer = null;
+		try {
+			String confPath = getFdsfClientConfPath();
+			ClientGlobal.init(confPath);
+
+			// 建立连接
+			TrackerClient trackerClient = new TrackerClient();
+			trackerServer = trackerClient.getConnection();
+			StorageClient1 storageClient = new StorageClient1(trackerServer, null);
+			return storageClient.delete_file1(fileId);
+			
+		} catch (Exception e) {
+			log.error(e.getMessage(), e);
+			throw e;
+		} finally {
+
+			try {
+				if (trackerServer != null) {
+					trackerServer.close();
+					trackerServer = null;
+				}
+			} catch (IOException e) {
+				log.error(e.getMessage(), e);
+			}
+		}
+	}
+	
+	/**
+	 * 下载文件
+	 * 
+	 * @param groupName the group name of storage server
+	 * @param fileStorageName filename on storage server
+	 * @param localFileName local filename to save
+	 * @return 0 for success, none zero for fail
+	 * @throws Exception
+	 */
+	public int download(String groupName, String fileStorageName, String localFileName) throws Exception {
+		TrackerServer trackerServer = null;
+		try {
+			String confPath = getFdsfClientConfPath();
+			ClientGlobal.init(confPath);
+
+			// 建立连接
+			TrackerClient trackerClient = new TrackerClient();
+			trackerServer = trackerClient.getConnection();
+			StorageClient storageClient = new StorageClient(trackerServer, null);
+			File localFile = new File(localFileName);
+			if (!localFile.exists()) {
+				if (!localFile.getParentFile().exists()) {
+					localFile.getParentFile().mkdirs();
+				}
+
+				if (!localFile.exists()) {
+					localFile.createNewFile();
+				}
+			} else {
+				if (localFile.isDirectory()) {
+					throw new Exception("传入路径为目录，请传入文件路径");
+				}
+
+			}
+			return storageClient.download_file(groupName, fileStorageName, localFileName);
+			
+		} catch (Exception e) {
+			log.error(e.getMessage(), e);
+			throw e;
+		} finally {
+
+			try {
+				if (trackerServer != null) {
+					trackerServer.close();
+					trackerServer = null;
+				}
+			} catch (IOException e) {
+				log.error(e.getMessage(), e);
+			}
+		}
+	}
+	
+	/**
+	 * 下载文件
+	 * 
+	 * @param groupName the group name of storage server
+	 * @param fileStorageName filename on storage server
+	 * @param localFileName local filename to save
+	 * @return 0 for success, none zero for fail
+	 * @throws Exception
+	 */
+	public int downloadFiles(List<AttachmentDto> attachmentList, String[] localFileName) throws Exception {
+		TrackerServer trackerServer = null;
+		try {
+			String confPath = getFdsfClientConfPath();
+			ClientGlobal.init(confPath);
+			
+			// 建立连接
+			TrackerClient trackerClient = new TrackerClient();
+			trackerServer = trackerClient.getConnection();
+			MyStorageClient storageClient = new MyStorageClient(trackerServer, null);
+			return storageClient.downloadFiles(attachmentList, localFileName);
+			
+		} catch (Exception e) {
+			log.error(e.getMessage(), e);
+			throw e;
+		} finally {
+
+			try {
+				if (trackerServer != null) {
+					trackerServer.close();
+					trackerServer = null;
+				}
+			} catch (IOException e) {
+				log.error(e.getMessage(), e);
+			}
+		}
+	}
+	
+	/**
+	 * 获取文件存储的 storage server IP
+	 * 
+	 * @param groupName the group name of storage server
+	 * @param fileStorageName filename on storage server
+	 * @return the source ip address of the file uploaded to
+	 * @throws Exception
+	 */
+	public String getFileAddrIP(String groupName, String fileStorageName) throws Exception {
+		TrackerServer trackerServer = null;
+		try {
+			String confPath = getFdsfClientConfPath();
+			ClientGlobal.init(confPath);
+
+			// 建立连接
+			TrackerClient trackerClient = new TrackerClient();
+			trackerServer = trackerClient.getConnection();
+			StorageClient storageClient = new StorageClient(trackerServer, null);
+			FileInfo fileInfo = storageClient.get_file_info(groupName, fileStorageName);
+			System.out.println(fileInfo);
+			String innerIp = fileInfo.getSourceIpAddr();
+			if(innerIp.indexOf(ConfigurationUtil.STORAGE_ONE_SERVER_IP_N)>-1){
+				return  ConfigurationUtil.STORAGE_ONE_SERVER_IP_W;
+			}else if(innerIp.indexOf(ConfigurationUtil.STORAGE_TWO_SERVER_IP_N)>-1){
+				return  ConfigurationUtil.STORAGE_TWO_SERVER_IP_W;
+			}else if(innerIp.indexOf(ConfigurationUtil.TRACKER_SERVER_IP_N)>-1){
+				return  ConfigurationUtil.TRACKER_SERVER_IP_W;
+			}
+			return innerIp;
+		} catch (Exception e) {
+			log.error(e.getMessage(), e);
+			throw e;
+		} finally {
+
+			try {
+				if (trackerServer != null) {
+					trackerServer.close();
+					trackerServer = null;
+				}
+			} catch (IOException e) {
+				log.error(e.getMessage(), e);
+			}
+		}
+	}
+	
+	
+	private String getFdsfClientConfPath() {
+//		String confPath = this.getClass().getResource("/fdfs_client.conf").getPath();
+//		log.info("fdfs client conf path:" + confPath);
+//		String confPath1 = this.getClass().getResource("fdfs_client.conf").getPath();
+//		log.info("fdfs client conf path1:" + confPath1);
+		// jar:file:/D:/xinju/tomcat/apache-tomcat-7.0.76/wtpwebapps/platform-app/WEB-INF/lib/platform-utils-0.0.1-SNAPSHOT.jar!/com/xinleju/platform/base/utils/
+		/*
+		System.out.println("getClass().getResource(\"\").getFile():" + getClass().getResource("").getFile());
+		System.out.println("getClass().getResource(\"\").getFile().getQuery():" + getClass().getResource("").getQuery());
+		System.out.println("getClass().getResource(\"/\"):" + getClass().getResource("/"));
+		String confPath = getClass().getResource("").getFile();
+		confPath = confPath.substring(0, confPath.indexOf('!'));
+		File tempFile = new File(confPath);
+		confPath = tempFile.getParentFile().getPath();
+		// 判断服务器系统
+		String osName = System.getProperty("os.name");
+		log.info("===>> 系统名称:"+ osName);
+		if (osName != null && osName.toLowerCase().startsWith("win")) {
+			confPath = confPath.substring(confPath.indexOf(File.separator) + 1) + File.separator + "fdfs_client.conf";
+		} else {
+			confPath += File.separator + "fdfs_client.conf";
+		}
+		log.info("===>> confPath.startsWith(\"file:\")=" + confPath.startsWith("file:"));
+		if (confPath.startsWith("file:")) {
+			log.info("====>> confPath startWith [file:]:" + confPath);
+			confPath = confPath.substring(5);
+			log.info("====>> confPath:" + confPath);
+		}
+		*/
+		String confPath = ConfigurationUtil.FDFS_CLIENT_CONF_PATH;
+		System.out.println("fdfs client conf path:" + confPath);
+		
+		return confPath;
+	}
+
+	public String getFdsfClientConfPort() {
+		String confPort = ConfigurationUtil.FDFS_STORAGE_HTTP_PORT;
+		System.out.println("fdfs client conf port:" + confPort);
+		return confPort;
+	}
+	
+	public static void main(String[] args) {
+		try {
+			/*File file = new File("D:\\xinju\\share\\upload1.jpg");
+			FileInputStream in = new FileInputStream(file);
+			byte[] bs = new byte[in.available()];
+			in.read(bs);
+			in.close();
+			NameValuePair[] metaList = new NameValuePair[3];
+			metaList[0] = new NameValuePair("fileName", "upload1.jpg");
+			metaList[1] = new NameValuePair("fileExtName", "jpg");
+			metaList[2] = new NameValuePair("fileLength", String.valueOf(bs.length));
+			
+			new FastDFSClient().upload(bs, "jpg", metaList);*/
+			
+			//System.out.println(new FastDFSClient().getFileAddrIP("group1 ", "M00/00/00/wKiZC1isHe2AflN4AABfm6hvV6A696.jpg"));
+			
+			//new FastDFSClient().download("group1", "M00/00/00/wKiZC1isHe2AflN4AABfm6hvV6A696.jpg", "D:/xinju/temp/tttt.jpg");
+			
+			/*List<AttachmentDto> attList = new ArrayList<>();
+			AttachmentDto dto1= new AttachmentDto();
+			dto1.setFullName("1.conf");
+			dto1.setPath("group1/M00/00/00/wKiZC1ij1cyAQ0zWAAAF9kETNbU94.conf");
+			
+			AttachmentDto dto2= new AttachmentDto();
+			dto2.setFullName("2.jpg");
+			dto2.setPath("group1/M00/00/00/wKiZC1isHe2AflN4AABfm6hvV6A696.jpg");
+			
+			AttachmentDto dto3= new AttachmentDto();
+			dto3.setFullName("3.zip");
+			dto3.setPath("group1/M00/00/00/wKiZC1irIkeAWka8AAc9Nx4lZAs201.zip");
+			
+			attList.add(dto1);
+			attList.add(dto2);
+			attList.add(dto3);
+			String fileLocation = System.getProperty("java.io.tmpdir") + UUID.randomUUID().toString();
+			System.out.println("fileLocation:" + fileLocation);
+			new FastDFSClient().downloadFiles(attList, fileLocation);*/
+			
+			/*System.out.println(System.getProperty("java.io.tmpdir"));
+			System.out.println(UUID.randomUUID().toString());*/
+			/*String s1 = "1";
+			String[] s2 = new String[]{"1"};
+			test1(s1,s2);
+			System.out.println(s1);
+			System.out.println(s2[0]);*/
+//			new FastDFSClient().delete1("group1/M00/00/00/wKiZC1irIIOAXEXHAT-YE24IoHw748.zip");
+//			new FastDFSClient().delete1("group1/M00/00/00/wKiZC1irIkeANwV9AT-YE24IoHw128.zip");
+//			new FastDFSClient().delete1("group1/M00/00/00/wKiZC1irIkiASwD8AfiksrAVckE667.rar");
+//			new FastDFSClient().delete1("group1/M00/00/00/wKiZC1iscXKATlICAmftJzNUs1g781.zip");
+//			new FastDFSClient().delete1("group1/M00/00/00/wKiZC1iscXKAV8aRAfiksrAVckE265.rar");
+//			new FastDFSClient().delete1("group1/M00/00/00/wKiZC1isO9KAXUzYAfiksrAVckE467.rar");
+//			new FastDFSClient().delete1("group1/M00/00/00/wKiZC1isOleAK9U8AmftJzNUs1g769.zip");
+//			new FastDFSClient().delete1("group1/M00/00/00/wKiZC1isPOGAXodEAmftJzNUs1g947.zip");
+			//new FastDFSClient().download("group1", "", "");
+		} catch (Exception e) {          
+			// TODO Auto-generated catch block
+			log.error(e.getMessage(), e);
+		}
+	}
+	
+	public static void test1(String ff, String[] list) {
+		ff = "22";
+		list[0] = "22";
+	}
+	
+	
+	private class MyStorageClient extends StorageClient {
+		
+		public MyStorageClient(TrackerServer trackerServer, StorageServer storageServer) {
+			super(trackerServer, storageServer);
+		}
+
+		public int downloadFiles(List<AttachmentDto> attList, String[] localFileName) throws IOException, MyException {
+			if (null != attList && attList.size() > 0) {
+				ZipOutputStream zout = null;
+				String zipFileName = StringUtils.isEmpty(attList.get(0).getName())?localFileName[0].substring(localFileName[0].lastIndexOf(File.separatorChar) + 1):attList.get(0).getName();
+				File zipFile = new File(localFileName[0] + File.separator + zipFileName + ".zip");
+				try {
+					
+					if (!zipFile.getParentFile().exists()) {
+						zipFile.getParentFile().mkdirs();
+					}
+					zout = new ZipOutputStream(new FileOutputStream(zipFile), Charset.forName("UTF-8"));
+					Set<String> entryNameSet = new HashSet<>();
+					for (AttachmentDto attachmentDto : attList) {
+//						if (StringUtils.isNotEmpty(attachmentDto.getPath())) {
+//							int rt = doDownload(zout, attachmentDto, entryNameSet);
+//							if (rt != 0) {
+//								return rt;
+//							}
+//						}
+						
+						int rt = doDownload(zout, attachmentDto, entryNameSet);
+						if (rt != 0) {
+							return rt;
+						}
+						
+					}
+				}catch(Exception e) {
+					log.error(e.getMessage(), e);
+					throw e;
+				} finally {
+					try {
+						zout.close();
+					} catch(Exception e) {}
+					
+					if (this.errno != 0) {
+						new File(localFileName[0]).delete();
+					} else {
+						localFileName[0] = zipFile.getCanonicalPath();
+					}
+				}
+			}
+			return 0;
+		}
+
+		private int doDownload(ZipOutputStream zout, AttachmentDto dto, Set<String> entryNameSet)
+				throws IOException, MyException {
+			
+			// url附件下载
+			if (StringUtils.isNotBlank(dto.getType()) && "url".equalsIgnoreCase(dto.getType())) {
+				String urlTmpl = "[{000214A0-0000-0000-C000-000000000046}]\r\nProp3=19,2\r\n[InternetShortcut]\r\nIDList=\r\nURL=" + dto.getUrl();
+				
+				
+				// 重名文件重命名
+				String etFileName = StringUtils.isEmpty(dto.getFullName())?"without name.url":dto.getFullName();
+				if (entryNameSet.contains(etFileName)) {
+					int lastDotIndex = etFileName.lastIndexOf('.');
+					etFileName = etFileName.substring(0, lastDotIndex) + " (1)" + etFileName.substring(lastDotIndex);
+				}
+				if (!etFileName.toLowerCase().endsWith(".url")) etFileName += ".url";
+				entryNameSet.add(etFileName);
+				zout.putNextEntry(new ZipEntry(etFileName));
+				zout.write(urlTmpl.getBytes());
+				zout.closeEntry();
+				
+				return 0;
+			}
+			
+			if (StringUtils.isEmpty(dto.getPath())) return 0;
+			
+			String groupName = dto.getPath().substring(0, dto.getPath().indexOf('/'));
+			String remoteFileName = dto.getPath().substring(dto.getPath().indexOf('/') + 1);
+			boolean bNewConnection = this.newReadableStorageConnection(groupName,  remoteFileName);
+			Socket storageSocket = this.storageServer.getSocket();
+			InputStream in = null;
+			try {
+				ProtoCommon.RecvHeaderInfo header;
+					
+				this.errno = 0;
+				this.send_download_package(groupName, remoteFileName, 0, 0);
+				
+				in = storageSocket.getInputStream();
+				header = ProtoCommon.recvHeader(in, ProtoCommon.STORAGE_PROTO_CMD_RESP, -1);
+				this.errno = header.errno;
+				if (header.errno != 0) {
+					return header.errno;
+				}
+				
+				byte[] buff = new byte[256 * 1024];
+				long remainBytes = header.body_len;
+				int bytes;
+				
+				// System.out.println("expect_body_len=" + header.body_len);
+				// 重名文件重命名
+				String etFileName = StringUtils.isEmpty(dto.getFullName())?remoteFileName:dto.getFullName();
+				if (entryNameSet.contains(etFileName)) {
+					int lastDotIndex = etFileName.lastIndexOf('.');
+					etFileName = etFileName.substring(0, lastDotIndex) + " (1)" + etFileName.substring(lastDotIndex);
+				}
+				entryNameSet.add(etFileName);
+				zout.putNextEntry(new ZipEntry(etFileName));
+				while (remainBytes > 0) {
+					if ((bytes = in.read(buff, 0,
+							remainBytes > buff.length ? buff.length : (int) remainBytes)) < 0) {
+						throw new IOException(
+								"recv package size " + (header.body_len - remainBytes) + " != " + header.body_len);
+					}
+					zout.write(buff, 0, bytes);
+					remainBytes -= bytes;
+					
+				}
+				zout.closeEntry();
+			
+				return 0;
+			} catch (IOException ex) {
+				
+				if (this.errno == 0) {
+					this.errno = ProtoCommon.ERR_NO_EIO;
+				}
+				
+				if (!bNewConnection) {
+					try {
+						this.storageServer.close();
+					} catch (IOException ex1) {
+						log.error(ex1.getMessage(), ex1);
+					} finally {
+						this.storageServer = null;
+					}
+				}
+				
+				try {
+					in.close();
+				} catch (IOException ex1) {
+					log.error(ex1.getMessage(), ex1);
+				} finally {
+					in = null;
+				}
+
+				throw ex;
+			} finally {
+				if (bNewConnection) {
+					try {
+						this.storageServer.close();
+					} catch (IOException ex1) {
+						log.error(ex1.getMessage(), ex1);
+					} finally {
+						this.storageServer = null;
+					}
+				}
+				try {
+					in.close();
+				} catch (IOException ex1) {
+					log.error(ex1.getMessage(), ex1);
+				} finally {
+					in = null;
+				}
+			}
+		}
+		
+	}
+}

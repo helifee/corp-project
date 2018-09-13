@@ -1,0 +1,362 @@
+package com.xinleju.platform.univ.search.dto.service.impl;
+
+import java.net.UnknownHostException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.log4j.Logger;
+import org.elasticsearch.index.IndexNotFoundException;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.xinleju.platform.base.utils.DubboServiceResultInfo;
+import com.xinleju.platform.base.utils.Page;
+import com.xinleju.platform.tools.data.JacksonUtils;
+import com.xinleju.platform.univ.search.dto.service.SearchIndexDtoServiceCustomer;
+import com.xinleju.platform.univ.search.entity.SearchIndex;
+import com.xinleju.platform.univ.search.service.SearchIndexService;
+
+/**
+ * @author haoqp
+ * 
+ *
+ */
+ 
+public class SearchIndexDtoServiceProducer implements SearchIndexDtoServiceCustomer{
+	private static Logger log = Logger.getLogger(SearchIndexDtoServiceProducer.class);
+	@Autowired
+	private SearchIndexService searchIndexService;
+
+	public String save(String userInfo, String saveJson){
+	   DubboServiceResultInfo info=new DubboServiceResultInfo();
+	   try {
+		   SearchIndex searchIndex=JacksonUtils.fromJson(saveJson, SearchIndex.class);
+		   searchIndexService.save(searchIndex);
+		   info.setResult(JacksonUtils.toJson(searchIndex));
+		   info.setSucess(true);
+		   info.setMsg("保存对象成功!");
+		} catch (Exception e) {
+		 log.error("保存对象失败!"+e.getMessage());
+		 info.setSucess(false);
+		 info.setMsg("保存对象失败!");
+		 info.setExceptionMsg(e.getMessage());
+		}
+	   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String saveBatch(String userInfo, String saveJsonList) {
+		
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+			List<SearchIndex> searchIndexList = JacksonUtils.fromJson(saveJsonList, ArrayList.class, SearchIndex.class);
+			searchIndexService.saveBatch(searchIndexList);
+			info.setResult(JacksonUtils.toJson(searchIndexList));
+			info.setSucess(true);
+			info.setMsg("保存对象成功!");
+		} catch (Exception e) {
+			log.error("保存对象失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("保存对象失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String updateBatch(String userInfo, String updateJsonList) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+			List<SearchIndex> searchIndexList = JacksonUtils.fromJson(updateJsonList, ArrayList.class, SearchIndex.class);
+			int result = searchIndexService.updateBatch(searchIndexList);
+			info.setResult(JacksonUtils.toJson(result));
+			info.setSucess(true);
+			info.setMsg("更新对象成功!");
+		} catch (Exception e) {
+			log.error("更新对象失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("更新对象失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String update(String userInfo, String updateJson)  {
+		// TODO Auto-generated method stub
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   SearchIndex searchIndex=JacksonUtils.fromJson(updateJson, SearchIndex.class);
+			   int result=   searchIndexService.update(searchIndex);
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("更新对象成功!");
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deleteObjectById(String userInfo, String deleteJson)
+	{
+		// TODO Auto-generated method stub
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   SearchIndex searchIndex=JacksonUtils.fromJson(deleteJson, SearchIndex.class);
+			   int result= searchIndexService.deleteObjectById(searchIndex.getId());
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("删除对象成功!");
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deleteAllObjectByIds(String userInfo, String deleteJsonList)
+   {
+		// TODO Auto-generated method stub
+		 DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   if (StringUtils.isNotBlank(deleteJsonList)) {
+				   Map map=JacksonUtils.fromJson(deleteJsonList, HashMap.class);
+				   List<String> list=Arrays.asList(map.get("id").toString().split(","));
+				   int result= searchIndexService.deleteAllObjectByIds(list);
+				   info.setResult(JacksonUtils.toJson(result));
+				   info.setSucess(true);
+				   info.setMsg("删除对象成功!");
+				}
+			} catch (Exception e) {
+			 log.error("删除对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getObjectById(String userInfo, String getJson)
+	 {
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			SearchIndex searchIndex=JacksonUtils.fromJson(getJson, SearchIndex.class);
+			SearchIndex	result = searchIndexService.getObjectById(searchIndex.getId());
+			info.setResult(JacksonUtils.toJson(result));
+		    info.setSucess(true);
+		    info.setMsg("获取对象成功!");
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getPage(String userInfo, String paramater) {
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map map=JacksonUtils.fromJson(paramater, HashMap.class);
+				Page page=searchIndexService.getPage(map, (Integer)map.get("start"),  (Integer)map.get("limit"));
+				info.setResult(JacksonUtils.toJson(page));
+			    info.setSucess(true);
+			    info.setMsg("获取分页对象成功!");
+			}else{
+				Page page=searchIndexService.getPage(new HashMap(), null, null);
+				info.setResult(JacksonUtils.toJson(page));
+			    info.setSucess(true);
+			    info.setMsg("获取分页对象成功!");
+			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取分页对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取分页对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	
+	@Override
+	public String getPageFullTextQuery(String userInfo, String paramater) {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+			Map map = null;
+			if(StringUtils.isNotBlank(paramater)){
+				map=JacksonUtils.fromJson(paramater, HashMap.class);
+			}else{
+				map = new HashMap();
+			}
+			
+			Page page=searchIndexService.getPageFullTextQuery(map);
+			info.setResult(JacksonUtils.toJson(page));
+		    info.setSucess(true);
+		    info.setMsg("获取分页对象成功!");
+		    
+		} catch (Exception e) {
+			 log.error("获取分页对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 if (e instanceof IndexNotFoundException) {
+				 info.setMsg("当前租户无索引!");
+			 } else if (e instanceof UnknownHostException) {
+				 info.setMsg("未知主机!");
+			 } else {
+				 info.setMsg("查询失败!");
+			 }
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String queryList(String userInfo, String paramater){
+		// TODO Auto-generated method stub
+		DubboServiceResultInfo info=new DubboServiceResultInfo();
+		try {
+			if(StringUtils.isNotBlank(paramater)){
+				Map map=JacksonUtils.fromJson(paramater, HashMap.class);
+				List list=searchIndexService.queryList(map);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}else{
+				List list=searchIndexService.queryList(null);
+				info.setResult(JacksonUtils.toJson(list));
+			    info.setSucess(true);
+			    info.setMsg("获取列表对象成功!");
+			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			 log.error("获取列表对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("获取列表对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String getCount(String userInfo, String paramater)  {
+		// TODO Auto-generated method stub
+		return null;
+	}
+	
+	@Override
+	public String deletePseudoObjectById(String userInfo, String deleteJson)
+	{
+		// TODO Auto-generated method stub
+		   DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   SearchIndex searchIndex=JacksonUtils.fromJson(deleteJson, SearchIndex.class);
+			   int result= searchIndexService.deletePseudoObjectById(searchIndex.getId());
+			   info.setResult(JacksonUtils.toJson(result));
+			   info.setSucess(true);
+			   info.setMsg("删除对象成功!");
+			} catch (Exception e) {
+			 log.error("更新对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deletePseudoAllObjectByIds(String userInfo, String deleteJsonList)
+   {
+		// TODO Auto-generated method stub
+		 DubboServiceResultInfo info=new DubboServiceResultInfo();
+		   try {
+			   if (StringUtils.isNotBlank(deleteJsonList)) {
+				   Map map=JacksonUtils.fromJson(deleteJsonList, HashMap.class);
+				   List<String> list=Arrays.asList(map.get("id").toString().split(","));
+				   int result= searchIndexService.deletePseudoAllObjectByIds(list);
+				   info.setResult(JacksonUtils.toJson(result));
+				   info.setSucess(true);
+				   info.setMsg("删除对象成功!");
+				}
+			} catch (Exception e) {
+			 log.error("删除对象失败!"+e.getMessage());
+			 info.setSucess(false);
+			 info.setMsg("删除更新对象失败!");
+			 info.setExceptionMsg(e.getMessage());
+			}
+		   return JacksonUtils.toJson(info);
+	}
+
+	@Override
+	public String deleteAllSearchIndex(String userInfo, String esDocIndex, String esDocType, String businessIds) throws Exception {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+			if (StringUtils.isNotBlank(esDocIndex)) {
+				List<String> list = JacksonUtils.fromJson(businessIds, ArrayList.class, String.class);
+				int result = searchIndexService.deleteAllSearchIndex(esDocIndex, esDocType, list);
+				info.setResult(JacksonUtils.toJson(result));
+				info.setSucess(true);
+				info.setMsg("批量删除索引成功!");
+			}
+		} catch (Exception e) {
+			log.error("批量删除索引失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("批量删除索引失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+	
+	
+	@Override
+	public String initIndexMapping(String userInfo, String tendId) throws Exception {
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+			searchIndexService.initIndexMapping(tendId);
+//			info.setResult(JacksonUtils.toJson(result));
+			info.setSucess(true);
+			info.setMsg("初始化索引映射成功!");
+		} catch (Exception e) {
+			log.error("初始化索引映射失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("初始化索引映射失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+
+	}
+
+	@Override
+	public String updateIndexMapping(String userInfo, String tendId) throws Exception {
+		
+		DubboServiceResultInfo info = new DubboServiceResultInfo();
+		try {
+			searchIndexService.updateIndexMapping(tendId);
+//			info.setResult(JacksonUtils.toJson(result));
+			info.setSucess(true);
+			info.setMsg("初始化索引映射成功!");
+		} catch (Exception e) {
+			log.error("初始化索引映射失败!" + e.getMessage());
+			info.setSucess(false);
+			info.setMsg("初始化索引映射失败!");
+			info.setExceptionMsg(e.getMessage());
+		}
+		return JacksonUtils.toJson(info);
+	}
+
+
+}

@@ -1,0 +1,24 @@
+package com.xinleju.platform.sys.base.dao;
+
+import java.util.List;
+import java.util.Map;
+
+import com.xinleju.platform.base.dao.BaseDao;
+import com.xinleju.platform.sys.base.dto.BaseSupplierAccontDto;
+import com.xinleju.platform.sys.base.entity.BaseSupplierAccont;
+
+/**
+ * @author admin
+ *
+ */
+
+public interface BaseSupplierAccontDao extends BaseDao<String, BaseSupplierAccont> {
+
+	public List<Map<String,Object>> getSupplierAccontMapBySupplierId(String id);
+	
+	
+	public List<BaseSupplierAccont> getSupplierAccontBySupplierId(String id);
+	
+	
+
+}

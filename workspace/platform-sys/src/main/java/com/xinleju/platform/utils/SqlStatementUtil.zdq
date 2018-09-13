@@ -1,0 +1,422 @@
+package com.xinleju.platform.utils;
+
+import com.xinleju.platform.base.annotation.Column;
+import com.xinleju.platform.base.annotation.Key;
+import com.xinleju.platform.base.annotation.Table;
+import com.xinleju.platform.base.annotation.Version;
+import com.xinleju.platform.tools.data.JacksonUtils;
+import org.apache.commons.lang.StringUtils;
+
+import java.lang.reflect.Field;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+/**
+ * Created by admin on 2017/5/22.
+ */
+public class SqlStatementUtil {
+    /**
+     * 生成分页查询sql语句
+     * @param paramMap
+     * @param clazz
+     * @return
+     */
+    public static String getPageSqlStatment(Map<String,Object> paramMap,Class clazz){
+        StringBuffer buffer = new StringBuffer();
+        buffer.append("select \n");
+        //Class clazz = ContentRowAttribute.class;
+
+        Map<String,String > fieldColumnMap = new HashMap<String,String>();
+
+        //获取实体字段-列定义
+        Field[] fieldArr = clazz.getDeclaredFields();
+        for (Field field:fieldArr) {
+            String fieldName = field.getName();
+            Column column = field.getAnnotation(Column.class);
+            if (column!=null){
+                String columnName = column.value();
+                buffer.append(columnName + " as " + fieldName + ", \n");
+                fieldColumnMap.put(fieldName,columnName);
+            }
+
+        }
+
+        //获取实体超类字段-列定义
+        Class superClazz = clazz.getSuperclass();
+        Field[] superFieldArr = superClazz.getDeclaredFields();
+        for (Field field:superFieldArr) {
+            String fieldName = field.getName();
+            Column column = field.getAnnotation(Column.class);
+            String columnName = null;
+            //获取column
+            if (column!=null){
+                columnName = column.value();
+                columnName = getFieldColumn(fieldName);
+                fieldColumnMap.put(fieldName,columnName);
+            }
+
+            //获取主键
+            Key key = field.getAnnotation(Key.class);
+            if (key != null) {
+                columnName = key.value();
+                columnName = getFieldColumn(fieldName);
+                fieldColumnMap.put(fieldName,columnName);
+            }
+
+            //获取版本列
+            Version version = field.getAnnotation(Version.class);
+            if (version != null) {
+                columnName = version.value();
+                columnName = getFieldColumn(fieldName);
+                fieldColumnMap.put(fieldName,columnName);
+            }
+            buffer.append(columnName + " as " + fieldName + ", \n");
+        }
+
+        buffer = buffer.replace(buffer.lastIndexOf(","),buffer.length()-1,"");
+
+        Table table = (Table) clazz.getAnnotation(Table.class);
+        buffer.append("from " + table.value() + " \n");
+
+
+        buffer.append(" where 1=1 " );
+
+        //模糊查询字段
+        String fuzzyQueryField = (String) paramMap.get("fuzzyQueryFields");
+        List<String> fuzzyQueryFields = JacksonUtils.fromJson(fuzzyQueryField,List.class);
+        paramMap.remove("fuzzyQueryFields");
+
+        //时间区间查询字段
+        String dateField = (String) paramMap.get("dateFields");
+        List<String> dateFields = JacksonUtils.fromJson(dateField,List.class);
+        paramMap.remove("dateFields");
+
+        //排序字段
+        String sortField = (String) paramMap.get("sortFields");
+        Map<String,String> sortFields = JacksonUtils.fromJson(sortField,Map.class);
+        paramMap.remove("sortFields");
+
+        Integer start = (Integer) paramMap.get("start");
+        paramMap.remove("start");
+
+        Integer limit = (Integer) paramMap.get("limit");
+        paramMap.remove("limit");
+
+        //添加where条件
+        Set<Map.Entry<String, Object>> entrySet = paramMap.entrySet();
+        Map<String,String> fuzzyMap = new HashMap<String,String>();
+        Map<String,String> dateMap = new HashMap<String,String>();
+        for (Map.Entry<String, Object> entry:entrySet) {
+            String key = entry.getKey();
+            Object value = entry.getValue();
+
+            if(fuzzyQueryFields!=null&&fuzzyQueryFields.contains(key)){
+                //buffer.append(" and " + fieldColumnMap.get(key) + " like '%" + value + "%' \n");
+                fuzzyMap.put(key,String.valueOf(value));
+                continue;
+            }
+
+            if(dateFields!=null&&dateFields.contains(key)){
+                //buffer.append(" and " + fieldColumnMap.get(key) + " like '%" + value + "%' \n");
+                dateMap.put(key,String.valueOf(value));
+                continue;
+            }
+
+            if(value instanceof String){
+                if (fieldColumnMap.containsKey(key)){
+                    buffer.append("and " + fieldColumnMap.get(key) + " = '" + value + "' \n");
+                }
+            }
+
+            if(value instanceof Integer||value instanceof Double||value instanceof Float||value instanceof Short||value instanceof Long){
+                if (fieldColumnMap.containsKey(key)){
+                    buffer.append("and " + fieldColumnMap.get(key) + " = " + value + " \n");
+                }
+            }
+
+            if(value instanceof Boolean){
+                if (fieldColumnMap.containsKey(key)){
+                    buffer.append("and " + fieldColumnMap.get(key) + " = " + (Boolean.FALSE.equals(value)?0:1) + " \n");
+                }
+            }
+        }
+
+
+        //添加模糊查询
+        if (fuzzyQueryFields != null && fuzzyQueryFields.size() > 0) {
+            StringBuffer fuzzyQueryStatment = new StringBuffer();
+            for (String fuzzyField:fuzzyQueryFields) {
+                if(fieldColumnMap.containsKey(fuzzyField)&&fuzzyMap.containsKey(fuzzyField)){
+                    fuzzyQueryStatment.append(" or "+ fieldColumnMap.get(fuzzyField) + " like '%"+fuzzyMap.get(fuzzyField)+"%' \n");
+                }
+
+            }
+            String fuzzyQueryStatmentStr = fuzzyQueryStatment.toString();
+            if (StringUtils.isNotBlank(fuzzyQueryStatmentStr)){
+                fuzzyQueryStatmentStr = fuzzyQueryStatmentStr.substring(fuzzyQueryStatmentStr.indexOf("or")+2);
+                buffer.append("and (" + fuzzyQueryStatmentStr + ")");
+            }
+
+        }
+
+        //添加时间区间查询
+        if (dateFields != null && dateFields.size() > 0) {
+            StringBuffer dateFieldsStatment = new StringBuffer();
+            for (String dateFieldCode:dateFields) {
+                String dateFieldColumn = dateFieldCode.split("_")[0];
+                if(fieldColumnMap.containsKey(dateFieldColumn)&&dateMap.containsKey(dateFieldCode)){
+                    if(dateFieldCode.indexOf("starttime")> -1){
+                        dateFieldsStatment.append(" and "+ fieldColumnMap.get(dateFieldColumn) + " >= '"+dateMap.get(dateFieldCode)+"' \n");
+                    }
+                    if(dateFieldCode.indexOf("endtime")> -1){
+                        dateFieldsStatment.append(" and "+ fieldColumnMap.get(dateFieldColumn) + " < '"+dateMap.get(dateFieldCode)+"' \n");
+                    }
+                }
+
+            }
+            String dateFieldsStatmentStr = dateFieldsStatment.toString();
+            if (StringUtils.isNotBlank(dateFieldsStatmentStr)){
+                dateFieldsStatmentStr = dateFieldsStatmentStr.substring(dateFieldsStatmentStr.indexOf("and")+3);
+                buffer.append("and (" + dateFieldsStatmentStr + ")");
+            }
+
+        }
+
+        //添加排序
+        if (sortFields != null&&sortFields.size()>0) {
+            Set<Map.Entry<String,String>> sortEntrySet = sortFields.entrySet();
+            //buffer.append("order by ");
+            String sortSql = "order by ";
+            for (Map.Entry<String,String> sortEntry:sortEntrySet) {
+                String key = sortEntry.getKey();
+                String value = sortEntry.getValue();
+                if(fieldColumnMap.containsKey(key)){
+                    //buffer.append(fieldColumnMap.get(key) + " " + value +", \n");
+                    sortSql += fieldColumnMap.get(key) + " " + value +", \n";
+                }
+            }
+
+            if (sortSql.lastIndexOf(",") >= 0) {
+                sortSql = sortSql.substring(0,sortSql.lastIndexOf(",")) + " \n";
+            }
+
+            buffer.append(sortSql);
+        }
+
+        //添加分页
+        if (start != null && limit != null) {
+            buffer.append("limit "+start + "," + limit + " \n");
+        }
+
+        return buffer.toString();
+    }
+
+
+    public static String getPageCountSqlStatment(Map<String,Object> paramMap,Class clazz){
+        StringBuffer buffer = new StringBuffer();
+        buffer.append("select \n");
+        //Class clazz = ContentRowAttribute.class;
+
+        Map<String,String > fieldColumnMap = new HashMap<String,String>();
+
+        //获取实体字段-列定义
+        Field[] fieldArr = clazz.getDeclaredFields();
+        for (Field field:fieldArr) {
+            String fieldName = field.getName();
+            Column column = field.getAnnotation(Column.class);
+            if (column!=null){
+                String columnName = column.value();
+                //buffer.append(columnName + " as " + fieldName + ", \n");
+                fieldColumnMap.put(fieldName,columnName);
+            }
+
+        }
+
+        //获取实体超类字段-列定义
+        Class superClazz = clazz.getSuperclass();
+        Field[] superFieldArr = superClazz.getDeclaredFields();
+        for (Field field:superFieldArr) {
+            String fieldName = field.getName();
+            Column column = field.getAnnotation(Column.class);
+            String columnName = null;
+            //获取column
+            if (column!=null){
+                columnName = column.value();
+                columnName = getFieldColumn(fieldName);
+                fieldColumnMap.put(fieldName,columnName);
+            }
+
+            //获取主键
+            Key key = field.getAnnotation(Key.class);
+            if (key != null) {
+                columnName = key.value();
+                columnName = getFieldColumn(fieldName);
+                fieldColumnMap.put(fieldName,columnName);
+            }
+
+            //获取版本列
+            Version version = field.getAnnotation(Version.class);
+            if (version != null) {
+                columnName = version.value();
+                columnName = getFieldColumn(fieldName);
+                fieldColumnMap.put(fieldName,columnName);
+            }
+            //buffer.append(columnName + " as " + fieldName + ", \n");
+        }
+
+        buffer.append(" count(id) \n");
+        //buffer = buffer.replace(buffer.lastIndexOf(","),buffer.length()-1,"");
+
+        Table table = (Table) clazz.getAnnotation(Table.class);
+        buffer.append("from " + table.value() + " \n");
+
+
+        buffer.append(" where 1=1 " );
+
+        //模糊查询字段
+        String fuzzyQueryField = (String) paramMap.get("fuzzyQueryFields");
+        List<String> fuzzyQueryFields = JacksonUtils.fromJson(fuzzyQueryField,List.class);
+        paramMap.remove("fuzzyQueryFields");
+
+        //时间区间查询字段
+        String dateField = (String) paramMap.get("dateFields");
+        List<String> dateFields = JacksonUtils.fromJson(dateField,List.class);
+        paramMap.remove("dateFields");
+
+        //排序字段
+        String sortField = (String) paramMap.get("sortFields");
+        Map<String,String> sortFields = JacksonUtils.fromJson(sortField,Map.class);
+        paramMap.remove("sortFields");
+
+        Integer start = (Integer) paramMap.get("start");
+        paramMap.remove("start");
+
+        Integer limit = (Integer) paramMap.get("limit");
+        paramMap.remove("limit");
+
+        //添加where条件
+        Set<Map.Entry<String, Object>> entrySet = paramMap.entrySet();
+        Map<String,String> fuzzyMap = new HashMap<String,String>();
+        Map<String,String> dateMap = new HashMap<String,String>();
+        for (Map.Entry<String, Object> entry:entrySet) {
+            String key = entry.getKey();
+            Object value = entry.getValue();
+
+            if(fuzzyQueryFields!=null&&fuzzyQueryFields.contains(key)){
+                //buffer.append(" and " + fieldColumnMap.get(key) + " like '%" + value + "%' \n");
+                fuzzyMap.put(key,String.valueOf(value));
+                continue;
+            }
+
+            if(dateFields!=null&&dateFields.contains(key)){
+                //buffer.append(" and " + fieldColumnMap.get(key) + " like '%" + value + "%' \n");
+                dateMap.put(key,String.valueOf(value));
+                continue;
+            }
+
+            if(value instanceof String){
+                if (fieldColumnMap.containsKey(key)){
+                    buffer.append("and " + fieldColumnMap.get(key) + " = '" + value + "' \n");
+                }
+            }
+
+            if(value instanceof Integer||value instanceof Double||value instanceof Float||value instanceof Short||value instanceof Long){
+                if (fieldColumnMap.containsKey(key)){
+                    buffer.append("and " + fieldColumnMap.get(key) + " = " + value + " \n");
+                }
+            }
+
+            if(value instanceof Boolean){
+                if (fieldColumnMap.containsKey(key)){
+                    buffer.append("and " + fieldColumnMap.get(key) + " = " + (Boolean.FALSE.equals(value)?0:1) + " \n");
+                }
+            }
+        }
+
+
+        //添加模糊查询
+        if (fuzzyQueryFields != null && fuzzyQueryFields.size() > 0) {
+            String fuzzyQueryStatment = "";
+            for (String fuzzyField:fuzzyQueryFields) {
+                if(fieldColumnMap.containsKey(fuzzyField)&&fuzzyMap.containsKey(fuzzyField)){
+                    fuzzyQueryStatment += " or "+ fieldColumnMap.get(fuzzyField) + " like '%"+fuzzyMap.get(fuzzyField)+"%' \n";
+                }
+
+            }
+            if (StringUtils.isNotBlank(fuzzyQueryStatment)){
+                fuzzyQueryStatment = fuzzyQueryStatment.substring(fuzzyQueryStatment.indexOf("or")+2);
+                buffer.append("and (" + fuzzyQueryStatment + ")");
+            }
+
+        }
+        //添加时间区间查询
+        if (dateFields != null && dateFields.size() > 0) {
+            StringBuffer dateFieldsStatment = new StringBuffer();
+            for (String dateFieldCode:dateFields) {
+                String dateFieldColumn = dateFieldCode.split("_")[0];
+                if(fieldColumnMap.containsKey(dateFieldColumn)&&dateMap.containsKey(dateFieldCode)){
+                    if(dateFieldCode.indexOf("starttime")> -1){
+                        dateFieldsStatment.append(" and "+ fieldColumnMap.get(dateFieldColumn) + " >= '"+dateMap.get(dateFieldCode)+"' \n");
+                    }
+                    if(dateFieldCode.indexOf("endtime")> -1){
+                        dateFieldsStatment.append(" and "+ fieldColumnMap.get(dateFieldColumn) + " < '"+dateMap.get(dateFieldCode)+"' \n");
+                    }
+                }
+
+            }
+            String dateFieldsStatmentStr = dateFieldsStatment.toString();
+            if (StringUtils.isNotBlank(dateFieldsStatmentStr)){
+                dateFieldsStatmentStr = dateFieldsStatmentStr.substring(dateFieldsStatmentStr.indexOf("and")+3);
+                buffer.append("and (" + dateFieldsStatmentStr + ")");
+            }
+
+        }
+
+        /*//添加排序
+        if (sortFields != null) {
+            Set<Map.Entry<String,String>> sortEntrySet = sortFields.entrySet();
+            for (Map.Entry<String,String> sortEntry:sortEntrySet) {
+                String key = sortEntry.getKey();
+                String value = sortEntry.getValue();
+                if(fieldColumnMap.containsKey(key)){
+                    buffer.append("order by " + fieldColumnMap.get(key) + " " + value +" \n");
+                }
+            }
+        }*/
+
+        //添加分页
+        /*if (start != null && limit != null) {
+            buffer.append("limit "+start + "," + limit);
+        }*/
+
+        return buffer.toString();
+    }
+
+    /**
+     * 获取实体数据库字段
+     * @param fieldName
+     * @return
+     */
+    private static  String getFieldColumn(String fieldName) {
+        String columnName = null;
+        if (StringUtils.isBlank(columnName)) {
+            String regEx = "[A-Z]";
+            Pattern pattern = Pattern.compile(regEx);
+            Matcher matcher = pattern.matcher(fieldName);
+            StringBuffer buf = new StringBuffer();
+            int startPoint = 0;
+            while (matcher.find()) {
+                buf.append(fieldName.substring(startPoint, matcher.start()).toLowerCase());
+                buf.append("_");
+                startPoint = matcher.start();
+            }
+            buf.append(fieldName.substring(startPoint).toLowerCase());
+            columnName = buf.toString();
+        }
+        return columnName ;
+    }
+}

@@ -1,0 +1,213 @@
+package com.cnaps.hvps.action.clearingAccount;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.struts.action.ActionForm;
+import org.apache.struts.action.ActionForward;
+import org.apache.struts.action.ActionMapping;
+
+import com.bancstone.action.BaseAction;
+import com.bancstone.common.exception.PicpMessageException;
+import com.bancstone.service.systemManage.impl.CommonServices;
+import com.cnaps.coreservices.CommonXMLEntity;
+import com.cnaps.coreservices.TransCodeEntity;
+import com.cnaps.coreservices.TransServices;
+import com.cnaps.hvps.form.clearingAccount.AccountingReturnForm;
+import com.cnaps.hvps.form.clearingAccount.ApplicationEnterForm;
+import com.cnaps.hvps.form.clearingAccount.FundspoolManagementForm;
+import com.cnaps.hvps.persistence.clearingAccount.AccountingReturn;
+import com.cnaps.hvps.persistence.clearingAccount.FundspoolManagement;
+import com.cnaps.hvps.persistence.info.Informationquery;
+
+/**
+ * 资金池管理查询
+ * 
+ * @author Administrator
+ * 
+ */
+public class FundspoolAction extends BaseAction {
+
+	/**
+	 * 资金池管理申请发送
+	 * 
+	 * @param mapping
+	 * @param form
+	 * @param request
+	 * @param response
+	 * @return
+	 */
+	public ActionForward sendMessage(ActionMapping mapping, ActionForm form,
+			HttpServletRequest request, HttpServletResponse response) {
+
+		try {
+			CommonServices commonService = (CommonServices) this
+					.getBean("CommonServices");
+			String workdate = request.getSession().getAttribute("workDate")
+					.toString();// 工作日期
+			String msgId = commonService.getSEQMsgId(workdate);
+
+			TransServices transServices = (TransServices) this.getBean("transServices");
+		
+			FundspoolManagementForm voform = (FundspoolManagementForm) form;
+			
+			//报文设置
+			String transactionid = TransCodeEntity.MONEY_POOL_MANAGEMENT_APPLICATION;//功能代码
+			commSetToXML(voform,request,transactionid);
+			voform.setPmtGrpId(msgId);
+//			commSetToXML(voform, "15105373", "SAPS");
+//			voform.setMsgId(msgId);// 报文标识号
+//			voform.setMsgcode("ccms.903.001.02"); // 报文号
+			String [] fenzijigou = request.getParameterValues("fenzijigou");
+			List brnchList = new ArrayList();
+			for(int i=0;i<fenzijigou.length;i++){
+				brnchList.add(fenzijigou[i]);
+			}
+			voform.getPo().setBrnchList(brnchList);
+			String reslutmessage = "";// 处理信息
+			// 发送交易报文 并解析得到回应的信息
+			CommonXMLEntity commonXMLEntity = transServices.transProcess(
+					voform, TransCodeEntity.MONEY_POOL_MANAGEMENT_APPLICATION, "clearingaccts", "");
+			commonXMLEntity.getProcessCode();
+			if (!commonXMLEntity.getProcessCode().equals("000000")) {
+				throw new PicpMessageException("错误码："
+						+ commonXMLEntity.getProcessCode() + "错误信息："
+						+ commonXMLEntity.getProcessDes());
+			} else {
+				reslutmessage = "处理成功码：" + commonXMLEntity.getProcessCode()
+						+ ";  清算账户资金池管理申请发送成功！";
+			}
+
+			return toSuccessPage(mapping, request, reslutmessage);
+
+		} catch (Exception e) {
+			return toFailedPage(mapping, request, e.getMessage());
+		}
+	}
+
+	/**
+	 * 发送查询报文 资金池查询
+	 * 
+	 * @param mapping
+	 * @param form
+	 * @param request
+	 * @param response
+	 * @return
+	 */
+	public ActionForward querySendxml(ActionMapping mapping, ActionForm form,
+			HttpServletRequest request, HttpServletResponse response) {
+
+		try {
+			CommonServices commonService = (CommonServices) this
+					.getBean("CommonServices");
+			String workdate = request.getSession().getAttribute("workDate")
+					.toString();// 工作日期
+			String msgId = commonService.getSEQMsgId(workdate);
+
+			// 界面查询条件
+			FundspoolManagementForm voform = (FundspoolManagementForm) form;
+			FundspoolManagement po = voform.getPo();
+			commSetToXML(voform, TransCodeEntity.QUERYCD, "CMCS");
+			voform.setMsgId(msgId);// 报文标识号
+			voform.setQueryCd(TransCodeEntity.CAPITAL_POOL_INQUIRES);
+			this.setFenYe(voform);
+
+			TransServices transServices = (TransServices) this
+					.getBean("transServices");
+			commSetConditionsList(voform, po);
+			CommonXMLEntity commonXMLEntity = transServices.transProcess(
+					voform, voform.getTransactionId(), "clearingaccts", voform
+							.getQueryCd());
+			if (!commonXMLEntity.getProcessCode().equals("000000")) {
+				throw new PicpMessageException("错误码：["
+						+ commonXMLEntity.getProcessCode() + "] 错误信息：["
+						+ commonXMLEntity.getProcessDes() + "]");
+			}
+			voform.setTotalSize(Integer.parseInt(commonXMLEntity
+					.getRecordcount()));
+			this.setQueryPageValue(voform, true);
+			List List = commonXMLEntity.getResults();
+			this.setPageInfo(request, voform);
+			this.setObjectToRequest(request, "queryList", List);
+			request.setAttribute("condition", po);
+			return mapping.findForward("queryList");
+
+		} catch (Exception e) {
+			e.printStackTrace();
+			return toFailedPage(mapping, request, e.getMessage());
+		}
+	}
+
+	/**
+	 * 设置 传送到后台的XML 的条件List到FORM里
+	 * 
+	 * @param voform
+	 * @param hpo
+	 */
+
+	private void commSetConditionsList(FundspoolManagementForm voform,
+			FundspoolManagement hpo) {
+
+		if (!StringUtils.isEmpty(hpo.getMsgId())) {
+			voform.getConditions().add("msgid:" + hpo.getMsgId());
+		}
+		if (!StringUtils.isEmpty(hpo.getWorkDate())) {
+			voform.getConditions().add("workdate:" + hpo.getWorkDate());
+		}
+
+	}
+
+	/**
+	 * 发送明细报文
+	 * 
+	 * @param mapping
+	 * @param form
+	 * @param request
+	 * @param response
+	 * @return
+	 */
+	public ActionForward sendDetailMessage(ActionMapping mapping,
+			ActionForm form, HttpServletRequest request,
+			HttpServletResponse response) {
+
+		try {
+
+			CommonServices commonService = (CommonServices) this
+					.getBean("CommonServices");
+			String workdate = request.getSession().getAttribute("workDate")
+					.toString();// 工作日期
+			String msgId = commonService.getSEQMsgId(workdate);
+			// 界面查询条件
+			FundspoolManagementForm voform = (FundspoolManagementForm) form;
+			commSetToXML(voform, TransCodeEntity.QUERYCD, "CMCS");
+			voform.setMsgId(msgId);// 报文标识号
+			voform.setQueryCd(TransCodeEntity.CAPITAL_POOL_INQUIRES);
+			this.setFenYe(voform);
+			TransServices transServices = (TransServices) this
+					.getBean("transServices");
+			String id = request.getParameter("id");
+			voform.getConditions().add("ID:" + id);
+			CommonXMLEntity commonXMLEntity = transServices.transProcess(
+					voform, voform.getTransactionId(), "clearingaccts", voform
+							.getQueryCd());
+			if (!commonXMLEntity.getProcessCode().equals("000000")) {
+				throw new PicpMessageException("错误码：["
+						+ commonXMLEntity.getProcessCode() + "] 错误信息：["
+						+ commonXMLEntity.getProcessDes() + "]");
+			}
+			List<FundspoolManagement> list = commonXMLEntity.getResults();
+			FundspoolManagement po = list.get(0);
+			request.setAttribute("entity", po);
+			return mapping.findForward("gotoDetailPage");
+
+		} catch (Exception e) {
+			e.printStackTrace();
+			return toFailedPage(mapping, request, e.getMessage());
+		}
+	}
+
+}

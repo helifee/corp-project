@@ -1,0 +1,355 @@
+/*
+ * @(#) J030021ServiceImpl.java
+ * Copyright (c) 2009-2010 大连远东计算机系统有限公司
+ * All rights reserved.
+ *      Project: 教育考试培训系统
+ *    SubSystem: 教育子系统
+ */
+package com.yds.tt.training.service.impl;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import net.sf.json.JSONObject;
+
+import org.springframework.stereotype.Service;
+
+import com.yds.base.service.AbstractBaseService;
+import com.yds.common.service.SessionConstants;
+import com.yds.tt.manager.bean.CategoryInfo;
+import com.yds.tt.manager.bean.TtCheckResult;
+import com.yds.tt.manager.service.TtCommonService;
+import com.yds.tt.manager.service.TtCommonUtil;
+import com.yds.tt.manager.service.TtConstants;
+import com.yds.tt.training.bean.BookInfo;
+import com.yds.tt.training.bean.CourseBookRelation;
+import com.yds.tt.training.bean.J030021Info;
+import com.yds.tt.training.dao.J030021Dao;
+import com.yds.tt.training.service.J030021Service;
+import com.yds.util.service.Session;
+
+/**
+ * @see com.yds.tt.training.service.J030021Service
+ */
+@Service("j030021Service")
+public class J030021ServiceImpl extends AbstractBaseService implements
+		J030021Service {
+	
+	// 教材审批者操作标识
+	private static final Integer BOOKAPPROVERFLG = 8;
+	// 教材编辑者操作标识	
+	private static final Integer BOOKEDITORFLG = 4;
+	// 课程编辑者操作标识	
+	private static final Integer COURSEEDITORFLG = 2;
+	// 具有权限标识
+	private static final Integer OPERATEAUTHORITYFLG = 1;
+	// 教材ID链接显示标识
+	private static final Integer BOOKIDLINKFLG = 1;	
+	private J030021Dao j030021Dao;
+	private TtCommonService ttCommonService;
+	
+	/**s
+	 * {@inheritDoc}
+	 */
+	@Override
+	public TtCheckResult initProcess(Integer mode) {
+		
+		// 设置画面session情报
+		Session.set(SessionConstants.TT_J030021_MODE, mode);
+		String loginUserId = TtCommonUtil.getLoginUserId();
+		// 画面Id
+		String thisPageId = TtConstants.PageId.J030021.value();
+		// 事件Id
+		String thisEventId = "J030021_2";
+		// 对象Id
+		List<String> objectList = new ArrayList<String>();
+		// 检查结果
+		TtCheckResult checkResult = new TtCheckResult();
+		
+		// 画面启动限制检查
+		if (mode.equals(ADD_MODE)) {
+			String courseId = (String) Session
+					.get(SessionConstants.TT_J030021_COURSEID);
+			objectList.add(courseId);
+			thisEventId = "J030021_1";
+			checkResult = ttCommonService.checkStartupAuthority(thisPageId,
+					thisEventId, 0, 0, 0, TtConstants.C43.C43_1.value(), objectList);
+		} else if (mode.equals(SHOWLIST_MODE)) {
+			thisEventId = "J030021_2";
+			checkResult = ttCommonService.checkStartupAuthority(thisPageId,
+					thisEventId, 0, 0, 0, 0, objectList);
+		}
+		
+		// 是否课程管理员权限取得
+		Long courseManagerCount = j030021Dao.selectCountCourseManager(loginUserId);
+		if (courseManagerCount > 0) {
+			Session.set(SessionConstants.TT_J030021_COURSEMANAGER, true);
+		} else {
+			Session.set(SessionConstants.TT_J030021_COURSEMANAGER, false);
+		}
+		
+		return checkResult;
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public long selectCountBookInfo(J030021Info j030021Info){
+		
+		// 教材一览取得件数
+		long bookCount = 0;
+		
+		// 取得loginUserId
+		String loginUserId = TtCommonUtil.getLoginUserId();
+		Boolean courseManager = (Boolean)Session.get(SessionConstants.TT_J030021_COURSEMANAGER);
+
+		j030021Info.setLoginUserId(loginUserId);
+		j030021Info.setCourseManager(courseManager);
+		
+		// 取得课程管理员可操作分类
+		if (courseManager) {
+			// 取得分类检索条件
+			List<CategoryInfo> categoryInfos = ttCommonService
+					.getCategoryCondition(loginUserId, TtConstants.C24.C24_1.value(), 
+					j030021Info.getCategory1Id(), j030021Info.getCategory2Id(), 
+					j030021Info.getCategory3Id());
+			j030021Info.setCategoryInfos(categoryInfos);
+			if (categoryInfos == null || categoryInfos.size() == 0) {
+				j030021Info.setCourseManager(false);
+			}
+		}
+		
+		// 取得画面模式
+		int mode = (Integer)Session.get(SessionConstants.TT_J030021_MODE);
+		
+		if (mode == 1) {
+			// 教材信息取得(追加模式)
+			bookCount = j030021Dao.selectCountBookInfoAddMode(j030021Info);
+		} else {
+			// 教材信息取得(一览模式)
+			bookCount = j030021Dao.selectCountBookInfoShowMode(j030021Info);
+		}
+		
+		return bookCount;
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public List<BookInfo> getBookInfoList(J030021Info j030021Info, int offset, int perCounts) {
+
+		// 检索结果
+		List<BookInfo> bookInfoList;
+		
+		// 取得loginUserId
+		String loginUserId = TtCommonUtil.getLoginUserId();
+		j030021Info.setLoginUserId(loginUserId);
+		
+		// 取得画面模式
+		int mode = (Integer)Session.get(SessionConstants.TT_J030021_MODE);
+		
+		if (mode == 1) {
+			// 教材信息取得(追加模式)
+			bookInfoList = j030021Dao.getBookInfoListAddMode(j030021Info, offset, perCounts);
+		} else {
+			// 教材信息取得(一览模式针对课程管理员)
+			bookInfoList = j030021Dao.getBookInfoListShowMode(j030021Info, offset, perCounts);
+			
+			// 操作标识判断
+			int operator = 0;
+			for (BookInfo info : bookInfoList) {				
+				operator = info.getOperatorFlg();
+				// 教材审批者
+				if (operator / BOOKAPPROVERFLG == 1) {
+					if (info.getBookStatus() == TtConstants.R01.R01_2.value()) {
+						info.setApproveFlg(OPERATEAUTHORITYFLG);
+					} else {
+						info.setApproveFlg(0);
+					}
+				}
+				// 教材编辑者
+				operator %= BOOKAPPROVERFLG;
+				if (operator / BOOKEDITORFLG == 1) {
+					info.setEditFlg(OPERATEAUTHORITYFLG);
+				}
+				// 课程编辑者
+				operator %= BOOKEDITORFLG;
+				if (operator / COURSEEDITORFLG == 1) {
+					info.setEditFlg(OPERATEAUTHORITYFLG);
+					info.setDeleteFlg(OPERATEAUTHORITYFLG);
+				}
+				// 课程管理员
+				operator %= COURSEEDITORFLG;
+				if (operator != 0) {
+					info.setEditFlg(OPERATEAUTHORITYFLG);
+					info.setManageFlg(OPERATEAUTHORITYFLG);
+					info.setDeleteFlg(OPERATEAUTHORITYFLG);
+				}
+				// 设置教材ID链接显示标识
+				if (info.getVersionNum() > 1) {
+					info.setBookIdShowFlg(BOOKIDLINKFLG);
+				} else if (info.getVersionNum() == 1
+						&& TtConstants.R01.R01_3.toString().equals(
+								info.getBookStatus().toString())) {
+					info.setBookIdShowFlg(BOOKIDLINKFLG);
+				} else {
+					info.setBookIdShowFlg(0);
+				}
+			}
+		}
+
+		return bookInfoList;
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public TtCheckResult checkEditCourse () {
+		
+		// 画面Id
+		String thisPageId = TtConstants.PageId.J030021.value();
+		// 事件Id
+		String thisEventId = "J030021_1";
+		// 对象Id
+		List<String> objectList = new ArrayList<String>();
+		String courseId = (String) Session
+				.get(SessionConstants.TT_J030021_COURSEID);
+		objectList.add(courseId);
+
+		// 权限检查
+		TtCheckResult checkResult = ttCommonService
+				.checkStartupAuthority(thisPageId, thisEventId, 0, 0, 0,
+						TtConstants.C43.C43_1.value(), objectList);
+		
+		return checkResult;
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@SuppressWarnings("unchecked")
+	@Override
+	public void addToCourse(JSONObject json) {
+		
+		// 取得courseId
+		String courseId = Session.get(SessionConstants.TT_J030021_COURSEID).toString();
+		
+		// 课程下已经存在教材检索
+		Map<String, String> bookCourseIds = new HashMap<String, String>();
+		bookCourseIds.put("courseId", courseId);
+		Map<String, String> courseHadBooks = j030021Dao.getCourseBookRelation(bookCourseIds);
+		
+		// 课程教材关联关系设定
+		List<CourseBookRelation> courseHadntBooks = new ArrayList<CourseBookRelation>();
+		CourseBookRelation courseBookRelation;
+		
+		// 取得画面选中教材
+		Set<String> jsonSet = json.keySet();
+		Iterator<String> jsonIterator = jsonSet.iterator();
+		while (jsonIterator.hasNext()) {
+			
+			// 画面选中的教材ID
+			String bookId = jsonIterator.next();
+
+			// 添加课程下不存在的教材
+			if (courseHadBooks.get(bookId) == null) {
+				courseBookRelation = new CourseBookRelation();
+				courseBookRelation.setCourseId(courseId);
+				courseBookRelation.setBookId(bookId);
+				courseHadntBooks.add(courseBookRelation);
+			}
+			
+		}
+		
+		// 将教材加入课程
+		for (CourseBookRelation info : courseHadntBooks) {
+			j030021Dao.saveCourseBookRelation(info);
+		}
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public Boolean checkBookInfo(J030021Info j030021Info) {
+		
+		// 检查结果
+		Boolean checkResult = true;
+
+		// 开始日期与结束日期合法性检查
+		if (j030021Info != null) {
+			if (j030021Info.getCreateTimeFrom() == null) {
+				checkResult = true;
+			} else if (j030021Info.getCreateTimeTo() == null) {
+				checkResult = true;
+			} else if (j030021Info.getCreateTimeFrom().compareTo(
+					j030021Info.getCreateTimeTo()) > 0) {
+
+				checkResult = false;
+			}				
+		}
+		
+		return checkResult;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public Boolean checkCourseInfo() {
+		String courseId;
+		if (Session.get(SessionConstants.TT_J030021_COURSEID) == null) {
+			return false;
+		} else {
+			courseId = Session.get(SessionConstants.TT_J030021_COURSEID).toString();
+		}
+		
+		// 课程存在检查
+		long courseCount = j030021Dao.selectCountCourse(courseId);
+		if (courseCount == 0) {
+			return false;
+		}
+		
+		return true;
+	}
+	
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public Boolean checkBookQuoteFlg(String bookId) {
+		// 检查结果
+		Boolean checkResult = true;
+		// 课程教材关联检索
+		Map<String, String> bookCourseIds = new HashMap<String, String>();
+		bookCourseIds.put("bookId", bookId);
+		Map<String, String> bookQuoted = j030021Dao.getCourseBookRelation(bookCourseIds);		
+		// 检索结果判断
+		if (bookQuoted == null || bookQuoted.size() == 0) {
+			checkResult = false;
+		}
+		return checkResult;
+	}
+
+	/**
+	 * @param dao the j030021Dao to set
+	 */
+	public void setJ030021Dao(J030021Dao dao) {
+		j030021Dao = dao;
+	}
+
+	/**
+	 * @param ttCommonService the ttCommonService to set
+	 */
+	public void setTtCommonService(TtCommonService ttCommonService) {
+		this.ttCommonService = ttCommonService;
+	}
+	
+}
